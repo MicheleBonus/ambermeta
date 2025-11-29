@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 from ambermeta.utils import MetadataBase
-import extract_prmtop as legacy
+from ambermeta.legacy_extractors import prmtop as legacy
 
 
 @dataclass

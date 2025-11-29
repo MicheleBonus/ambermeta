@@ -3,9 +3,15 @@ from __future__ import annotations
 import os
 import glob
 import math
-import numpy as np
-from dataclasses import dataclass, field
+import importlib.util
 from typing import List, Optional, Sequence, Dict, Tuple
+
+_numpy_spec = importlib.util.find_spec("numpy")
+if _numpy_spec is not None:  # pragma: no cover - optional dependency
+    import numpy as np  # type: ignore
+else:  # pragma: no cover - optional dependency
+    np = None  # type: ignore
+from dataclasses import dataclass, field
 
 # -------------------------------
 # 1. Dependency Management
@@ -79,6 +85,9 @@ def _calc_volume_array(lengths: np.ndarray, angles: Optional[np.ndarray]) -> np.
     lengths: (N, 3) array of a,b,c
     angles: (N, 3) array of alpha, beta, gamma (degrees)
     """
+    if np is None:
+        raise ImportError("NumPy is required to calculate volume arrays")
+
     if angles is None:
         # Orthogonal: V = a*b*c
         return np.prod(lengths, axis=1)
@@ -128,6 +137,9 @@ def _detect_format(filepath: str) -> str:
 # -------------------------------
 
 def _parse_netcdf_trajectory(filepath: str) -> TrajectoryMetadata:
+    if np is None:
+        raise ImportError("NumPy is required to parse NetCDF trajectories")
+
     md = TrajectoryMetadata(filename=filepath, file_format="NetCDF")
     
     if not HAS_NETCDF:
