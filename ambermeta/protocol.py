@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Pattern
+
+import re
 
 from ambermeta.parsers.inpcrd import InpcrdData, InpcrdParser
 from ambermeta.parsers.mdcrd import MdcrdData, MdcrdParser
@@ -14,11 +16,13 @@ from ambermeta.parsers.prmtop import PrmtopData, PrmtopParser
 @dataclass
 class SimulationStage:
     name: str
+    stage_role: Optional[str] = None
     prmtop: Optional[PrmtopData] = None
     inpcrd: Optional[InpcrdData] = None
     mdin: Optional[MdinData] = None
     mdout: Optional[MdoutData] = None
     mdcrd: Optional[MdcrdData] = None
+    restart_path: Optional[str] = None
     validation: List[str] = field(default_factory=list)
 
     def validate(self) -> None:
@@ -106,10 +110,10 @@ class SimulationStage:
         return notes
 
     def summary(self) -> Dict[str, str]:
-        intent = "Unknown"
+        intent = self.stage_role or "Unknown"
         result = "Unknown"
         if self.mdin and self.mdin.details:
-            intent = getattr(self.mdin.details, "stage_role", "MD Stage")
+            intent = self.stage_role or getattr(self.mdin.details, "stage_role", "MD Stage")
         if self.mdout and self.mdout.details:
             result = "Completed" if getattr(self.mdout.details, "finished_properly", False) else "Unclear"
         evidence = "; ".join(self.validation or [])
@@ -120,10 +124,11 @@ class SimulationStage:
 class SimulationProtocol:
     stages: List[SimulationStage] = field(default_factory=list)
 
-    def validate(self) -> None:
+    def validate(self, cross_stage: bool = True) -> None:
         for stage in self.stages:
             stage.validate()
-        self._check_continuity()
+        if cross_stage:
+            self._check_continuity()
 
     def _check_continuity(self) -> None:
         for prev, current in zip(self.stages, self.stages[1:]):
@@ -146,7 +151,14 @@ class SimulationProtocol:
         return {"steps": total_steps, "time_ps": total_time}
 
 
-def auto_discover(directory: str) -> SimulationProtocol:
+def auto_discover(
+    directory: str,
+    grouping_rules: Optional[Dict[str, str]] = None,
+    include_roles: Optional[List[str]] = None,
+    include_stems: Optional[List[str]] = None,
+    restart_files: Optional[Dict[str, str]] = None,
+    skip_cross_stage_validation: bool = False,
+) -> SimulationProtocol:
     files = [f for f in os.listdir(directory) if os.path.isfile(os.path.join(directory, f))]
     grouped: Dict[str, Dict[str, str]] = {}
     ext_map = {
@@ -170,24 +182,60 @@ def auto_discover(directory: str) -> SimulationProtocol:
             continue
         grouped.setdefault(stem, {})[kind] = os.path.join(directory, fname)
 
+    compiled_rules: List[tuple[Pattern[str], str]] = []
+    if grouping_rules:
+        for pattern, role in grouping_rules.items():
+            try:
+                compiled_rules.append((re.compile(pattern), role))
+            except re.error:
+                compiled_rules.append((re.compile(re.escape(pattern)), role))
+
     stages: List[SimulationStage] = []
     for stem, kinds in sorted(grouped.items()):
-        stage = SimulationStage(name=stem)
+        stage_role: Optional[str] = None
+        for pattern, role in compiled_rules:
+            if pattern.search(stem):
+                stage_role = role
+                break
+
+        if include_stems and stem not in include_stems:
+            continue
+
+        stage = SimulationStage(name=stem, stage_role=stage_role)
         if "prmtop" in kinds:
             stage.prmtop = PrmtopParser(kinds["prmtop"]).parse()
-        if "inpcrd" in kinds:
-            stage.inpcrd = InpcrdParser(kinds["inpcrd"]).parse()
         if "mdin" in kinds:
             stage.mdin = MdinParser(kinds["mdin"]).parse()
+            stage.stage_role = stage.stage_role or getattr(stage.mdin.details, "stage_role", None)
         if "mdout" in kinds:
             stage.mdout = MdoutParser(kinds["mdout"]).parse()
         if "mdcrd" in kinds:
             stage.mdcrd = MdcrdParser(kinds["mdcrd"]).parse()
+        if "inpcrd" in kinds:
+            stage.inpcrd = InpcrdParser(kinds["inpcrd"]).parse()
+            stage.restart_path = kinds["inpcrd"]
+
+        if include_roles and stage.stage_role and stage.stage_role not in include_roles:
+            continue
+        if include_roles and not stage.stage_role:
+            continue
+
+        restart_source = None
+        if restart_files:
+            for key in (stage.name, stage.stage_role):
+                if key and key in restart_files:
+                    restart_source = restart_files[key]
+                    break
+
+        if restart_source:
+            stage.inpcrd = InpcrdParser(restart_source).parse()
+            stage.restart_path = restart_source
+
         stage.validate()
         stages.append(stage)
 
     protocol = SimulationProtocol(stages=stages)
-    protocol.validate()
+    protocol.validate(cross_stage=not skip_cross_stage_validation)
     return protocol
 
 
