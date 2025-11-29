@@ -1,16 +1,11 @@
 from __future__ import annotations
 
-from pathlib import Path
-
 from ambermeta.protocol import auto_discover
 
 
-TEST_DATA = Path(__file__).resolve().parent.parent / "md_test_files"
-
-
-def test_auto_discover_filters_by_role():
+def test_auto_discover_filters_by_role(sample_md_data_dir):
     protocol = auto_discover(
-        str(TEST_DATA),
+        str(sample_md_data_dir),
         grouping_rules={"CH3L1": "equilibration", "^ntp_prod": "production"},
         include_roles=["production"],
         skip_cross_stage_validation=True,
@@ -21,11 +16,11 @@ def test_auto_discover_filters_by_role():
     assert all(stage.name.startswith("ntp_prod") for stage in protocol.stages)
 
 
-def test_auto_discover_restart_override_for_subset():
-    restart_file = TEST_DATA / "ntp_prod_0000.rst"
+def test_auto_discover_restart_override_for_subset(sample_md_data_dir):
+    restart_file = sample_md_data_dir / "ntp_prod_0000.rst"
 
     protocol = auto_discover(
-        str(TEST_DATA),
+        str(sample_md_data_dir),
         grouping_rules={"^ntp_prod": "production"},
         include_stems=["ntp_prod_0001"],
         restart_files={"production": str(restart_file)},
@@ -40,9 +35,9 @@ def test_auto_discover_restart_override_for_subset():
     assert stage.restart_path == str(restart_file)
 
 
-def test_auto_discover_can_isolate_equilibration():
+def test_auto_discover_can_isolate_equilibration(sample_md_data_dir):
     protocol = auto_discover(
-        str(TEST_DATA),
+        str(sample_md_data_dir),
         grouping_rules={"CH3L1": "equilibration", "^ntp_prod": "production"},
         include_roles=["equilibration"],
         skip_cross_stage_validation=True,

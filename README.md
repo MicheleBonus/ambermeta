@@ -68,3 +68,32 @@ validation notes that highlight mismatches in atom counts, box information,
 simulation timing, and sampling frequency. The `SimulationProtocol` aggregates
 those stages, performs continuity checks across them, and returns total steps and
 simulation time for rapid reporting.
+
+## Testing and sample data
+
+Run the automated test suite with:
+
+```bash
+pytest
+```
+
+Sample AMBER inputs and outputs live under `tests/data/amber/md_test_files`. The
+fixtures include the original `CH3L1_HUMAN_6NAG` coordinate and parameter pair
+alongside production restarts, control files, and logs (no trajectories are
+provided). `ntp_prod_0000.rst` represents the starting restart for the
+production stages. You can point `auto_discover` at the bundled fixtures to
+experiment locally:
+
+```python
+from pathlib import Path
+
+from ambermeta import auto_discover
+
+sample_dir = Path("tests/data/amber/md_test_files")
+protocol = auto_discover(
+    str(sample_dir),
+    grouping_rules={"CH3L1": "equilibration", "^ntp_prod": "production"},
+    restart_files={"production": str(sample_dir / "ntp_prod_0000.rst")},
+    skip_cross_stage_validation=True,
+)
+```
