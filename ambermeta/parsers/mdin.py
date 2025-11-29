@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from ambermeta.utils import MetadataBase
-import extract_mdin as legacy
+from ambermeta.legacy_extractors import mdin as legacy
 
 
 @dataclass

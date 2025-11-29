@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from ambermeta.utils import MetadataBase
-import extract_mdcrd as legacy
+from ambermeta.legacy_extractors import mdcrd as legacy
 
 
 @dataclass
