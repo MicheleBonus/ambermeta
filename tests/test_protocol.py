@@ -186,3 +186,58 @@ def test_load_protocol_from_manifest_uses_parent_directory(tmp_path, monkeypatch
 
     assert len(proto.stages) == 1
     assert proto.stages[0].mdin.filename == str(stage_dir / "alpha.mdin")
+
+
+def test_gap_expectations_are_reported(tmp_path, monkeypatch):
+    stage_dir = tmp_path / "protocol"
+    stage_dir.mkdir()
+
+    mdcrd_file = stage_dir / "stage1.mdcrd"
+    mdcrd_file.write_text("")
+    inpcrd_file = stage_dir / "stage2.rst"
+    inpcrd_file.write_text("")
+
+    monkeypatch.setattr(protocol, "MdcrdParser", _make_parser({"time_end": 10.0}))
+    monkeypatch.setattr(protocol, "InpcrdParser", _make_parser({"time": 15.0}))
+
+    manifest = [
+        {"name": "stage1", "files": {"mdcrd": "stage1.mdcrd"}},
+        {
+            "name": "stage2",
+            "files": {"inpcrd": "stage2.rst"},
+            "gaps": {"expected_ps": 5, "tolerance_ps": 1},
+        },
+    ]
+
+    proto = auto_discover(str(stage_dir), manifest=manifest)
+
+    stage2 = proto.stages[1]
+
+    assert stage2.observed_gap_ps == 5.0
+    assert any("within expected window" in note for note in stage2.continuity)
+    summary = stage2.summary()
+    assert summary["expected_gap_ps"]
+    assert summary["observed_gap_ps"]
+
+
+def test_overlap_detection_adds_clear_message(tmp_path, monkeypatch):
+    stage_dir = tmp_path / "protocol"
+    stage_dir.mkdir()
+
+    (stage_dir / "stage1.mdcrd").write_text("")
+    (stage_dir / "stage2.rst").write_text("")
+
+    monkeypatch.setattr(protocol, "MdcrdParser", _make_parser({"time_end": 20.0}))
+    monkeypatch.setattr(protocol, "InpcrdParser", _make_parser({"time": 15.0}))
+
+    manifest = [
+        {"name": "stage1", "files": {"mdcrd": "stage1.mdcrd"}},
+        {"name": "stage2", "files": {"inpcrd": "stage2.rst"}},
+    ]
+
+    proto = auto_discover(str(stage_dir), manifest=manifest)
+
+    stage2 = proto.stages[1]
+
+    assert any("overlap" in note.lower() for note in stage2.continuity)
+    assert "overlap" in stage2.summary()["continuity"].lower()
