@@ -1,6 +1,20 @@
 from __future__ import annotations
 
 from ambermeta.protocol import auto_discover
+import ambermeta.protocol as protocol
+
+
+def _make_parser(details):
+    class _Parser:
+        def __init__(self, filename):
+            self.filename = filename
+
+        def parse(self):
+            from types import SimpleNamespace
+
+            return SimpleNamespace(details=SimpleNamespace(**details), filename=self.filename)
+
+    return _Parser
 
 
 def test_auto_discover_filters_by_role(sample_md_data_dir):
@@ -46,3 +60,22 @@ def test_auto_discover_can_isolate_equilibration(sample_md_data_dir):
     assert len(protocol.stages) == 1
     assert protocol.stages[0].name.startswith("CH3L1_HUMAN_6NAG")
     assert protocol.stages[0].stage_role == "equilibration"
+
+
+def test_auto_discover_validates_each_stage_once(tmp_path, monkeypatch):
+    stage_dir = tmp_path / "protocol"
+    stage_dir.mkdir()
+
+    for ext in ("prmtop", "inpcrd"):
+        (stage_dir / f"stage1.{ext}").write_text("")
+
+    monkeypatch.setattr(protocol, "PrmtopParser", _make_parser({"natom": 10}))
+    monkeypatch.setattr(protocol, "InpcrdParser", _make_parser({"natoms": 12}))
+
+    proto = auto_discover(str(stage_dir), skip_cross_stage_validation=True)
+
+    assert len(proto.stages) == 1
+    validation = proto.stages[0].validation
+    expected = "Atom count mismatch across ['prmtop', 'inpcrd']: [10, 12]"
+
+    assert validation.count(expected) == 1

@@ -231,7 +231,6 @@ def auto_discover(
             stage.inpcrd = InpcrdParser(restart_source).parse()
             stage.restart_path = restart_source
 
-        stage.validate()
         stages.append(stage)
 
     protocol = SimulationProtocol(stages=stages)
