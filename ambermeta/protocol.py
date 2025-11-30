@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import json
 import os
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Dict, List, Optional, Pattern
 
 import re
@@ -11,6 +13,11 @@ from ambermeta.parsers.mdcrd import MdcrdData, MdcrdParser
 from ambermeta.parsers.mdin import MdinData, MdinParser
 from ambermeta.parsers.mdout import MdoutData, MdoutParser
 from ambermeta.parsers.prmtop import PrmtopData, PrmtopParser
+
+try:  # pragma: no cover - optional dependency
+    import yaml
+except ImportError:  # pragma: no cover - optional dependency
+    yaml = None
 
 
 @dataclass
@@ -232,6 +239,12 @@ def _manifest_to_stages(
         if include_roles and not stage.stage_role:
             continue
 
+        notes = entry.get("notes") or entry.get("gaps")
+        if isinstance(notes, str):
+            stage.validation.append(notes)
+        elif isinstance(notes, list):
+            stage.validation.extend(str(n) for n in notes)
+
         stages.append(stage)
 
     return stages
@@ -337,4 +350,70 @@ def auto_discover(
     return protocol
 
 
-__all__ = ["SimulationProtocol", "SimulationStage", "auto_discover"]
+def load_manifest(manifest_path: str | os.PathLike[str]):
+    """Load a manifest from YAML or JSON.
+
+    Parameters
+    ----------
+    manifest_path:
+        Path to a YAML or JSON manifest describing simulation stages.
+    """
+
+    path = Path(manifest_path)
+    if not path.exists():
+        raise FileNotFoundError(f"Manifest not found: {manifest_path}")
+
+    text = path.read_text(encoding="utf-8")
+    suffix = path.suffix.lower()
+
+    if suffix in {".yaml", ".yml"}:
+        if yaml is None:
+            raise ImportError("PyYAML is required to read YAML manifests. Install with `pip install pyyaml`.")
+        manifest = yaml.safe_load(text)  # type: ignore[arg-type]
+    else:
+        manifest = json.loads(text)
+
+    if manifest is None:
+        return {}
+
+    if not isinstance(manifest, (dict, list)):
+        raise TypeError("Manifest must be a mapping or list of stage entries.")
+
+    return manifest
+
+
+def load_protocol_from_manifest(
+    manifest_path: str | os.PathLike[str],
+    *,
+    directory: Optional[str] = None,
+    include_roles: Optional[List[str]] = None,
+    include_stems: Optional[List[str]] = None,
+    restart_files: Optional[Dict[str, str]] = None,
+    skip_cross_stage_validation: bool = False,
+) -> SimulationProtocol:
+    """Build a protocol using a manifest file.
+
+    The manifest can be YAML or JSON. Relative file paths are resolved against
+    the provided ``directory`` or the manifest's parent directory when omitted.
+    """
+
+    manifest = load_manifest(manifest_path)
+    base_dir = directory or str(Path(manifest_path).parent)
+
+    return auto_discover(
+        base_dir,
+        manifest=manifest,
+        include_roles=include_roles,
+        include_stems=include_stems,
+        restart_files=restart_files,
+        skip_cross_stage_validation=skip_cross_stage_validation,
+    )
+
+
+__all__ = [
+    "SimulationProtocol",
+    "SimulationStage",
+    "auto_discover",
+    "load_manifest",
+    "load_protocol_from_manifest",
+]

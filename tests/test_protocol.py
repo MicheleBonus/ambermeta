@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from ambermeta.protocol import auto_discover
 import ambermeta.protocol as protocol
 
@@ -142,3 +144,45 @@ def test_manifest_backfills_restart_when_missing(tmp_path, monkeypatch):
     stage = proto.stages[0]
     assert stage.inpcrd is not None
     assert stage.restart_path == str(restart_file)
+
+
+def test_manifest_notes_are_preserved(tmp_path, monkeypatch):
+    stage_dir = tmp_path / "protocol"
+    stage_dir.mkdir()
+
+    (stage_dir / "stage.mdin").write_text("")
+    (stage_dir / "stage.mdout").write_text("")
+
+    monkeypatch.setattr(protocol, "MdinParser", _make_parser({"stage_role": "prep"}))
+    monkeypatch.setattr(protocol, "MdoutParser", _make_parser({"natoms": 5, "dt": 0.1}))
+
+    manifest = [
+        {
+            "name": "stage",
+            "files": {"mdin": "stage.mdin", "mdout": "stage.mdout"},
+            "notes": ["prmtop intentionally omitted"],
+        }
+    ]
+
+    proto = auto_discover(str(stage_dir), manifest=manifest, skip_cross_stage_validation=True)
+
+    assert proto.stages[0].validation
+    assert "prmtop intentionally omitted" in proto.stages[0].validation
+
+
+def test_load_protocol_from_manifest_uses_parent_directory(tmp_path, monkeypatch):
+    stage_dir = tmp_path / "inputs"
+    stage_dir.mkdir()
+
+    (stage_dir / "alpha.mdin").write_text("")
+    manifest_path = tmp_path / "protocol.json"
+    manifest_path.write_text(
+        json.dumps({"alpha": {"files": {"mdin": "inputs/alpha.mdin"}, "stage_role": "prep"}})
+    )
+
+    monkeypatch.setattr(protocol, "MdinParser", _make_parser({"stage_role": "prep"}))
+
+    proto = protocol.load_protocol_from_manifest(manifest_path, skip_cross_stage_validation=True)
+
+    assert len(proto.stages) == 1
+    assert proto.stages[0].mdin.filename == str(stage_dir / "alpha.mdin")
