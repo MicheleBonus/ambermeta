@@ -26,6 +26,11 @@ install it in editable mode for local development:
 python -m pip install -e .
 ```
 
+The package offers two optional extras:
+
+- NetCDF readers for trajectory/coordinate parsing: `python -m pip install -e ".[netcdf]"`
+- Test tooling: `python -m pip install -e ".[tests]"`
+
 After installation, the core types are available directly from the top-level
 package, and individual parsers can be imported from `ambermeta.parsers`:
 
