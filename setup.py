@@ -15,6 +15,7 @@ setup(
         "netcdf": ["netCDF4>=1.6", "scipy>=1.8", "numpy>=1.23"],
         "tests": ["pytest>=7"],
     },
+    entry_points={"console_scripts": ["ambermeta=ambermeta.cli:main"]},
     classifiers=[
         "Programming Language :: Python :: 3",
         "Programming Language :: Python :: 3 :: Only",

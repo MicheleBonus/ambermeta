@@ -74,6 +74,79 @@ simulation timing, and sampling frequency. The `SimulationProtocol` aggregates
 those stages, performs continuity checks across them, and returns total steps and
 simulation time for rapid reporting.
 
+## Command-line planning
+
+After installing the package you will also have an `ambermeta` console script.
+The `plan` command builds a `SimulationProtocol` from a manifest or launches an
+interactive prompt to collect stage roles, ordering, and known gaps:
+
+```bash
+# Build from a YAML/JSON manifest (see templates below)
+ambermeta plan --manifest ./protocol.yaml
+
+# Prompt for stage names, roles, file paths, and gaps, then summarize
+ambermeta plan /path/to/amber_runs
+```
+
+The output lists total steps/time plus each stage's intent, result, restart
+source (if any), and validation notes. Use `--skip-cross-stage-validation` to
+omit continuity checks when the stages are known to be non-contiguous.
+
+### Manifest templates
+
+Manifests can be YAML (requires `pyyaml`) or JSON and may be either a list of
+stage objects or a mapping of stage names. Relative paths are resolved against
+the manifest file's directory by default.
+
+```yaml
+# protocol.yaml
+- name: equil
+  stage_role: equilibration
+  files:
+    prmtop: CH3L1_HUMAN_6NAG_3xenergy.prmtop
+    mdin: CH3L1_HUMAN_6NAG_3xenergy.mdin
+    mdout: CH3L1_HUMAN_6NAG_3xenergy.mdout
+  notes:
+    - Coordinate file missing; using restart from production
+- name: prod1
+  stage_role: production
+  files:
+    mdin: ntp_prod_0001.in
+    mdout: ntp_prod_0001.out
+    inpcrd: ntp_prod_0000.rst
+```
+
+```json
+// protocol.json
+[
+  {
+    "name": "equil",
+    "stage_role": "equilibration",
+    "files": {
+      "prmtop": "CH3L1_HUMAN_6NAG_3xenergy.prmtop",
+      "mdin": "CH3L1_HUMAN_6NAG_3xenergy.mdin",
+      "mdout": "CH3L1_HUMAN_6NAG_3xenergy.mdout"
+    }
+  },
+  {
+    "name": "prod1",
+    "stage_role": "production",
+    "inpcrd": "ntp_prod_0000.rst",
+    "mdin": "ntp_prod_0001.in",
+    "mdout": "ntp_prod_0001.out"
+  }
+]
+```
+
+You can also load a manifest directly from Python using
+`load_protocol_from_manifest`:
+
+```python
+from ambermeta import load_protocol_from_manifest
+
+protocol = load_protocol_from_manifest("protocol.yaml")
+```
+
 ## Testing and sample data
 
 Run the automated test suite with:
