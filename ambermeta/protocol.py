@@ -151,14 +151,113 @@ class SimulationProtocol:
         return {"steps": total_steps, "time_ps": total_time}
 
 
+def _normalize_manifest(manifest: Dict[str, Dict[str, str]] | List[Dict[str, str]]):
+    if isinstance(manifest, dict):
+        for name, entry in manifest.items():
+            if not isinstance(entry, dict):
+                raise TypeError("Manifest entries must be dictionaries")
+            normalized = dict(entry)
+            normalized.setdefault("name", name)
+            yield normalized
+    elif isinstance(manifest, list):
+        for entry in manifest:
+            if not isinstance(entry, dict):
+                raise TypeError("Manifest entries must be dictionaries")
+            yield dict(entry)
+    else:
+        raise TypeError("Manifest must be a list or dictionary")
+
+
+def _manifest_to_stages(
+    manifest: Dict[str, Dict[str, str]] | List[Dict[str, str]],
+    directory: Optional[str],
+    include_roles: Optional[List[str]],
+    include_stems: Optional[List[str]],
+    restart_files: Optional[Dict[str, str]],
+) -> List[SimulationStage]:
+    kinds = {"prmtop", "inpcrd", "mdin", "mdout", "mdcrd"}
+    stages: List[SimulationStage] = []
+    for entry in _normalize_manifest(manifest):
+        name = entry.get("name")
+        if not name:
+            raise ValueError("Each manifest entry must include a 'name'.")
+        stage_role = entry.get("stage_role")
+
+        files = entry.get("files", {})
+        paths = {k: v for k, v in entry.items() if k in kinds}
+        if isinstance(files, dict):
+            for kind, path in files.items():
+                if kind in kinds and path is not None:
+                    paths.setdefault(kind, path)
+
+        resolved = {}
+        for kind, path in paths.items():
+            if path is None:
+                continue
+            if directory and not os.path.isabs(path):
+                resolved[kind] = os.path.join(directory, path)
+            else:
+                resolved[kind] = path
+
+        stage = SimulationStage(name=name, stage_role=stage_role)
+
+        if "prmtop" in resolved:
+            stage.prmtop = PrmtopParser(resolved["prmtop"]).parse()
+        if "mdin" in resolved:
+            stage.mdin = MdinParser(resolved["mdin"]).parse()
+            stage.stage_role = stage.stage_role or getattr(stage.mdin.details, "stage_role", None)
+        if "mdout" in resolved:
+            stage.mdout = MdoutParser(resolved["mdout"]).parse()
+        if "mdcrd" in resolved:
+            stage.mdcrd = MdcrdParser(resolved["mdcrd"]).parse()
+        if "inpcrd" in resolved:
+            stage.inpcrd = InpcrdParser(resolved["inpcrd"]).parse()
+            stage.restart_path = resolved["inpcrd"]
+
+        restart_source = None
+        if restart_files:
+            for key in (stage.name, stage.stage_role):
+                if key and key in restart_files:
+                    restart_source = restart_files[key]
+                    break
+
+        if restart_source and "inpcrd" not in resolved:
+            stage.inpcrd = InpcrdParser(restart_source).parse()
+            stage.restart_path = restart_source
+
+        if include_stems and stage.name not in include_stems:
+            continue
+        if include_roles and stage.stage_role and stage.stage_role not in include_roles:
+            continue
+        if include_roles and not stage.stage_role:
+            continue
+
+        stages.append(stage)
+
+    return stages
+
+
 def auto_discover(
     directory: str,
+    manifest: Optional[Dict[str, Dict[str, str]] | List[Dict[str, str]]] = None,
     grouping_rules: Optional[Dict[str, str]] = None,
     include_roles: Optional[List[str]] = None,
     include_stems: Optional[List[str]] = None,
     restart_files: Optional[Dict[str, str]] = None,
     skip_cross_stage_validation: bool = False,
 ) -> SimulationProtocol:
+    if manifest is not None:
+        stages = _manifest_to_stages(
+            manifest,
+            directory=directory,
+            include_roles=include_roles,
+            include_stems=include_stems,
+            restart_files=restart_files,
+        )
+        protocol = SimulationProtocol(stages=stages)
+        protocol.validate(cross_stage=not skip_cross_stage_validation)
+        return protocol
+
     files = [f for f in os.listdir(directory) if os.path.isfile(os.path.join(directory, f))]
     grouped: Dict[str, Dict[str, str]] = {}
     ext_map = {

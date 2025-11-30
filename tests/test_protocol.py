@@ -79,3 +79,66 @@ def test_auto_discover_validates_each_stage_once(tmp_path, monkeypatch):
     expected = "Atom count mismatch across ['prmtop', 'inpcrd']: [10, 12]"
 
     assert validation.count(expected) == 1
+
+
+def test_manifest_bypasses_inference_and_preserves_order(tmp_path, monkeypatch):
+    stage_dir = tmp_path / "protocol"
+    stage_dir.mkdir()
+
+    for stem in ("beta", "alpha"):
+        (stage_dir / f"{stem}.mdin").write_text("")
+        (stage_dir / f"{stem}.mdout").write_text("")
+    (stage_dir / "beta.rst").write_text("")
+
+    mdin_parser = _make_parser({"stage_role": "placeholder"})
+    mdout_parser = _make_parser({"natoms": 10, "dt": 0.1})
+    inpcrd_parser = _make_parser({"natoms": 10})
+
+    monkeypatch.setattr(protocol, "MdinParser", mdin_parser)
+    monkeypatch.setattr(protocol, "MdoutParser", mdout_parser)
+    monkeypatch.setattr(protocol, "InpcrdParser", inpcrd_parser)
+
+    manifest = [
+        {
+            "name": "beta",
+            "stage_role": "equilibration",
+            "files": {"mdin": "beta.mdin", "mdout": "beta.mdout", "inpcrd": "beta.rst"},
+        },
+        {
+            "name": "alpha",
+            "stage_role": "production",
+            "files": {"mdin": "alpha.mdin", "mdout": "alpha.mdout"},
+        },
+    ]
+
+    proto = auto_discover(str(stage_dir), manifest=manifest, skip_cross_stage_validation=True)
+
+    assert [stage.name for stage in proto.stages] == ["beta", "alpha"]
+    assert all(stage.validation is not None for stage in proto.stages)
+    assert proto.stages[0].inpcrd is not None
+
+
+def test_manifest_backfills_restart_when_missing(tmp_path, monkeypatch):
+    stage_dir = tmp_path / "protocol"
+    stage_dir.mkdir()
+
+    (stage_dir / "prod.mdin").write_text("")
+    restart_file = stage_dir / "prod.rst"
+    restart_file.write_text("")
+
+    monkeypatch.setattr(protocol, "MdinParser", _make_parser({"stage_role": "production"}))
+    monkeypatch.setattr(protocol, "InpcrdParser", _make_parser({"natoms": 42}))
+
+    manifest = [{"name": "prod_stage", "stage_role": "production", "files": {"mdin": "prod.mdin"}}]
+
+    proto = auto_discover(
+        str(stage_dir),
+        manifest=manifest,
+        restart_files={"prod_stage": str(restart_file)},
+        skip_cross_stage_validation=True,
+    )
+
+    assert len(proto.stages) == 1
+    stage = proto.stages[0]
+    assert stage.inpcrd is not None
+    assert stage.restart_path == str(restart_file)
