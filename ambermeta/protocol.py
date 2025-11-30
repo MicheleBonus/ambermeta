@@ -24,6 +24,9 @@ except ImportError:  # pragma: no cover - optional dependency
 class SimulationStage:
     name: str
     stage_role: Optional[str] = None
+    expected_gap_ps: Optional[float] = None
+    gap_tolerance_ps: Optional[float] = None
+    observed_gap_ps: Optional[float] = None
     prmtop: Optional[PrmtopData] = None
     inpcrd: Optional[InpcrdData] = None
     mdin: Optional[MdinData] = None
@@ -31,6 +34,7 @@ class SimulationStage:
     mdcrd: Optional[MdcrdData] = None
     restart_path: Optional[str] = None
     validation: List[str] = field(default_factory=list)
+    continuity: List[str] = field(default_factory=list)
 
     def validate(self) -> None:
         self.validation.extend(self._validate_atoms())
@@ -116,6 +120,10 @@ class SimulationStage:
                     notes.append(f"Coordinate write frequency differs between {base[0]} and {label} ({base[1]} vs {val}).")
         return notes
 
+    def _add_continuity_note(self, message: str) -> None:
+        self.continuity.append(message)
+        self.validation.append(message)
+
     def summary(self) -> Dict[str, str]:
         intent = self.stage_role or "Unknown"
         result = "Unknown"
@@ -123,8 +131,21 @@ class SimulationStage:
             intent = self.stage_role or getattr(self.mdin.details, "stage_role", "MD Stage")
         if self.mdout and self.mdout.details:
             result = "Completed" if getattr(self.mdout.details, "finished_properly", False) else "Unclear"
+        expected_gap = None
+        if self.expected_gap_ps is not None:
+            tolerance = f"±{self.gap_tolerance_ps:g} " if self.gap_tolerance_ps is not None else ""
+            expected_gap = f"{self.expected_gap_ps:g} {tolerance}ps"
+        observed_gap = f"{self.observed_gap_ps:g} ps" if self.observed_gap_ps is not None else None
+        continuity = "; ".join(self.continuity or [])
         evidence = "; ".join(self.validation or [])
-        return {"intent": intent, "result": result, "evidence": evidence}
+        return {
+            "intent": intent,
+            "result": result,
+            "expected_gap_ps": expected_gap or "",
+            "observed_gap_ps": observed_gap or "",
+            "continuity": continuity,
+            "evidence": evidence,
+        }
 
 
 @dataclass
@@ -142,8 +163,41 @@ class SimulationProtocol:
             if prev.mdcrd and prev.mdcrd.details and current.inpcrd and current.inpcrd.details:
                 end_time = getattr(prev.mdcrd.details, "time_end", None)
                 start_time = getattr(current.inpcrd.details, "time", None)
-                if end_time and start_time and start_time < end_time:
-                    current.validation.append("Stage appears to start before previous ended.")
+                if end_time is None or start_time is None:
+                    if current.expected_gap_ps is not None:
+                        current._add_continuity_note(
+                            "Expected gap could not be verified because timing metadata is missing."
+                        )
+                    continue
+
+                gap = start_time - end_time
+                current.observed_gap_ps = gap
+
+                if gap < 0:
+                    current._add_continuity_note(
+                        f"Stage appears to overlap previous stage by {abs(gap):g} ps."
+                    )
+                elif gap > 0:
+                    current._add_continuity_note(f"Stage starts {gap:g} ps after previous ended.")
+
+                if current.expected_gap_ps is not None:
+                    tolerance = current.gap_tolerance_ps or 0.0
+                    lower = current.expected_gap_ps - tolerance
+                    upper = current.expected_gap_ps + tolerance
+                    if gap < lower:
+                        current._add_continuity_note(
+                            f"Observed gap {gap:g} ps is shorter than expected {current.expected_gap_ps:g} ps."
+                        )
+                    elif gap > upper:
+                        current._add_continuity_note(
+                            f"Observed gap {gap:g} ps exceeds expected {current.expected_gap_ps:g} ps."
+                        )
+                    else:
+                        current._add_continuity_note(
+                            f"Observed gap {gap:g} ps is within expected window ({current.expected_gap_ps:g}±{tolerance:g} ps)."
+                        )
+                elif gap != 0:
+                    current._add_continuity_note("Gap detected without stated expectation; verify continuity.")
 
     def totals(self) -> Dict[str, float]:
         total_steps = 0.0
@@ -239,7 +293,27 @@ def _manifest_to_stages(
         if include_roles and not stage.stage_role:
             continue
 
-        notes = entry.get("notes") or entry.get("gaps")
+        gap_info = entry.get("gaps") or entry.get("gap")
+        notes = entry.get("notes")
+        if isinstance(gap_info, dict):
+            expected = gap_info.get("expected") or gap_info.get("expected_ps")
+            tolerance = gap_info.get("tolerance") or gap_info.get("tolerance_ps")
+            if expected is not None:
+                stage.expected_gap_ps = float(expected)
+            if tolerance is not None:
+                stage.gap_tolerance_ps = float(tolerance)
+            extra_notes = gap_info.get("notes")
+            if isinstance(extra_notes, str):
+                stage.validation.append(extra_notes)
+            elif isinstance(extra_notes, list):
+                stage.validation.extend(str(n) for n in extra_notes)
+        elif isinstance(gap_info, (int, float)):
+            stage.expected_gap_ps = float(gap_info)
+        elif isinstance(gap_info, str):
+            stage.validation.append(gap_info)
+        elif isinstance(gap_info, list):
+            stage.validation.extend(str(n) for n in gap_info)
+
         if isinstance(notes, str):
             stage.validation.append(notes)
         elif isinstance(notes, list):
