@@ -1,4 +1,10 @@
-from ambermeta.parsers import InpcrdParser, MdcrdParser, MdinParser, MdoutParser, PrmtopParser
+from ambermeta.parsers import (
+    InpcrdParser,
+    MdcrdParser,
+    MdinParser,
+    MdoutParser,
+    PrmtopParser,
+)
 
 
 def test_prmtop_parser(sample_md_data_dir):
