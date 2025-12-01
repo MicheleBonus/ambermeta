@@ -134,8 +134,22 @@ class SimulationStage:
         _compare(expected_durations, "Simulation duration", "ps")
 
         if mdcrd_duration and expected_durations:
+            default_tolerance = 1e-6
+            mdcrd_timestep = (
+                getattr(self.mdcrd.details, "avg_dt", None) if self.mdcrd and self.mdcrd.details else None
+            )
+
             for label, duration in expected_durations.items():
-                if isinstance(duration, (int, float)) and duration != mdcrd_duration:
+                if not isinstance(duration, (int, float)):
+                    continue
+
+                tolerance = default_tolerance
+                if isinstance(mdcrd_timestep, (int, float)):
+                    tolerance = max(tolerance, float(mdcrd_timestep))
+                if isinstance(timesteps.get(label), (int, float)):
+                    tolerance = max(tolerance, float(timesteps[label]))
+
+                if abs(duration - mdcrd_duration) > tolerance:
                     notes.append(
                         f"Trajectory duration from mdcrd ({mdcrd_duration:g} ps) differs from expected duration from {label} ({duration:g} ps)."
                     )
