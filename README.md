@@ -92,11 +92,29 @@ The output lists total steps/time plus each stage's intent, result, restart
 source (if any), and validation notes. Use `--skip-cross-stage-validation` to
 omit continuity checks when the stages are known to be non-contiguous.
 
-### Manifest templates
+### Manifest schema
 
-Manifests can be YAML (requires `pyyaml`) or JSON and may be either a list of
-stage objects or a mapping of stage names. Relative paths are resolved against
-the manifest file's directory by default.
+AmberMeta manifests describe ordered simulation stages for the `auto_discover`
+helper and the `ambermeta plan` CLI. Manifests can be YAML (requires the
+optional `pyyaml` extra) or JSON and may be either a list of stage objects or a
+mapping of stage names. Relative paths are resolved against the manifest file's
+directory by default (or against the `directory` argument passed to
+`load_protocol_from_manifest`/`auto_discover`).
+
+- **Required per stage:** `name` plus `stage_role` (intent). The role can be
+  inferred from `mdin` metadata when provided but is best set explicitly.
+- **Files:** specify `prmtop`, `mdin`, `mdout`, `inpcrd`, or `mdcrd` either as
+  top-level keys in each stage or under a `files` mapping. At least one
+  recognized file is recommended for validation.
+- **Optional:** `notes` (string or list) and `gaps`/`gap` describing expected
+  discontinuities before a stage (supports `expected`/`expected_ps`,
+  `tolerance`/`tolerance_ps`, and free-form notes). Providing `inpcrd` sets the
+  restart source; programmatic callers can also supply `restart_files` to
+  backfill restarts by stage name or role.
+
+See [docs/manifest.md](docs/manifest.md) for a complete schema walk-through and
+additional edge-case examples, including missing files, restart chaining, and
+non-contiguous stages.
 
 ```yaml
 # protocol.yaml
