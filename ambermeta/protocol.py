@@ -80,30 +80,43 @@ class SimulationStage:
         return []
 
     def _validate_timing(self) -> List[str]:
-        timing = []
+        timing: List[tuple[str, str, float]] = []
         if self.mdin and self.mdin.details:
             length = getattr(self.mdin.details, "length_steps", None)
             dt = getattr(self.mdin.details, "dt", None)
-            if length and dt:
-                timing.append(("mdin", length, dt))
+            if length:
+                timing.append(("mdin", "steps", length))
+            if dt:
+                timing.append(("mdin", "ps_per_step", dt))
         if self.mdout and self.mdout.details:
             length = getattr(self.mdout.details, "nstlim", None)
             dt = getattr(self.mdout.details, "dt", None)
-            if length and dt:
-                timing.append(("mdout", length, dt))
+            if length:
+                timing.append(("mdout", "steps", length))
+            if dt:
+                timing.append(("mdout", "ps_per_step", dt))
         if self.mdcrd and self.mdcrd.details:
+            avg_dt = getattr(self.mdcrd.details, "avg_dt", None)
             dur = getattr(self.mdcrd.details, "total_duration", None)
-            if dur:
-                timing.append(("mdcrd", "duration_ps", dur))
+            if avg_dt:
+                timing.append(("mdcrd", "ps_per_step", avg_dt))
+            elif dur:
+                timing.append(("mdcrd", "ps", dur))
 
         notes: List[str] = []
-        if len(timing) > 1:
-            base = timing[0]
-            for label, length, dt in timing[1:]:
-                if isinstance(base[1], (int, float)) and isinstance(length, (int, float)) and base[1] != length:
-                    notes.append(f"Step count differs between {base[0]} and {label} ({base[1]} vs {length}).")
-                if isinstance(base[2], (int, float)) and isinstance(dt, (int, float)) and base[2] != dt:
-                    notes.append(f"Timestep differs between {base[0]} and {label} ({base[2]} vs {dt}).")
+        by_unit: Dict[str, List[tuple[str, float]]] = {}
+        for label, unit, value in timing:
+            by_unit.setdefault(unit, []).append((label, value))
+
+        for unit, entries in by_unit.items():
+            if len(entries) < 2:
+                continue
+            base_label, base_value = entries[0]
+            for label, value in entries[1:]:
+                if isinstance(base_value, (int, float)) and isinstance(value, (int, float)) and base_value != value:
+                    notes.append(
+                        f"{unit.replace('_', ' ').capitalize()} differs between {base_label} and {label} ({base_value} vs {value})."
+                    )
         return notes
 
     def _validate_sampling(self) -> List[str]:
