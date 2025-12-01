@@ -5,7 +5,6 @@ import json
 import os
 import statistics
 import sys
-from dataclasses import asdict, is_dataclass
 from typing import Any, Dict, Iterable, List, Optional
 
 from ambermeta.protocol import (
@@ -72,60 +71,6 @@ def _format_avg_std(values: Iterable[float], unit: str, precision: int = 3) -> O
 
     stdev = statistics.stdev(data)
     return f"{avg:.{precision}f} ± {stdev:.{precision}f}{suffix}"
-
-
-def _serialize_value(value: Any) -> Any:
-    if value is None:
-        return None
-    if isinstance(value, (str, int, float, bool)):
-        return value
-    if isinstance(value, (list, tuple, set)):
-        return [_serialize_value(v) for v in value]
-    if isinstance(value, dict):
-        return {k: _serialize_value(v) for k, v in value.items()}
-    if is_dataclass(value):
-        return {k: _serialize_value(v) for k, v in asdict(value).items()}
-    if hasattr(value, "__dict__"):
-        return {k: _serialize_value(v) for k, v in value.__dict__.items() if not k.startswith("_")}
-    return str(value)
-
-
-def _serialize_metadata(metadata: Any) -> Optional[Dict[str, Any]]:
-    if metadata is None:
-        return None
-
-    return {
-        "filename": getattr(metadata, "filename", None),
-        "warnings": list(getattr(metadata, "warnings", []) or []),
-        "details": _serialize_value(getattr(metadata, "details", None)),
-    }
-
-
-def _serialize_protocol(protocol: SimulationProtocol) -> Dict[str, Any]:
-    return {
-        "totals": protocol.totals(),
-        "stages": [
-            {
-                "name": stage.name,
-                "stage_role": stage.stage_role,
-                "expected_gap_ps": stage.expected_gap_ps,
-                "gap_tolerance_ps": stage.gap_tolerance_ps,
-                "observed_gap_ps": stage.observed_gap_ps,
-                "restart_path": stage.restart_path,
-                "summary": stage.summary(),
-                "validation": list(stage.validation),
-                "continuity": list(stage.continuity),
-                "files": {
-                    "prmtop": _serialize_metadata(stage.prmtop),
-                    "inpcrd": _serialize_metadata(stage.inpcrd),
-                    "mdin": _serialize_metadata(stage.mdin),
-                    "mdout": _serialize_metadata(stage.mdout),
-                    "mdcrd": _serialize_metadata(stage.mdcrd),
-                },
-            }
-            for stage in protocol.stages
-        ],
-    }
 
 
 def _print_protocol(protocol: SimulationProtocol, verbose: bool = False) -> None:
@@ -271,7 +216,7 @@ def _print_protocol(protocol: SimulationProtocol, verbose: bool = False) -> None
                 print(f"  note: {note}")
         if verbose:
             print("  details:")
-            stage_payload = _serialize_protocol(SimulationProtocol(stages=[stage]))["stages"][0]
+            stage_payload = stage.to_dict()
             for key in ("files", "validation", "continuity"):
                 if key not in stage_payload:
                     continue
@@ -321,7 +266,7 @@ def _plan_command(args: argparse.Namespace) -> int:
     _print_protocol(protocol, verbose=args.verbose)
 
     if args.summary_path:
-        payload = _serialize_protocol(protocol)
+        payload = protocol.to_dict()
         summary_format = args.summary_format
         if summary_format is None:
             _, ext = os.path.splitext(args.summary_path)

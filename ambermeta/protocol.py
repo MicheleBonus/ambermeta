@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field, is_dataclass
 from pathlib import Path
-from typing import Dict, List, Optional, Pattern
+from typing import Any, Dict, List, Optional, Pattern
 
 import re
 
@@ -18,6 +18,38 @@ try:  # pragma: no cover - optional dependency
     import yaml
 except ImportError:  # pragma: no cover - optional dependency
     yaml = None
+
+
+def _serialize_value(value: Any) -> Any:
+    if value is None:
+        return None
+    if isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, (list, tuple, set)):
+        return [_serialize_value(v) for v in value]
+    if isinstance(value, dict):
+        return {k: _serialize_value(v) for k, v in value.items()}
+    if is_dataclass(value):
+        return {k: _serialize_value(v) for k, v in asdict(value).items()}
+    if hasattr(value, "to_dict"):
+        try:
+            return value.to_dict()
+        except TypeError:
+            pass
+    if hasattr(value, "__dict__"):
+        return {k: _serialize_value(v) for k, v in value.__dict__.items() if not k.startswith("_")}
+    return str(value)
+
+
+def _serialize_metadata(metadata: Any) -> Optional[Dict[str, Any]]:
+    if metadata is None:
+        return None
+
+    return {
+        "filename": getattr(metadata, "filename", None),
+        "warnings": list(getattr(metadata, "warnings", []) or []),
+        "details": _serialize_value(getattr(metadata, "details", None)),
+    }
 
 
 @dataclass
@@ -197,6 +229,26 @@ class SimulationStage:
             "evidence": evidence,
         }
 
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "name": self.name,
+            "stage_role": self.stage_role,
+            "expected_gap_ps": self.expected_gap_ps,
+            "gap_tolerance_ps": self.gap_tolerance_ps,
+            "observed_gap_ps": self.observed_gap_ps,
+            "restart_path": self.restart_path,
+            "summary": self.summary(),
+            "validation": list(self.validation),
+            "continuity": list(self.continuity),
+            "files": {
+                "prmtop": _serialize_metadata(self.prmtop),
+                "inpcrd": _serialize_metadata(self.inpcrd),
+                "mdin": _serialize_metadata(self.mdin),
+                "mdout": _serialize_metadata(self.mdout),
+                "mdcrd": _serialize_metadata(self.mdcrd),
+            },
+        }
+
 
 @dataclass
 class SimulationProtocol:
@@ -274,6 +326,12 @@ class SimulationProtocol:
                     total_steps += float(length)
                     total_time += float(length) * float(dt)
         return {"steps": total_steps, "time_ps": total_time}
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "totals": self.totals(),
+            "stages": [stage.to_dict() for stage in self.stages],
+        }
 
 
 def _normalize_manifest(manifest: Dict[str, Dict[str, str]] | List[Dict[str, str]]):
