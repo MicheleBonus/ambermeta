@@ -65,6 +65,47 @@ def _print_protocol(protocol: SimulationProtocol) -> None:
         print(f"\n- {stage.name}")
         print(f"  intent: {summary['intent']}")
         print(f"  result: {summary['result']}")
+        metadata_lines = []
+        if stage.prmtop and stage.prmtop.details:
+            prmtop_details = stage.prmtop.details
+            prmtop_bits = []
+            if getattr(prmtop_details, "natom", None):
+                prmtop_bits.append(f"atoms={prmtop_details.natom}")
+            if getattr(prmtop_details, "box_dimensions", None):
+                prmtop_bits.append("box=yes")
+            metadata_lines.append(f"  prmtop: {', '.join(prmtop_bits) or 'parsed'}")
+        if stage.mdcrd and stage.mdcrd.details:
+            mdcrd_details = stage.mdcrd.details
+            mdcrd_bits = []
+            if getattr(mdcrd_details, "n_frames", None):
+                mdcrd_bits.append(f"frames={mdcrd_details.n_frames}")
+            if getattr(mdcrd_details, "time_start", None) is not None and getattr(mdcrd_details, "time_end", None) is not None:
+                mdcrd_bits.append(
+                    f"time={mdcrd_details.time_start:g}–{mdcrd_details.time_end:g} ps"
+                )
+            if getattr(mdcrd_details, "avg_dt", None):
+                mdcrd_bits.append(f"dt≈{mdcrd_details.avg_dt:g} ps")
+            if getattr(mdcrd_details, "has_box", False):
+                mdcrd_bits.append("box")
+            if getattr(mdcrd_details, "is_remd", False):
+                remd_types = getattr(mdcrd_details, "remd_types", []) or []
+                remd_desc = ", ".join(remd_types) if remd_types else "REMD"
+                mdcrd_bits.append(remd_desc)
+            metadata_lines.append(f"  mdcrd: {', '.join(mdcrd_bits) or 'parsed'}")
+        if stage.inpcrd and stage.inpcrd.details:
+            inpcrd_details = stage.inpcrd.details
+            inpcrd_bits = []
+            if getattr(inpcrd_details, "natoms", None):
+                inpcrd_bits.append(f"atoms={inpcrd_details.natoms}")
+            if getattr(inpcrd_details, "has_box", False):
+                inpcrd_bits.append("box")
+            if getattr(inpcrd_details, "time", None) is not None:
+                inpcrd_bits.append(f"time={inpcrd_details.time:g} ps")
+            if inpcrd_bits:
+                metadata_lines.append(f"  inpcrd: {', '.join(inpcrd_bits)}")
+        if metadata_lines:
+            for line in metadata_lines:
+                print(line)
         if stage.restart_path:
             print(f"  restart: {stage.restart_path}")
         if summary.get("evidence"):
