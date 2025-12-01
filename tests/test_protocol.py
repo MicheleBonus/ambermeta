@@ -241,3 +241,26 @@ def test_overlap_detection_adds_clear_message(tmp_path, monkeypatch):
 
     assert any("overlap" in note.lower() for note in stage2.continuity)
     assert "overlap" in stage2.summary()["continuity"].lower()
+
+
+def test_tiny_gap_without_expectation_is_ignored(tmp_path, monkeypatch):
+    stage_dir = tmp_path / "protocol"
+    stage_dir.mkdir()
+
+    (stage_dir / "stage1.mdcrd").write_text("")
+    (stage_dir / "stage2.rst").write_text("")
+
+    monkeypatch.setattr(protocol, "MdcrdParser", _make_parser({"time_end": 10.0, "avg_dt": 0.004}))
+    monkeypatch.setattr(protocol, "InpcrdParser", _make_parser({"time": 10.0000001}))
+
+    manifest = [
+        {"name": "stage1", "files": {"mdcrd": "stage1.mdcrd"}},
+        {"name": "stage2", "files": {"inpcrd": "stage2.rst"}},
+    ]
+
+    proto = auto_discover(str(stage_dir), manifest=manifest)
+
+    stage2 = proto.stages[1]
+
+    assert stage2.observed_gap_ps == 0.0
+    assert not stage2.continuity
