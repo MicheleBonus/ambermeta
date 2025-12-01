@@ -103,9 +103,9 @@ directory by default (or against the `directory` argument passed to
 
 - **Required per stage:** `name` plus `stage_role` (intent). The role can be
   inferred from `mdin` metadata when provided but is best set explicitly.
-- **Files:** specify `prmtop`, `mdin`, `mdout`, `inpcrd`, or `mdcrd` either as
-  top-level keys in each stage or under a `files` mapping. At least one
-  recognized file is recommended for validation.
+- **Files:** specify `prmtop`, `mdin`, `mdout`, `inpcrd`, or `mdcrd` under a
+  `files` mapping for each stage. At least one recognized file is recommended
+  for validation.
 - **Optional:** `notes` (string or list) and `gaps`/`gap` describing expected
   discontinuities before a stage (supports `expected`/`expected_ps`,
   `tolerance`/`tolerance_ps`, and free-form notes). Providing `inpcrd` sets the
@@ -115,6 +115,9 @@ directory by default (or against the `directory` argument passed to
 See [docs/manifest.md](docs/manifest.md) for a complete schema walk-through and
 additional edge-case examples, including missing files, restart chaining, and
 non-contiguous stages.
+
+Both YAML and JSON templates place file references under the `files` mapping to
+match loader expectations.
 
 ```yaml
 # protocol.yaml
@@ -149,9 +152,11 @@ non-contiguous stages.
   {
     "name": "prod1",
     "stage_role": "production",
-    "inpcrd": "ntp_prod_0000.rst",
-    "mdin": "ntp_prod_0001.in",
-    "mdout": "ntp_prod_0001.out"
+    "files": {
+      "mdin": "ntp_prod_0001.in",
+      "mdout": "ntp_prod_0001.out",
+      "inpcrd": "ntp_prod_0000.rst"
+    }
   }
 ]
 ```
