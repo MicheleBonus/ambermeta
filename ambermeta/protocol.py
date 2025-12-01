@@ -184,6 +184,20 @@ class SimulationProtocol:
                     continue
 
                 gap = start_time - end_time
+
+                # When no explicit gap expectation is provided, treat very small
+                # differences as numerical noise instead of real gaps/overlaps.
+                if current.expected_gap_ps is None:
+                    default_tolerance = 1e-6
+                    prior_dt = getattr(prev.mdcrd.details, "avg_dt", None)
+                    tolerance = (
+                        max(float(prior_dt) * 1e-6, default_tolerance)
+                        if isinstance(prior_dt, (int, float))
+                        else default_tolerance
+                    )
+                    if abs(gap) <= tolerance:
+                        gap = 0.0
+
                 current.observed_gap_ps = gap
 
                 if gap < 0:
