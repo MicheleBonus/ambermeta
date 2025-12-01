@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import argparse
 import os
+import statistics
 import sys
-from typing import Any, Dict, List
+from typing import Any, Dict, Iterable, List, Optional
 
 from ambermeta.protocol import (
     SimulationProtocol,
@@ -52,6 +53,20 @@ def _interactive_manifest(directory: str) -> List[Dict[str, Any]]:
     return manifest
 
 
+def _format_avg_std(values: Iterable[float], unit: str, precision: int = 3) -> Optional[str]:
+    data = [float(v) for v in values if isinstance(v, (int, float))]
+    if not data:
+        return None
+
+    avg = statistics.mean(data)
+    suffix = f" {unit}" if unit else ""
+    if len(data) == 1:
+        return f"{avg:.{precision}f}{suffix}"
+
+    stdev = statistics.stdev(data)
+    return f"{avg:.{precision}f} ± {stdev:.{precision}f}{suffix}"
+
+
 def _print_protocol(protocol: SimulationProtocol) -> None:
     totals = protocol.totals()
     print("\nProtocol summary")
@@ -72,8 +87,68 @@ def _print_protocol(protocol: SimulationProtocol) -> None:
             if getattr(prmtop_details, "natom", None):
                 prmtop_bits.append(f"atoms={prmtop_details.natom}")
             if getattr(prmtop_details, "box_dimensions", None):
-                prmtop_bits.append("box=yes")
+                dims = prmtop_details.box_dimensions
+                if isinstance(dims, (list, tuple)) and len(dims) == 3:
+                    prmtop_bits.append(
+                        "box="
+                        f"{float(dims[0]):.2f}×{float(dims[1]):.2f}×{float(dims[2]):.2f} Å"
+                    )
+                else:
+                    prmtop_bits.append("box=yes")
+            if getattr(prmtop_details, "density", None):
+                prmtop_bits.append(f"density={float(prmtop_details.density):.3f} g/cc")
             metadata_lines.append(f"  prmtop: {', '.join(prmtop_bits) or 'parsed'}")
+        if stage.mdin and stage.mdin.details:
+            mdin_details = stage.mdin.details
+            mdin_bits = []
+            if getattr(mdin_details, "length_steps", None):
+                mdin_bits.append(f"steps={mdin_details.length_steps}")
+            if getattr(mdin_details, "dt", None):
+                mdin_bits.append(f"dt={mdin_details.dt:g} ps")
+            metadata_lines.append(f"  mdin: {', '.join(mdin_bits) or 'parsed'}")
+        stats_line: Optional[str] = None
+        if stage.mdout and stage.mdout.details:
+            mdout_details = stage.mdout.details
+            mdout_bits = []
+            if getattr(mdout_details, "finished_properly", None) is not None:
+                status = "complete" if mdout_details.finished_properly else "uncertain"
+                mdout_bits.append(f"status={status}")
+            if getattr(mdout_details, "nstlim", None):
+                mdout_bits.append(f"steps={mdout_details.nstlim}")
+            if getattr(mdout_details, "dt", None):
+                mdout_bits.append(f"dt={mdout_details.dt:g} ps")
+            if getattr(mdout_details, "thermostat", None):
+                thermostat = mdout_details.thermostat
+                target = getattr(mdout_details, "target_temp", None)
+                if target:
+                    thermostat = f"{thermostat} @ {target:g} K"
+                mdout_bits.append(f"thermostat={thermostat}")
+            if getattr(mdout_details, "barostat", None) and mdout_details.barostat != "None":
+                mdout_bits.append(f"barostat={mdout_details.barostat}")
+            if getattr(mdout_details, "box_type", None):
+                mdout_bits.append(f"box={mdout_details.box_type}")
+
+            stats_bits = []
+            stats = getattr(mdout_details, "stats", None)
+            if stats:
+                if getattr(stats, "count", 0):
+                    stats_bits.append(f"frames={stats.count}")
+                if getattr(stats, "time_start", None) is not None and getattr(stats, "time_end", None) is not None:
+                    stats_bits.append(
+                        f"time={float(stats.time_start):g}–{float(stats.time_end):g} ps"
+                    )
+                temp_stats = _format_avg_std(getattr(stats, "temps", []), "K", precision=2)
+                if temp_stats:
+                    stats_bits.append(f"temp={temp_stats}")
+                density_stats = _format_avg_std(
+                    getattr(stats, "densities", []), "g/cc", precision=4
+                )
+                if density_stats:
+                    stats_bits.append(f"density={density_stats}")
+            if stats_bits:
+                stats_line = f"  stats: {', '.join(stats_bits)}"
+
+            metadata_lines.append(f"  mdout: {', '.join(mdout_bits) or 'parsed'}")
         if stage.mdcrd and stage.mdcrd.details:
             mdcrd_details = stage.mdcrd.details
             mdcrd_bits = []
@@ -86,10 +161,28 @@ def _print_protocol(protocol: SimulationProtocol) -> None:
             if getattr(mdcrd_details, "avg_dt", None):
                 mdcrd_bits.append(f"dt≈{mdcrd_details.avg_dt:g} ps")
             if getattr(mdcrd_details, "has_box", False):
-                mdcrd_bits.append("box")
+                box_desc = "box"
+                if getattr(mdcrd_details, "box_type", None):
+                    box_desc = f"box={mdcrd_details.box_type}"
+                if getattr(mdcrd_details, "volume_stats", None):
+                    volume_stats = mdcrd_details.volume_stats
+                    if (
+                        isinstance(volume_stats, (list, tuple))
+                        and len(volume_stats) == 3
+                        and all(isinstance(v, (int, float)) for v in volume_stats)
+                    ):
+                        box_desc += f", volume≈{float(volume_stats[2]):.2f} Å³"
+                mdcrd_bits.append(box_desc)
             if getattr(mdcrd_details, "is_remd", False):
                 remd_types = getattr(mdcrd_details, "remd_types", []) or []
                 remd_desc = ", ".join(remd_types) if remd_types else "REMD"
+                temps = getattr(mdcrd_details, "remd_temp_stats", None)
+                if (
+                    isinstance(temps, (list, tuple))
+                    and len(temps) == 3
+                    and all(isinstance(v, (int, float)) for v in temps)
+                ):
+                    remd_desc += f" ({temps[0]:.1f}–{temps[1]:.1f}K, avg {temps[2]:.1f}K)"
                 mdcrd_bits.append(remd_desc)
             metadata_lines.append(f"  mdcrd: {', '.join(mdcrd_bits) or 'parsed'}")
         if stage.inpcrd and stage.inpcrd.details:
@@ -106,6 +199,8 @@ def _print_protocol(protocol: SimulationProtocol) -> None:
         if metadata_lines:
             for line in metadata_lines:
                 print(line)
+        if stats_line:
+            print(stats_line)
         if stage.restart_path:
             print(f"  restart: {stage.restart_path}")
         if summary.get("evidence"):
