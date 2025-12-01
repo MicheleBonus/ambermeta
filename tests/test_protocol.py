@@ -170,6 +170,49 @@ def test_manifest_notes_are_preserved(tmp_path, monkeypatch):
     assert "prmtop intentionally omitted" in proto.stages[0].validation
 
 
+def test_mdcrd_frame_spacing_not_treated_as_timestep(tmp_path, monkeypatch):
+    stage_dir = tmp_path / "protocol"
+    stage_dir.mkdir()
+
+    for ext in ("mdin", "mdout", "mdcrd"):
+        (stage_dir / f"stage.{ext}").write_text("")
+
+    monkeypatch.setattr(protocol, "MdinParser", _make_parser({"length_steps": 1000, "dt": 0.002, "natoms": 10}))
+    monkeypatch.setattr(protocol, "MdoutParser", _make_parser({"nstlim": 1000, "dt": 0.002, "natoms": 10}))
+    monkeypatch.setattr(
+        protocol,
+        "MdcrdParser",
+        _make_parser({"avg_dt": 0.004, "total_duration": 2.0, "n_frames": 501, "n_atoms": 10}),
+    )
+
+    proto = auto_discover(str(stage_dir), skip_cross_stage_validation=True)
+    stage = proto.stages[0]
+
+    assert not any("Timestep" in note for note in stage.validation)
+
+
+def test_mdcrd_duration_compared_to_expected_length(tmp_path, monkeypatch):
+    stage_dir = tmp_path / "protocol"
+    stage_dir.mkdir()
+
+    for ext in ("mdin", "mdout", "mdcrd"):
+        (stage_dir / f"stage.{ext}").write_text("")
+
+    monkeypatch.setattr(protocol, "MdinParser", _make_parser({"length_steps": 1000, "dt": 0.002, "natoms": 10}))
+    monkeypatch.setattr(protocol, "MdoutParser", _make_parser({"nstlim": 1000, "dt": 0.002, "natoms": 10}))
+    monkeypatch.setattr(
+        protocol, "MdcrdParser", _make_parser({"avg_dt": 0.004, "total_duration": 4.0, "n_frames": 1001, "n_atoms": 10})
+    )
+
+    proto = auto_discover(str(stage_dir), skip_cross_stage_validation=True)
+    stage = proto.stages[0]
+
+    duration_notes = [note for note in stage.validation if "Trajectory duration from mdcrd" in note]
+
+    assert duration_notes
+    assert any("mdout" in note for note in duration_notes)
+
+
 def test_load_protocol_from_manifest_uses_parent_directory(tmp_path, monkeypatch):
     stage_dir = tmp_path / "inputs"
     stage_dir.mkdir()

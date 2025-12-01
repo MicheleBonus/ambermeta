@@ -80,43 +80,66 @@ class SimulationStage:
         return []
 
     def _validate_timing(self) -> List[str]:
-        timing: List[tuple[str, str, float]] = []
+        notes: List[str] = []
+
+        step_counts: Dict[str, float] = {}
+        timesteps: Dict[str, float] = {}
+        expected_durations: Dict[str, float] = {}
+
         if self.mdin and self.mdin.details:
             length = getattr(self.mdin.details, "length_steps", None)
             dt = getattr(self.mdin.details, "dt", None)
             if length:
-                timing.append(("mdin", "steps", length))
+                step_counts["mdin"] = length
             if dt:
-                timing.append(("mdin", "ps_per_step", dt))
+                timesteps["mdin"] = dt
+            if length and dt:
+                expected_durations["mdin"] = length * dt
+
         if self.mdout and self.mdout.details:
             length = getattr(self.mdout.details, "nstlim", None)
             dt = getattr(self.mdout.details, "dt", None)
             if length:
-                timing.append(("mdout", "steps", length))
+                step_counts["mdout"] = length
             if dt:
-                timing.append(("mdout", "ps_per_step", dt))
+                timesteps["mdout"] = dt
+            if length and dt:
+                expected_durations["mdout"] = length * dt
+
+        mdcrd_duration: Optional[float] = None
         if self.mdcrd and self.mdcrd.details:
-            avg_dt = getattr(self.mdcrd.details, "avg_dt", None)
             dur = getattr(self.mdcrd.details, "total_duration", None)
-            if avg_dt:
-                timing.append(("mdcrd", "ps_per_step", avg_dt))
-            elif dur:
-                timing.append(("mdcrd", "ps", dur))
+            avg_dt = getattr(self.mdcrd.details, "avg_dt", None)
+            n_frames = getattr(self.mdcrd.details, "n_frames", None)
 
-        notes: List[str] = []
-        by_unit: Dict[str, List[tuple[str, float]]] = {}
-        for label, unit, value in timing:
-            by_unit.setdefault(unit, []).append((label, value))
+            if dur:
+                mdcrd_duration = dur
+            elif avg_dt and n_frames and n_frames > 1:
+                mdcrd_duration = avg_dt * (n_frames - 1)
 
-        for unit, entries in by_unit.items():
-            if len(entries) < 2:
-                continue
-            base_label, base_value = entries[0]
-            for label, value in entries[1:]:
+        def _compare(values: Dict[str, float], description: str, suffix: str = "") -> None:
+            if len(values) < 2:
+                return
+            items = list(values.items())
+            base_label, base_value = items[0]
+            for label, value in items[1:]:
                 if isinstance(base_value, (int, float)) and isinstance(value, (int, float)) and base_value != value:
+                    sep = " " if suffix else ""
                     notes.append(
-                        f"{unit.replace('_', ' ').capitalize()} differs between {base_label} and {label} ({base_value} vs {value})."
+                        f"{description} differs between {base_label} and {label} ({base_value:g}{sep}{suffix} vs {value:g}{sep}{suffix})."
                     )
+
+        _compare(step_counts, "Step count")
+        _compare(timesteps, "Timestep", "ps per step")
+        _compare(expected_durations, "Simulation duration", "ps")
+
+        if mdcrd_duration and expected_durations:
+            for label, duration in expected_durations.items():
+                if isinstance(duration, (int, float)) and duration != mdcrd_duration:
+                    notes.append(
+                        f"Trajectory duration from mdcrd ({mdcrd_duration:g} ps) differs from expected duration from {label} ({duration:g} ps)."
+                    )
+
         return notes
 
     def _validate_sampling(self) -> List[str]:
