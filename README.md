@@ -1,123 +1,82 @@
 # ambermeta
 
-AmberMeta: A Simulation Provenance Engine
+AmberMeta is a simulation provenance engine for AMBER molecular dynamics runs. It parses common AMBER outputs, stitches them together into ordered simulation protocols, and highlights gaps or inconsistencies so you can report progress with confidence.
 
-## Library overview
+## What you get
+- Structured parsers for AMBER artifacts (`prmtop`, `mdin`, `mdout`, `inpcrd`, `mdcrd`) with optional NetCDF trajectory support.
+- `SimulationStage` and `SimulationProtocol` models that aggregate parsed files, flag validation issues, and compute total steps and simulated time.
+- Manifest-driven planning plus an interactive `ambermeta plan` CLI for quickly describing stage intent, restarts, and known discontinuities.
+- Utilities for file format detection, cleaning values, and computing statistics shared across all parsers.
 
-AmberMeta provides lightweight Python classes for extracting provenance from AMBER
-molecular dynamics runs. The package is organized around three main parts:
-
-- **Shared utilities** (`ambermeta/utils.py`): helpers for format detection,
-  value cleaning, statistics, volume calculation, and optional NetCDF backend
-  detection shared across all parsers.
-- **Parser classes** (`ambermeta/parsers/`): file-specific parsers that return
-  structured `*Data` objects (for `prmtop`, `inpcrd`, `mdin`, `mdout`, and
-  `mdcrd`) and are re-exported via `ambermeta.parsers` for convenient import.
-- **Protocol model** (`ambermeta/protocol.py`): domain objects describing a
-  `SimulationStage`, collections of stages in a `SimulationProtocol`, and the
-  `auto_discover` helper that assembles stages from files on disk.
-
-## Installation and imports
-
-This repository is a standard Python package. From the repository root you can
-install it in editable mode for local development:
+## Installation
+AmberMeta targets Python 3.8+. From the repository root install in editable mode for local development:
 
 ```bash
 python -m pip install -e .
 ```
 
-The package offers two optional extras:
-
-- NetCDF readers for trajectory/coordinate parsing: `python -m pip install -e ".[netcdf]"`
+Optional extras:
+- NetCDF trajectory reading: `python -m pip install -e ".[netcdf]"`
 - Test tooling: `python -m pip install -e ".[tests]"`
 
-After installation, the core types are available directly from the top-level
-package, and individual parsers can be imported from `ambermeta.parsers`:
+After installation the core models are available from the top-level package, while individual parsers live under `ambermeta.parsers`:
 
 ```python
 from ambermeta import SimulationProtocol, SimulationStage, auto_discover
-from ambermeta.parsers import PrmtopParser, MdoutParser
+from ambermeta.parsers import MdoutParser, PrmtopParser
 ```
 
-## Quickstart example
+## Use from Python
+1. **Discover files and build a protocol**
+   ```python
+   from ambermeta import auto_discover
 
-The snippet below discovers AMBER artifacts in a directory, constructs a
-protocol, validates consistency, and prints a concise summary. Replace
-`"/path/to/amber_runs"` with a directory containing matching AMBER output files
-(e.g., `stage1.mdin`, `stage1.mdout`, `stage1.prmtop`, etc.).
+   protocol = auto_discover("/path/to/amber_runs")
+   ```
+   Pass `grouping_rules`, `restart_files`, or a `manifest` to control how files map to stages.
 
-```python
-from pprint import pprint
+2. **Validate and summarize**
+   ```python
+   protocol.validate()  # already run during auto_discover, safe to call again
+   totals = protocol.totals()  # {"steps": ..., "time_ps": ...}
+   ```
 
-from ambermeta import auto_discover
+3. **Inspect individual stages**
+   ```python
+   for stage in protocol.stages:
+       summary = stage.summary()
+       print(stage.name, summary["intent"], summary["result"], summary.get("evidence"))
+       for note in stage.validation:
+           print("note:", note)
+   ```
 
-# Build the protocol from all recognizable files in the directory.
-protocol = auto_discover("/path/to/amber_runs")
-
-# Run additional validation (auto_discover already triggers per-stage checks).
-protocol.validate()
-
-print("Totals (steps, time_ps):")
-pprint(protocol.totals())
-
-print("\nStage summaries:")
-for stage in protocol.stages:
-    summary = stage.summary()
-    print(f"- {stage.name}: intent={summary['intent']} result={summary['result']}")
-    if summary["evidence"]:
-        print(f"  evidence: {summary['evidence']}")
-```
-
-The `SimulationStage` objects keep the parsed data for each file type and expose
-validation notes that highlight mismatches in atom counts, box information,
-simulation timing, and sampling frequency. The `SimulationProtocol` aggregates
-those stages, performs continuity checks across them, and returns total steps and
-simulation time for rapid reporting.
-
-## Command-line planning
-
-After installing the package you will also have an `ambermeta` console script.
-The `plan` command builds a `SimulationProtocol` from a manifest or launches an
-interactive prompt to collect stage roles, ordering, and known gaps:
+## Use the command line
+Installing the package also provides an `ambermeta` console script for quick planning and reporting.
 
 ```bash
-# Build from a YAML/JSON manifest (see templates below)
-ambermeta plan --manifest ./protocol.yaml
+# Build from a YAML/JSON manifest and summarize
+ambermeta plan --manifest ./protocol.yaml /path/to/amber_runs
 
 # Prompt for stage names, roles, file paths, and gaps, then summarize
 ambermeta plan /path/to/amber_runs
+
+# Write a structured summary for downstream tools
+ambermeta plan --manifest ./protocol.yaml --summary-path ./protocol.json
 ```
 
-The output lists total steps/time plus each stage's intent, result, restart
-source (if any), and validation notes. Use `--skip-cross-stage-validation` to
-omit continuity checks when the stages are known to be non-contiguous.
+Flags worth knowing:
+- `--skip-cross-stage-validation` disables continuity checks when stages are intentionally non-contiguous.
+- `-v/--verbose` prints parsed metadata, warnings, and continuity notes.
+- `--summary-format {json|yaml}` forces the written summary format (defaults to file extension).
 
-### Manifest schema
+## Manifests at a glance
+Manifests describe ordered simulation stages for both `auto_discover` and `ambermeta plan`. YAML (requires the optional `pyyaml` extra) and JSON are supported.
 
-AmberMeta manifests describe ordered simulation stages for the `auto_discover`
-helper and the `ambermeta plan` CLI. Manifests can be YAML (requires the
-optional `pyyaml` extra) or JSON and may be either a list of stage objects or a
-mapping of stage names. Relative paths are resolved against the manifest file's
-directory by default (or against the `directory` argument passed to
-`load_protocol_from_manifest`/`auto_discover`).
+- **Required:** `name` and `stage_role` (intent). Roles can sometimes be inferred from `mdin` metadata but are best provided explicitly.
+- **Files:** `prmtop`, `mdin`, `mdout`, `inpcrd`, `mdcrd` either directly in each stage or nested under `files`. Relative paths resolve against the manifest location or the directory passed to `auto_discover`.
+- **Optional:** `notes` (string or list), `gaps`/`gap` to declare expected discontinuities, and `inpcrd`/`restart_files` to capture restart sources.
 
-- **Required per stage:** `name` plus `stage_role` (intent). The role can be
-  inferred from `mdin` metadata when provided but is best set explicitly.
-- **Files:** specify `prmtop`, `mdin`, `mdout`, `inpcrd`, or `mdcrd` under a
-  `files` mapping for each stage. At least one recognized file is recommended
-  for validation.
-- **Optional:** `notes` (string or list) and `gaps`/`gap` describing expected
-  discontinuities before a stage (supports `expected`/`expected_ps`,
-  `tolerance`/`tolerance_ps`, and free-form notes). Providing `inpcrd` sets the
-  restart source; programmatic callers can also supply `restart_files` to
-  backfill restarts by stage name or role.
-
-See [docs/manifest.md](docs/manifest.md) for a complete schema walk-through and
-additional edge-case examples, including missing files, restart chaining, and
-non-contiguous stages.
-
-Both YAML and JSON templates place file references under the `files` mapping to
-match loader expectations.
+See [docs/manifest.md](docs/manifest.md) for the full schema and edge cases. Templates:
 
 ```yaml
 # protocol.yaml
@@ -161,8 +120,7 @@ match loader expectations.
 ]
 ```
 
-You can also load a manifest directly from Python using
-`load_protocol_from_manifest`:
+You can also load a manifest directly from Python:
 
 ```python
 from ambermeta import load_protocol_from_manifest
@@ -170,24 +128,11 @@ from ambermeta import load_protocol_from_manifest
 protocol = load_protocol_from_manifest("protocol.yaml")
 ```
 
-## Testing and sample data
-
-Run the automated test suite with:
-
-```bash
-pytest
-```
-
-Sample AMBER inputs and outputs live under `tests/data/amber/md_test_files`. The
-fixtures include the original `CH3L1_HUMAN_6NAG` coordinate and parameter pair
-alongside production restarts, control files, and logs (no trajectories are
-provided). `ntp_prod_0000.rst` represents the starting restart for the
-production stages. You can point `auto_discover` at the bundled fixtures to
-experiment locally:
+## Sample data and tests
+Sample AMBER inputs and outputs live under `tests/data/amber/md_test_files`. The fixtures include the original `CH3L1_HUMAN_6NAG` coordinate and parameter pair alongside production restarts, control files, and logs (no trajectories). Try them out with:
 
 ```python
 from pathlib import Path
-
 from ambermeta import auto_discover
 
 sample_dir = Path("tests/data/amber/md_test_files")
@@ -197,4 +142,10 @@ protocol = auto_discover(
     restart_files={"production": str(sample_dir / "ntp_prod_0000.rst")},
     skip_cross_stage_validation=True,
 )
+```
+
+Run the automated tests with:
+
+```bash
+pytest
 ```
