@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import statistics
 import sys
+from dataclasses import asdict, is_dataclass
 from typing import Any, Dict, Iterable, List, Optional
 
 from ambermeta.protocol import (
@@ -11,6 +13,11 @@ from ambermeta.protocol import (
     auto_discover,
     load_protocol_from_manifest,
 )
+
+try:  # pragma: no cover - optional dependency
+    import yaml
+except ImportError:  # pragma: no cover - optional dependency
+    yaml = None
 
 
 def _prompt(prompt: str) -> str:
@@ -67,7 +74,61 @@ def _format_avg_std(values: Iterable[float], unit: str, precision: int = 3) -> O
     return f"{avg:.{precision}f} ± {stdev:.{precision}f}{suffix}"
 
 
-def _print_protocol(protocol: SimulationProtocol) -> None:
+def _serialize_value(value: Any) -> Any:
+    if value is None:
+        return None
+    if isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, (list, tuple, set)):
+        return [_serialize_value(v) for v in value]
+    if isinstance(value, dict):
+        return {k: _serialize_value(v) for k, v in value.items()}
+    if is_dataclass(value):
+        return {k: _serialize_value(v) for k, v in asdict(value).items()}
+    if hasattr(value, "__dict__"):
+        return {k: _serialize_value(v) for k, v in value.__dict__.items() if not k.startswith("_")}
+    return str(value)
+
+
+def _serialize_metadata(metadata: Any) -> Optional[Dict[str, Any]]:
+    if metadata is None:
+        return None
+
+    return {
+        "filename": getattr(metadata, "filename", None),
+        "warnings": list(getattr(metadata, "warnings", []) or []),
+        "details": _serialize_value(getattr(metadata, "details", None)),
+    }
+
+
+def _serialize_protocol(protocol: SimulationProtocol) -> Dict[str, Any]:
+    return {
+        "totals": protocol.totals(),
+        "stages": [
+            {
+                "name": stage.name,
+                "stage_role": stage.stage_role,
+                "expected_gap_ps": stage.expected_gap_ps,
+                "gap_tolerance_ps": stage.gap_tolerance_ps,
+                "observed_gap_ps": stage.observed_gap_ps,
+                "restart_path": stage.restart_path,
+                "summary": stage.summary(),
+                "validation": list(stage.validation),
+                "continuity": list(stage.continuity),
+                "files": {
+                    "prmtop": _serialize_metadata(stage.prmtop),
+                    "inpcrd": _serialize_metadata(stage.inpcrd),
+                    "mdin": _serialize_metadata(stage.mdin),
+                    "mdout": _serialize_metadata(stage.mdout),
+                    "mdcrd": _serialize_metadata(stage.mdcrd),
+                },
+            }
+            for stage in protocol.stages
+        ],
+    }
+
+
+def _print_protocol(protocol: SimulationProtocol, verbose: bool = False) -> None:
     totals = protocol.totals()
     print("\nProtocol summary")
     print("================")
@@ -208,6 +269,32 @@ def _print_protocol(protocol: SimulationProtocol) -> None:
         if stage.validation:
             for note in stage.validation:
                 print(f"  note: {note}")
+        if verbose:
+            print("  details:")
+            stage_payload = _serialize_protocol(SimulationProtocol(stages=[stage]))["stages"][0]
+            for key in ("files", "validation", "continuity"):
+                if key not in stage_payload:
+                    continue
+                block = stage_payload[key]
+                if key == "files":
+                    for file_kind, metadata in block.items():
+                        if metadata is None:
+                            continue
+                        print(f"    {file_kind}:")
+                        print(f"      file: {metadata.get('filename')}")
+                        warnings = metadata.get("warnings") or []
+                        for warn in warnings:
+                            print(f"      warning: {warn}")
+                        details = metadata.get("details")
+                        if details:
+                            for line in json.dumps(details, indent=6).splitlines():
+                                print(f"      detail: {line}")
+                else:
+                    if not block:
+                        continue
+                    label = "validation" if key == "validation" else "continuity"
+                    for item in block:
+                        print(f"    {label}: {item}")
 
 
 def _plan_command(args: argparse.Namespace) -> int:
@@ -231,7 +318,28 @@ def _plan_command(args: argparse.Namespace) -> int:
             skip_cross_stage_validation=args.skip_cross_stage_validation,
         )
 
-    _print_protocol(protocol)
+    _print_protocol(protocol, verbose=args.verbose)
+
+    if args.summary_path:
+        payload = _serialize_protocol(protocol)
+        summary_format = args.summary_format
+        if summary_format is None:
+            _, ext = os.path.splitext(args.summary_path)
+            ext = ext.lower().lstrip(".")
+            if ext in {"yaml", "yml"}:
+                summary_format = "yaml"
+            else:
+                summary_format = "json"
+        if summary_format == "json":
+            with open(args.summary_path, "w", encoding="utf-8") as fh:
+                json.dump(payload, fh, indent=2)
+        elif summary_format == "yaml":
+            if yaml is None:
+                raise RuntimeError("PyYAML is required to write YAML summaries.")
+            with open(args.summary_path, "w", encoding="utf-8") as fh:
+                yaml.safe_dump(payload, fh, sort_keys=False)
+        else:
+            raise ValueError(f"Unsupported summary format: {summary_format}")
     return 0
 
 
@@ -258,6 +366,21 @@ def build_parser() -> argparse.ArgumentParser:
         "--skip-cross-stage-validation",
         action="store_true",
         help="Skip continuity checks between consecutive stages",
+    )
+    plan_parser.add_argument(
+        "-v",
+        "--verbose",
+        action="store_true",
+        help="Show detailed metadata, warnings, and continuity information for each stage",
+    )
+    plan_parser.add_argument(
+        "--summary-path",
+        help="Path to write a structured protocol summary (JSON or YAML)",
+    )
+    plan_parser.add_argument(
+        "--summary-format",
+        choices=["json", "yaml"],
+        help="Force the structured summary format (default: inferred from file extension)",
     )
 
     return parser
