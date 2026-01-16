@@ -454,6 +454,7 @@ def auto_discover(
     include_stems: Optional[List[str]] = None,
     restart_files: Optional[Dict[str, str]] = None,
     skip_cross_stage_validation: bool = False,
+    recursive: bool = False,
 ) -> SimulationProtocol:
     if manifest is not None:
         stages = _manifest_to_stages(
@@ -467,7 +468,19 @@ def auto_discover(
         protocol.validate(cross_stage=not skip_cross_stage_validation)
         return protocol
 
-    files = [f for f in os.listdir(directory) if os.path.isfile(os.path.join(directory, f))]
+    discovered: List[tuple[str, str]] = []
+    if recursive:
+        for root, _, filenames in os.walk(directory):
+            for fname in filenames:
+                full_path = os.path.join(root, fname)
+                if os.path.isfile(full_path):
+                    rel_path = os.path.relpath(full_path, directory)
+                    discovered.append((rel_path, full_path))
+    else:
+        for fname in os.listdir(directory):
+            full_path = os.path.join(directory, fname)
+            if os.path.isfile(full_path):
+                discovered.append((fname, full_path))
     grouped: Dict[str, Dict[str, str]] = {}
     ext_map = {
         ".prmtop": "prmtop",
@@ -483,12 +496,13 @@ def auto_discover(
         ".nc": "mdcrd",
     }
 
-    for fname in files:
-        stem, ext = os.path.splitext(fname)
+    for rel_path, full_path in discovered:
+        stem = Path(rel_path).with_suffix("").as_posix()
+        _, ext = os.path.splitext(rel_path)
         kind = ext_map.get(ext.lower())
         if not kind:
             continue
-        grouped.setdefault(stem, {})[kind] = os.path.join(directory, fname)
+        grouped.setdefault(stem, {})[kind] = full_path
 
     compiled_rules: List[tuple[Pattern[str], str]] = []
     if grouping_rules:
@@ -586,6 +600,7 @@ def load_protocol_from_manifest(
     include_stems: Optional[List[str]] = None,
     restart_files: Optional[Dict[str, str]] = None,
     skip_cross_stage_validation: bool = False,
+    recursive: bool = False,
 ) -> SimulationProtocol:
     """Build a protocol using a manifest file.
 
@@ -603,6 +618,7 @@ def load_protocol_from_manifest(
         include_stems=include_stems,
         restart_files=restart_files,
         skip_cross_stage_validation=skip_cross_stage_validation,
+        recursive=recursive,
     )
 
 

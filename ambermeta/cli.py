@@ -250,6 +250,7 @@ def _plan_command(args: argparse.Namespace) -> int:
             args.manifest,
             directory=directory,
             skip_cross_stage_validation=args.skip_cross_stage_validation,
+            recursive=args.recursive,
         )
     else:
         manifest = _interactive_manifest(directory)
@@ -261,6 +262,7 @@ def _plan_command(args: argparse.Namespace) -> int:
             directory,
             manifest=manifest,
             skip_cross_stage_validation=args.skip_cross_stage_validation,
+            recursive=args.recursive,
         )
 
     _print_protocol(protocol, verbose=args.verbose)
@@ -311,6 +313,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--skip-cross-stage-validation",
         action="store_true",
         help="Skip continuity checks between consecutive stages",
+    )
+    plan_parser.add_argument(
+        "--recursive",
+        action="store_true",
+        help="Recursively discover stage files under the provided directory",
     )
     plan_parser.add_argument(
         "-v",

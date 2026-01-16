@@ -47,7 +47,9 @@ per-stage and cross-stage validation.
   `auto_discover`.
 - **`auto_discover`** parses each referenced file into a `SimulationStage`,
   attaches restart paths, applies gap expectations, and runs validation. When
-  `manifest` is `None`, it discovers files on disk instead.
+  `manifest` is `None`, it discovers files on disk instead. Pass
+  `recursive=True` to search subdirectories; stage names use the relative path
+  (without extension) so nested files remain distinct.
 - **`ambermeta plan`** uses the manifest path when provided; otherwise it
   prompts for the same stage keys interactively. `--skip-cross-stage-validation`
   disables continuity checks (useful for non-contiguous protocols).

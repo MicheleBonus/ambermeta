@@ -33,7 +33,11 @@ from ambermeta.parsers import MdoutParser, PrmtopParser
 
    protocol = auto_discover("/path/to/amber_runs")
    ```
-   Pass `grouping_rules`, `restart_files`, or a `manifest` to control how files map to stages.
+   Pass `grouping_rules`, `restart_files`, or a `manifest` to control how files map to stages. Use
+   `recursive=True` to scan nested stage folders while preserving relative paths in stage names.
+   ```python
+   protocol = auto_discover("/path/to/amber_runs", recursive=True)
+   ```
 
 2. **Validate and summarize**
    ```python
@@ -57,6 +61,9 @@ Installing the package also provides an `ambermeta` console script for quick pla
 # Build from a YAML/JSON manifest and summarize
 ambermeta plan --manifest ./protocol.yaml /path/to/amber_runs
 
+# Recursively discover stage files in nested directories
+ambermeta plan --recursive /path/to/amber_runs
+
 # Prompt for stage names, roles, file paths, and gaps, then summarize
 ambermeta plan /path/to/amber_runs
 
@@ -68,6 +75,7 @@ Flags worth knowing:
 - `--skip-cross-stage-validation` disables continuity checks when stages are intentionally non-contiguous.
 - `-v/--verbose` prints parsed metadata, warnings, and continuity notes.
 - `--summary-format {json|yaml}` forces the written summary format (defaults to file extension).
+- `--recursive` scans subdirectories and uses relative paths for stage naming.
 
 ## Manifests at a glance
 Manifests describe ordered simulation stages for both `auto_discover` and `ambermeta plan`. YAML (requires the optional `pyyaml` extra) and JSON are supported.
