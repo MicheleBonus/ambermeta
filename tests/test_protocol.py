@@ -351,3 +351,70 @@ def test_tiny_gap_without_expectation_is_ignored(tmp_path, monkeypatch):
 
     assert stage2.observed_gap_ps == 0.0
     assert not stage2.continuity
+
+
+def test_methods_summary_prunes_stats_and_includes_reproducibility_metadata():
+    from types import SimpleNamespace
+
+    stage = protocol.SimulationStage(name="stage1", stage_role="equilibration")
+    stage.mdin = SimpleNamespace(
+        details=SimpleNamespace(
+            ensemble="NPT",
+            temp_control="Langevin",
+            press_control="Monte Carlo",
+            dt=0.002,
+            length_steps=5000,
+            coord_freq=500,
+            traj_format="NetCDF",
+        )
+    )
+    stage.mdout = SimpleNamespace(
+        details=SimpleNamespace(
+            program="PMEMD",
+            version="22",
+            thermostat="Langevin",
+            barostat="Monte Carlo",
+            dt=0.002,
+            nstlim=5000,
+            natoms=1000,
+            box_type="Cubic",
+            stats=SimpleNamespace(temps=[300.0, 301.0], etots=[-1.0, -2.0]),
+        )
+    )
+    stage.inpcrd = SimpleNamespace(
+        details=SimpleNamespace(
+            natoms=1000,
+            has_box=True,
+            box_dimensions=[10.0, 10.0, 10.0],
+            box_angles=[90.0, 90.0, 90.0],
+            program="sander",
+            program_version="20",
+        )
+    )
+    stage.prmtop = SimpleNamespace(
+        details=SimpleNamespace(
+            natom=1000,
+            box_dimensions=[10.0, 10.0, 10.0],
+            box_angles=[90.0, 90.0, 90.0],
+        )
+    )
+    stage.mdcrd = SimpleNamespace(
+        details=SimpleNamespace(
+            n_atoms=1000,
+            avg_dt=1.0,
+            n_frames=100,
+            box_type="Orthogonal",
+            program="cpptraj",
+        )
+    )
+
+    proto = protocol.SimulationProtocol(stages=[stage])
+    methods = proto.to_methods_dict()
+
+    assert methods["stages"][0]["md_engine"]["timestep_ps"] == 0.002
+    assert methods["stages"][0]["trajectory_output"]["coord_write_interval_steps"] == 500
+    assert methods["stages"][0]["system"]["atom_counts"]["prmtop"] == 1000
+    assert methods["stage_sequence"] == [{"name": "stage1", "role": "equilibration"}]
+
+    methods_json = json.dumps(methods)
+    assert "stats" not in methods_json
