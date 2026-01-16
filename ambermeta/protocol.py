@@ -593,6 +593,9 @@ class SimulationProtocol:
                         "density": getattr(details, "density", None),
                         "solvent_type": getattr(details, "solvent_type", None),
                         "simulation_category": getattr(details, "simulation_category", None),
+                        "hmr_active": getattr(details, "hmr_active", None),
+                        "hmr_hydrogen_mass_range": getattr(details, "hmr_hydrogen_mass_range", None),
+                        "hmr_hydrogen_mass_summary": getattr(details, "hmr_hydrogen_mass_summary", None),
                     }
                 )
 

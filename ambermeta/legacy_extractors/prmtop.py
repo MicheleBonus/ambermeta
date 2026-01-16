@@ -248,6 +248,11 @@ class PrmtopMetadata:
     num_solvent_molecules: int = 0
     num_solute_residues: int = 0
 
+    # Hydrogen mass repartitioning (HMR)
+    hmr_active: Optional[bool] = None
+    hmr_hydrogen_mass_range: Optional[Tuple[float, float]] = None
+    hmr_hydrogen_mass_summary: Optional[str] = None
+
 
 def _classify_simulation(md: PrmtopMetadata):
     """
@@ -376,6 +381,29 @@ def extract_prmtop_metadata(filepath: str) -> PrmtopMetadata:
     if masses:
         valid_masses = [m for m in masses if m is not None]
         md.total_mass = sum(valid_masses)
+
+    atomic_numbers = prmtop.get("ATOMIC_NUMBER")
+    if masses and atomic_numbers:
+        hydrogen_masses = []
+        count = min(len(masses), len(atomic_numbers))
+        for mass, atomic_number in zip(masses[:count], atomic_numbers[:count]):
+            if atomic_number == 1 and mass is not None:
+                hydrogen_masses.append(mass)
+
+        if hydrogen_masses:
+            min_mass = min(hydrogen_masses)
+            max_mass = max(hydrogen_masses)
+            md.hmr_hydrogen_mass_range = (min_mass, max_mass)
+            md.hmr_hydrogen_mass_summary = (
+                f"{min_mass:.3f}-{max_mass:.3f} amu across {len(hydrogen_masses)} H"
+            )
+            has_elevated = max_mass >= 1.5
+            has_normal = min_mass <= 1.1
+            hmr_by_threshold = max_mass >= 2.0
+            redistributed = has_elevated and has_normal
+            md.hmr_active = hmr_by_threshold or redistributed
+        else:
+            md.hmr_active = False
 
     # 4. Box & Density
     box_data = prmtop.get("BOX_DIMENSIONS")
