@@ -408,23 +408,73 @@ class SimulationProtocol:
 
         def _collect_md_engine(stage: SimulationStage) -> Dict[str, Any]:
             md_engine: Dict[str, Any] = {}
+
+            def _collect_pme_indicators(
+                cntrl_parameters: Dict[str, Any], mdout_details: Optional[Any]
+            ) -> Dict[str, Any]:
+                indicators: Dict[str, Any] = {}
+                pme_keys = (
+                    "ew_type",
+                    "pme",
+                    "pme_enabled",
+                    "use_pme",
+                    "pme_grid",
+                    "fft_grid",
+                    "fft_grid_x",
+                    "fft_grid_y",
+                    "fft_grid_z",
+                    "ewald",
+                )
+                for key in pme_keys:
+                    if key in cntrl_parameters and cntrl_parameters[key] is not None:
+                        indicators[key] = cntrl_parameters[key]
+                if mdout_details is not None:
+                    for key in pme_keys:
+                        value = getattr(mdout_details, key, None)
+                        if value is not None:
+                            indicators.setdefault(key, value)
+                return indicators
+
             if stage.mdin and stage.mdin.details:
                 details = stage.mdin.details
+                cntrl_parameters = getattr(details, "cntrl_parameters", {}) or {}
                 md_engine.update(
                     {
                         "ensemble": getattr(details, "ensemble", None),
                         "thermostat": getattr(details, "temp_control", None),
                         "barostat": getattr(details, "press_control", None),
+                        "temp_control": getattr(details, "temp_control", None),
+                        "press_control": getattr(details, "press_control", None),
+                        "cutoff": getattr(details, "cutoff", None),
+                        "constraints": getattr(details, "constraints", None),
+                        "pbc": getattr(details, "pbc", None),
                         "timestep_ps": getattr(details, "dt", None),
                         "run_length_steps": getattr(details, "length_steps", None),
+                        "cntrl_parameters": cntrl_parameters or None,
                     }
                 )
+                pme_indicators = _collect_pme_indicators(cntrl_parameters, None)
+                if pme_indicators:
+                    md_engine["pme"] = pme_indicators
             if stage.mdout and stage.mdout.details:
                 details = stage.mdout.details
                 md_engine.setdefault("thermostat", getattr(details, "thermostat", None))
                 md_engine.setdefault("barostat", getattr(details, "barostat", None))
                 md_engine.setdefault("timestep_ps", getattr(details, "dt", None))
                 md_engine.setdefault("run_length_steps", getattr(details, "nstlim", None))
+                if getattr(details, "cutoff", None) is not None:
+                    md_engine.setdefault("cutoff", getattr(details, "cutoff", None))
+                    md_engine["cutoff_mdout"] = getattr(details, "cutoff", None)
+                if getattr(details, "shake_active", None) is not None:
+                    md_engine["shake_active"] = getattr(details, "shake_active", None)
+                pme_indicators = _collect_pme_indicators({}, details)
+                if pme_indicators:
+                    existing_pme = md_engine.get("pme")
+                    if isinstance(existing_pme, dict):
+                        for key, value in pme_indicators.items():
+                            existing_pme.setdefault(key, value)
+                    else:
+                        md_engine["pme"] = pme_indicators
             if md_engine.get("run_length_steps") and md_engine.get("timestep_ps"):
                 try:
                     md_engine["run_length_ps"] = float(md_engine["run_length_steps"]) * float(md_engine["timestep_ps"])
