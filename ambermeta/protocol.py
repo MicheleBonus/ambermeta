@@ -351,6 +351,42 @@ def _normalize_manifest(manifest: Dict[str, Dict[str, str]] | List[Dict[str, str
         raise TypeError("Manifest must be a list or dictionary")
 
 
+def validate_manifest(
+    manifest: Dict[str, Dict[str, str]] | List[Dict[str, str]],
+    directory: Optional[str] = None,
+) -> None:
+    kinds = {"prmtop", "inpcrd", "mdin", "mdout", "mdcrd"}
+    missing: List[str] = []
+    for entry in _normalize_manifest(manifest):
+        name = entry.get("name")
+        if not name:
+            raise ValueError("Each manifest entry must include a 'name'.")
+
+        files = entry.get("files", {})
+        paths = {k: v for k, v in entry.items() if k in kinds}
+        if isinstance(files, dict):
+            for kind, path in files.items():
+                if kind in kinds and path is not None:
+                    paths.setdefault(kind, path)
+
+        resolved = {}
+        for kind, path in paths.items():
+            if path is None:
+                continue
+            if directory and not os.path.isabs(path):
+                resolved[kind] = os.path.join(directory, path)
+            else:
+                resolved[kind] = path
+
+        for kind, path in resolved.items():
+            if not os.path.exists(path):
+                missing.append(f"stage '{name}', {kind}: {path}")
+
+    if missing:
+        message = "Manifest references missing files:\n" + "\n".join(missing)
+        raise FileNotFoundError(message)
+
+
 def _manifest_to_stages(
     manifest: Dict[str, Dict[str, str]] | List[Dict[str, str]],
     directory: Optional[str],
@@ -360,6 +396,7 @@ def _manifest_to_stages(
 ) -> List[SimulationStage]:
     kinds = {"prmtop", "inpcrd", "mdin", "mdout", "mdcrd"}
     stages: List[SimulationStage] = []
+    validate_manifest(manifest, directory)
     for entry in _normalize_manifest(manifest):
         name = entry.get("name")
         if not name:
