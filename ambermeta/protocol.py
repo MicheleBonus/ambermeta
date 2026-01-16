@@ -13,6 +13,7 @@ from ambermeta.parsers.mdcrd import MdcrdData, MdcrdParser
 from ambermeta.parsers.mdin import MdinData, MdinParser
 from ambermeta.parsers.mdout import MdoutData, MdoutParser
 from ambermeta.parsers.prmtop import PrmtopData, PrmtopParser
+from ambermeta.legacy_extractors.prmtop import ION_RESNAMES, WATER_RESNAMES
 
 try:  # pragma: no cover - optional dependency
     import yaml
@@ -578,7 +579,44 @@ class SimulationProtocol:
                 "dimensions": box_dimensions,
                 "angles": box_angles,
             }
-            return {"atom_counts": atom_counts, "box": box}
+            composition: Dict[str, Any] = {}
+            if stage.prmtop and stage.prmtop.details:
+                details = stage.prmtop.details
+                residue_composition = getattr(details, "residue_composition", None)
+                composition.update(
+                    {
+                        "residue_composition": residue_composition,
+                        "num_solvent_molecules": getattr(details, "num_solvent_molecules", None),
+                        "num_solute_residues": getattr(details, "num_solute_residues", None),
+                        "total_charge": getattr(details, "total_charge", None),
+                        "is_neutral": getattr(details, "is_neutral", None),
+                        "density": getattr(details, "density", None),
+                        "solvent_type": getattr(details, "solvent_type", None),
+                        "simulation_category": getattr(details, "simulation_category", None),
+                    }
+                )
+
+                if residue_composition:
+                    water_residues = {
+                        residue: count
+                        for residue, count in residue_composition.items()
+                        if residue in WATER_RESNAMES
+                    }
+                    ion_residues = {
+                        residue: count
+                        for residue, count in residue_composition.items()
+                        if residue in ION_RESNAMES
+                    }
+                    composition.update(
+                        {
+                            "water_residue_counts": water_residues or None,
+                            "ion_residue_counts": ion_residues or None,
+                            "water_molecule_count": sum(water_residues.values()) if water_residues else None,
+                            "ion_count": sum(ion_residues.values()) if ion_residues else None,
+                        }
+                    )
+
+            return {"atom_counts": atom_counts, "box": box, "composition": composition}
 
         def _collect_trajectory(stage: SimulationStage) -> Dict[str, Any]:
             trajectory: Dict[str, Any] = {}
