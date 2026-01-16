@@ -432,6 +432,71 @@ class SimulationProtocol:
                     pass
             return md_engine
 
+        def _collect_restraints(stage: SimulationStage) -> Dict[str, Any]:
+            if not stage.mdin or not stage.mdin.details:
+                return {}
+
+            details = stage.mdin.details
+            cntrl = getattr(details, "cntrl_parameters", {}) or {}
+            wt_schedules = getattr(details, "wt_schedules", []) or []
+            definitions = getattr(details, "restraint_definitions", []) or []
+
+            ntr_value = cntrl.get("ntr")
+            restraint_weight = cntrl.get("restraint_wt")
+
+            mask_keys = [
+                key
+                for key in cntrl.keys()
+                if isinstance(key, str)
+                and (
+                    "restraintmask" in key.lower()
+                    or key.lower().startswith("restraint_mask")
+                    or key.lower().startswith("restraintmask")
+                )
+            ]
+            mask_primary = cntrl.get("restraintmask")
+            if mask_primary is None and mask_keys:
+                mask_primary = cntrl.get(sorted(mask_keys, key=str.lower)[0])
+
+            mask_variants = {
+                key: cntrl.get(key)
+                for key in sorted(mask_keys, key=str.lower)
+                if key != "restraintmask"
+            }
+
+            schedule = []
+            for entry in wt_schedules:
+                quantity = getattr(entry, "quantity", None)
+                if not quantity:
+                    continue
+                quantity_upper = str(quantity).upper()
+                if not quantity_upper.startswith("REST"):
+                    continue
+                schedule.append(
+                    {
+                        "type": quantity_upper,
+                        "start_step": getattr(entry, "istep1", None),
+                        "end_step": getattr(entry, "istep2", None),
+                        "start_value": getattr(entry, "value1", None),
+                        "end_value": getattr(entry, "value2", None),
+                        "increment": getattr(entry, "iinc", None),
+                        "multiplier": getattr(entry, "imult", None),
+                    }
+                )
+
+            active = getattr(details, "restraints_active", None)
+            if active is None and ntr_value is not None:
+                active = str(ntr_value) not in {"0", "0.0", "False", "false"}
+
+            return {
+                "active": active,
+                "ntr": ntr_value,
+                "weight": restraint_weight,
+                "mask": {"primary": mask_primary, "variants": mask_variants},
+                "definitions": list(definitions) if definitions else None,
+                "schedule": schedule,
+            }
+
         def _collect_system(stage: SimulationStage) -> Dict[str, Any]:
             atom_counts: Dict[str, Any] = {}
             if stage.prmtop and stage.prmtop.details:
@@ -490,6 +555,7 @@ class SimulationProtocol:
                 "role": stage.stage_role,
                 "software": _collect_software(stage),
                 "md_engine": _collect_md_engine(stage),
+                "restraints": _collect_restraints(stage),
                 "system": _collect_system(stage),
                 "trajectory_output": _collect_trajectory(stage),
             }
