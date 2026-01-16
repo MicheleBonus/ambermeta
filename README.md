@@ -5,7 +5,7 @@ AmberMeta is a simulation provenance engine for AMBER molecular dynamics runs. I
 ## What you get
 - Structured parsers for AMBER artifacts (`prmtop`, `mdin`, `mdout`, `inpcrd`, `mdcrd`) with optional NetCDF trajectory support.
 - `SimulationStage` and `SimulationProtocol` models that aggregate parsed files, flag validation issues, and compute total steps and simulated time.
-- Manifest-driven planning plus an interactive `ambermeta plan` CLI for quickly describing stage intent, restarts, and known discontinuities.
+- Manifest-driven planning plus an interactive `ambermeta plan` CLI for quickly describing stage intent, restarts, expected gaps, and known discontinuities.
 - Utilities for file format detection, cleaning values, and computing statistics shared across all parsers.
 
 ## Installation
@@ -64,7 +64,7 @@ ambermeta plan --manifest ./protocol.yaml /path/to/amber_runs
 # Recursively discover stage files in nested directories
 ambermeta plan --recursive /path/to/amber_runs
 
-# Prompt for stage names, roles, file paths, and gaps, then summarize
+# Prompt for stage names, roles, file paths, restarts, and expected gap/tolerance values, then summarize
 ambermeta plan /path/to/amber_runs
 
 # Write a structured summary for downstream tools
