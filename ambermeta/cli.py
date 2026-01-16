@@ -29,7 +29,7 @@ def _prompt(prompt: str) -> str:
 def _interactive_manifest(directory: str) -> List[Dict[str, Any]]:
     print("Interactive mode: define simulation stages in order. Press Enter without a name to stop.")
     manifest: List[Dict[str, Any]] = []
-    kinds = ("prmtop", "inpcrd", "mdin", "mdout", "mdcrd")
+    kinds = ("prmtop", "mdin", "mdout", "mdcrd")
 
     while True:
         name = _prompt("Stage name (blank to finish): ").strip()
@@ -46,6 +46,26 @@ def _interactive_manifest(directory: str) -> List[Dict[str, Any]]:
             value = _prompt(f"    {kind} file path (optional): ").strip()
             if value:
                 stage_entry[kind] = value
+
+        restart_path = _prompt("  Restart/inpcrd file path (optional): ").strip()
+        if restart_path:
+            stage_entry["inpcrd"] = restart_path
+
+        gaps: Dict[str, float] = {}
+        expected_gap = _prompt("  Expected gap (ps, optional): ").strip()
+        if expected_gap:
+            try:
+                gaps["expected"] = float(expected_gap)
+            except ValueError:
+                print("  Expected gap must be a number; skipping.")
+        tolerance = _prompt("  Gap tolerance (ps, optional): ").strip()
+        if tolerance:
+            try:
+                gaps["tolerance"] = float(tolerance)
+            except ValueError:
+                print("  Gap tolerance must be a number; skipping.")
+        if gaps:
+            stage_entry["gaps"] = gaps
 
         note = _prompt("  Known gaps/notes for this stage (optional): ").strip()
         if note:
@@ -297,6 +317,11 @@ def build_parser() -> argparse.ArgumentParser:
     plan_parser = subparsers.add_parser(
         "plan",
         help="Build and summarize a SimulationProtocol from a manifest or interactive input",
+        description=(
+            "Build and summarize a SimulationProtocol from a manifest or interactive input. "
+            "Interactive mode prompts for stage roles, file paths, restart (inpcrd) paths, "
+            "and expected gap/tolerance values."
+        ),
     )
     plan_parser.add_argument(
         "directory",
