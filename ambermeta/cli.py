@@ -307,6 +307,9 @@ def _plan_command(args: argparse.Namespace) -> int:
                 yaml.safe_dump(payload, fh, sort_keys=False)
         else:
             raise ValueError(f"Unsupported summary format: {summary_format}")
+    if args.methods_summary_path:
+        with open(args.methods_summary_path, "w", encoding="utf-8") as fh:
+            json.dump(protocol.to_methods_dict(), fh, indent=2)
     return 0
 
 
@@ -358,6 +361,14 @@ def build_parser() -> argparse.ArgumentParser:
         "--summary-format",
         choices=["json", "yaml"],
         help="Force the structured summary format (default: inferred from file extension)",
+    )
+    plan_parser.add_argument(
+        "--methods-summary-path",
+        help=(
+            "Write a Materials & Methods-ready JSON summary with reproducibility-critical metadata "
+            "(software versions, MD settings, system composition, and trajectory cadence) while omitting "
+            "energies and other nonessential arrays"
+        ),
     )
 
     return parser

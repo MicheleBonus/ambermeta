@@ -52,6 +52,43 @@ def _serialize_metadata(metadata: Any) -> Optional[Dict[str, Any]]:
     }
 
 
+def _prune_methods_value(value: Any) -> Any:
+    if value is None:
+        return None
+    if isinstance(value, dict):
+        pruned = {}
+        for key, val in value.items():
+            cleaned = _prune_methods_value(val)
+            if cleaned is None:
+                continue
+            if isinstance(cleaned, (dict, list)) and not cleaned:
+                continue
+            pruned[key] = cleaned
+        return pruned
+    if isinstance(value, list):
+        pruned_list = []
+        for item in value:
+            cleaned = _prune_methods_value(item)
+            if cleaned is None:
+                continue
+            if isinstance(cleaned, (dict, list)) and not cleaned:
+                continue
+            pruned_list.append(cleaned)
+        return pruned_list
+    return value
+
+
+def _sanitize_identifier(value: Any) -> Optional[str]:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        value = str(value)
+    normalized = value.strip()
+    if not normalized or normalized.lower() in {"unknown", "none", "n/a"}:
+        return None
+    return normalized
+
+
 @dataclass
 class SimulationStage:
     name: str
@@ -332,6 +369,137 @@ class SimulationProtocol:
             "totals": self.totals(),
             "stages": [stage.to_dict() for stage in self.stages],
         }
+
+    def to_methods_dict(self) -> Dict[str, Any]:
+        def _collect_software(stage: SimulationStage) -> List[Dict[str, str]]:
+            tools: List[Dict[str, str]] = []
+
+            def _add_tool(source: str, program: Any, version: Any = None) -> None:
+                program_clean = _sanitize_identifier(program)
+                version_clean = _sanitize_identifier(version)
+                if not program_clean and not version_clean:
+                    return
+                entry: Dict[str, str] = {"source": source}
+                if program_clean:
+                    entry["program"] = program_clean
+                if version_clean:
+                    entry["version"] = version_clean
+                tools.append(entry)
+
+            if stage.mdout and stage.mdout.details:
+                _add_tool(
+                    "mdout",
+                    getattr(stage.mdout.details, "program", None),
+                    getattr(stage.mdout.details, "version", None),
+                )
+            if stage.inpcrd and stage.inpcrd.details:
+                _add_tool(
+                    "inpcrd",
+                    getattr(stage.inpcrd.details, "program", None),
+                    getattr(stage.inpcrd.details, "program_version", None),
+                )
+            if stage.mdcrd and stage.mdcrd.details:
+                _add_tool(
+                    "mdcrd",
+                    getattr(stage.mdcrd.details, "program", None),
+                    None,
+                )
+            return tools
+
+        def _collect_md_engine(stage: SimulationStage) -> Dict[str, Any]:
+            md_engine: Dict[str, Any] = {}
+            if stage.mdin and stage.mdin.details:
+                details = stage.mdin.details
+                md_engine.update(
+                    {
+                        "ensemble": getattr(details, "ensemble", None),
+                        "thermostat": getattr(details, "temp_control", None),
+                        "barostat": getattr(details, "press_control", None),
+                        "timestep_ps": getattr(details, "dt", None),
+                        "run_length_steps": getattr(details, "length_steps", None),
+                    }
+                )
+            if stage.mdout and stage.mdout.details:
+                details = stage.mdout.details
+                md_engine.setdefault("thermostat", getattr(details, "thermostat", None))
+                md_engine.setdefault("barostat", getattr(details, "barostat", None))
+                md_engine.setdefault("timestep_ps", getattr(details, "dt", None))
+                md_engine.setdefault("run_length_steps", getattr(details, "nstlim", None))
+            if md_engine.get("run_length_steps") and md_engine.get("timestep_ps"):
+                try:
+                    md_engine["run_length_ps"] = float(md_engine["run_length_steps"]) * float(md_engine["timestep_ps"])
+                except (TypeError, ValueError):
+                    pass
+            return md_engine
+
+        def _collect_system(stage: SimulationStage) -> Dict[str, Any]:
+            atom_counts: Dict[str, Any] = {}
+            if stage.prmtop and stage.prmtop.details:
+                atom_counts["prmtop"] = getattr(stage.prmtop.details, "natom", None)
+            if stage.inpcrd and stage.inpcrd.details:
+                atom_counts["inpcrd"] = getattr(stage.inpcrd.details, "natoms", None)
+            if stage.mdout and stage.mdout.details:
+                atom_counts["mdout"] = getattr(stage.mdout.details, "natoms", None)
+            if stage.mdcrd and stage.mdcrd.details:
+                atom_counts["mdcrd"] = getattr(stage.mdcrd.details, "n_atoms", None)
+
+            box_type = None
+            if stage.mdout and stage.mdout.details:
+                box_type = getattr(stage.mdout.details, "box_type", None) or box_type
+            if stage.mdcrd and stage.mdcrd.details:
+                box_type = getattr(stage.mdcrd.details, "box_type", None) or box_type
+
+            box_dimensions = None
+            box_angles = None
+            if stage.inpcrd and stage.inpcrd.details:
+                box_dimensions = getattr(stage.inpcrd.details, "box_dimensions", None) or box_dimensions
+                box_angles = getattr(stage.inpcrd.details, "box_angles", None) or box_angles
+            if stage.prmtop and stage.prmtop.details:
+                box_dimensions = getattr(stage.prmtop.details, "box_dimensions", None) or box_dimensions
+                box_angles = getattr(stage.prmtop.details, "box_angles", None) or box_angles
+
+            box: Dict[str, Any] = {
+                "type": box_type,
+                "dimensions": box_dimensions,
+                "angles": box_angles,
+            }
+            return {"atom_counts": atom_counts, "box": box}
+
+        def _collect_trajectory(stage: SimulationStage) -> Dict[str, Any]:
+            trajectory: Dict[str, Any] = {}
+            if stage.mdin and stage.mdin.details:
+                details = stage.mdin.details
+                trajectory.update(
+                    {
+                        "coord_write_interval_steps": getattr(details, "coord_freq", None),
+                        "traj_format": getattr(details, "traj_format", None),
+                    }
+                )
+            if stage.mdcrd and stage.mdcrd.details:
+                details = stage.mdcrd.details
+                trajectory.setdefault("frame_interval_ps", getattr(details, "avg_dt", None))
+                trajectory.setdefault("n_frames", getattr(details, "n_frames", None))
+            return trajectory
+
+        stages_payload = []
+        stage_sequence = []
+        for stage in self.stages:
+            stage_sequence.append({"name": stage.name, "role": stage.stage_role})
+            stage_payload = {
+                "name": stage.name,
+                "role": stage.stage_role,
+                "software": _collect_software(stage),
+                "md_engine": _collect_md_engine(stage),
+                "system": _collect_system(stage),
+                "trajectory_output": _collect_trajectory(stage),
+            }
+            stages_payload.append(_prune_methods_value(stage_payload))
+
+        payload = {
+            "stage_sequence": stage_sequence,
+            "stages": stages_payload,
+        }
+        return _prune_methods_value(payload)
 
 
 def _normalize_manifest(manifest: Dict[str, Dict[str, str]] | List[Dict[str, str]]):
