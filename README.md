@@ -77,6 +77,17 @@ Flags worth knowing:
 - `--summary-format {json|yaml}` forces the written summary format (defaults to file extension).
 - `--recursive` scans subdirectories and uses relative paths for stage naming.
 
+## Methods summaries (`--methods-summary-path`)
+Use `--methods-summary-path` to write a compact, JSON methods summary intended for reporting or manuscript supplements. The output matches the CLI help text by omitting nonessential arrays and energy series, and it is always JSON regardless of file extension. For example:
+
+```bash
+ambermeta plan --methods-summary-path methods.json /path/to/amber_runs
+```
+
+The output mirrors `SimulationProtocol.to_methods_dict()` and includes these top-level keys:
+- `stage_sequence`: ordered stage names.
+- `stages`: per-stage metadata with `software`, `md_engine`, `system`, and `trajectory_output` entries.
+
 ## Manifests at a glance
 Manifests describe ordered simulation stages for both `auto_discover` and `ambermeta plan`. YAML (requires the optional `pyyaml` extra) and JSON are supported.
 
