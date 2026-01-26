@@ -777,13 +777,30 @@ stages:
 def _plan_command(args: argparse.Namespace) -> int:
     directory = os.path.abspath(args.directory)
 
+    # Get new feature flags with defaults
+    expand_env = not getattr(args, "no_expand_env", False)
+    pattern_filter = getattr(args, "pattern", None)
+    auto_detect_restarts = getattr(args, "auto_detect_restarts", False)
+
     if args.manifest:
         protocol = load_protocol_from_manifest(
             args.manifest,
             directory=directory,
             skip_cross_stage_validation=args.skip_cross_stage_validation,
             recursive=args.recursive,
+            expand_env=expand_env,
         )
+        # Apply auto-detect restarts if requested (after manifest loading)
+        if auto_detect_restarts:
+            from ambermeta.protocol import auto_detect_restart_chain
+            from ambermeta.parsers.inpcrd import InpcrdParser
+            auto_restarts = auto_detect_restart_chain(protocol.stages, directory)
+            for stage in protocol.stages:
+                if stage.name in auto_restarts and not stage.restart_path:
+                    rst_path = auto_restarts[stage.name]
+                    stage.inpcrd = InpcrdParser(rst_path).parse()
+                    stage.restart_path = rst_path
+                    stage.validation.append(f"INFO: restart file auto-detected: {rst_path}")
     else:
         manifest = _interactive_manifest(directory)
         if not manifest:
@@ -795,6 +812,8 @@ def _plan_command(args: argparse.Namespace) -> int:
             manifest=manifest,
             skip_cross_stage_validation=args.skip_cross_stage_validation,
             recursive=args.recursive,
+            auto_detect_restarts=auto_detect_restarts,
+            pattern_filter=pattern_filter,
         )
 
     _print_protocol(protocol, verbose=args.verbose)
@@ -997,6 +1016,23 @@ For more information, visit: https://github.com/your-org/ambermeta
     plan_parser.add_argument(
         "--stats-csv",
         help="Export per-stage statistics to a CSV file",
+    )
+    # DS-002: Environment variable expansion
+    plan_parser.add_argument(
+        "--no-expand-env",
+        action="store_true",
+        help="Disable environment variable expansion in manifest paths",
+    )
+    # DS-004: Pattern-based filtering
+    plan_parser.add_argument(
+        "--pattern",
+        help="Regex pattern to filter discovered files (e.g., 'prod_.*' for production runs)",
+    )
+    # DS-005: Auto restart detection
+    plan_parser.add_argument(
+        "--auto-detect-restarts",
+        action="store_true",
+        help="Automatically detect and link restart files between stages",
     )
 
     # UX-005: validate subcommand

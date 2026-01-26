@@ -1,12 +1,12 @@
 # AmberMeta Improvement Plan
 
 **Date**: 2026-01-26
-**Status**: Partially Completed
-**Version**: 1.1
+**Status**: Substantially Completed
+**Version**: 2.0
 
 ## Executive Summary
 
-This document outlines remaining improvements for the ambermeta package. Bug fixes and core UX enhancements have been completed. The remaining items focus on advanced data submission workflows, enterprise features, and optional enhancements.
+This document outlines the improvements for the ambermeta package. The majority of planned features have been implemented, including all bug fixes, UX enhancements, and core data submission improvements. Remaining items are low-priority future enhancements.
 
 ---
 
@@ -35,34 +35,49 @@ This document outlines remaining improvements for the ambermeta package. Bug fix
 - [x] UX-008: Enhanced Help System - Added examples to CLI help, epilog with usage
 - [x] UX-009: Example Manifest Generator - Added `init` command with templates
 
+### Data Submission Improvements (Newly Completed)
+
+#### DS-001: Additional Manifest Formats (COMPLETE)
+- [x] Support TOML format for manifests (requires tomllib/tomli)
+- [x] Support CSV format for simple workflows
+- [x] Auto-detect format based on file extension
+
+#### DS-002: Environment Variable Expansion (COMPLETE)
+- [x] Allow `${VAR}` and `$VAR` syntax in manifest file paths
+- [x] Useful for portable manifests across systems
+- [x] Can be disabled via `--no-expand-env` CLI flag or `expand_env=False` API parameter
+
+#### DS-004: Smart Pattern-Based Grouping (COMPLETE)
+- [x] Auto-detect numeric sequences (prod_001, prod_002, etc.)
+- [x] Regex pattern matching for file organization (`--pattern` CLI flag)
+- [x] Stage type inference from file content
+- [x] New `detect_numeric_sequences()` and `smart_group_files()` functions
+
+#### DS-005: Restart Chain Auto-Detection (COMPLETE)
+- [x] Automatically link restart files based on atom count and timestamps
+- [x] Build dependency graph for stages using naming conventions
+- [x] Auto-validate continuity
+- [x] New `auto_detect_restart_chain()` function and `--auto-detect-restarts` CLI flag
+
+#### DS-010: Per-Stage Tolerances (COMPLETE)
+- [x] Fine-grained gap tolerance control per stage
+- [x] Available via `ProtocolBuilder.with_stage_tolerance()` method
+- [x] Expected gap specification per stage in manifests
+
+#### DS-011: Builder Pattern API (COMPLETE)
+- [x] Fluent `ProtocolBuilder` class for protocol construction
+- [x] Method chaining for stage configuration
+- [x] Built-in validation with configurable options
+
 ---
 
 ## Remaining Items (Future Enhancements)
 
-### Data Submission Improvements
-
-#### DS-001: Additional Manifest Formats (MEDIUM)
-- Support TOML format for manifests
-- Support CSV format for simple workflows
-- Auto-detect format based on file extension
-
-#### DS-002: Environment Variable Expansion (MEDIUM)
-- Allow `${VAR}` syntax in manifest file paths
-- Useful for portable manifests across systems
+### Low Priority Data Submission Improvements
 
 #### DS-003: Inline File Content (LOW)
 - Embed small mdin files directly in manifest
 - Useful for simple one-file protocols
-
-#### DS-004: Smart Pattern-Based Grouping (HIGH)
-- Auto-detect numeric sequences (prod_001, prod_002, etc.)
-- Regex pattern matching for file organization
-- Stage type inference from file content
-
-#### DS-005: Restart Chain Auto-Detection (HIGH)
-- Automatically link restart files based on atom count and timestamps
-- Build dependency graph for stages
-- Auto-validate continuity
 
 #### DS-006: Multi-Run Support (LOW)
 - Handle REMD replica numbering
@@ -84,17 +99,7 @@ This document outlines remaining improvements for the ambermeta package. Bug fix
 - Per-rule severity levels
 - Custom error messages
 
-#### DS-010: Per-Stage Tolerances (MEDIUM)
-- Fine-grained gap tolerance control
-- Skip continuity check for specific stages
-- Expected gap specification per stage
-
 ### API Improvements
-
-#### DS-011: Builder Pattern API (MEDIUM)
-- Fluent API for protocol construction
-- Method chaining for stage configuration
-- Built-in validation
 
 #### DS-012: Async Parsing Support (LOW)
 - Async/await for parallel file operations
@@ -114,27 +119,17 @@ This document outlines remaining improvements for the ambermeta package. Bug fix
 
 ---
 
-## Implementation Priority
-
-### Next Phase (Recommended)
-1. DS-004: Smart Pattern-Based Grouping
-2. DS-005: Restart Chain Auto-Detection
-3. DS-010: Per-Stage Tolerances
-4. DS-011: Builder Pattern API
-
-### Future Phases
-- DS-008: Batch Processing
-- DS-014: Rich Output Formats
-- DS-001: Additional Manifest Formats
-- Remaining low-priority items
-
----
-
 ## New Files Created
 
 - `ambermeta/logging_config.py` - Structured logging configuration
 
-## Files Modified
+## Files Modified (This Release)
+
+- `ambermeta/protocol.py` - Added TOML/CSV support, env var expansion, smart grouping, restart chain detection, builder API
+- `ambermeta/__init__.py` - Export new symbols
+- `ambermeta/cli.py` - New CLI flags for data submission features
+
+## Files Modified (Previous Release)
 
 - `ambermeta/cli.py` - New subcommands, colors, progress indicators, CSV export
 - `ambermeta/protocol.py` - Bug fixes, circular reference detection, continuity notes
@@ -149,4 +144,4 @@ This document outlines remaining improvements for the ambermeta package. Bug fix
 
 ## Notes
 
-All bug fixes and core UX improvements have been implemented. The remaining data submission improvements are optional enhancements that can be added in future releases based on user feedback and priorities.
+All major data submission improvements have been implemented. The remaining items are optional enhancements that can be added in future releases based on user feedback and priorities.
