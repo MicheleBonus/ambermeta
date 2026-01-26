@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import re
 import glob
 import os
@@ -187,15 +188,19 @@ def _as_int(val: Any) -> Optional[int]:
 
 def _as_float(val: Any) -> Optional[float]:
     try:
+        result = None
         if isinstance(val, bool):
-            return float(val)
-        if isinstance(val, (int, float)):
-            return float(val)
-        if isinstance(val, str) and val and "$" not in val:
-            return float(val.replace("d", "e").replace("D", "E"))
+            result = float(val)
+        elif isinstance(val, (int, float)):
+            result = float(val)
+        elif isinstance(val, str) and val and "$" not in val:
+            result = float(val.replace("d", "e").replace("D", "E"))
+        # Filter out NaN and Inf values
+        if result is not None and (math.isnan(result) or math.isinf(result)):
+            return None
+        return result
     except (ValueError, TypeError):
         return None
-    return None
 
 # -------------------------------
 # 4. Main Parser
@@ -854,7 +859,7 @@ if __name__ == "__main__":
                         for line in md.restraint_definitions:
                             print("   ", line)
                 print("-" * 60)
-        except Exception as exc:
+        except (IOError, OSError, ValueError, UnicodeDecodeError) as exc:
             print(f"Failed to parse {fpath}: {exc}")
             print("-" * 60)
     

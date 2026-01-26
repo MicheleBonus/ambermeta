@@ -40,16 +40,21 @@ class InpcrdMetadata:
     """
     filename: str
     file_format: str = "Unknown"  # "Formatted ASCII" or "NetCDF"
-    
+
     # --- Identification ---
     title: str = "N/A"
     program: str = "Unknown"
     program_version: str = "Unknown"
     conventions: str = "Unknown"
-    
+
     # --- Dimensions ---
     natoms: int = 0
     nres: Optional[int] = None # Only available in NetCDF usually
+
+    @property
+    def n_atoms(self) -> int:
+        """Standardized atom count property for consistency across metadata classes."""
+        return self.natoms
     
     # --- Simulation State ---
     time: Optional[float] = None # picoseconds
@@ -202,7 +207,7 @@ def _parse_ascii_box(md: InpcrdMetadata):
             if not lines:
                 return
             box_line = lines[-1]
-            
+
             parts = box_line.split()
             if len(parts) >= 3:
                 vals = [float(x) for x in parts]
@@ -211,9 +216,9 @@ def _parse_ascii_box(md: InpcrdMetadata):
                     md.box_angles = vals[3:6]
                 else:
                     md.box_angles = [90.0, 90.0, 90.0] # Default if not specified (old formats)
-                
+
                 md.box_volume = _calc_volume(md.box_dimensions, md.box_angles)
-    except Exception as e:
+    except (IOError, OSError, ValueError, IndexError) as e:
         md.warnings.append(f"Failed to parse ASCII box line: {e}")
 
 # -------------------------------
@@ -308,7 +313,7 @@ def _parse_netcdf_inpcrd(filepath: str) -> InpcrdMetadata:
         finally:
             ds.close()
 
-    except Exception as e:
+    except (IOError, OSError, ValueError, KeyError, IndexError, RuntimeError) as e:
         md.warnings.append(f"Error parsing NetCDF structure: {e}")
 
     return md
@@ -399,6 +404,6 @@ if __name__ == "__main__":
             md = parse_inpcrd(fpath)
             print(summarize_metadata(md))
             print("-" * 50)
-        except Exception as e:
+        except (IOError, OSError, ValueError, FileNotFoundError) as e:
             print(f"Error reading {fpath}: {e}")
             print("-" * 50)

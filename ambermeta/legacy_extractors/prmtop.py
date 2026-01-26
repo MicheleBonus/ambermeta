@@ -227,6 +227,11 @@ class PrmtopMetadata:
     natom: Optional[int] = None
     nres: Optional[int] = None
     nbond: Optional[int] = None
+
+    @property
+    def n_atoms(self) -> Optional[int]:
+        """Standardized atom count property for consistency across metadata classes."""
+        return self.natom
     
     # Chemistry
     total_mass: float = 0.0
@@ -513,7 +518,7 @@ if __name__ == "__main__":
         try:
             md = extract_prmtop_metadata(sys.argv[1])
             print(summarize_metadata(md))
-        except Exception as e:
+        except (IOError, OSError, ValueError, FileNotFoundError, PrmtopParseError) as e:
             print(f"Error processing file: {e}")
             import traceback
             traceback.print_exc()
