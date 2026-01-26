@@ -899,6 +899,47 @@ def detect_numeric_sequences(filenames: List[str]) -> Dict[str, List[str]]:
     return result
 
 
+def infer_stage_role_from_path(path: str) -> Optional[str]:
+    """Infer stage role from the directory or file path.
+
+    Examines path components and filename to detect stage type patterns.
+    Common directory names like 'equil', 'prod', 'min' are recognized.
+    """
+    path_lower = path.lower()
+    parts = path_lower.replace("\\", "/").split("/")
+
+    # Check all path parts (directories and filename)
+    for part in parts:
+        # Minimization patterns
+        if part.startswith("min") or "_min" in part or part == "em":
+            return "minimization"
+
+        # Heating patterns
+        if "heat" in part or "warm" in part:
+            return "heating"
+
+        # Equilibration patterns
+        if part.startswith("equil") or part == "nvt" or part == "npt" or "_equil" in part:
+            return "equilibration"
+
+        # Production patterns
+        if part.startswith("prod") or "_prod" in part:
+            return "production"
+
+    # Check for common filename patterns
+    filename = parts[-1] if parts else ""
+    if any(x in filename for x in ("min", "minim", "em")):
+        return "minimization"
+    if any(x in filename for x in ("heat", "warm")):
+        return "heating"
+    if any(x in filename for x in ("equil", "nvt_", "npt_")):
+        return "equilibration"
+    if "prod" in filename:
+        return "production"
+
+    return None
+
+
 def infer_stage_role_from_content(
     mdin_data: Optional[MdinData] = None,
     mdout_data: Optional[MdoutData] = None,
@@ -1157,6 +1198,7 @@ def auto_discover(
     recursive: bool = False,
     auto_detect_restarts: bool = False,
     pattern_filter: Optional[str] = None,
+    global_prmtop: Optional[str] = None,
 ) -> SimulationProtocol:
     if manifest is not None:
         stages = _manifest_to_stages(
@@ -1175,6 +1217,16 @@ def auto_discover(
                     stage.inpcrd = InpcrdParser(rst_path).parse()
                     stage.restart_path = rst_path
                     stage.validation.append(f"INFO: restart file auto-detected: {rst_path}")
+
+        # Apply global prmtop to stages that don't have one
+        if global_prmtop:
+            global_prmtop_path = os.path.join(directory, global_prmtop) if not os.path.isabs(global_prmtop) else global_prmtop
+            if os.path.exists(global_prmtop_path):
+                global_prmtop_data = PrmtopParser(global_prmtop_path).parse()
+                for stage in stages:
+                    if not stage.prmtop:
+                        stage.prmtop = global_prmtop_data
+                        stage.validation.append(f"INFO: using global prmtop: {global_prmtop}")
 
         protocol = SimulationProtocol(stages=stages)
         protocol.validate(cross_stage=not skip_cross_stage_validation)
@@ -1240,6 +1292,13 @@ def auto_discover(
                 stage.stage_role = inferred
                 stage.validation.append(f"INFO: stage_role '{inferred}' inferred from file content")
 
+        # Try path-based role inference as final fallback
+        if not stage.stage_role:
+            inferred = infer_stage_role_from_path(stem)
+            if inferred:
+                stage.stage_role = inferred
+                stage.validation.append(f"INFO: stage_role '{inferred}' inferred from path")
+
         if include_roles and stage.stage_role and stage.stage_role not in include_roles:
             continue
         if include_roles and not stage.stage_role:
@@ -1256,6 +1315,11 @@ def auto_discover(
             stage.inpcrd = InpcrdParser(restart_source).parse()
             stage.restart_path = restart_source
 
+        # Skip stages that only have prmtop or inpcrd (not actual simulation stages)
+        has_simulation_files = stage.mdin or stage.mdout or stage.mdcrd
+        if not has_simulation_files:
+            continue
+
         stages.append(stage)
 
     # Apply auto restart detection if requested
@@ -1267,6 +1331,16 @@ def auto_discover(
                 stage.inpcrd = InpcrdParser(rst_path).parse()
                 stage.restart_path = rst_path
                 stage.validation.append(f"INFO: restart file auto-detected: {rst_path}")
+
+    # Apply global prmtop to stages that don't have one
+    if global_prmtop:
+        global_prmtop_path = os.path.join(directory, global_prmtop) if not os.path.isabs(global_prmtop) else global_prmtop
+        if os.path.exists(global_prmtop_path):
+            global_prmtop_data = PrmtopParser(global_prmtop_path).parse()
+            for stage in stages:
+                if not stage.prmtop:
+                    stage.prmtop = global_prmtop_data
+                    stage.validation.append(f"INFO: using global prmtop: {global_prmtop}")
 
     protocol = SimulationProtocol(stages=stages)
     protocol.validate(cross_stage=not skip_cross_stage_validation)
@@ -1423,6 +1497,7 @@ def load_protocol_from_manifest(
     skip_cross_stage_validation: bool = False,
     recursive: bool = False,
     expand_env: bool = True,
+    global_prmtop: Optional[str] = None,
 ) -> SimulationProtocol:
     """Build a protocol using a manifest file.
 
@@ -1448,6 +1523,8 @@ def load_protocol_from_manifest(
         If True, search subdirectories for files.
     expand_env:
         If True, expand environment variables in file paths.
+    global_prmtop:
+        Global prmtop file to use for stages without their own prmtop.
     """
 
     manifest = load_manifest(manifest_path, expand_env=expand_env)
@@ -1461,6 +1538,7 @@ def load_protocol_from_manifest(
         restart_files=restart_files,
         skip_cross_stage_validation=skip_cross_stage_validation,
         recursive=recursive,
+        global_prmtop=global_prmtop,
     )
 
 
