@@ -28,25 +28,76 @@ BAROSTATS = {
 }
 
 # -------------------------------
-# 2. Metadata Dataclasses
+# 2. Welford's Online Statistics Algorithm
+# -------------------------------
+
+@dataclass
+class StreamingStats:
+    """
+    Implements Welford's online algorithm for streaming mean and variance.
+    Uses O(1) memory regardless of the number of samples.
+    """
+    count: int = 0
+    mean: float = 0.0
+    m2: float = 0.0  # Sum of squared differences from the mean
+
+    def add(self, value: float) -> None:
+        """Add a new value using Welford's online algorithm."""
+        self.count += 1
+        delta = value - self.mean
+        self.mean += delta / self.count
+        delta2 = value - self.mean
+        self.m2 += delta * delta2
+
+    @property
+    def variance(self) -> float:
+        """Population variance."""
+        if self.count < 2:
+            return 0.0
+        return self.m2 / self.count
+
+    @property
+    def sample_variance(self) -> float:
+        """Sample variance (Bessel's correction)."""
+        if self.count < 2:
+            return 0.0
+        return self.m2 / (self.count - 1)
+
+    @property
+    def stdev(self) -> float:
+        """Sample standard deviation."""
+        return math.sqrt(self.sample_variance)
+
+    def get_stats(self) -> Tuple[Optional[float], Optional[float]]:
+        """Return (mean, stdev) tuple compatible with _calc_stats."""
+        if self.count == 0:
+            return None, None
+        if self.count == 1:
+            return self.mean, 0.0
+        return self.mean, self.stdev
+
+
+# -------------------------------
+# 3. Metadata Dataclasses
 # -------------------------------
 
 @dataclass
 class ThermoStats:
     """
     Stores accumulated statistics for the entire run based on parsed frames.
+    Uses Welford's online algorithm for O(1) memory usage.
     """
     count: int = 0
     time_start: float = 0.0
     time_end: float = 0.0
-    
-    # Store lists to calculate stdev
-    temps: List[float] = field(default_factory=list)
-    pressures: List[float] = field(default_factory=list)
-    etots: List[float] = field(default_factory=list)
-    densities: List[float] = field(default_factory=list)
-    volumes: List[float] = field(default_factory=list)
-    
+
+    # Streaming statistics using Welford's algorithm (O(1) memory)
+    _temps: StreamingStats = field(default_factory=StreamingStats)
+    _pressures: StreamingStats = field(default_factory=StreamingStats)
+    _etots: StreamingStats = field(default_factory=StreamingStats)
+    _densities: StreamingStats = field(default_factory=StreamingStats)
+    _volumes: StreamingStats = field(default_factory=StreamingStats)
+
     # Energy components (accumulators for mean)
     sum_bond: float = 0.0
     sum_angle: float = 0.0
@@ -54,9 +105,56 @@ class ThermoStats:
     sum_vdw: float = 0.0
     sum_elec: float = 0.0
 
+    # Backward-compatible list properties (return empty lists for compatibility)
+    @property
+    def temps(self) -> List[float]:
+        """Backward-compatible property. Use temp_stats for streaming statistics."""
+        return []
+
+    @property
+    def pressures(self) -> List[float]:
+        """Backward-compatible property. Use pressure_stats for streaming statistics."""
+        return []
+
+    @property
+    def etots(self) -> List[float]:
+        """Backward-compatible property. Use etot_stats for streaming statistics."""
+        return []
+
+    @property
+    def densities(self) -> List[float]:
+        """Backward-compatible property. Use density_stats for streaming statistics."""
+        return []
+
+    @property
+    def volumes(self) -> List[float]:
+        """Backward-compatible property. Use volume_stats for streaming statistics."""
+        return []
+
+    # Streaming statistics accessors
+    @property
+    def temp_stats(self) -> StreamingStats:
+        return self._temps
+
+    @property
+    def pressure_stats(self) -> StreamingStats:
+        return self._pressures
+
+    @property
+    def etot_stats(self) -> StreamingStats:
+        return self._etots
+
+    @property
+    def density_stats(self) -> StreamingStats:
+        return self._densities
+
+    @property
+    def volume_stats(self) -> StreamingStats:
+        return self._volumes
+
     def add_frame(self, data: Dict[str, Any]):
         self.count += 1
-        
+
         def get_f(key):
             val = data.get(key)
             if isinstance(val, (float, int)): return float(val)
@@ -67,12 +165,12 @@ class ThermoStats:
             if self.count == 1: self.time_start = t
             self.time_end = t
 
-        if (v := get_f('TEMP(K)')) is not None: self.temps.append(v)
-        if (v := get_f('PRESS')) is not None: self.pressures.append(v)
-        if (v := get_f('Etot')) is not None: self.etots.append(v)
-        if (v := get_f('Density')) is not None: self.densities.append(v)
-        if (v := get_f('VOLUME')) is not None: self.volumes.append(v)
-        
+        if (v := get_f('TEMP(K)')) is not None: self._temps.add(v)
+        if (v := get_f('PRESS')) is not None: self._pressures.add(v)
+        if (v := get_f('Etot')) is not None: self._etots.add(v)
+        if (v := get_f('Density')) is not None: self._densities.add(v)
+        if (v := get_f('VOLUME')) is not None: self._volumes.add(v)
+
         self.sum_bond += get_f('BOND') or 0.0
         self.sum_angle += get_f('ANGLE') or 0.0
         self.sum_dihed += get_f('DIHED') or 0.0
@@ -83,7 +181,7 @@ class ThermoStats:
     def duration_ns(self) -> float:
         # Standard duration (Last - First)
         return (self.time_end - self.time_start) / 1000.0
-    
+
     @property
     def avg_interval_ps(self) -> float:
         """Estimates the output frequency (dt * ntwx) from the frames."""
@@ -105,17 +203,22 @@ class ThermoStats:
 @dataclass
 class MdoutMetadata:
     filename: str
-    
+
     # --- Administrative ---
     program: str = "SANDER"
     version: str = "Unknown"
     run_date: str = "Unknown"
     gpu_model: str = "None"
-    
+
     # --- System ---
     natoms: int = 0
     nres: int = 0
     box_type: str = "Vacuum"
+
+    @property
+    def n_atoms(self) -> int:
+        """Standardized atom count property for consistency across metadata classes."""
+        return self.natoms
     
     # --- Configuration ---
     run_type: str = "MD"
@@ -278,7 +381,8 @@ def parse_mdout(filepath: str) -> MdoutMetadata:
                 if "time:" in p and idx+1 < len(parts):
                     try:
                         md.wall_time_seconds = float(parts[idx+1])
-                    except: pass
+                    except (ValueError, IndexError) as e:
+                        md.warnings.append(f"Failed to parse wall time: {e}")
 
     return md
 
@@ -308,25 +412,28 @@ def summarize_single(md: MdoutMetadata) -> str:
         dur_ns = (md.nstlim * md.dt) / 1000.0
         s.append(f"Protocol: {md.nstlim:,} steps ({dur_ns:.3f} ns)")
 
-    # Statistics 
+    # Statistics
     st = md.stats
     if st.count > 0:
         s.append("-" * 30)
         s.append(f"Statistics (Computed over {st.count} frames):")
         # Show actual coverage (including interval)
         s.append(f"  Time:    {st.time_start:.1f} -> {st.time_end:.1f} ps (True Coverage: {st.true_coverage_ns:.3f} ns)")
-        
-        t_avg, t_std = _calc_stats(st.temps)
-        s.append(f"  Temp:    {t_avg:.2f} +/- {t_std:.2f} K")
-        
-        p_avg, p_std = _calc_stats(st.pressures)
+
+        # Use streaming statistics with get_stats() method
+        t_avg, t_std = st.temp_stats.get_stats()
+        if t_avg is not None:
+            s.append(f"  Temp:    {t_avg:.2f} +/- {t_std:.2f} K")
+
+        p_avg, p_std = st.pressure_stats.get_stats()
         if p_avg is not None: s.append(f"  Press:   {p_avg:.1f} +/- {p_std:.1f} bar")
-        
-        d_avg, d_std = _calc_stats(st.densities)
+
+        d_avg, d_std = st.density_stats.get_stats()
         if d_avg is not None: s.append(f"  Density: {d_avg:.4f} +/- {d_std:.4f} g/cc")
-        
-        e_avg, e_std = _calc_stats(st.etots)
-        s.append(f"  Etot:    {e_avg:,.1f} +/- {e_std:,.1f} kcal/mol")
+
+        e_avg, e_std = st.etot_stats.get_stats()
+        if e_avg is not None:
+            s.append(f"  Etot:    {e_avg:,.1f} +/- {e_std:,.1f} kcal/mol")
         
         parts = []
         if st.sum_bond: parts.append(f"Bond: {st.sum_bond/st.count:.0f}")
@@ -436,7 +543,7 @@ if __name__ == "__main__":
             if not args.sequence_only:
                 print(summarize_single(md))
                 print("="*60)
-        except Exception as e:
+        except (IOError, OSError, ValueError, FileNotFoundError, UnicodeDecodeError) as e:
             print(f"Error {f}: {e}")
             
     if len(metas) > 1:

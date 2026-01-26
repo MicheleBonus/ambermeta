@@ -21,25 +21,41 @@ except ImportError:  # pragma: no cover - optional dependency
     yaml = None
 
 
-def _serialize_value(value: Any) -> Any:
+def _serialize_value(value: Any, _visited: Optional[set] = None) -> Any:
+    """Serialize a value to JSON-compatible types with circular reference detection."""
     if value is None:
         return None
     if isinstance(value, (str, int, float, bool)):
         return value
-    if isinstance(value, (list, tuple, set)):
-        return [_serialize_value(v) for v in value]
-    if isinstance(value, dict):
-        return {k: _serialize_value(v) for k, v in value.items()}
-    if is_dataclass(value):
-        return {k: _serialize_value(v) for k, v in asdict(value).items()}
-    if hasattr(value, "to_dict"):
-        try:
-            return value.to_dict()
-        except TypeError:
-            pass
-    if hasattr(value, "__dict__"):
-        return {k: _serialize_value(v) for k, v in value.__dict__.items() if not k.startswith("_")}
-    return str(value)
+
+    # Initialize visited set for circular reference detection
+    if _visited is None:
+        _visited = set()
+
+    # Check for circular references using object id
+    obj_id = id(value)
+    if obj_id in _visited:
+        return "<circular reference>"
+    _visited.add(obj_id)
+
+    try:
+        if isinstance(value, (list, tuple, set)):
+            return [_serialize_value(v, _visited) for v in value]
+        if isinstance(value, dict):
+            return {k: _serialize_value(v, _visited) for k, v in value.items()}
+        if is_dataclass(value):
+            return {k: _serialize_value(v, _visited) for k, v in asdict(value).items()}
+        if hasattr(value, "to_dict"):
+            try:
+                return value.to_dict()
+            except TypeError:
+                pass
+        if hasattr(value, "__dict__"):
+            return {k: _serialize_value(v, _visited) for k, v in value.__dict__.items() if not k.startswith("_")}
+        return str(value)
+    finally:
+        # Remove from visited when done processing this branch
+        _visited.discard(obj_id)
 
 
 def _serialize_metadata(metadata: Any) -> Optional[Dict[str, Any]]:
@@ -62,7 +78,8 @@ def _prune_methods_value(value: Any) -> Any:
             cleaned = _prune_methods_value(val)
             if cleaned is None:
                 continue
-            if isinstance(cleaned, (dict, list)) and not cleaned:
+            # Only skip empty containers, not falsy values like 0 or False
+            if isinstance(cleaned, (dict, list)) and len(cleaned) == 0:
                 continue
             pruned[key] = cleaned
         return pruned
@@ -72,7 +89,8 @@ def _prune_methods_value(value: Any) -> Any:
             cleaned = _prune_methods_value(item)
             if cleaned is None:
                 continue
-            if isinstance(cleaned, (dict, list)) and not cleaned:
+            # Only skip empty containers, not falsy values like 0 or False
+            if isinstance(cleaned, (dict, list)) and len(cleaned) == 0:
                 continue
             pruned_list.append(cleaned)
         return pruned_list
@@ -115,14 +133,15 @@ class SimulationStage:
     def _validate_atoms(self) -> List[str]:
         counts = []
         labels = []
-        if self.prmtop and self.prmtop.details and getattr(self.prmtop.details, "natom", None):
-            counts.append(self.prmtop.details.natom)
+        # Use standardized n_atoms property across all metadata classes
+        if self.prmtop and self.prmtop.details and getattr(self.prmtop.details, "n_atoms", None):
+            counts.append(self.prmtop.details.n_atoms)
             labels.append("prmtop")
-        if self.inpcrd and self.inpcrd.details and getattr(self.inpcrd.details, "natoms", None):
-            counts.append(self.inpcrd.details.natoms)
+        if self.inpcrd and self.inpcrd.details and getattr(self.inpcrd.details, "n_atoms", None):
+            counts.append(self.inpcrd.details.n_atoms)
             labels.append("inpcrd")
-        if self.mdout and self.mdout.details and getattr(self.mdout.details, "natoms", None):
-            counts.append(self.mdout.details.natoms)
+        if self.mdout and self.mdout.details and getattr(self.mdout.details, "n_atoms", None):
+            counts.append(self.mdout.details.n_atoms)
             labels.append("mdout")
         if self.mdcrd and self.mdcrd.details and getattr(self.mdcrd.details, "n_atoms", None):
             counts.append(self.mdcrd.details.n_atoms)
@@ -145,8 +164,11 @@ class SimulationStage:
         if self.mdout and self.mdout.details and getattr(self.mdout.details, "box_type", None):
             boxes.append("mdout")
 
-        if boxes and len(boxes) < 2:
-            return [f"Only {boxes[0]} reports box information; check consistency."]
+        # Only validate box consistency if multiple sources report box info
+        # A single source having box info is not a validation issue
+        if len(boxes) >= 2:
+            # Could add box dimension comparison here if needed
+            pass
         return []
 
     def _validate_timing(self) -> List[str]:
@@ -300,6 +322,22 @@ class SimulationProtocol:
 
     def _check_continuity(self) -> None:
         for prev, current in zip(self.stages, self.stages[1:]):
+            prev_mdcrd = prev.mdcrd and prev.mdcrd.details
+            curr_inpcrd = current.inpcrd and current.inpcrd.details
+
+            if not prev_mdcrd or not curr_inpcrd:
+                # Add informational note when continuity check is skipped
+                missing = []
+                if not prev_mdcrd:
+                    missing.append(f"mdcrd from {prev.name}")
+                if not curr_inpcrd:
+                    missing.append(f"inpcrd from {current.name}")
+                current._add_continuity_note(
+                    f"INFO: Cannot verify continuity between {prev.name} and {current.name} "
+                    f"(missing {', '.join(missing)})"
+                )
+                continue
+
             if prev.mdcrd and prev.mdcrd.details and current.inpcrd and current.inpcrd.details:
                 end_time = getattr(prev.mdcrd.details, "time_end", None)
                 start_time = getattr(current.inpcrd.details, "time", None)
@@ -750,7 +788,10 @@ def _manifest_to_stages(
             stage.prmtop = PrmtopParser(resolved["prmtop"]).parse()
         if "mdin" in resolved:
             stage.mdin = MdinParser(resolved["mdin"]).parse()
-            stage.stage_role = stage.stage_role or getattr(stage.mdin.details, "stage_role", None)
+            inferred_role = getattr(stage.mdin.details, "stage_role", None)
+            if not stage.stage_role and inferred_role:
+                stage.stage_role = inferred_role
+                stage.validation.append(f"INFO: stage_role '{inferred_role}' inferred from mdin file")
         if "mdout" in resolved:
             stage.mdout = MdoutParser(resolved["mdout"]).parse()
         if "mdcrd" in resolved:
@@ -890,7 +931,10 @@ def auto_discover(
             stage.prmtop = PrmtopParser(kinds["prmtop"]).parse()
         if "mdin" in kinds:
             stage.mdin = MdinParser(kinds["mdin"]).parse()
-            stage.stage_role = stage.stage_role or getattr(stage.mdin.details, "stage_role", None)
+            inferred_role = getattr(stage.mdin.details, "stage_role", None)
+            if not stage.stage_role and inferred_role:
+                stage.stage_role = inferred_role
+                stage.validation.append(f"INFO: stage_role '{inferred_role}' inferred from mdin file")
         if "mdout" in kinds:
             stage.mdout = MdoutParser(kinds["mdout"]).parse()
         if "mdcrd" in kinds:

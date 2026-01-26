@@ -59,7 +59,11 @@ def _clean_value(val: str) -> Any:
         pass
 
     try:
-        return float(val.replace("d", "e").replace("D", "E"))
+        result = float(val.replace("d", "e").replace("D", "E"))
+        # Filter out NaN and Inf values as they are invalid for simulation parameters
+        if math.isnan(result) or math.isinf(result):
+            return None
+        return result
     except ValueError:
         return val
 

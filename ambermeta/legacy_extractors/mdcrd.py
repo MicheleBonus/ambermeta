@@ -128,7 +128,7 @@ def _detect_format(filepath: str) -> str:
             header = f.read(4)
             if header.startswith(b'CDF'):
                 return "NetCDF"
-    except Exception:
+    except (IOError, OSError):
         pass
     return "ASCII"
 
@@ -218,7 +218,7 @@ def _parse_netcdf_trajectory(filepath: str) -> TrajectoryMetadata:
                     vols = _calc_volume_array(lengths, angles)
                     if len(vols) > 0:
                         md.volume_stats = (float(np.min(vols)), float(np.max(vols)), float(np.mean(vols)))
-                except Exception as e:
+                except (ValueError, TypeError, IndexError) as e:
                     md.warnings.append(f"Volume calculation failed: {e}")
 
             # --- 5. REMD Metadata ---
@@ -237,7 +237,7 @@ def _parse_netcdf_trajectory(filepath: str) -> TrajectoryMetadata:
         finally:
             ds.close()
 
-    except Exception as e:
+    except (IOError, OSError, ValueError, KeyError, IndexError, RuntimeError) as e:
         md.warnings.append(f"NetCDF Error: {e}")
 
     return md
@@ -248,7 +248,7 @@ def _parse_ascii_trajectory(filepath: str) -> TrajectoryMetadata:
         with open(filepath, 'r') as f:
             md.title = f.readline().strip()
         md.warnings.append("ASCII format: No detailed metadata (time, box, count) extractable without prmtop.")
-    except Exception:
+    except (IOError, OSError, UnicodeDecodeError):
         md.warnings.append("File empty or unreadable.")
     return md
 
@@ -400,7 +400,7 @@ if __name__ == "__main__":
             metas.append(md)
             if not args.sequence_only:
                 print(summarize_single(md))
-        except Exception as e:
+        except (IOError, OSError, ValueError, FileNotFoundError) as e:
             print(f"Error {f}: {e}")
 
     if len(metas) > 1:
