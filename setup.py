@@ -13,7 +13,9 @@ setup(
     packages=find_packages(include=["ambermeta", "ambermeta.*"]),
     extras_require={
         "netcdf": ["netCDF4>=1.6", "scipy>=1.8", "numpy>=1.23"],
+        "tui": ["textual>=0.40.0"],
         "tests": ["pytest>=7"],
+        "all": ["netCDF4>=1.6", "scipy>=1.8", "numpy>=1.23", "textual>=0.40.0"],
     },
     entry_points={"console_scripts": ["ambermeta=ambermeta.cli:main"]},
     classifiers=[

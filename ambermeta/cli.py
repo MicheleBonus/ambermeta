@@ -874,6 +874,33 @@ def _plan_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def _tui_command(args: argparse.Namespace) -> int:
+    """Launch the TUI for building protocol manifests."""
+    try:
+        from ambermeta.tui import run_tui, TEXTUAL_AVAILABLE
+    except ImportError:
+        print(Colors.error("ERROR: TUI module not available."))
+        print("Install with: pip install ambermeta[tui]")
+        return 1
+
+    if not TEXTUAL_AVAILABLE:
+        print(Colors.error("ERROR: Textual library is required for the TUI."))
+        print("Install with: pip install textual")
+        return 1
+
+    directory = os.path.abspath(args.directory)
+    if not os.path.isdir(directory):
+        print(Colors.error(f"ERROR: Directory not found: {directory}"))
+        return 1
+
+    try:
+        run_tui(directory)
+        return 0
+    except Exception as e:
+        print(Colors.error(f"ERROR: TUI failed: {e}"))
+        return 1
+
+
 def _export_stats_csv(protocol: SimulationProtocol, filepath: str) -> None:
     """Export per-stage statistics to a CSV file."""
     import csv
@@ -957,6 +984,7 @@ def build_parser() -> argparse.ArgumentParser:
 Examples:
   ambermeta plan -m manifest.yaml           # Build protocol from manifest
   ambermeta plan . --recursive              # Auto-discover files recursively
+  ambermeta tui /path/to/simulation/        # Launch interactive TUI
   ambermeta validate -m manifest.yaml       # Validate a protocol
   ambermeta info system.prmtop              # Show file information
   ambermeta init my_project                 # Generate example manifest
@@ -1101,6 +1129,23 @@ For more information, visit: https://github.com/your-org/ambermeta
         help="Output format (default: text)",
     )
 
+    # TUI subcommand
+    tui_parser = subparsers.add_parser(
+        "tui",
+        help="Launch interactive TUI for building protocol manifests",
+        description=(
+            "Launch a terminal user interface for interactively building "
+            "simulation protocol manifests. Features include file browser, "
+            "stage management, sequence detection, and export to multiple formats."
+        ),
+    )
+    tui_parser.add_argument(
+        "directory",
+        nargs="?",
+        default=".",
+        help="Directory containing simulation files (default: current directory)",
+    )
+
     # UX-009: init subcommand
     init_parser = subparsers.add_parser(
         "init",
@@ -1148,6 +1193,8 @@ def main(argv: List[str] | None = None) -> int:
         return _info_command(args)
     if args.command == "init":
         return _init_command(args)
+    if args.command == "tui":
+        return _tui_command(args)
 
     parser.print_help()
     return 1
