@@ -20,6 +20,17 @@ try:  # pragma: no cover - optional dependency
 except ImportError:  # pragma: no cover - optional dependency
     yaml = None
 
+try:  # pragma: no cover - optional dependency
+    import tomllib  # Python 3.11+
+except ImportError:  # pragma: no cover - optional dependency
+    try:
+        import tomli as tomllib  # Fallback for older Python
+    except ImportError:
+        tomllib = None
+
+import csv
+from io import StringIO
+
 
 def _serialize_value(value: Any, _visited: Optional[set] = None) -> Any:
     """Serialize a value to JSON-compatible types with circular reference detection."""
@@ -849,29 +860,229 @@ def _manifest_to_stages(
     return stages
 
 
-def auto_discover(
-    directory: str,
-    manifest: Optional[Dict[str, Dict[str, str]] | List[Dict[str, str]]] = None,
-    grouping_rules: Optional[Dict[str, str]] = None,
-    include_roles: Optional[List[str]] = None,
-    include_stems: Optional[List[str]] = None,
-    restart_files: Optional[Dict[str, str]] = None,
-    skip_cross_stage_validation: bool = False,
-    recursive: bool = False,
-) -> SimulationProtocol:
-    if manifest is not None:
-        stages = _manifest_to_stages(
-            manifest,
-            directory=directory,
-            include_roles=include_roles,
-            include_stems=include_stems,
-            restart_files=restart_files,
-        )
-        protocol = SimulationProtocol(stages=stages)
-        protocol.validate(cross_stage=not skip_cross_stage_validation)
-        return protocol
+def detect_numeric_sequences(filenames: List[str]) -> Dict[str, List[str]]:
+    """Detect numeric sequences in filenames for automatic grouping.
 
+    Identifies patterns like prod_001, prod_002, etc. and groups them together.
+
+    Parameters
+    ----------
+    filenames:
+        List of filenames to analyze.
+
+    Returns
+    -------
+    Dictionary mapping base pattern to list of matching files in numeric order.
+    """
+    import re
+
+    # Pattern to detect numeric suffixes: name_001, name.001, name001, name-001
+    numeric_pattern = re.compile(r'^(.+?)[-_.]?(\d{2,})$')
+
+    groups: Dict[str, List[tuple[int, str]]] = {}
+
+    for filename in filenames:
+        stem = Path(filename).stem
+        match = numeric_pattern.match(stem)
+        if match:
+            base = match.group(1)
+            num = int(match.group(2))
+            groups.setdefault(base, []).append((num, filename))
+
+    # Sort each group by numeric value and return just the filenames
+    result: Dict[str, List[str]] = {}
+    for base, items in groups.items():
+        if len(items) >= 2:  # Only consider sequences with 2+ files
+            items.sort(key=lambda x: x[0])
+            result[base] = [filename for _, filename in items]
+
+    return result
+
+
+def infer_stage_role_from_content(
+    mdin_data: Optional[MdinData] = None,
+    mdout_data: Optional[MdoutData] = None,
+) -> Optional[str]:
+    """Infer stage role from parsed file content.
+
+    Uses heuristics based on simulation parameters to determine the stage type.
+    """
+    # Try mdin first
+    if mdin_data and mdin_data.details:
+        details = mdin_data.details
+        inferred = getattr(details, "stage_role", None)
+        if inferred:
+            return inferred
+
+        # Check for minimization indicators
+        cntrl = getattr(details, "cntrl_parameters", {}) or {}
+        imin = cntrl.get("imin")
+        if imin == 1:
+            return "minimization"
+
+        # Check for heating (increasing temperature)
+        tempi = cntrl.get("tempi", 0)
+        temp0 = cntrl.get("temp0", 300)
+        if isinstance(tempi, (int, float)) and isinstance(temp0, (int, float)):
+            if tempi < temp0 and tempi < 50:
+                return "heating"
+
+        # Check for equilibration vs production
+        ntr = cntrl.get("ntr")
+        ibelly = cntrl.get("ibelly")
+        if ntr == 1 or ibelly == 1:
+            return "equilibration"
+
+        # Check nstlim to distinguish short equilibration from long production
+        nstlim = cntrl.get("nstlim", 0)
+        if isinstance(nstlim, (int, float)) and nstlim > 500000:
+            return "production"
+
+    # Try mdout
+    if mdout_data and mdout_data.details:
+        details = mdout_data.details
+        if getattr(details, "imin", None) == 1:
+            return "minimization"
+
+    return None
+
+
+def auto_detect_restart_chain(
+    stages: List[SimulationStage],
+    directory: str,
+) -> Dict[str, str]:
+    """Automatically detect restart file chains between stages.
+
+    Analyzes stages to find restart files that link them together based on:
+    - Matching atom counts
+    - Timestamp continuity
+    - File naming conventions (e.g., prod_001.rst -> prod_002 uses it)
+
+    Parameters
+    ----------
+    stages:
+        List of simulation stages to analyze.
+    directory:
+        Base directory for finding restart files.
+
+    Returns
+    -------
+    Dictionary mapping stage names to their restart file paths.
+    """
+    # Collect all potential restart files
+    restart_candidates: List[tuple[str, InpcrdData]] = []
+
+    ext_map = {".rst", ".rst7", ".ncrst", ".restrt", ".inpcrd"}
+
+    # Scan for restart files
+    for fname in os.listdir(directory):
+        full_path = os.path.join(directory, fname)
+        if not os.path.isfile(full_path):
+            continue
+        _, ext = os.path.splitext(fname)
+        if ext.lower() not in ext_map:
+            continue
+        try:
+            data = InpcrdParser(full_path).parse()
+            restart_candidates.append((full_path, data))
+        except (IOError, OSError, ValueError):
+            continue
+
+    if not restart_candidates:
+        return {}
+
+    restart_mapping: Dict[str, str] = {}
+
+    # Try to match restarts to stages based on various heuristics
+    for i, stage in enumerate(stages):
+        if stage.restart_path:
+            continue  # Already has a restart
+
+        # Get target atom count for matching
+        target_atoms: Optional[int] = None
+        if stage.prmtop and stage.prmtop.details:
+            target_atoms = getattr(stage.prmtop.details, "n_atoms", None)
+        if target_atoms is None and stage.mdin and stage.mdin.details:
+            # Some mdin files might reference atom count
+            pass
+
+        # Try to find matching restart
+        best_match: Optional[tuple[str, float]] = None
+
+        for rst_path, rst_data in restart_candidates:
+            if not rst_data or not rst_data.details:
+                continue
+
+            # Check atom count match
+            rst_atoms = getattr(rst_data.details, "n_atoms", None)
+            if target_atoms and rst_atoms and target_atoms != rst_atoms:
+                continue
+
+            # Check naming convention match
+            rst_stem = Path(rst_path).stem
+            stage_stem = stage.name.replace("/", "_")
+
+            # Common patterns: stagename.rst -> next stage, prev_stage.rst7 -> current
+            score = 0.0
+
+            # Check if restart name matches previous stage
+            if i > 0:
+                prev_name = stages[i - 1].name.replace("/", "_")
+                if prev_name in rst_stem or rst_stem in prev_name:
+                    score += 5.0
+
+            # Check for numeric sequence matching
+            stage_match = re.search(r'(\d{2,})', stage_stem)
+            rst_match = re.search(r'(\d{2,})', rst_stem)
+            if stage_match and rst_match:
+                stage_num = int(stage_match.group(1))
+                rst_num = int(rst_match.group(1))
+                if rst_num == stage_num - 1:
+                    score += 10.0  # Previous sequence number is ideal
+                elif rst_num == stage_num:
+                    score += 3.0
+
+            # Check timestamp if previous stage has end time
+            if i > 0 and stages[i - 1].mdcrd and stages[i - 1].mdcrd.details:
+                prev_end = getattr(stages[i - 1].mdcrd.details, "time_end", None)
+                rst_time = getattr(rst_data.details, "time", None)
+                if prev_end is not None and rst_time is not None:
+                    if abs(prev_end - rst_time) < 0.1:  # Within 0.1 ps
+                        score += 20.0
+
+            if score > 0 and (best_match is None or score > best_match[1]):
+                best_match = (rst_path, score)
+
+        if best_match and best_match[1] >= 5.0:  # Minimum confidence threshold
+            restart_mapping[stage.name] = best_match[0]
+
+    return restart_mapping
+
+
+def smart_group_files(
+    directory: str,
+    pattern: Optional[str] = None,
+    recursive: bool = False,
+) -> Dict[str, Dict[str, str]]:
+    """Smart grouping of simulation files based on patterns and sequences.
+
+    Automatically detects numeric sequences and groups related files together.
+
+    Parameters
+    ----------
+    directory:
+        Directory to scan for files.
+    pattern:
+        Optional regex pattern to filter files.
+    recursive:
+        If True, search subdirectories.
+
+    Returns
+    -------
+    Dictionary mapping stage names to file paths by type.
+    """
     discovered: List[tuple[str, str]] = []
+
     if recursive:
         for root, _, filenames in os.walk(directory):
             for fname in filenames:
@@ -884,20 +1095,33 @@ def auto_discover(
             full_path = os.path.join(directory, fname)
             if os.path.isfile(full_path):
                 discovered.append((fname, full_path))
-    grouped: Dict[str, Dict[str, str]] = {}
+
+    # Apply pattern filter if provided
+    if pattern:
+        compiled = re.compile(pattern)
+        discovered = [(rel, full) for rel, full in discovered if compiled.search(rel)]
+
     ext_map = {
         ".prmtop": "prmtop",
         ".top": "prmtop",
+        ".parm7": "prmtop",
         ".inpcrd": "inpcrd",
         ".rst": "inpcrd",
         ".rst7": "inpcrd",
+        ".ncrst": "inpcrd",
+        ".restrt": "inpcrd",
         ".mdin": "mdin",
         ".in": "mdin",
         ".mdout": "mdout",
         ".out": "mdout",
         ".mdcrd": "mdcrd",
         ".nc": "mdcrd",
+        ".crd": "mdcrd",
+        ".x": "mdcrd",
     }
+
+    # Group by stem
+    grouped: Dict[str, Dict[str, str]] = {}
 
     for rel_path, full_path in discovered:
         stem = Path(rel_path).with_suffix("").as_posix()
@@ -906,6 +1130,58 @@ def auto_discover(
         if not kind:
             continue
         grouped.setdefault(stem, {})[kind] = full_path
+
+    # Detect and handle numeric sequences
+    all_stems = list(grouped.keys())
+    sequences = detect_numeric_sequences(all_stems)
+
+    # Add sequence metadata to groups
+    for base_pattern, sequence_stems in sequences.items():
+        for idx, stem in enumerate(sequence_stems):
+            if stem in grouped:
+                grouped[stem]["_sequence_base"] = base_pattern
+                grouped[stem]["_sequence_index"] = str(idx)
+                grouped[stem]["_sequence_length"] = str(len(sequence_stems))
+
+    return grouped
+
+
+def auto_discover(
+    directory: str,
+    manifest: Optional[Dict[str, Dict[str, str]] | List[Dict[str, str]]] = None,
+    grouping_rules: Optional[Dict[str, str]] = None,
+    include_roles: Optional[List[str]] = None,
+    include_stems: Optional[List[str]] = None,
+    restart_files: Optional[Dict[str, str]] = None,
+    skip_cross_stage_validation: bool = False,
+    recursive: bool = False,
+    auto_detect_restarts: bool = False,
+    pattern_filter: Optional[str] = None,
+) -> SimulationProtocol:
+    if manifest is not None:
+        stages = _manifest_to_stages(
+            manifest,
+            directory=directory,
+            include_roles=include_roles,
+            include_stems=include_stems,
+            restart_files=restart_files,
+        )
+        # Apply auto restart detection if requested
+        if auto_detect_restarts:
+            auto_restarts = auto_detect_restart_chain(stages, directory)
+            for stage in stages:
+                if stage.name in auto_restarts and not stage.restart_path:
+                    rst_path = auto_restarts[stage.name]
+                    stage.inpcrd = InpcrdParser(rst_path).parse()
+                    stage.restart_path = rst_path
+                    stage.validation.append(f"INFO: restart file auto-detected: {rst_path}")
+
+        protocol = SimulationProtocol(stages=stages)
+        protocol.validate(cross_stage=not skip_cross_stage_validation)
+        return protocol
+
+    # Use smart grouping for file discovery
+    grouped = smart_group_files(directory, pattern=pattern_filter, recursive=recursive)
 
     compiled_rules: List[tuple[Pattern[str], str]] = []
     if grouping_rules:
@@ -917,6 +1193,9 @@ def auto_discover(
 
     stages: List[SimulationStage] = []
     for stem, kinds in sorted(grouped.items()):
+        # Skip internal metadata keys
+        file_kinds = {k: v for k, v in kinds.items() if not k.startswith("_")}
+
         stage_role: Optional[str] = None
         for pattern, role in compiled_rules:
             if pattern.search(stem):
@@ -927,21 +1206,39 @@ def auto_discover(
             continue
 
         stage = SimulationStage(name=stem, stage_role=stage_role)
-        if "prmtop" in kinds:
-            stage.prmtop = PrmtopParser(kinds["prmtop"]).parse()
-        if "mdin" in kinds:
-            stage.mdin = MdinParser(kinds["mdin"]).parse()
+
+        # Add sequence info as validation notes if detected
+        if "_sequence_base" in kinds:
+            seq_base = kinds["_sequence_base"]
+            seq_idx = kinds.get("_sequence_index", "?")
+            seq_len = kinds.get("_sequence_length", "?")
+            stage.validation.append(
+                f"INFO: Part of sequence '{seq_base}' (item {int(seq_idx)+1} of {seq_len})"
+            )
+
+        if "prmtop" in file_kinds:
+            stage.prmtop = PrmtopParser(file_kinds["prmtop"]).parse()
+        if "mdin" in file_kinds:
+            stage.mdin = MdinParser(file_kinds["mdin"]).parse()
+            # Try mdin-based inference first
             inferred_role = getattr(stage.mdin.details, "stage_role", None)
             if not stage.stage_role and inferred_role:
                 stage.stage_role = inferred_role
                 stage.validation.append(f"INFO: stage_role '{inferred_role}' inferred from mdin file")
-        if "mdout" in kinds:
-            stage.mdout = MdoutParser(kinds["mdout"]).parse()
-        if "mdcrd" in kinds:
-            stage.mdcrd = MdcrdParser(kinds["mdcrd"]).parse()
-        if "inpcrd" in kinds:
-            stage.inpcrd = InpcrdParser(kinds["inpcrd"]).parse()
-            stage.restart_path = kinds["inpcrd"]
+        if "mdout" in file_kinds:
+            stage.mdout = MdoutParser(file_kinds["mdout"]).parse()
+        if "mdcrd" in file_kinds:
+            stage.mdcrd = MdcrdParser(file_kinds["mdcrd"]).parse()
+        if "inpcrd" in file_kinds:
+            stage.inpcrd = InpcrdParser(file_kinds["inpcrd"]).parse()
+            stage.restart_path = file_kinds["inpcrd"]
+
+        # Try content-based role inference if still no role
+        if not stage.stage_role:
+            inferred = infer_stage_role_from_content(stage.mdin, stage.mdout)
+            if inferred:
+                stage.stage_role = inferred
+                stage.validation.append(f"INFO: stage_role '{inferred}' inferred from file content")
 
         if include_roles and stage.stage_role and stage.stage_role not in include_roles:
             continue
@@ -961,18 +1258,127 @@ def auto_discover(
 
         stages.append(stage)
 
+    # Apply auto restart detection if requested
+    if auto_detect_restarts:
+        auto_restarts = auto_detect_restart_chain(stages, directory)
+        for stage in stages:
+            if stage.name in auto_restarts and not stage.restart_path:
+                rst_path = auto_restarts[stage.name]
+                stage.inpcrd = InpcrdParser(rst_path).parse()
+                stage.restart_path = rst_path
+                stage.validation.append(f"INFO: restart file auto-detected: {rst_path}")
+
     protocol = SimulationProtocol(stages=stages)
     protocol.validate(cross_stage=not skip_cross_stage_validation)
     return protocol
 
 
-def load_manifest(manifest_path: str | os.PathLike[str]):
-    """Load a manifest from YAML or JSON.
+def _expand_env_vars(value: Any) -> Any:
+    """Recursively expand environment variables in string values.
+
+    Supports ${VAR} and $VAR syntax. Undefined variables are left unchanged.
+    """
+    if isinstance(value, str):
+        # Expand ${VAR} syntax
+        result = value
+        import re
+        for match in re.finditer(r'\$\{([^}]+)\}', value):
+            var_name = match.group(1)
+            env_value = os.environ.get(var_name)
+            if env_value is not None:
+                result = result.replace(match.group(0), env_value)
+        # Expand $VAR syntax (only if not followed by {)
+        for match in re.finditer(r'\$([A-Za-z_][A-Za-z0-9_]*)(?!\{)', result):
+            var_name = match.group(1)
+            env_value = os.environ.get(var_name)
+            if env_value is not None:
+                result = result.replace(match.group(0), env_value)
+        return result
+    elif isinstance(value, dict):
+        return {k: _expand_env_vars(v) for k, v in value.items()}
+    elif isinstance(value, list):
+        return [_expand_env_vars(item) for item in value]
+    return value
+
+
+def _parse_csv_manifest(text: str) -> List[Dict[str, Any]]:
+    """Parse a CSV manifest file into a list of stage dictionaries.
+
+    Expected CSV format:
+    name,stage_role,prmtop,mdin,mdout,mdcrd,inpcrd,notes
+
+    First row must be headers.
+    """
+    reader = csv.DictReader(StringIO(text))
+    stages: List[Dict[str, Any]] = []
+
+    for row in reader:
+        stage: Dict[str, Any] = {}
+        for key, value in row.items():
+            if key is None or value is None:
+                continue
+            key = key.strip()
+            value = value.strip()
+            if not value:
+                continue
+            # Handle special fields
+            if key in ("expected_gap_ps", "gap_tolerance_ps"):
+                try:
+                    stage[key] = float(value)
+                except ValueError:
+                    stage[key] = value
+            elif key == "notes":
+                # Support semicolon-separated notes
+                stage[key] = [n.strip() for n in value.split(";") if n.strip()]
+            else:
+                stage[key] = value
+        if stage.get("name"):
+            stages.append(stage)
+
+    return stages
+
+
+def _parse_toml_manifest(text: str) -> Dict[str, Any] | List[Dict[str, Any]]:
+    """Parse a TOML manifest file.
+
+    TOML manifests can have two formats:
+    1. Array of tables: [[stages]]
+    2. Table per stage: [stage.name]
+    """
+    if tomllib is None:
+        raise ImportError(
+            "tomllib/tomli is required to read TOML manifests. "
+            "Install with `pip install tomli` (Python < 3.11) or use Python 3.11+."
+        )
+
+    data = tomllib.loads(text)
+
+    # If there's a 'stages' key with a list, return that
+    if "stages" in data and isinstance(data["stages"], list):
+        return data["stages"]
+
+    # If the data is a dict with stage names as keys
+    return data
+
+
+def load_manifest(
+    manifest_path: str | os.PathLike[str],
+    expand_env: bool = True,
+) -> Dict[str, Any] | List[Dict[str, Any]]:
+    """Load a manifest from YAML, JSON, TOML, or CSV.
 
     Parameters
     ----------
     manifest_path:
-        Path to a YAML or JSON manifest describing simulation stages.
+        Path to a manifest describing simulation stages.
+        Supported formats: .yaml, .yml, .json, .toml, .csv
+    expand_env:
+        If True, expand environment variables in file paths using ${VAR} or $VAR syntax.
+        Default is True.
+
+    Returns
+    -------
+    Manifest data as a list of stage dictionaries or a mapping.
     """
 
     path = Path(manifest_path)
@@ -985,8 +1391,13 @@ def load_manifest(manifest_path: str | os.PathLike[str]):
     if suffix in {".yaml", ".yml"}:
         if yaml is None:
             raise ImportError("PyYAML is required to read YAML manifests. Install with `pip install pyyaml`.")
-        manifest = yaml.safe_load(text)  # type: ignore[arg-type]
+        manifest = yaml.safe_load(text)
+    elif suffix == ".toml":
+        manifest = _parse_toml_manifest(text)
+    elif suffix == ".csv":
+        manifest = _parse_csv_manifest(text)
     else:
+        # Default to JSON
         manifest = json.loads(text)
 
     if manifest is None:
@@ -994,6 +1405,10 @@ def load_manifest(manifest_path: str | os.PathLike[str]):
 
     if not isinstance(manifest, (dict, list)):
         raise TypeError("Manifest must be a mapping or list of stage entries.")
+
+    # Expand environment variables if requested
+    if expand_env:
+        manifest = _expand_env_vars(manifest)
 
     return manifest
 
@@ -1007,14 +1422,35 @@ def load_protocol_from_manifest(
     restart_files: Optional[Dict[str, str]] = None,
     skip_cross_stage_validation: bool = False,
     recursive: bool = False,
+    expand_env: bool = True,
 ) -> SimulationProtocol:
     """Build a protocol using a manifest file.
 
-    The manifest can be YAML or JSON. Relative file paths are resolved against
-    the provided ``directory`` or the manifest's parent directory when omitted.
+    The manifest can be YAML, JSON, TOML, or CSV. Relative file paths are
+    resolved against the provided ``directory`` or the manifest's parent
+    directory when omitted.
+
+    Parameters
+    ----------
+    manifest_path:
+        Path to the manifest file.
+    directory:
+        Base directory for resolving relative paths in the manifest.
+    include_roles:
+        Only include stages with these roles.
+    include_stems:
+        Only include stages with these names.
+    restart_files:
+        Mapping of stage name/role to restart file paths.
+    skip_cross_stage_validation:
+        If True, skip continuity checks between stages.
+    recursive:
+        If True, search subdirectories for files.
+    expand_env:
+        If True, expand environment variables in file paths.
     """
 
-    manifest = load_manifest(manifest_path)
+    manifest = load_manifest(manifest_path, expand_env=expand_env)
     base_dir = directory or str(Path(manifest_path).parent)
 
     return auto_discover(
@@ -1028,10 +1464,291 @@ def load_protocol_from_manifest(
     )
 
 
+class ProtocolBuilder:
+    """Fluent builder for constructing SimulationProtocol objects.
+
+    Provides a chainable API for building protocols step by step with
+    built-in validation.
+
+    Example
+    -------
+    >>> protocol = (
+    ...     ProtocolBuilder()
+    ...     .from_directory("/path/to/files")
+    ...     .with_grouping_rules({"prod": "production"})
+    ...     .auto_detect_restarts()
+    ...     .skip_validation()
+    ...     .build()
+    ... )
+    """
+
+    def __init__(self) -> None:
+        self._directory: Optional[str] = None
+        self._manifest: Optional[Dict[str, Any] | List[Dict[str, Any]]] = None
+        self._manifest_path: Optional[str] = None
+        self._grouping_rules: Optional[Dict[str, str]] = None
+        self._include_roles: Optional[List[str]] = None
+        self._include_stems: Optional[List[str]] = None
+        self._restart_files: Optional[Dict[str, str]] = None
+        self._skip_cross_stage_validation: bool = False
+        self._recursive: bool = False
+        self._auto_detect_restarts: bool = False
+        self._pattern_filter: Optional[str] = None
+        self._expand_env: bool = True
+        self._stages: List[SimulationStage] = []
+        self._stage_tolerances: Dict[str, tuple[float, float]] = {}
+
+    def from_directory(self, directory: str, recursive: bool = False) -> "ProtocolBuilder":
+        """Set the base directory for file discovery.
+
+        Parameters
+        ----------
+        directory:
+            Path to directory containing simulation files.
+        recursive:
+            If True, search subdirectories.
+        """
+        self._directory = os.path.abspath(directory)
+        self._recursive = recursive
+        return self
+
+    def from_manifest(
+        self,
+        manifest_path: str,
+        directory: Optional[str] = None,
+        expand_env: bool = True,
+    ) -> "ProtocolBuilder":
+        """Load stages from a manifest file.
+
+        Parameters
+        ----------
+        manifest_path:
+            Path to YAML, JSON, TOML, or CSV manifest.
+        directory:
+            Base directory for relative paths (defaults to manifest location).
+        expand_env:
+            If True, expand environment variables in paths.
+        """
+        self._manifest_path = manifest_path
+        self._manifest = load_manifest(manifest_path, expand_env=expand_env)
+        self._directory = directory or str(Path(manifest_path).parent)
+        self._expand_env = expand_env
+        return self
+
+    def with_grouping_rules(self, rules: Dict[str, str]) -> "ProtocolBuilder":
+        """Set regex-based grouping rules for stage role assignment.
+
+        Parameters
+        ----------
+        rules:
+            Dictionary mapping regex patterns to stage roles.
+        """
+        self._grouping_rules = rules
+        return self
+
+    def with_pattern_filter(self, pattern: str) -> "ProtocolBuilder":
+        """Filter discovered files using a regex pattern.
+
+        Parameters
+        ----------
+        pattern:
+            Regex pattern to match against filenames.
+        """
+        self._pattern_filter = pattern
+        return self
+
+    def include_roles(self, roles: List[str]) -> "ProtocolBuilder":
+        """Only include stages with specific roles.
+
+        Parameters
+        ----------
+        roles:
+            List of role names to include.
+        """
+        self._include_roles = roles
+        return self
+
+    def include_stems(self, stems: List[str]) -> "ProtocolBuilder":
+        """Only include stages with specific names.
+
+        Parameters
+        ----------
+        stems:
+            List of stage names to include.
+        """
+        self._include_stems = stems
+        return self
+
+    def with_restart_files(self, restart_files: Dict[str, str]) -> "ProtocolBuilder":
+        """Specify restart files for stages.
+
+        Parameters
+        ----------
+        restart_files:
+            Dictionary mapping stage name/role to restart file path.
+        """
+        self._restart_files = restart_files
+        return self
+
+    def auto_detect_restarts(self, enable: bool = True) -> "ProtocolBuilder":
+        """Enable automatic restart chain detection.
+
+        When enabled, the builder will try to automatically link restart
+        files between stages based on naming patterns and timestamps.
+        """
+        self._auto_detect_restarts = enable
+        return self
+
+    def skip_validation(self, skip: bool = True) -> "ProtocolBuilder":
+        """Skip cross-stage validation checks.
+
+        Parameters
+        ----------
+        skip:
+            If True, skip continuity validation between stages.
+        """
+        self._skip_cross_stage_validation = skip
+        return self
+
+    def with_stage_tolerance(
+        self,
+        stage_name: str,
+        expected_gap_ps: float,
+        tolerance_ps: float = 0.1,
+    ) -> "ProtocolBuilder":
+        """Set per-stage gap tolerance.
+
+        Parameters
+        ----------
+        stage_name:
+            Name of the stage to configure.
+        expected_gap_ps:
+            Expected gap before this stage in picoseconds.
+        tolerance_ps:
+            Allowed tolerance for gap validation.
+        """
+        self._stage_tolerances[stage_name] = (expected_gap_ps, tolerance_ps)
+        return self
+
+    def add_stage(
+        self,
+        name: str,
+        stage_role: Optional[str] = None,
+        prmtop: Optional[str] = None,
+        mdin: Optional[str] = None,
+        mdout: Optional[str] = None,
+        mdcrd: Optional[str] = None,
+        inpcrd: Optional[str] = None,
+        expected_gap_ps: Optional[float] = None,
+        gap_tolerance_ps: Optional[float] = None,
+    ) -> "ProtocolBuilder":
+        """Manually add a stage to the protocol.
+
+        Parameters
+        ----------
+        name:
+            Unique stage identifier.
+        stage_role:
+            Stage type (minimization, equilibration, production, etc.).
+        prmtop, mdin, mdout, mdcrd, inpcrd:
+            Paths to simulation files.
+        expected_gap_ps:
+            Expected gap before this stage in picoseconds.
+        gap_tolerance_ps:
+            Tolerance for gap validation.
+        """
+        stage = SimulationStage(
+            name=name,
+            stage_role=stage_role,
+            expected_gap_ps=expected_gap_ps,
+            gap_tolerance_ps=gap_tolerance_ps,
+        )
+
+        base_dir = self._directory or "."
+
+        if prmtop:
+            path = prmtop if os.path.isabs(prmtop) else os.path.join(base_dir, prmtop)
+            stage.prmtop = PrmtopParser(path).parse()
+        if mdin:
+            path = mdin if os.path.isabs(mdin) else os.path.join(base_dir, mdin)
+            stage.mdin = MdinParser(path).parse()
+        if mdout:
+            path = mdout if os.path.isabs(mdout) else os.path.join(base_dir, mdout)
+            stage.mdout = MdoutParser(path).parse()
+        if mdcrd:
+            path = mdcrd if os.path.isabs(mdcrd) else os.path.join(base_dir, mdcrd)
+            stage.mdcrd = MdcrdParser(path).parse()
+        if inpcrd:
+            path = inpcrd if os.path.isabs(inpcrd) else os.path.join(base_dir, inpcrd)
+            stage.inpcrd = InpcrdParser(path).parse()
+            stage.restart_path = path
+
+        self._stages.append(stage)
+        return self
+
+    def build(self) -> SimulationProtocol:
+        """Build and return the SimulationProtocol.
+
+        Returns
+        -------
+        SimulationProtocol with all configured stages validated.
+        """
+        if self._stages:
+            # Manual stages were added
+            protocol = SimulationProtocol(stages=list(self._stages))
+        elif self._manifest is not None and self._directory:
+            # Use manifest
+            protocol = auto_discover(
+                self._directory,
+                manifest=self._manifest,
+                grouping_rules=self._grouping_rules,
+                include_roles=self._include_roles,
+                include_stems=self._include_stems,
+                restart_files=self._restart_files,
+                skip_cross_stage_validation=True,  # We'll validate after applying tolerances
+                recursive=self._recursive,
+                auto_detect_restarts=self._auto_detect_restarts,
+                pattern_filter=self._pattern_filter,
+            )
+        elif self._directory:
+            # Discover from directory
+            protocol = auto_discover(
+                self._directory,
+                grouping_rules=self._grouping_rules,
+                include_roles=self._include_roles,
+                include_stems=self._include_stems,
+                restart_files=self._restart_files,
+                skip_cross_stage_validation=True,  # We'll validate after applying tolerances
+                recursive=self._recursive,
+                auto_detect_restarts=self._auto_detect_restarts,
+                pattern_filter=self._pattern_filter,
+            )
+        else:
+            raise ValueError("No directory or manifest specified. Use from_directory() or from_manifest().")
+
+        # Apply per-stage tolerances
+        for stage in protocol.stages:
+            if stage.name in self._stage_tolerances:
+                expected, tolerance = self._stage_tolerances[stage.name]
+                stage.expected_gap_ps = expected
+                stage.gap_tolerance_ps = tolerance
+
+        # Validate now with proper tolerances applied
+        if not self._skip_cross_stage_validation:
+            protocol.validate(cross_stage=True)
+
+        return protocol
+
+
 __all__ = [
     "SimulationProtocol",
     "SimulationStage",
+    "ProtocolBuilder",
     "auto_discover",
+    "detect_numeric_sequences",
+    "infer_stage_role_from_content",
+    "auto_detect_restart_chain",
+    "smart_group_files",
     "load_manifest",
     "load_protocol_from_manifest",
 ]
