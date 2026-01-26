@@ -781,6 +781,7 @@ def _plan_command(args: argparse.Namespace) -> int:
     expand_env = not getattr(args, "no_expand_env", False)
     pattern_filter = getattr(args, "pattern", None)
     auto_detect_restarts = getattr(args, "auto_detect_restarts", False)
+    global_prmtop = getattr(args, "prmtop", None)
 
     if args.manifest:
         protocol = load_protocol_from_manifest(
@@ -789,6 +790,7 @@ def _plan_command(args: argparse.Namespace) -> int:
             skip_cross_stage_validation=args.skip_cross_stage_validation,
             recursive=args.recursive,
             expand_env=expand_env,
+            global_prmtop=global_prmtop,
         )
         # Apply auto-detect restarts if requested (after manifest loading)
         if auto_detect_restarts:
@@ -801,6 +803,28 @@ def _plan_command(args: argparse.Namespace) -> int:
                     stage.inpcrd = InpcrdParser(rst_path).parse()
                     stage.restart_path = rst_path
                     stage.validation.append(f"INFO: restart file auto-detected: {rst_path}")
+    elif args.recursive:
+        # Recursive mode: auto-discover files without interactive prompts
+        print(f"\nScanning {directory} recursively for simulation files...")
+        protocol = auto_discover(
+            directory,
+            manifest=None,
+            skip_cross_stage_validation=args.skip_cross_stage_validation,
+            recursive=True,
+            auto_detect_restarts=auto_detect_restarts,
+            pattern_filter=pattern_filter,
+            global_prmtop=global_prmtop,
+        )
+        if not protocol.stages:
+            print("No simulation files discovered; exiting.")
+            print("\nHint: Check that your directory contains files with recognized extensions:")
+            print("  prmtop: .prmtop, .parm7, .top")
+            print("  mdin:   .mdin, .in")
+            print("  mdout:  .mdout, .out")
+            print("  mdcrd:  .nc, .mdcrd, .crd, .x")
+            print("  inpcrd: .inpcrd, .rst, .rst7, .ncrst, .restrt")
+            return 1
+        print(f"Discovered {len(protocol.stages)} stage(s).\n")
     else:
         manifest = _interactive_manifest(directory)
         if not manifest:
@@ -811,9 +835,10 @@ def _plan_command(args: argparse.Namespace) -> int:
             directory,
             manifest=manifest,
             skip_cross_stage_validation=args.skip_cross_stage_validation,
-            recursive=args.recursive,
+            recursive=False,
             auto_detect_restarts=auto_detect_restarts,
             pattern_filter=pattern_filter,
+            global_prmtop=global_prmtop,
         )
 
     _print_protocol(protocol, verbose=args.verbose)
@@ -987,7 +1012,9 @@ For more information, visit: https://github.com/your-org/ambermeta
     plan_parser.add_argument(
         "--recursive",
         action="store_true",
-        help="Recursively discover stage files under the provided directory",
+        help="Auto-discover simulation files recursively (no interactive prompts). "
+             "Files are grouped by stem (filename without extension) and stage roles "
+             "are inferred from directory names (equil→equilibration, prod→production).",
     )
     plan_parser.add_argument(
         "-v",
@@ -1033,6 +1060,11 @@ For more information, visit: https://github.com/your-org/ambermeta
         "--auto-detect-restarts",
         action="store_true",
         help="Automatically detect and link restart files between stages",
+    )
+    # Global prmtop to avoid redundant specification
+    plan_parser.add_argument(
+        "--prmtop",
+        help="Global prmtop file to use for all stages (avoids specifying it per stage)",
     )
 
     # UX-005: validate subcommand
