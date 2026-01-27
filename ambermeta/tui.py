@@ -1637,32 +1637,6 @@ if TEXTUAL_AVAILABLE:
             text-style: bold;
         }
 
-        /* Responsive: narrow terminal adjustments */
-        @media (width < 100) {
-            Screen {
-                grid-columns: 1fr 1fr;
-            }
-
-            .editor-row Label {
-                width: 12;
-            }
-        }
-
-        @media (width < 80) {
-            Screen {
-                layout: vertical;
-                grid-columns: 1fr;
-            }
-
-            #left-panel {
-                height: 40%;
-            }
-
-            #right-panel {
-                height: 60%;
-            }
-        }
-
         /* Modal styles */
         ModalScreen {
             align: center middle;
