@@ -361,30 +361,44 @@ class SimulationProtocol:
 
                 gap = start_time - end_time
 
-                # When no explicit gap expectation is provided, treat very small
+                # Robust tolerance calculation for numerical precision and unit issues
+                # Use a tolerance that scales with the magnitude of the times involved
+                # Default: 1 ps or 0.01% of end_time, whichever is larger
+                default_tolerance = max(1.0, abs(end_time) * 1e-4) if end_time else 1.0
+                prior_dt = getattr(prev.mdcrd.details, "avg_dt", None)
+                if isinstance(prior_dt, (int, float)) and prior_dt > 0:
+                    # Also consider the frame interval as a tolerance factor
+                    default_tolerance = max(default_tolerance, float(prior_dt) * 0.5)
+
+                # When no explicit gap expectation is provided, treat small
                 # differences as numerical noise instead of real gaps/overlaps.
                 if current.expected_gap_ps is None:
-                    default_tolerance = 1e-6
-                    prior_dt = getattr(prev.mdcrd.details, "avg_dt", None)
-                    tolerance = (
-                        max(float(prior_dt) * 1e-6, default_tolerance)
-                        if isinstance(prior_dt, (int, float))
-                        else default_tolerance
-                    )
-                    if abs(gap) <= tolerance:
+                    if abs(gap) <= default_tolerance:
                         gap = 0.0
+
+                # Sanity check: massive gaps (> 1e6 ps = 1 µs) are likely errors
+                # in unit conversion or file parsing, not real discontinuities
+                if abs(gap) > 1e6:
+                    current._add_continuity_note(
+                        f"INFO: Implausible gap detected ({gap:g} ps); likely a unit or parsing error. "
+                        f"Continuity check skipped."
+                    )
+                    current.observed_gap_ps = None
+                    continue
 
                 current.observed_gap_ps = gap
 
                 if gap < 0:
-                    current._add_continuity_note(
-                        f"Stage appears to overlap previous stage by {abs(gap):g} ps."
-                    )
+                    # Small negative gaps within tolerance are likely floating-point noise
+                    if abs(gap) > default_tolerance:
+                        current._add_continuity_note(
+                            f"Stage appears to overlap previous stage by {abs(gap):g} ps."
+                        )
                 elif gap > 0:
                     current._add_continuity_note(f"Stage starts {gap:g} ps after previous ended.")
 
                 if current.expected_gap_ps is not None:
-                    tolerance = current.gap_tolerance_ps or 0.0
+                    tolerance = current.gap_tolerance_ps or default_tolerance
                     lower = current.expected_gap_ps - tolerance
                     upper = current.expected_gap_ps + tolerance
                     if gap < lower:
@@ -493,8 +507,7 @@ class SimulationProtocol:
                         "ensemble": getattr(details, "ensemble", None),
                         "thermostat": getattr(details, "temp_control", None),
                         "barostat": getattr(details, "press_control", None),
-                        "temp_control": getattr(details, "temp_control", None),
-                        "press_control": getattr(details, "press_control", None),
+                        # Removed duplicate temp_control and press_control
                         "cutoff": getattr(details, "cutoff", None),
                         "constraints": getattr(details, "constraints", None),
                         "pbc": getattr(details, "pbc", None),
@@ -514,7 +527,7 @@ class SimulationProtocol:
                 md_engine.setdefault("run_length_steps", getattr(details, "nstlim", None))
                 if getattr(details, "cutoff", None) is not None:
                     md_engine.setdefault("cutoff", getattr(details, "cutoff", None))
-                    md_engine["cutoff_mdout"] = getattr(details, "cutoff", None)
+                    # Removed redundant cutoff_mdout field
                 if getattr(details, "shake_active", None) is not None:
                     md_engine["shake_active"] = getattr(details, "shake_active", None)
                 pme_indicators = _collect_pme_indicators({}, details)
@@ -648,23 +661,43 @@ class SimulationProtocol:
                     }
                 )
 
+            # Infer HMR from timestep if not already detected from prmtop
+            # Timestep >= 0.003 ps (3 fs) is a definitive indicator of HMR
+            dt = None
+            if stage.mdin and stage.mdin.details:
+                dt = getattr(stage.mdin.details, "dt", None)
+            if dt is None and stage.mdout and stage.mdout.details:
+                dt = getattr(stage.mdout.details, "dt", None)
+            if dt is not None and isinstance(dt, (int, float)):
+                if dt >= 0.003:
+                    # Large timestep indicates HMR is active
+                    if composition.get("hmr_active") is None or composition.get("hmr_active") is False:
+                        composition["hmr_active"] = True
+                        composition["hmr_inferred_from_timestep"] = True
+
             # Add observed density from mdout if available (actual simulation values)
             if stage.mdout and stage.mdout.details:
                 mdout_details = stage.mdout.details
-                density_stats = getattr(mdout_details, "density_stats", None)
-                if density_stats:
-                    avg, std = density_stats.get_stats()
-                    if avg is not None:
-                        composition["observed_density_mean"] = avg
-                        composition["observed_density_std"] = std
-                        # Use observed as the primary density if available
-                        composition["density"] = avg
-                    else:
-                        # Fall back to initial density if no observed
-                        composition["density"] = composition.get("initial_density")
-                else:
-                    composition["density"] = composition.get("initial_density")
-            else:
+                stats = getattr(mdout_details, "stats", None)
+                if stats:
+                    density_stats = getattr(stats, "density_stats", None)
+                    if density_stats:
+                        avg, std = density_stats.get_stats()
+                        if avg is not None:
+                            composition["average_density"] = avg
+                            composition["density_std"] = std
+                            # Use average as the primary density if available
+                            composition["density"] = avg
+                    # Get first and last density from trajectory
+                    first_density = getattr(stats, "first_density", None)
+                    last_density = getattr(stats, "last_density", None)
+                    if first_density is not None:
+                        composition["first_density"] = first_density
+                    if last_density is not None:
+                        composition["final_density"] = last_density
+
+            # Fall back to initial density from prmtop if no observed density
+            if "density" not in composition:
                 composition["density"] = composition.get("initial_density")
 
             # Add observed box dimensions from mdcrd if available
@@ -698,6 +731,31 @@ class SimulationProtocol:
                             "ion_count": sum(ion_residues.values()) if ion_residues else None,
                         }
                     )
+
+            # Consolidate density fields to minimize redundancy:
+            # If density is constant (e.g., NVT or minimization), only keep 'density'
+            # If trajectory shows density variation, keep detailed breakdown
+            density_tolerance = 1e-4  # Relative tolerance for density comparison
+            initial = composition.get("initial_density")
+            avg = composition.get("average_density")
+            first = composition.get("first_density")
+            final = composition.get("final_density")
+
+            def densities_equal(a, b):
+                if a is None or b is None:
+                    return a is None and b is None
+                return abs(a - b) < max(abs(a), abs(b)) * density_tolerance
+
+            # Check if all density values are effectively the same
+            densities_to_check = [d for d in [initial, avg, first, final] if d is not None]
+            if densities_to_check:
+                all_equal = all(densities_equal(densities_to_check[0], d) for d in densities_to_check)
+                if all_equal:
+                    # Consolidate to single 'density' field
+                    composition["density"] = avg if avg is not None else (first if first is not None else initial)
+                    # Remove redundant fields
+                    for key in ["initial_density", "average_density", "first_density", "final_density", "density_std"]:
+                        composition.pop(key, None)
 
             return {"atom_counts": atom_counts, "box": box, "composition": composition}
 
