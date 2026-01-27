@@ -71,7 +71,7 @@ class MdinMetadata:
     length_steps: Union[int, str] = 0    # nstlim
     dt: Union[float, str] = 0.001        # dt (ps) - Default is 0.001 (Manual p.6)
     restart_flag: Union[int, str] = 0    # irest
-    ensemble: str = "Unknown"            # NVE / NVT / NPT / ...
+    ensemble: Optional[str] = "Unknown"  # NVE / NVT / NPT / ... or None for minimization
     stage_role: str = "Generic MD Stage" # heuristic description
     
     # --- Output ---
@@ -467,16 +467,20 @@ def _interpret_parameters(md: MdinMetadata) -> None:
             elif q == "CUT":
                 md.has_cutoff_schedule = True
 
-    # --- Ensemble classification ---
-    md.ensemble = _classify_ensemble(
-        ntb=ntb_i,
-        ntt=ntt_i,
-        ntp=ntp_i,
-        implicit=(md.implicit_solvent != "No"),
-    )
-
     # --- Stage role heuristics ---
     md.stage_role = _classify_stage(md)
+
+    # --- Ensemble classification ---
+    # Minimization stages don't have a thermodynamic ensemble
+    if imin_i is not None and imin_i != 0:
+        md.ensemble = None  # Minimization has no ensemble
+    else:
+        md.ensemble = _classify_ensemble(
+            ntb=ntb_i,
+            ntt=ntt_i,
+            ntp=ntp_i,
+            implicit=(md.implicit_solvent != "No"),
+        )
 
     # --- Sanity checks / warnings ---
     _populate_warnings(md)

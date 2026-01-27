@@ -361,32 +361,48 @@ class SimulationProtocol:
 
                 gap = start_time - end_time
 
+                # Get timestep info for tolerance calculation
+                prior_dt = getattr(prev.mdcrd.details, "avg_dt", None)
+                if not isinstance(prior_dt, (int, float)) or prior_dt <= 0:
+                    prior_dt = 0.002  # Default 2 fs if not available
+
                 # When no explicit gap expectation is provided, treat very small
                 # differences as numerical noise instead of real gaps/overlaps.
+                # Use a tolerance of at least 10% of the timestep or 0.1 ps minimum
                 if current.expected_gap_ps is None:
-                    default_tolerance = 1e-6
-                    prior_dt = getattr(prev.mdcrd.details, "avg_dt", None)
-                    tolerance = (
-                        max(float(prior_dt) * 1e-6, default_tolerance)
-                        if isinstance(prior_dt, (int, float))
-                        else default_tolerance
-                    )
+                    tolerance = max(float(prior_dt) * 0.1, 0.1)  # 10% of dt or 0.1 ps
                     if abs(gap) <= tolerance:
                         gap = 0.0
 
+                # Detect likely unit conversion errors or data issues
+                # Gaps larger than 1 million ps (1000 ns) are almost certainly errors
+                max_reasonable_gap = 1e6  # 1000 ns in ps
+                if abs(gap) > max_reasonable_gap:
+                    current._add_continuity_note(
+                        f"WARNING: Computed gap ({gap:g} ps) is unreasonably large. "
+                        "This likely indicates a unit mismatch or missing time data. Skipping gap check."
+                    )
+                    current.observed_gap_ps = None
+                    continue
+
                 current.observed_gap_ps = gap
 
-                if gap < 0:
-                    current._add_continuity_note(
-                        f"Stage appears to overlap previous stage by {abs(gap):g} ps."
-                    )
-                elif gap > 0:
-                    current._add_continuity_note(f"Stage starts {gap:g} ps after previous ended.")
+                # Only report actual gaps/overlaps that exceed auto-tolerance (no explicit expectation)
+                if current.expected_gap_ps is None:
+                    auto_tolerance = max(float(prior_dt) * 0.1, 0.1)
+                    if gap < -auto_tolerance:  # Real overlap (negative gap beyond tolerance)
+                        current._add_continuity_note(
+                            f"Stage appears to overlap previous stage by {abs(gap):g} ps."
+                        )
+                    elif gap > auto_tolerance:  # Real gap
+                        current._add_continuity_note(f"Stage starts {gap:g} ps after previous ended.")
+                    elif gap != 0:
+                        current._add_continuity_note("Gap detected without stated expectation; verify continuity.")
 
                 if current.expected_gap_ps is not None:
-                    tolerance = current.gap_tolerance_ps or 0.0
-                    lower = current.expected_gap_ps - tolerance
-                    upper = current.expected_gap_ps + tolerance
+                    expected_tolerance = current.gap_tolerance_ps or 0.0
+                    lower = current.expected_gap_ps - expected_tolerance
+                    upper = current.expected_gap_ps + expected_tolerance
                     if gap < lower:
                         current._add_continuity_note(
                             f"Observed gap {gap:g} ps is shorter than expected {current.expected_gap_ps:g} ps."
@@ -397,10 +413,8 @@ class SimulationProtocol:
                         )
                     else:
                         current._add_continuity_note(
-                            f"Observed gap {gap:g} ps is within expected window ({current.expected_gap_ps:g}±{tolerance:g} ps)."
+                            f"Observed gap {gap:g} ps is within expected window ({current.expected_gap_ps:g}±{expected_tolerance:g} ps)."
                         )
-                elif gap != 0:
-                    current._add_continuity_note("Gap detected without stated expectation; verify continuity.")
 
     def totals(self) -> Dict[str, float]:
         total_steps = 0.0
@@ -648,19 +662,62 @@ class SimulationProtocol:
                     }
                 )
 
+            # Additional HMR detection from timestep heuristic
+            # If dt >= 0.003 ps (3 fs), HMR is almost certainly being used
+            dt_ps = None
+            if stage.mdin and stage.mdin.details:
+                dt_ps = getattr(stage.mdin.details, "dt", None)
+            if dt_ps is None and stage.mdout and stage.mdout.details:
+                dt_ps = getattr(stage.mdout.details, "dt", None)
+
+            if dt_ps is not None and isinstance(dt_ps, (int, float)):
+                hmr_from_dt = float(dt_ps) >= 0.003  # 3 fs or larger indicates HMR
+                hmr_from_mass = composition.get("hmr_active")
+
+                if hmr_from_dt and not hmr_from_mass:
+                    # Timestep indicates HMR but prmtop didn't detect it
+                    composition["hmr_active"] = True
+                    composition["hmr_inferred_from_timestep"] = True
+                    if "hmr_hydrogen_mass_summary" not in composition or not composition["hmr_hydrogen_mass_summary"]:
+                        composition["hmr_hydrogen_mass_summary"] = f"Inferred from timestep (dt={dt_ps} ps)"
+                elif hmr_from_dt and hmr_from_mass:
+                    composition["hmr_confirmed_by_timestep"] = True
+
             # Add observed density from mdout if available (actual simulation values)
+            # Smart density reporting: only include fields that add value
             if stage.mdout and stage.mdout.details:
                 mdout_details = stage.mdout.details
-                density_stats = getattr(mdout_details, "density_stats", None)
-                if density_stats:
-                    avg, std = density_stats.get_stats()
-                    if avg is not None:
-                        composition["observed_density_mean"] = avg
-                        composition["observed_density_std"] = std
-                        # Use observed as the primary density if available
-                        composition["density"] = avg
+                stats = getattr(mdout_details, "stats", None)
+                if stats:
+                    density_stats = getattr(stats, "density_stats", None)
+                    if density_stats:
+                        avg, std = density_stats.get_stats()
+                        if avg is not None:
+                            # Track first/last density from trajectory
+                            first_density = getattr(stats, "first_density", None)
+                            last_density = getattr(stats, "last_density", None)
+
+                            # Determine if density is effectively constant
+                            # Use a threshold of 0.5% variation or std < 0.01 g/cc
+                            density_is_constant = False
+                            if std is not None and (std < 0.01 or (avg > 0 and std / avg < 0.005)):
+                                density_is_constant = True
+
+                            if density_is_constant:
+                                # For constant density (NVT, minimization), only report average
+                                composition["density"] = avg
+                                # Don't include redundant first/final/std for constant density
+                            else:
+                                # For varying density (NPT), include full trajectory info
+                                composition["observed_density_first"] = first_density
+                                composition["observed_density_final"] = last_density
+                                composition["observed_density_mean"] = avg
+                                composition["observed_density_std"] = std
+                                composition["density"] = avg
+                        else:
+                            # Fall back to initial density if no observed
+                            composition["density"] = composition.get("initial_density")
                     else:
-                        # Fall back to initial density if no observed
                         composition["density"] = composition.get("initial_density")
                 else:
                     composition["density"] = composition.get("initial_density")
@@ -717,6 +774,45 @@ class SimulationProtocol:
                 trajectory.setdefault("n_frames", getattr(details, "n_frames", None))
             return trajectory
 
+        def _deduplicate_stage_data(stage_data: Dict[str, Any]) -> Dict[str, Any]:
+            """Remove redundant data that wouldn't appear in a Methods section.
+
+            - Remove initial_density if we have observed density (average is sufficient)
+            - Remove duplicate cutoff fields (keep one)
+            - Remove verbose auxiliary fields
+            """
+            if "system" in stage_data and isinstance(stage_data["system"], dict):
+                comp = stage_data["system"].get("composition", {})
+                if comp and isinstance(comp, dict):
+                    # If we have observed density, remove initial_density (redundant)
+                    if "density" in comp and "initial_density" in comp:
+                        # Only remove if density is from observation, not fallback
+                        has_observed = any(k.startswith("observed_density") for k in comp)
+                        if has_observed or comp.get("density") != comp.get("initial_density"):
+                            del comp["initial_density"]
+                        elif comp.get("density") == comp.get("initial_density"):
+                            # Same value - remove initial_density as redundant
+                            del comp["initial_density"]
+
+            if "md_engine" in stage_data and isinstance(stage_data["md_engine"], dict):
+                eng = stage_data["md_engine"]
+                # Remove duplicate cutoff fields - keep cutoff_mdout if available, else cutoff
+                if "cutoff" in eng and "cutoff_mdout" in eng:
+                    if eng["cutoff"] == eng["cutoff_mdout"]:
+                        del eng["cutoff_mdout"]
+
+                # temp_control and thermostat are often duplicates
+                if "temp_control" in eng and "thermostat" in eng:
+                    if eng["temp_control"] == eng["thermostat"]:
+                        del eng["temp_control"]
+
+                # press_control and barostat are often duplicates
+                if "press_control" in eng and "barostat" in eng:
+                    if eng["press_control"] == eng["barostat"]:
+                        del eng["press_control"]
+
+            return stage_data
+
         stages_payload = []
         stage_sequence = []
         for stage in self.stages:
@@ -730,6 +826,8 @@ class SimulationProtocol:
                 "system": _collect_system(stage),
                 "trajectory_output": _collect_trajectory(stage),
             }
+            # Apply deduplication before pruning
+            stage_payload = _deduplicate_stage_data(stage_payload)
             stages_payload.append(_prune_methods_value(stage_payload))
 
         payload = {

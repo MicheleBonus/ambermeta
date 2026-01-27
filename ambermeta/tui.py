@@ -372,35 +372,82 @@ class ProtocolState:
     def link_restart_files(self) -> None:
         """Link restart files between consecutive stages.
 
-        For each stage (except the first), sets the inpcrd to the restart/rst file
-        from the previous stage, if:
-        1. The previous stage has an inpcrd file with the same stem (that's actually its output)
-        2. The current stage doesn't have an explicitly set inpcrd or it has one with its own stem
+        IMPORTANT: In AMBER workflows:
+        - Each stage's same-stem inpcrd/rst file is its OUTPUT (restart file it produces)
+        - Each stage's INPUT comes from the PREVIOUS stage's output
+        - The first stage's input comes from a separate "initial" inpcrd (e.g., system.inpcrd)
+
+        This method properly chains restart files:
+        1. For stage N (N > 0), input = stage N-1's same-stem inpcrd (its output)
+        2. Same-stem inpcrd files are stored separately as "restart_output"
         """
         if len(self.stages) < 2:
             return
 
+        # First pass: identify and store output restart files separately
+        for stage in self.stages:
+            curr_inpcrd = stage.files.get("inpcrd")
+            if curr_inpcrd:
+                stage_stem = Path(stage.name).stem
+                inpcrd_stem = Path(curr_inpcrd).stem
+                # If the inpcrd has the same stem as the stage, it's the OUTPUT, not INPUT
+                if stage_stem == inpcrd_stem or stage_stem in inpcrd_stem or inpcrd_stem in stage_stem:
+                    # Store as restart output, clear from input
+                    stage.files["_restart_output"] = curr_inpcrd
+                    del stage.files["inpcrd"]
+
+        # Second pass: link previous stage's output as current stage's input
         for i in range(1, len(self.stages)):
             prev_stage = self.stages[i - 1]
             curr_stage = self.stages[i]
 
-            # Get the previous stage's restart output (same-stem inpcrd is actually its output)
-            prev_inpcrd = prev_stage.files.get("inpcrd")
-            if not prev_inpcrd:
+            # Get the previous stage's restart output
+            prev_output = prev_stage.files.get("_restart_output")
+            if not prev_output:
+                # Fall back to looking for the previous stage's inpcrd
+                prev_output = prev_stage.files.get("inpcrd")
+
+            if not prev_output:
                 continue
 
-            # Check if current stage has a same-stem inpcrd (which would be ITS output, not input)
-            curr_inpcrd = curr_stage.files.get("inpcrd")
-            if curr_inpcrd:
-                # Check if it's the same stem as the current stage (meaning it's the output, not input)
-                curr_stem = Path(curr_stage.name).stem
-                inpcrd_stem = Path(curr_inpcrd).stem
-                if curr_stem != inpcrd_stem:
-                    # It's explicitly set to a different file, don't override
-                    continue
+            # Only set if current stage doesn't already have an explicit input
+            if "inpcrd" not in curr_stage.files:
+                curr_stage.files["inpcrd"] = prev_output
 
-            # Link the previous stage's restart to the current stage's input
-            curr_stage.files["inpcrd"] = prev_inpcrd
+        # Third pass: try to find initial inpcrd for the first stage
+        if self.stages and "inpcrd" not in self.stages[0].files:
+            first_stage = self.stages[0]
+            # Look for a candidate initial coordinate file
+            # - Same directory as the prmtop or in the base directory
+            # - Not matching any stage stem
+            stage_stems = {Path(s.name).stem for s in self.stages}
+
+            initial_candidates = []
+            inpcrd_exts = {".rst", ".rst7", ".ncrst", ".restrt", ".inpcrd", ".crd"}
+
+            # Check discovered files for candidates
+            for stem, files in self._discovered_files.items():
+                if stem in stage_stems:
+                    continue  # Skip stage output files
+                inpcrd_path = files.get("inpcrd")
+                if inpcrd_path:
+                    inpcrd_stem = Path(inpcrd_path).stem.lower()
+                    # Prefer files with names suggesting initial coordinates
+                    is_initial = any(kw in inpcrd_stem for kw in [
+                        "system", "start", "initial", "init", "input", "solvated", "setup"
+                    ])
+                    initial_candidates.append((inpcrd_path, is_initial))
+
+            # Sort to prioritize files with "initial" keywords
+            initial_candidates.sort(key=lambda x: (not x[1], x[0]))
+
+            if initial_candidates:
+                first_stage.files["inpcrd"] = initial_candidates[0][0]
+
+        # Fourth pass: clean up temporary _restart_output keys from the files dict
+        for stage in self.stages:
+            if "_restart_output" in stage.files:
+                del stage.files["_restart_output"]
 
     def create_stages_from_sequence(self, base_pattern: str, role: str = "") -> List[Stage]:
         """Create stages from a detected numeric sequence."""

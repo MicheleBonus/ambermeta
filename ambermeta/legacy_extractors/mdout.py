@@ -98,6 +98,14 @@ class ThermoStats:
     _densities: StreamingStats = field(default_factory=StreamingStats)
     _volumes: StreamingStats = field(default_factory=StreamingStats)
 
+    # First and last values for trajectory evolution tracking
+    first_density: Optional[float] = None
+    last_density: Optional[float] = None
+    first_temp: Optional[float] = None
+    last_temp: Optional[float] = None
+    first_volume: Optional[float] = None
+    last_volume: Optional[float] = None
+
     # Energy components (accumulators for mean)
     sum_bond: float = 0.0
     sum_angle: float = 0.0
@@ -165,11 +173,32 @@ class ThermoStats:
             if self.count == 1: self.time_start = t
             self.time_end = t
 
-        if (v := get_f('TEMP(K)')) is not None: self._temps.add(v)
+        # Temperature tracking with first/last
+        temp_val = get_f('TEMP(K)')
+        if temp_val is not None:
+            self._temps.add(temp_val)
+            if self.first_temp is None:
+                self.first_temp = temp_val
+            self.last_temp = temp_val
+
         if (v := get_f('PRESS')) is not None: self._pressures.add(v)
         if (v := get_f('Etot')) is not None: self._etots.add(v)
-        if (v := get_f('Density')) is not None: self._densities.add(v)
-        if (v := get_f('VOLUME')) is not None: self._volumes.add(v)
+
+        # Density tracking with first/last
+        density_val = get_f('Density')
+        if density_val is not None:
+            self._densities.add(density_val)
+            if self.first_density is None:
+                self.first_density = density_val
+            self.last_density = density_val
+
+        # Volume tracking with first/last
+        volume_val = get_f('VOLUME')
+        if volume_val is not None:
+            self._volumes.add(volume_val)
+            if self.first_volume is None:
+                self.first_volume = volume_val
+            self.last_volume = volume_val
 
         self.sum_bond += get_f('BOND') or 0.0
         self.sum_angle += get_f('ANGLE') or 0.0
