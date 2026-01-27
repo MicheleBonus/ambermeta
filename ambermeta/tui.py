@@ -369,6 +369,39 @@ class ProtocolState:
         self._save_state("Set global prmtop")
         self.global_prmtop = path
 
+    def link_restart_files(self) -> None:
+        """Link restart files between consecutive stages.
+
+        For each stage (except the first), sets the inpcrd to the restart/rst file
+        from the previous stage, if:
+        1. The previous stage has an inpcrd file with the same stem (that's actually its output)
+        2. The current stage doesn't have an explicitly set inpcrd or it has one with its own stem
+        """
+        if len(self.stages) < 2:
+            return
+
+        for i in range(1, len(self.stages)):
+            prev_stage = self.stages[i - 1]
+            curr_stage = self.stages[i]
+
+            # Get the previous stage's restart output (same-stem inpcrd is actually its output)
+            prev_inpcrd = prev_stage.files.get("inpcrd")
+            if not prev_inpcrd:
+                continue
+
+            # Check if current stage has a same-stem inpcrd (which would be ITS output, not input)
+            curr_inpcrd = curr_stage.files.get("inpcrd")
+            if curr_inpcrd:
+                # Check if it's the same stem as the current stage (meaning it's the output, not input)
+                curr_stem = Path(curr_stage.name).stem
+                inpcrd_stem = Path(curr_inpcrd).stem
+                if curr_stem != inpcrd_stem:
+                    # It's explicitly set to a different file, don't override
+                    continue
+
+            # Link the previous stage's restart to the current stage's input
+            curr_stage.files["inpcrd"] = prev_inpcrd
+
     def create_stages_from_sequence(self, base_pattern: str, role: str = "") -> List[Stage]:
         """Create stages from a detected numeric sequence."""
         if base_pattern not in self._sequences:
@@ -419,6 +452,10 @@ class ProtocolState:
 
     def to_manifest(self, use_absolute_paths: bool = True) -> List[Dict[str, Any]]:
         """Convert the protocol to a manifest format."""
+        # Link restart files if enabled (this properly chains restart inputs)
+        if self.auto_link_restarts:
+            self.link_restart_files()
+
         manifest = []
 
         for stage in self.stages:
@@ -445,21 +482,69 @@ class ProtocolState:
         if not YAML_AVAILABLE:
             raise ImportError("PyYAML is required for YAML export. Install with: pip install pyyaml")
 
-        manifest = {"stages": self.to_manifest(use_absolute_paths)}
+        manifest: Dict[str, Any] = {}
+
+        # Include global settings
+        if self.global_prmtop:
+            prmtop_path = self.global_prmtop
+            if use_absolute_paths and not os.path.isabs(prmtop_path):
+                prmtop_path = os.path.join(self.base_directory, prmtop_path)
+            manifest["global_prmtop"] = prmtop_path
+
+        if self.hmr_prmtop:
+            hmr_path = self.hmr_prmtop
+            if use_absolute_paths and not os.path.isabs(hmr_path):
+                hmr_path = os.path.join(self.base_directory, hmr_path)
+            manifest["hmr_prmtop"] = hmr_path
+
+        manifest["stages"] = self.to_manifest(use_absolute_paths)
+
         with open(path, "w", encoding="utf-8") as f:
             yaml.safe_dump(manifest, f, sort_keys=False, default_flow_style=False)
 
     def export_json(self, path: str, use_absolute_paths: bool = True) -> None:
         """Export manifest to JSON format."""
-        manifest = self.to_manifest(use_absolute_paths)
+        output: Dict[str, Any] = {}
+
+        # Include global settings
+        if self.global_prmtop:
+            prmtop_path = self.global_prmtop
+            if use_absolute_paths and not os.path.isabs(prmtop_path):
+                prmtop_path = os.path.join(self.base_directory, prmtop_path)
+            output["global_prmtop"] = prmtop_path
+
+        if self.hmr_prmtop:
+            hmr_path = self.hmr_prmtop
+            if use_absolute_paths and not os.path.isabs(hmr_path):
+                hmr_path = os.path.join(self.base_directory, hmr_path)
+            output["hmr_prmtop"] = hmr_path
+
+        output["stages"] = self.to_manifest(use_absolute_paths)
+
         with open(path, "w", encoding="utf-8") as f:
-            json.dump(manifest, f, indent=2)
+            json.dump(output, f, indent=2)
 
     def export_toml(self, path: str, use_absolute_paths: bool = True) -> None:
         """Export manifest to TOML format."""
         manifest = self.to_manifest(use_absolute_paths)
 
         lines = ["# AmberMeta Protocol Manifest", ""]
+
+        # Include global settings
+        if self.global_prmtop:
+            prmtop_path = self.global_prmtop
+            if use_absolute_paths and not os.path.isabs(prmtop_path):
+                prmtop_path = os.path.join(self.base_directory, prmtop_path)
+            lines.append(f'global_prmtop = "{prmtop_path}"')
+
+        if self.hmr_prmtop:
+            hmr_path = self.hmr_prmtop
+            if use_absolute_paths and not os.path.isabs(hmr_path):
+                hmr_path = os.path.join(self.base_directory, hmr_path)
+            lines.append(f'hmr_prmtop = "{hmr_path}"')
+
+        if self.global_prmtop or self.hmr_prmtop:
+            lines.append("")
         for stage in manifest:
             lines.append("[[stages]]")
             for key, value in stage.items():
@@ -1240,22 +1325,29 @@ if TEXTUAL_AVAILABLE:
             self._stem_info = []
 
             for stem, files in sorted(discovered.items()):
+                # Get file types in this group (excluding metadata keys)
+                file_types = [k for k in files.keys() if not k.startswith("_")]
+
+                # Skip groups that only have prmtop/inpcrd - they don't represent simulations
+                # A simulation group needs at least an mdin, mdout, or mdcrd file
+                simulation_types = {"mdin", "mdout", "mdcrd"}
+                if not any(ft in simulation_types for ft in file_types):
+                    continue
+
                 # Filter by folder if specified
                 if self.folder_path:
+                    # Get any file path from this group to check folder membership
                     sample_path = next(
                         (v for k, v in files.items() if not k.startswith("_")), ""
                     )
-                    if not sample_path.startswith(
-                        os.path.relpath(self.folder_path, self.state.base_directory)
-                    ):
+                    # Compare using full paths - check if sample_path starts with folder_path
+                    if sample_path and not sample_path.startswith(self.folder_path):
                         continue
 
                 # Skip already created stages
                 if stem in existing_names:
                     continue
 
-                # Get file types in this group
-                file_types = [k for k in files.keys() if not k.startswith("_")]
                 inferred_role = infer_stage_role_from_path(stem) or ""
 
                 self._stem_info.append((stem, files, inferred_role))
@@ -1736,13 +1828,17 @@ if TEXTUAL_AVAILABLE:
 
         /* Auto-generate modal */
         #stem-list-container {
-            height: 20;
+            height: 1fr;
+            min-height: 10;
+            max-height: 40;
             border: solid $primary-darken-2;
             margin: 1 0;
+            overflow-y: auto;
         }
 
         #stem-list {
             padding: 1;
+            height: auto;
         }
 
         #stem-list RadioButton {
@@ -1810,6 +1906,7 @@ if TEXTUAL_AVAILABLE:
             self.state = ProtocolState(directory)
             self.current_stage_index: int = -1
             self._pending_prmtop_path: Optional[str] = None  # For stage prmtop assignment
+            self._current_folder_context: Optional[str] = None  # Track selected folder for Ctrl+A
 
         def compose(self) -> ComposeResult:
             yield Header()
@@ -1837,17 +1934,63 @@ if TEXTUAL_AVAILABLE:
 
             self.notify(f"Found {files_count} file groups, {seq_count} sequences")
 
+        def _folder_has_simulation_files(self, folder_path: str) -> Tuple[bool, List[str]]:
+            """Check if a folder contains simulation files (mdin/mdout/mdcrd).
+
+            Returns (has_simulations, list_of_prmtop_files).
+            """
+            simulation_exts = {".mdin", ".in", ".mdout", ".out", ".mdcrd", ".nc", ".crd", ".x"}
+            prmtop_exts = {".prmtop", ".top", ".parm7"}
+
+            has_simulation = False
+            prmtop_files = []
+
+            for fname in os.listdir(folder_path):
+                full_path = os.path.join(folder_path, fname)
+                if not os.path.isfile(full_path):
+                    continue
+                ext = os.path.splitext(fname)[1].lower()
+                if ext in simulation_exts:
+                    has_simulation = True
+                elif ext in prmtop_exts:
+                    prmtop_files.append(full_path)
+
+            return has_simulation, prmtop_files
+
         def on_tree_node_selected(self, event: Tree.NodeSelected[str]) -> None:
             """Handle file tree selection."""
             if event.node.data:
                 path = Path(event.node.data)
 
-                # Folder selection - offer auto-generate
+                # Track folder context for Ctrl+A - use parent if file, else use folder
                 if path.is_dir():
-                    self.push_screen(
-                        AutoGenerateModal(self.state, str(path)),
-                        self.on_auto_generate_complete
-                    )
+                    self._current_folder_context = str(path)
+                elif path.is_file():
+                    self._current_folder_context = str(path.parent)
+
+                # Folder selection
+                if path.is_dir():
+                    has_sims, prmtop_files = self._folder_has_simulation_files(str(path))
+
+                    if has_sims:
+                        # Folder has simulation files - offer auto-generate
+                        self.push_screen(
+                            AutoGenerateModal(self.state, str(path)),
+                            self.on_auto_generate_complete
+                        )
+                    elif prmtop_files:
+                        # Folder only has prmtop files - offer to set as global prmtop
+                        if len(prmtop_files) == 1:
+                            self._pending_prmtop_path = prmtop_files[0]
+                            self.push_screen(
+                                PrmtopAssignmentModal(self.state, prmtop_files[0]),
+                                self.on_prmtop_assigned
+                            )
+                        else:
+                            # Multiple prmtop files - show selection
+                            self.notify(f"Folder contains {len(prmtop_files)} prmtop files. Click individual files to assign.")
+                    else:
+                        self.notify("No simulation or topology files found in this folder")
                     return
 
                 if path.is_file():
@@ -1960,8 +2103,11 @@ if TEXTUAL_AVAILABLE:
             self.push_screen(SearchModal(self.state), self.on_search_result)
 
         def action_auto_generate(self) -> None:
-            """Open auto-generate stages modal."""
-            self.push_screen(AutoGenerateModal(self.state), self.on_auto_generate_complete)
+            """Open auto-generate stages modal, scoped to current folder context if available."""
+            self.push_screen(
+                AutoGenerateModal(self.state, self._current_folder_context),
+                self.on_auto_generate_complete
+            )
 
         def on_auto_generate_complete(self, result: Optional[int]) -> None:
             """Handle auto-generate completion."""
