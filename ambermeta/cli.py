@@ -288,14 +288,17 @@ def _print_protocol(protocol: SimulationProtocol, verbose: bool = False) -> None
                     stats_bits.append(
                         f"time={float(stats.time_start):g}–{float(stats.time_end):g} ps"
                     )
-                temp_stats = _format_avg_std(getattr(stats, "temps", []), "K", precision=2)
-                if temp_stats:
-                    stats_bits.append(f"temp={temp_stats}")
-                density_stats = _format_avg_std(
-                    getattr(stats, "densities", []), "g/cc", precision=4
-                )
-                if density_stats:
-                    stats_bits.append(f"density={density_stats}")
+                # Use streaming stats (temp_stats, density_stats) instead of empty list properties
+                temp_streaming = getattr(stats, "temp_stats", None)
+                if temp_streaming and hasattr(temp_streaming, "get_stats"):
+                    t_avg, t_std = temp_streaming.get_stats()
+                    if t_avg is not None:
+                        stats_bits.append(f"temp={t_avg:.2f} ± {t_std:.2f} K")
+                density_streaming = getattr(stats, "density_stats", None)
+                if density_streaming and hasattr(density_streaming, "get_stats"):
+                    d_avg, d_std = density_streaming.get_stats()
+                    if d_avg is not None:
+                        stats_bits.append(f"density={d_avg:.4f} ± {d_std:.4f} g/cc")
             if stats_bits:
                 stats_line = f"  stats: {', '.join(stats_bits)}"
 
@@ -783,7 +786,18 @@ def _plan_command(args: argparse.Namespace) -> int:
     auto_detect_restarts = getattr(args, "auto_detect_restarts", False)
     global_prmtop = getattr(args, "prmtop", None)
 
+    # Progress callback for reporting
+    def progress_reporter(stage_name: str, current: int, total: int) -> None:
+        if sys.stdout.isatty():
+            # Truncate long stage names
+            name = stage_name[:40] + "..." if len(stage_name) > 40 else stage_name
+            sys.stdout.write(f"\rProcessing: {current}/{total} [{name}]" + " " * 20)
+            sys.stdout.flush()
+            if current == total:
+                sys.stdout.write("\n")
+
     if args.manifest:
+        print(f"Loading manifest: {args.manifest}")
         protocol = load_protocol_from_manifest(
             args.manifest,
             directory=directory,
@@ -791,6 +805,7 @@ def _plan_command(args: argparse.Namespace) -> int:
             recursive=args.recursive,
             expand_env=expand_env,
             global_prmtop=global_prmtop,
+            progress_callback=progress_reporter,
         )
         # Apply auto-detect restarts if requested (after manifest loading)
         if auto_detect_restarts:
@@ -978,18 +993,38 @@ def _export_stats_csv(protocol: SimulationProtocol, filepath: str) -> None:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="ambermeta",
-        description="AmberMeta command-line tools for parsing and validating AMBER MD simulation files",
+        description=(
+            "AmberMeta - Simulation provenance engine for AMBER molecular dynamics.\n\n"
+            "Extract, organize, and validate metadata from AMBER simulation files.\n"
+            "Supports prmtop, mdin, mdout, mdcrd (NetCDF), and restart files."
+        ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
-Examples:
-  ambermeta plan -m manifest.yaml           # Build protocol from manifest
-  ambermeta plan . --recursive              # Auto-discover files recursively
-  ambermeta tui /path/to/simulation/        # Launch interactive TUI
-  ambermeta validate -m manifest.yaml       # Validate a protocol
-  ambermeta info system.prmtop              # Show file information
-  ambermeta init my_project                 # Generate example manifest
+Commands:
+  plan      Build a simulation protocol from manifest or auto-discovery
+  tui       Launch interactive terminal UI for building manifests
+  validate  Quick validation of simulation files
+  info      Display detailed metadata for a single file
+  init      Generate example manifest templates
 
-For more information, visit: https://github.com/your-org/ambermeta
+Examples:
+  ambermeta plan -m manifest.yaml           Build protocol from manifest
+  ambermeta plan . --recursive              Auto-discover files recursively
+  ambermeta plan -m manifest.yaml \\
+    --methods-summary-path methods.json     Export publication-ready summary
+  ambermeta tui /path/to/simulations        Launch interactive TUI
+  ambermeta validate system.prmtop *.mdout  Validate multiple files
+  ambermeta info --format json system.prmtop  Show metadata as JSON
+  ambermeta init --template standard .      Generate manifest template
+
+File Types:
+  prmtop:  .prmtop, .top, .parm7    (topology/parameters)
+  mdin:    .mdin, .in               (input control)
+  mdout:   .mdout, .out             (output log)
+  mdcrd:   .nc, .mdcrd, .crd        (trajectory)
+  inpcrd:  .rst, .rst7, .ncrst      (coordinates/restart)
+
+For documentation, visit: https://github.com/MicheleBonus/ambermeta
 """,
     )
 

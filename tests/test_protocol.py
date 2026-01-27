@@ -68,11 +68,14 @@ def test_auto_discover_validates_each_stage_once(tmp_path, monkeypatch):
     stage_dir = tmp_path / "protocol"
     stage_dir.mkdir()
 
-    for ext in ("prmtop", "inpcrd"):
+    # Add at least an mdin file so the stage isn't skipped (prmtop/inpcrd only stages are valid)
+    for ext in ("prmtop", "inpcrd", "mdin"):
         (stage_dir / f"stage1.{ext}").write_text("")
 
-    monkeypatch.setattr(protocol, "PrmtopParser", _make_parser({"natom": 10}))
-    monkeypatch.setattr(protocol, "InpcrdParser", _make_parser({"natoms": 12}))
+    # Use n_atoms attribute to match what the validation code expects
+    monkeypatch.setattr(protocol, "PrmtopParser", _make_parser({"n_atoms": 10}))
+    monkeypatch.setattr(protocol, "InpcrdParser", _make_parser({"n_atoms": 12}))
+    monkeypatch.setattr(protocol, "MdinParser", _make_parser({"length_steps": 100}))
 
     proto = auto_discover(str(stage_dir), skip_cross_stage_validation=True)
 

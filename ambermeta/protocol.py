@@ -4,7 +4,7 @@ import json
 import os
 from dataclasses import asdict, dataclass, field, is_dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Pattern
+from typing import Any, Callable, Dict, List, Optional, Pattern
 
 import re
 
@@ -639,7 +639,7 @@ class SimulationProtocol:
                         "num_solute_residues": getattr(details, "num_solute_residues", None),
                         "total_charge": getattr(details, "total_charge", None),
                         "is_neutral": getattr(details, "is_neutral", None),
-                        "density": getattr(details, "density", None),
+                        "initial_density": getattr(details, "density", None),  # From prmtop - initial value
                         "solvent_type": getattr(details, "solvent_type", None),
                         "simulation_category": getattr(details, "simulation_category", None),
                         "hmr_active": getattr(details, "hmr_active", None),
@@ -648,6 +648,37 @@ class SimulationProtocol:
                     }
                 )
 
+            # Add observed density from mdout if available (actual simulation values)
+            if stage.mdout and stage.mdout.details:
+                mdout_details = stage.mdout.details
+                density_stats = getattr(mdout_details, "density_stats", None)
+                if density_stats:
+                    avg, std = density_stats.get_stats()
+                    if avg is not None:
+                        composition["observed_density_mean"] = avg
+                        composition["observed_density_std"] = std
+                        # Use observed as the primary density if available
+                        composition["density"] = avg
+                    else:
+                        # Fall back to initial density if no observed
+                        composition["density"] = composition.get("initial_density")
+                else:
+                    composition["density"] = composition.get("initial_density")
+            else:
+                composition["density"] = composition.get("initial_density")
+
+            # Add observed box dimensions from mdcrd if available
+            if stage.mdcrd and stage.mdcrd.details:
+                mdcrd_details = stage.mdcrd.details
+                volume_stats = getattr(mdcrd_details, "volume_stats", None)
+                if volume_stats:
+                    composition["observed_volume_mean"] = volume_stats[2] if len(volume_stats) > 2 else None
+                    composition["observed_volume_min"] = volume_stats[0] if len(volume_stats) > 0 else None
+                    composition["observed_volume_max"] = volume_stats[1] if len(volume_stats) > 1 else None
+
+            # Add water and ion information from residue composition
+            if stage.prmtop and stage.prmtop.details:
+                residue_composition = getattr(stage.prmtop.details, "residue_composition", None)
                 if residue_composition:
                     water_residues = {
                         residue: count
@@ -767,15 +798,42 @@ def _manifest_to_stages(
     include_roles: Optional[List[str]],
     include_stems: Optional[List[str]],
     restart_files: Optional[Dict[str, str]],
+    progress_callback: Optional[Callable[[str, int, int], None]] = None,
 ) -> List[SimulationStage]:
+    """Convert manifest entries to SimulationStage objects.
+
+    Parameters
+    ----------
+    manifest:
+        Manifest dictionary or list of stage entries.
+    directory:
+        Base directory for resolving relative paths.
+    include_roles:
+        Only include stages with these roles.
+    include_stems:
+        Only include stages with these names.
+    restart_files:
+        Mapping of stage name/role to restart file paths.
+    progress_callback:
+        Optional callback function(stage_name, current, total) for progress reporting.
+    """
     kinds = {"prmtop", "inpcrd", "mdin", "mdout", "mdcrd"}
     stages: List[SimulationStage] = []
     validate_manifest(manifest, directory)
-    for entry in _normalize_manifest(manifest):
+
+    # Count total entries for progress reporting
+    entries = list(_normalize_manifest(manifest))
+    total = len(entries)
+
+    for idx, entry in enumerate(entries):
         name = entry.get("name")
         if not name:
             raise ValueError("Each manifest entry must include a 'name'.")
         stage_role = entry.get("stage_role")
+
+        # Report progress
+        if progress_callback:
+            progress_callback(name, idx + 1, total)
 
         files = entry.get("files", {})
         paths = {k: v for k, v in entry.items() if k in kinds}
@@ -863,7 +921,9 @@ def _manifest_to_stages(
 def detect_numeric_sequences(filenames: List[str]) -> Dict[str, List[str]]:
     """Detect numeric sequences in filenames for automatic grouping.
 
-    Identifies patterns like prod_001, prod_002, etc. and groups them together.
+    Identifies patterns in two formats:
+    - Suffix format: prod_001, prod_002, etc. (common for production runs)
+    - Prefix format: 01_min, 02_nvt, 03_npt, etc. (common for equilibration)
 
     Parameters
     ----------
@@ -877,16 +937,33 @@ def detect_numeric_sequences(filenames: List[str]) -> Dict[str, List[str]]:
     import re
 
     # Pattern to detect numeric suffixes: name_001, name.001, name001, name-001
-    numeric_pattern = re.compile(r'^(.+?)[-_.]?(\d{2,})$')
+    suffix_pattern = re.compile(r'^(.+?)[-_.]?(\d{2,})$')
+
+    # Pattern to detect numeric prefixes: 01_name, 01.name, 01-name
+    prefix_pattern = re.compile(r'^(\d{2,})[-_.]?(.+)$')
 
     groups: Dict[str, List[tuple[int, str]]] = {}
 
     for filename in filenames:
         stem = Path(filename).stem
-        match = numeric_pattern.match(stem)
+
+        # Try suffix pattern first (prod_001, prod_002)
+        match = suffix_pattern.match(stem)
         if match:
             base = match.group(1)
             num = int(match.group(2))
+            groups.setdefault(f"suffix:{base}", []).append((num, filename))
+            continue
+
+        # Try prefix pattern (01_min, 02_nvt)
+        match = prefix_pattern.match(stem)
+        if match:
+            num = int(match.group(1))
+            # For prefix patterns, use the parent directory as additional grouping
+            parent_dir = str(Path(filename).parent)
+            if parent_dir == ".":
+                parent_dir = ""
+            base = f"prefix:{parent_dir}"
             groups.setdefault(base, []).append((num, filename))
 
     # Sort each group by numeric value and return just the filenames
@@ -894,7 +971,12 @@ def detect_numeric_sequences(filenames: List[str]) -> Dict[str, List[str]]:
     for base, items in groups.items():
         if len(items) >= 2:  # Only consider sequences with 2+ files
             items.sort(key=lambda x: x[0])
-            result[base] = [filename for _, filename in items]
+            # Clean up the base pattern for display
+            clean_base = base.replace("suffix:", "").replace("prefix:", "")
+            if not clean_base:
+                # For prefix patterns without a parent dir, use a descriptive name
+                clean_base = "numbered_sequence"
+            result[clean_base] = [filename for _, filename in items]
 
     return result
 
@@ -1199,6 +1281,8 @@ def auto_discover(
     auto_detect_restarts: bool = False,
     pattern_filter: Optional[str] = None,
     global_prmtop: Optional[str] = None,
+    hmr_prmtop: Optional[str] = None,
+    progress_callback: Optional[Callable[[str, int, int], None]] = None,
 ) -> SimulationProtocol:
     if manifest is not None:
         stages = _manifest_to_stages(
@@ -1207,6 +1291,7 @@ def auto_discover(
             include_roles=include_roles,
             include_stems=include_stems,
             restart_files=restart_files,
+            progress_callback=progress_callback,
         )
         # Apply auto restart detection if requested
         if auto_detect_restarts:
@@ -1227,6 +1312,23 @@ def auto_discover(
                     if not stage.prmtop:
                         stage.prmtop = global_prmtop_data
                         stage.validation.append(f"INFO: using global prmtop: {global_prmtop}")
+
+        # Apply HMR prmtop to stages with large timesteps (dt >= 0.004 ps)
+        if hmr_prmtop:
+            hmr_prmtop_path = os.path.join(directory, hmr_prmtop) if not os.path.isabs(hmr_prmtop) else hmr_prmtop
+            if os.path.exists(hmr_prmtop_path):
+                hmr_prmtop_data = PrmtopParser(hmr_prmtop_path).parse()
+                for stage in stages:
+                    # Check if stage uses large timestep (HMR typically requires dt >= 0.004 ps)
+                    dt = None
+                    if stage.mdin and hasattr(stage.mdin, 'dt'):
+                        dt = stage.mdin.dt
+                    elif stage.mdout and hasattr(stage.mdout, 'dt'):
+                        dt = stage.mdout.dt
+
+                    if dt is not None and dt >= 0.004:
+                        stage.prmtop = hmr_prmtop_data
+                        stage.validation.append(f"INFO: using HMR prmtop (dt={dt} ps): {hmr_prmtop}")
 
         protocol = SimulationProtocol(stages=stages)
         protocol.validate(cross_stage=not skip_cross_stage_validation)
@@ -1314,11 +1416,6 @@ def auto_discover(
         if restart_source:
             stage.inpcrd = InpcrdParser(restart_source).parse()
             stage.restart_path = restart_source
-
-        # Skip stages that only have prmtop or inpcrd (not actual simulation stages)
-        has_simulation_files = stage.mdin or stage.mdout or stage.mdcrd
-        if not has_simulation_files:
-            continue
 
         stages.append(stage)
 
@@ -1498,6 +1595,8 @@ def load_protocol_from_manifest(
     recursive: bool = False,
     expand_env: bool = True,
     global_prmtop: Optional[str] = None,
+    hmr_prmtop: Optional[str] = None,
+    progress_callback: Optional[Callable[[str, int, int], None]] = None,
 ) -> SimulationProtocol:
     """Build a protocol using a manifest file.
 
@@ -1525,20 +1624,47 @@ def load_protocol_from_manifest(
         If True, expand environment variables in file paths.
     global_prmtop:
         Global prmtop file to use for stages without their own prmtop.
+    hmr_prmtop:
+        HMR prmtop file to use for stages with large timesteps (dt >= 0.004).
+    progress_callback:
+        Optional callback function(stage_name, current, total) for progress reporting.
     """
 
-    manifest = load_manifest(manifest_path, expand_env=expand_env)
+    manifest_data = load_manifest(manifest_path, expand_env=expand_env)
     base_dir = directory or str(Path(manifest_path).parent)
+
+    # Extract global settings from manifest if present
+    manifest_global_prmtop = None
+    manifest_hmr_prmtop = None
+    stages_list = manifest_data
+
+    if isinstance(manifest_data, dict):
+        # Manifest may contain global settings
+        manifest_global_prmtop = manifest_data.get("global_prmtop")
+        manifest_hmr_prmtop = manifest_data.get("hmr_prmtop")
+
+        # Extract stages list
+        if "stages" in manifest_data and isinstance(manifest_data["stages"], list):
+            stages_list = manifest_data["stages"]
+        else:
+            # It's a dict with stage names as keys
+            stages_list = manifest_data
+
+    # CLI parameters override manifest settings
+    effective_global_prmtop = global_prmtop or manifest_global_prmtop
+    effective_hmr_prmtop = hmr_prmtop or manifest_hmr_prmtop
 
     return auto_discover(
         base_dir,
-        manifest=manifest,
+        manifest=stages_list,
         include_roles=include_roles,
         include_stems=include_stems,
         restart_files=restart_files,
         skip_cross_stage_validation=skip_cross_stage_validation,
         recursive=recursive,
-        global_prmtop=global_prmtop,
+        global_prmtop=effective_global_prmtop,
+        hmr_prmtop=effective_hmr_prmtop,
+        progress_callback=progress_callback,
     )
 
 

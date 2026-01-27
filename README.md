@@ -632,6 +632,81 @@ from ambermeta import (
 
 ---
 
+## Information Not Extracted
+
+AmberMeta extracts extensive metadata from simulation files, but certain information cannot be automatically determined from AMBER files and must be provided manually for a complete simulation record:
+
+### Metadata That Must Be Provided by User
+
+| Category | Information | Notes |
+|----------|-------------|-------|
+| **Project Context** | System name | Custom identifier for your simulation system |
+| | Project identifier | Study or experiment ID |
+| | Purpose/objective | Scientific goal of the simulation |
+| | PDB ID (if applicable) | Source structure identifier |
+| **Preparation Details** | Force field name/version | e.g., "ff19SB", "GAFF2" - may be partially inferred |
+| | Solvation method | e.g., "TIP3P box with 12 Å buffer" |
+| | Protonation states | pH and method used |
+| | Missing residues | Any gaps filled or mutations made |
+| | Ligand parametrization | How ligand charges/parameters were generated |
+| **Hardware/Software** | AMBER version | Exact version (e.g., "AmberTools23") |
+| | GPU model | If using pmemd.cuda |
+| | Computational resources | HPC cluster name, node configuration |
+| | Total wall time | Actual time to complete simulation |
+| **Scientific Context** | Literature references | Papers describing methods |
+| | Biological relevance | Context for the simulation |
+| | Known limitations | Caveats about the setup |
+
+### What AmberMeta CAN Extract
+
+| Source | Extracted Information |
+|--------|----------------------|
+| **prmtop** | Atom count, residue composition, box dimensions, density, ions, water model, HMR status, charge |
+| **mdin** | Timestep, run length, thermostat/barostat settings, restraints, stage role |
+| **mdout** | Completion status, thermodynamic statistics (T, P, density), timing, PME settings |
+| **mdcrd** | Frame count, time range, box dimensions (NPT), REMD info |
+| **inpcrd** | Atom count, box, velocities, simulation time (for continuity) |
+
+### What AmberMeta Calculates/Infers
+
+| Derived Value | Method |
+|---------------|--------|
+| **Stage role** | Inferred from mdin parameters (imin, tempi, barostat) or filename |
+| **Observed density** | Calculated from mdout statistics (mean ± std) |
+| **Observed volume** | Calculated from mdcrd box dimensions (min, max, mean) |
+| **Sequence membership** | Detected from filename patterns (prod_001, 01_min) |
+| **Restart chain** | Linked via atom counts and timestamps |
+| **Total simulation time** | Sum of all stage durations |
+
+### Best Practices for Complete Records
+
+To create a complete simulation provenance record:
+
+1. **Use manifest notes** to add context that cannot be extracted:
+   ```yaml
+   - name: production
+     stage_role: production
+     notes:
+       - "Force field: ff19SB + OPC water"
+       - "Run on NERSC Perlmutter using 4x A100 GPUs"
+       - "Purpose: Binding free energy calculation"
+   ```
+
+2. **Maintain a separate metadata file** for project-level information:
+   ```yaml
+   # project_metadata.yaml
+   project_name: "EGFR kinase inhibitor binding study"
+   pdb_source: "5UG9"
+   preparation:
+     force_field: "ff19SB"
+     water_model: "OPC"
+     protonation: "H++ server at pH 7.4"
+   ```
+
+3. **Use the methods summary** as a starting point and add missing details before publication
+
+---
+
 ## Documentation
 
 - [Tutorials](docs/tutorials.md) - Step-by-step guides for common workflows

@@ -451,8 +451,16 @@ def extract_prmtop_metadata(filepath: str) -> PrmtopMetadata:
     # 6. Solvent Pointers
     solv_ptr = prmtop.get("SOLVENT_POINTERS")
     if solv_ptr and len(solv_ptr) >= 3:
+        # SOLVENT_POINTERS[0] = IPTRES (last residue that is part of solute)
         md.num_solute_residues = solv_ptr[0]
-        md.num_solvent_molecules = solv_ptr[2]
+        # Note: SOLVENT_POINTERS[2] is NSPSOL (first solvent molecule index), NOT the count
+        # We calculate actual solvent count from residue composition instead
+        if md.residue_composition:
+            water_count = sum(
+                count for res, count in md.residue_composition.items()
+                if res in WATER_RESNAMES
+            )
+            md.num_solvent_molecules = water_count
 
     # 7. Final Classification
     _classify_simulation(md)
