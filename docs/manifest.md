@@ -385,6 +385,24 @@ protocol = (
 
 ---
 
+## Creating Manifests with the TUI
+
+The easiest way to create a manifest is using the Terminal User Interface:
+
+```bash
+ambermeta tui /path/to/simulations
+```
+
+The TUI provides:
+- Visual file browser with color-coded file types
+- Automatic file grouping and sequence detection
+- Stage creation with role inference
+- Export to YAML, JSON, TOML, or CSV
+
+See [TUI Guide](tui.md) for detailed documentation.
+
+---
+
 ## Validation Notes
 
 ### Stage Role Inference
