@@ -1,8 +1,8 @@
 # AmberMeta Improvement Plan
 
-**Date**: 2026-01-26
+**Date**: 2026-01-27
 **Status**: Substantially Completed
-**Version**: 2.0
+**Version**: 2.1
 
 ## Executive Summary
 
@@ -69,6 +69,16 @@ This document outlines the improvements for the ambermeta package. The majority 
 - [x] Method chaining for stage configuration
 - [x] Built-in validation with configurable options
 
+### Documentation Improvements (Newly Completed)
+
+#### DOC-001: Comprehensive Documentation (COMPLETE)
+- [x] Updated README.md with tutorials and comprehensive overview
+- [x] Created docs/tutorials.md with step-by-step guides for metadata extraction
+- [x] Created docs/tui.md with complete TUI documentation
+- [x] Created docs/cli.md with CLI reference documentation
+- [x] Created docs/api.md with Python API reference
+- [x] Updated docs/manifest.md with TUI integration reference
+
 ---
 
 ## Remaining Items (Future Enhancements)
@@ -122,12 +132,18 @@ This document outlines the improvements for the ambermeta package. The majority 
 ## New Files Created
 
 - `ambermeta/logging_config.py` - Structured logging configuration
+- `docs/tutorials.md` - Comprehensive step-by-step tutorials
+- `docs/tui.md` - Terminal User Interface documentation
+- `docs/cli.md` - Command Line Interface reference
+- `docs/api.md` - Python API reference
 
 ## Files Modified (This Release)
 
 - `ambermeta/protocol.py` - Added TOML/CSV support, env var expansion, smart grouping, restart chain detection, builder API
 - `ambermeta/__init__.py` - Export new symbols
 - `ambermeta/cli.py` - New CLI flags for data submission features
+- `README.md` - Comprehensive rewrite with tutorials and documentation links
+- `docs/manifest.md` - Added TUI integration reference
 
 ## Files Modified (Previous Release)
 
