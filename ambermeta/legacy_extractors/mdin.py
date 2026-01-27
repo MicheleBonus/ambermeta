@@ -71,7 +71,7 @@ class MdinMetadata:
     length_steps: Union[int, str] = 0    # nstlim
     dt: Union[float, str] = 0.001        # dt (ps) - Default is 0.001 (Manual p.6)
     restart_flag: Union[int, str] = 0    # irest
-    ensemble: str = "Unknown"            # NVE / NVT / NPT / ...
+    ensemble: Optional[str] = "Unknown"  # NVE / NVT / NPT / ... or None for minimization
     stage_role: str = "Generic MD Stage" # heuristic description
     
     # --- Output ---
@@ -468,11 +468,16 @@ def _interpret_parameters(md: MdinMetadata) -> None:
                 md.has_cutoff_schedule = True
 
     # --- Ensemble classification ---
+    # Determine if this is a minimization (imin != 0)
+    imin_val = _as_int(c.get("imin", 0)) or 0
+    is_minimization = imin_val != 0
+
     md.ensemble = _classify_ensemble(
         ntb=ntb_i,
         ntt=ntt_i,
         ntp=ntp_i,
         implicit=(md.implicit_solvent != "No"),
+        is_minimization=is_minimization,
     )
 
     # --- Stage role heuristics ---
@@ -486,10 +491,16 @@ def _classify_ensemble(
     ntt: Optional[int],
     ntp: Optional[int],
     implicit: bool,
-) -> str:
+    is_minimization: bool = False,
+) -> Optional[str]:
     """
     Returns a compact description of the ensemble based on ntb/ntt/ntp.
+    Returns None for minimization stages (no thermodynamic ensemble applies).
     """
+    # Minimizations don't have a thermodynamic ensemble
+    if is_minimization:
+        return None
+
     if implicit:
         # Most implicit solvent runs are NVT with or without thermostat.
         if ntt is None or ntt == 0:

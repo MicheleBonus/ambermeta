@@ -98,6 +98,12 @@ class ThermoStats:
     _densities: StreamingStats = field(default_factory=StreamingStats)
     _volumes: StreamingStats = field(default_factory=StreamingStats)
 
+    # First and last values for trajectory tracking
+    _first_density: Optional[float] = None
+    _last_density: Optional[float] = None
+    _first_volume: Optional[float] = None
+    _last_volume: Optional[float] = None
+
     # Energy components (accumulators for mean)
     sum_bond: float = 0.0
     sum_angle: float = 0.0
@@ -152,6 +158,26 @@ class ThermoStats:
     def volume_stats(self) -> StreamingStats:
         return self._volumes
 
+    @property
+    def first_density(self) -> Optional[float]:
+        """First density value from the trajectory."""
+        return self._first_density
+
+    @property
+    def last_density(self) -> Optional[float]:
+        """Last density value from the trajectory."""
+        return self._last_density
+
+    @property
+    def first_volume(self) -> Optional[float]:
+        """First volume value from the trajectory."""
+        return self._first_volume
+
+    @property
+    def last_volume(self) -> Optional[float]:
+        """Last volume value from the trajectory."""
+        return self._last_volume
+
     def add_frame(self, data: Dict[str, Any]):
         self.count += 1
 
@@ -168,8 +194,18 @@ class ThermoStats:
         if (v := get_f('TEMP(K)')) is not None: self._temps.add(v)
         if (v := get_f('PRESS')) is not None: self._pressures.add(v)
         if (v := get_f('Etot')) is not None: self._etots.add(v)
-        if (v := get_f('Density')) is not None: self._densities.add(v)
-        if (v := get_f('VOLUME')) is not None: self._volumes.add(v)
+        if (v := get_f('Density')) is not None:
+            self._densities.add(v)
+            # Track first and last density values
+            if self._first_density is None:
+                self._first_density = v
+            self._last_density = v
+        if (v := get_f('VOLUME')) is not None:
+            self._volumes.add(v)
+            # Track first and last volume values
+            if self._first_volume is None:
+                self._first_volume = v
+            self._last_volume = v
 
         self.sum_bond += get_f('BOND') or 0.0
         self.sum_angle += get_f('ANGLE') or 0.0
