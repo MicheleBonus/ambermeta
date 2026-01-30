@@ -1,12 +1,24 @@
 # AmberMeta Improvement Plan
 
-**Date**: 2026-01-27
+**Date**: 2026-01-30
 **Status**: Substantially Completed
-**Version**: 2.1
+**Version**: 2.2
 
 ## Executive Summary
 
 This document outlines the improvements for the ambermeta package. The majority of planned features have been implemented, including all bug fixes, UX enhancements, and core data submission improvements. Remaining items are low-priority future enhancements.
+
+---
+
+## Recent Changes (v0.2.0)
+
+### TUI Improvements (2026-01-30)
+- [x] **Fixed stage ordering display**: Changed "Seq #" column to "Order" showing global protocol position (1-based) instead of per-sequence position
+- [x] **Added single-file loading option**: When selecting a file that's part of a sequence, users now get a choice to load just that file or the entire sequence
+- [x] **Improved Stage Editor visibility**: Reorganized layout with more compact rows and better space utilization so all fields are visible without excessive scrolling
+- [x] **Created GUI implementation plan**: Comprehensive design document for a modern web-based GUI (see docs/gui-implementation-plan.md)
+- [x] **Added pyproject.toml**: Modern Python packaging with PEP 621 compliance
+- [x] **Version bump**: Updated to 0.2.0
 
 ---
 

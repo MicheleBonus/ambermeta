@@ -146,7 +146,7 @@ The center panel displays all configured stages.
 | **Stage Name** | Unique identifier for the stage |
 | **Role** | Stage type (minimization, heating, equilibration, production) |
 | **Files** | Number of files assigned to this stage |
-| **Seq #** | Position in a numbered sequence (e.g., prod_001 = #1) |
+| **Order** | Global protocol order (1-based position in the workflow) |
 
 ### Interactions
 
@@ -154,12 +154,13 @@ The center panel displays all configured stages.
 - **Double-click** to edit the stage in the Stage Editor
 - Selected stage is highlighted
 
-### Sequence Information
+### Stage Ordering
 
-The "Seq #" column shows the position within a detected sequence:
-- Sequences are auto-detected from numbered filenames (e.g., prod_001, prod_002)
-- This helps track order in production run series
-- Stages without a sequence show "-"
+The "Order" column shows the global position of each stage in the simulation protocol:
+- Order 1 is the first stage (typically minimization)
+- The order continues sequentially through all stages
+- Use Ctrl+Up/Ctrl+Down to reorder stages
+- Equilibration stages should come before production stages
 
 ---
 
@@ -251,9 +252,25 @@ Quickly assign topology files:
 | **Set as HMR Prmtop** | Mark as hydrogen mass repartitioning topology |
 | **Add to Stage Editor** | Add to the prmtop field of current stage |
 
+### File Load Choice Modal
+
+**Triggered by:** Selecting a file that's part of a detected sequence
+
+When you click on a file that belongs to a numeric sequence (e.g., `prod_001.mdin`), you'll be asked how to proceed:
+
+| Option | Description |
+|--------|-------------|
+| **Load Single File** | Create a stage for just this one file |
+| **Load Entire Sequence** | Open the Sequence Modal to load all files in the sequence |
+
+This gives you flexibility to:
+- Add individual files without loading the whole sequence
+- Work incrementally on large simulation sets
+- Fix or modify individual stages
+
 ### Sequence Modal
 
-**Triggered by:** Selecting a numeric sequence in the file browser
+**Triggered by:** Choosing "Load Entire Sequence" from File Load Choice, or via context menu
 
 Create multiple stages from a detected sequence:
 
