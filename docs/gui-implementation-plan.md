@@ -1,8 +1,74 @@
 # AmberMeta GUI Implementation Plan
 
-**Version**: 1.0
+**Version**: 1.1
 **Date**: 2026-01-30
-**Status**: Planning Phase
+**Status**: Phase 1 & 2 Complete, Phases 3-5 Partial
+
+---
+
+## Progress Report (2026-01-30)
+
+### Implementation Status: **Functional Initial Version**
+
+The web-based GUI has been implemented with core functionality operational. Users can launch the GUI with `ambermeta gui` and build protocol manifests through an intuitive drag-and-drop interface.
+
+### What Has Been Completed
+
+**Backend (FastAPI):**
+- REST API endpoints for all core operations
+- File discovery with AMBER file type detection
+- Stage CRUD operations with automatic role inference
+- Protocol export to YAML, JSON, TOML, CSV formats
+- Session save/load functionality
+- Pydantic schemas for type-safe API contracts
+
+**Frontend (React + TypeScript + Vite + Tailwind):**
+- Three-panel responsive layout (File Browser, Stage Builder, Properties Panel)
+- Drag-and-drop file assignment to stages using dnd-kit
+- Drag-and-drop stage reordering
+- Stage validation with visual indicators
+- Global settings panel (prmtop, HMR prmtop, options)
+- Export modal with format selection
+- Undo/redo system via Zustand store
+- Keyboard shortcuts (Ctrl+Z, Ctrl+Shift+Z, Ctrl+E)
+- File type icons with color coding
+- Search/filter in file browser
+
+**CLI Integration:**
+- `ambermeta gui` command with --port, --host, --no-browser options
+- Auto-opens browser after server starts
+- Placeholder page shown when frontend not built
+
+### What Remains To Be Done
+
+**Phase 3 - Visual Enhancements:**
+- [ ] Sequence grouping visualization (auto-detect prod_001, prod_002, etc.)
+
+**Phase 4 - Advanced Features:**
+- [ ] Real-time validation (currently triggered on demand)
+- [ ] WebSocket updates for live file watching
+- [ ] Bulk operations on multiple stages
+
+**Phase 5 - Packaging:**
+- [ ] Desktop packaging with PyInstaller/electron
+- [ ] User documentation and tutorials
+
+### How to Use
+
+1. Install with GUI dependencies: `pip install ambermeta[gui]`
+2. Navigate to simulation directory: `cd /path/to/simulations`
+3. Launch GUI: `ambermeta gui`
+4. Browser opens automatically to http://localhost:8765
+
+### Build Frontend (Development)
+
+```bash
+cd ambermeta/gui/frontend
+npm install
+npm run build
+```
+
+---
 
 ## Executive Summary
 
@@ -373,41 +439,41 @@ interface ProtocolState {
 
 ## Implementation Phases
 
-### Phase 1: Core Infrastructure (2-3 weeks)
+### Phase 1: Core Infrastructure (2-3 weeks) - **COMPLETE**
 
-- [ ] Set up FastAPI backend with basic endpoints
-- [ ] Create React project with Vite
-- [ ] Implement basic file browser (read-only)
-- [ ] Implement stage list (no drag-drop)
-- [ ] Basic properties panel
-- [ ] Export functionality
+- [x] Set up FastAPI backend with basic endpoints
+- [x] Create React project with Vite
+- [x] Implement basic file browser (read-only)
+- [x] Implement stage list (no drag-drop)
+- [x] Basic properties panel
+- [x] Export functionality
 
-### Phase 2: Drag-and-Drop (1-2 weeks)
+### Phase 2: Drag-and-Drop (1-2 weeks) - **COMPLETE**
 
-- [ ] File drag to stages
-- [ ] Stage reordering
-- [ ] Drop zone highlighting
-- [ ] Undo/redo system
+- [x] File drag to stages
+- [x] Stage reordering
+- [x] Drop zone highlighting
+- [x] Undo/redo system
 
-### Phase 3: Visual Enhancements (1-2 weeks)
+### Phase 3: Visual Enhancements (1-2 weeks) - **PARTIAL**
 
 - [ ] Sequence grouping visualization
-- [ ] File type icons and colors
-- [ ] Status indicators
-- [ ] Responsive layout
+- [x] File type icons and colors
+- [x] Status indicators
+- [x] Responsive layout
 
-### Phase 4: Advanced Features (2-3 weeks)
+### Phase 4: Advanced Features (2-3 weeks) - **PARTIAL**
 
 - [ ] Real-time validation
 - [ ] WebSocket updates
-- [ ] Keyboard shortcuts
-- [ ] Session management
+- [x] Keyboard shortcuts
+- [x] Session management
 - [ ] Bulk operations
 
-### Phase 5: Packaging (1 week)
+### Phase 5: Packaging (1 week) - **PARTIAL**
 
-- [ ] CLI integration (`ambermeta gui`)
-- [ ] Auto-open browser
+- [x] CLI integration (`ambermeta gui`)
+- [x] Auto-open browser
 - [ ] Desktop packaging (optional)
 - [ ] Documentation
 
