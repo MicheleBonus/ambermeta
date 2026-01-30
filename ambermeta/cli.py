@@ -916,6 +916,33 @@ def _tui_command(args: argparse.Namespace) -> int:
         return 1
 
 
+def _gui_command(args: argparse.Namespace) -> int:
+    """Launch the web-based GUI for building protocol manifests."""
+    try:
+        from ambermeta.gui import run_gui
+    except ImportError:
+        print(Colors.error("ERROR: GUI module not available."))
+        print("Install with: pip install ambermeta[gui]")
+        return 1
+
+    directory = os.path.abspath(args.directory)
+    if not os.path.isdir(directory):
+        print(Colors.error(f"ERROR: Directory not found: {directory}"))
+        return 1
+
+    try:
+        run_gui(
+            directory,
+            port=args.port,
+            host=args.host,
+            open_browser=not args.no_browser,
+        )
+        return 0
+    except Exception as e:
+        print(Colors.error(f"ERROR: GUI failed: {e}"))
+        return 1
+
+
 def _export_stats_csv(protocol: SimulationProtocol, filepath: str) -> None:
     """Export per-stage statistics to a CSV file."""
     import csv
@@ -1205,6 +1232,40 @@ For documentation, visit: https://github.com/MicheleBonus/ambermeta
         help="Template complexity (default: standard)",
     )
 
+    # GUI subcommand
+    gui_parser = subparsers.add_parser(
+        "gui",
+        help="Launch web-based GUI for building protocol manifests",
+        description=(
+            "Launch a modern web-based graphical user interface for building "
+            "simulation protocol manifests. Features include drag-and-drop file "
+            "assignment, visual stage management, sequence detection, and export "
+            "to multiple formats. Opens in your default web browser."
+        ),
+    )
+    gui_parser.add_argument(
+        "directory",
+        nargs="?",
+        default=".",
+        help="Directory containing simulation files (default: current directory)",
+    )
+    gui_parser.add_argument(
+        "--port",
+        type=int,
+        default=8765,
+        help="Server port (default: 8765)",
+    )
+    gui_parser.add_argument(
+        "--no-browser",
+        action="store_true",
+        help="Don't automatically open the browser",
+    )
+    gui_parser.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help="Server host (default: 127.0.0.1)",
+    )
+
     return parser
 
 
@@ -1230,6 +1291,8 @@ def main(argv: List[str] | None = None) -> int:
         return _init_command(args)
     if args.command == "tui":
         return _tui_command(args)
+    if args.command == "gui":
+        return _gui_command(args)
 
     parser.print_help()
     return 1

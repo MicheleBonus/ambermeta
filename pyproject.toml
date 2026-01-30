@@ -45,6 +45,13 @@ netcdf = [
 tui = [
     "textual>=0.40.0",
 ]
+gui = [
+    "fastapi>=0.100.0",
+    "uvicorn>=0.23.0",
+    "websockets>=11.0",
+    "python-multipart>=0.0.6",
+    "pyyaml>=6.0",
+]
 yaml = [
     "pyyaml>=6.0",
 ]
@@ -65,6 +72,10 @@ all = [
     "scipy>=1.8",
     "numpy>=1.23",
     "textual>=0.40.0",
+    "fastapi>=0.100.0",
+    "uvicorn>=0.23.0",
+    "websockets>=11.0",
+    "python-multipart>=0.0.6",
     "pyyaml>=6.0",
     "tomli>=2.0; python_version < '3.11'",
 ]
@@ -79,7 +90,7 @@ Repository = "https://github.com/ambermeta/ambermeta.git"
 Issues = "https://github.com/ambermeta/ambermeta/issues"
 
 [tool.setuptools]
-packages = ["ambermeta", "ambermeta.parsers", "ambermeta.legacy_extractors"]
+packages = ["ambermeta", "ambermeta.parsers", "ambermeta.legacy_extractors", "ambermeta.gui", "ambermeta.gui.api"]
 
 [tool.setuptools.package-data]
 ambermeta = ["py.typed"]
