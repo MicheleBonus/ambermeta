@@ -825,8 +825,8 @@ if TEXTUAL_AVAILABLE:
         def on_mount(self) -> None:
             table = self.query_one(DataTable)
             table.cursor_type = "row"
-            # Seq = Sequence position (order within a numbered sequence like prod_001, prod_002)
-            table.add_columns("Stage Name", "Role", "Files", "Seq #")
+            # Order = 1-based protocol position (global order in the simulation workflow)
+            table.add_columns("Stage Name", "Role", "Files", "Order")
             self.refresh_stages()
 
         def refresh_stages(self) -> None:
@@ -836,13 +836,14 @@ if TEXTUAL_AVAILABLE:
 
             for idx, stage in enumerate(self.state.stages):
                 files_count = len(stage.files)
-                seq_info = f"{stage.sequence_index+1}" if stage.sequence_index is not None else "-"
+                # Show 1-based protocol order (global position in the workflow)
+                order_info = str(idx + 1)
 
                 table.add_row(
                     stage.name[:30],
                     stage.role[:12] if stage.role else "-",
                     str(files_count),
-                    seq_info,
+                    order_info,
                     key=str(idx),
                 )
 
@@ -913,23 +914,15 @@ if TEXTUAL_AVAILABLE:
                     yield Label("Notes:", classes="label")
                     yield Input(id="stage-notes", placeholder="Optional notes")
 
-                yield Rule()
-                yield Label("Sequence Info:", classes="section-label")
-                yield Static(
-                    "[dim]Sequence tracks order within numbered file sets (e.g., prod_001, prod_002). "
-                    "This is auto-detected but can be manually adjusted.[/]",
-                    classes="help-text-small",
-                )
+                yield Label("Sequence (auto-detected):", classes="section-label")
 
                 with Horizontal(classes="editor-row"):
                     yield Label("Seq Base:", classes="label")
-                    yield Input(id="seq-base", placeholder="Sequence pattern (e.g., 'prod')")
+                    yield Input(id="seq-base", placeholder="e.g., 'prod'")
 
                 with Horizontal(classes="editor-row"):
                     yield Label("Seq Position:", classes="label")
-                    yield Input(id="seq-index", placeholder="Position in sequence (1, 2, 3...)")
-
-                yield Rule()
+                    yield Input(id="seq-index", placeholder="1, 2, 3...")
 
                 with Horizontal(classes="button-row"):
                     yield Button("Apply", id="apply-stage", variant="primary")
@@ -1248,6 +1241,72 @@ if TEXTUAL_AVAILABLE:
                 self.dismiss(None)
 
             elif event.button.id == "cancel-settings":
+                self.dismiss(None)
+
+        def action_cancel(self) -> None:
+            self.dismiss(None)
+
+
+    class FileLoadChoiceModal(ModalScreen[Optional[str]]):
+        """Modal for choosing between loading a single file or a whole sequence."""
+
+        BINDINGS = [
+            ("escape", "cancel", "Cancel"),
+        ]
+
+        def __init__(
+            self,
+            state: ProtocolState,
+            file_stem: str,
+            sequence_base: str,
+            sequence_count: int,
+            name: Optional[str] = None,
+            id: Optional[str] = None,
+            classes: Optional[str] = None,
+        ):
+            super().__init__(name=name, id=id, classes=classes)
+            self.state = state
+            self.file_stem = file_stem
+            self.sequence_base = sequence_base
+            self.sequence_count = sequence_count
+
+        def compose(self) -> ComposeResult:
+            with Container(id="file-choice-modal"):
+                yield Label("File Loading Options", id="choice-title")
+                yield Rule()
+
+                yield Static(
+                    f"[bold]{self.file_stem}[/] is part of a sequence "
+                    f"([cyan]{self.sequence_base}[/]) with {self.sequence_count} files.",
+                    classes="choice-info",
+                )
+
+                yield Rule()
+                yield Label("How would you like to load this?", classes="section-label")
+
+                with Vertical(id="choice-options"):
+                    yield Button(
+                        f"Load Single File ({self.file_stem})",
+                        id="load-single",
+                        variant="primary",
+                    )
+                    yield Button(
+                        f"Load Entire Sequence ({self.sequence_count} files)",
+                        id="load-sequence",
+                        variant="primary",
+                    )
+                    yield Button(
+                        "Cancel",
+                        id="cancel-choice",
+                        variant="error",
+                    )
+
+        def on_button_pressed(self, event: Button.Pressed) -> None:
+            if event.button.id == "load-single":
+                self.dismiss("single")
+            elif event.button.id == "load-sequence":
+                self.dismiss("sequence")
+            elif event.button.id == "cancel-choice":
                 self.dismiss(None)
 
         def action_cancel(self) -> None:
@@ -1732,8 +1791,8 @@ if TEXTUAL_AVAILABLE:
         }
 
         #stage-panel {
-            height: 50%;
-            min-height: 10;
+            height: 40%;
+            min-height: 8;
             border: solid blue;
         }
 
@@ -1745,10 +1804,15 @@ if TEXTUAL_AVAILABLE:
         }
 
         #editor-panel {
-            height: 50%;
-            min-height: 15;
+            height: 60%;
+            min-height: 20;
             border: solid cyan;
             overflow-y: auto;
+        }
+
+        #stage-editor-content {
+            height: auto;
+            padding: 0 1;
         }
 
         #stage-table {
@@ -1757,37 +1821,38 @@ if TEXTUAL_AVAILABLE:
         }
 
         .editor-row {
-            height: 3;
-            margin: 0 1;
+            height: 2;
+            margin: 0;
         }
 
         .editor-row Label {
-            width: 18;
-            min-width: 15;
+            width: 16;
+            min-width: 12;
         }
 
         .editor-row Input {
             width: 1fr;
-            min-width: 20;
+            min-width: 15;
         }
 
         .editor-row Select {
             width: 1fr;
-            min-width: 20;
+            min-width: 15;
         }
 
         .section-label {
-            margin-top: 1;
+            margin-top: 0;
             text-style: bold;
+            height: 1;
         }
 
         .file-label {
-            width: 15;
+            width: 12;
         }
 
         .button-row {
             height: 3;
-            margin-top: 1;
+            margin-top: 0;
             align: center middle;
         }
 
@@ -1796,6 +1861,7 @@ if TEXTUAL_AVAILABLE:
         }
 
         #editor-title {
+            height: 1;
             text-align: center;
             text-style: bold;
         }
@@ -1805,7 +1871,7 @@ if TEXTUAL_AVAILABLE:
             align: center middle;
         }
 
-        #export-modal, #settings-modal, #sequence-modal, #search-modal, #prmtop-modal, #folder-modal {
+        #export-modal, #settings-modal, #sequence-modal, #search-modal, #prmtop-modal, #folder-modal, #file-choice-modal {
             width: 80%;
             height: auto;
             max-height: 90%;
@@ -1815,10 +1881,30 @@ if TEXTUAL_AVAILABLE:
             padding: 1 2;
         }
 
-        #export-title, #settings-title, #seq-title, #search-title, #prmtop-title, #folder-title {
+        #export-title, #settings-title, #seq-title, #search-title, #prmtop-title, #folder-title, #choice-title {
             text-align: center;
             text-style: bold;
             margin-bottom: 1;
+        }
+
+        /* File choice modal */
+        #file-choice-modal {
+            width: 60%;
+            min-width: 50;
+        }
+
+        .choice-info {
+            margin: 1 0;
+            text-align: center;
+        }
+
+        #choice-options {
+            margin: 1 0;
+        }
+
+        #choice-options Button {
+            width: 100%;
+            margin: 1 0;
         }
 
         .export-row, .settings-row, .seq-row, .search-row {
@@ -1978,6 +2064,10 @@ if TEXTUAL_AVAILABLE:
             self.current_stage_index: int = -1
             self._pending_prmtop_path: Optional[str] = None  # For stage prmtop assignment
             self._current_folder_context: Optional[str] = None  # Track selected folder for Ctrl+A
+            # For sequence/single file loading choice
+            self._pending_sequence_base: Optional[str] = None
+            self._pending_sequence_stems: Optional[List[str]] = None
+            self._pending_single_stem: Optional[str] = None
 
         def compose(self) -> ComposeResult:
             yield Header()
@@ -2076,20 +2166,31 @@ if TEXTUAL_AVAILABLE:
                         )
                         return
 
+                    # Get the stem path for this file
+                    rel_path = os.path.relpath(str(path), self.state.base_directory)
+                    stem_path = str(Path(rel_path).with_suffix(""))
+
                     # Check if this is part of a sequence
                     stem = path.stem
                     for base, stems in self.state.get_sequences().items():
                         if any(stem.startswith(s.rsplit("/", 1)[-1].rsplit(".", 1)[0]) for s in stems):
+                            # Store sequence info for later use
+                            self._pending_sequence_base = base
+                            self._pending_sequence_stems = stems
+                            self._pending_single_stem = stem_path
+                            # Show choice modal
                             self.push_screen(
-                                SequenceModal(self.state, base, stems),
-                                self.on_sequence_created
+                                FileLoadChoiceModal(
+                                    self.state,
+                                    file_stem=stem_path,
+                                    sequence_base=base,
+                                    sequence_count=len(stems),
+                                ),
+                                self.on_file_load_choice
                             )
                             return
 
-                    # Create single stage
-                    rel_path = os.path.relpath(str(path), self.state.base_directory)
-                    stem_path = str(Path(rel_path).with_suffix(""))
-
+                    # Not part of a sequence - create single stage
                     if stem_path in self.state.get_discovered_files():
                         stage = self.state.create_stage_from_stem(stem_path)
                         if stage:
@@ -2108,6 +2209,30 @@ if TEXTUAL_AVAILABLE:
             if stages:
                 self.refresh_stages()
                 self.notify(f"Created {len(stages)} stages from sequence")
+
+        def on_file_load_choice(self, result: Optional[str]) -> None:
+            """Handle file load choice (single vs sequence)."""
+            if result == "single":
+                # Load just the single file as a stage
+                stem_path = getattr(self, '_pending_single_stem', None)
+                if stem_path and stem_path in self.state.get_discovered_files():
+                    stage = self.state.create_stage_from_stem(stem_path)
+                    if stage:
+                        self.refresh_stages()
+                        self.notify(f"Created stage: {stage.name}")
+            elif result == "sequence":
+                # Show the sequence modal for full sequence loading
+                base = getattr(self, '_pending_sequence_base', None)
+                stems = getattr(self, '_pending_sequence_stems', None)
+                if base and stems:
+                    self.push_screen(
+                        SequenceModal(self.state, base, stems),
+                        self.on_sequence_created
+                    )
+            # Clean up pending attributes
+            self._pending_sequence_base = None
+            self._pending_sequence_stems = None
+            self._pending_single_stem = None
 
         def on_prmtop_assigned(self, result: Optional[str]) -> None:
             """Handle prmtop assignment result."""

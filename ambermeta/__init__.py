@@ -1,3 +1,7 @@
+"""AmberMeta - Simulation provenance extraction for AMBER molecular dynamics."""
+
+__version__ = "0.2.0"
+
 from ambermeta.protocol import (
     SimulationProtocol,
     SimulationStage,
@@ -21,6 +25,7 @@ except ImportError:
     TEXTUAL_AVAILABLE = False
 
 __all__ = [
+    "__version__",
     "SimulationProtocol",
     "SimulationStage",
     "ProtocolBuilder",

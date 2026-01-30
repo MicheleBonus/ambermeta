@@ -42,29 +42,47 @@ AmberMeta extracts, organizes, and validates metadata from AMBER molecular dynam
 AmberMeta targets Python 3.8+. From the repository root, install in editable mode:
 
 ```bash
+# Using pip (recommended)
 python -m pip install -e .
+
+# Or using pyproject.toml directly
+pip install .
 ```
 
 ### Optional Extras
 
 ```bash
 # Terminal UI (TUI) support
-python -m pip install -e ".[tui]"
+pip install -e ".[tui]"
 
 # NetCDF trajectory reading (for .nc files)
-python -m pip install -e ".[netcdf]"
-
-# All optional dependencies
-python -m pip install -e ".[all]"
-
-# Test tooling
-python -m pip install -e ".[tests]"
-
-# TOML manifest support (Python < 3.11)
-python -m pip install tomli
+pip install -e ".[netcdf]"
 
 # YAML manifest support
-python -m pip install pyyaml
+pip install -e ".[yaml]"
+
+# TOML manifest support (Python < 3.11)
+pip install -e ".[toml]"
+
+# All optional dependencies
+pip install -e ".[all]"
+
+# Development tools (testing, linting, type checking)
+pip install -e ".[tests]"
+pip install -e ".[dev]"
+```
+
+### Quick Install Commands
+
+```bash
+# Minimal installation
+pip install -e .
+
+# Full installation with all features
+pip install -e ".[all]"
+
+# For development
+pip install -e ".[all,tests,dev]"
 ```
 
 ---
@@ -714,6 +732,7 @@ To create a complete simulation provenance record:
 - [CLI Reference](docs/cli.md) - Detailed command-line documentation
 - [Manifest Schema](docs/manifest.md) - Full manifest format documentation
 - [Python API Reference](docs/api.md) - Complete API documentation
+- [GUI Implementation Plan](docs/gui-implementation-plan.md) - Future web-based GUI design
 - [Improvement Plan](IMPROVEMENT_PLAN.md) - Development roadmap and changelog
 
 ---
