@@ -140,7 +140,9 @@ export function PropertiesPanel() {
   ) => {
     setLocalFiles((prev) => ({
       ...prev,
-      [fileType]: value,
+      // Use empty string for cleared fields so they're included in JSON.stringify
+      // The backend treats empty string as "clear this field"
+      [fileType]: value === undefined ? '' : value,
     }));
   };
 

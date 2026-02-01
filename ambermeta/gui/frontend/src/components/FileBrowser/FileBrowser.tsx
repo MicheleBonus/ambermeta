@@ -104,7 +104,7 @@ function formatFileSize(bytes: number): string {
 }
 
 export function FileBrowser() {
-  const { files, loadFiles, isLoading } = useProtocolStore();
+  const { files, loadFiles, isLoading, addStage, settings, updateSettings } = useProtocolStore();
   const [searchTerm, setSearchTerm] = useState('');
   const [contextMenu, setContextMenu] = useState<{
     x: number;
@@ -207,24 +207,47 @@ export function FileBrowser() {
           className="fixed bg-white border border-gray-200 rounded-lg shadow-lg py-1 z-50"
           style={{ left: contextMenu.x, top: contextMenu.y }}
         >
-          <button
-            className="w-full px-4 py-2 text-sm text-left hover:bg-gray-100"
-            onClick={() => {
-              // Handle set as global prmtop
-              closeContextMenu();
-            }}
-          >
-            Set as Global Prmtop
-          </button>
-          <button
-            className="w-full px-4 py-2 text-sm text-left hover:bg-gray-100"
-            onClick={() => {
-              // Handle create stage
-              closeContextMenu();
-            }}
-          >
-            Create Stage from This File
-          </button>
+          {contextMenu.file.file_type === 'prmtop' && (
+            <button
+              className="w-full px-4 py-2 text-sm text-left hover:bg-gray-100"
+              onClick={() => {
+                updateSettings({
+                  ...settings,
+                  global_prmtop: contextMenu.file.path,
+                });
+                closeContextMenu();
+              }}
+            >
+              Set as Global Prmtop
+            </button>
+          )}
+          {!contextMenu.file.is_directory && (
+            <button
+              className="w-full px-4 py-2 text-sm text-left hover:bg-gray-100"
+              onClick={async () => {
+                const file = contextMenu.file;
+                const stageName = file.name.replace(/\.[^/.]+$/, '');
+                await addStage({
+                  name: stageName,
+                  files: { [file.file_type]: file.path },
+                });
+                closeContextMenu();
+              }}
+            >
+              Create Stage from This File
+            </button>
+          )}
+          {contextMenu.file.is_directory && (
+            <button
+              className="w-full px-4 py-2 text-sm text-left hover:bg-gray-100"
+              onClick={() => {
+                // This will be enhanced with auto-discovery modal later
+                closeContextMenu();
+              }}
+            >
+              Auto-Discover Stages...
+            </button>
+          )}
         </div>
       )}
 

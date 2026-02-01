@@ -267,31 +267,41 @@ export const useProtocolStore = create<ProtocolStore>((set, get) => ({
     const { history, historyIndex, stages } = get();
     if (historyIndex < 0) return;
 
-    // Save current state before undoing
-    const newHistory = [...history];
+    // If at the end of history, save current state first so we can redo to it
+    let newHistory = [...history];
+    let newIndex = historyIndex;
+
     if (historyIndex === history.length - 1) {
-      newHistory.push([...stages]);
+      // We're at the latest change - save current state for redo
+      newHistory = [...history, [...stages]];
     }
 
+    // Restore the previous state
     set({
-      stages: history[historyIndex],
+      stages: [...history[historyIndex]],
       history: newHistory,
-      historyIndex: historyIndex - 1,
+      historyIndex: newIndex - 1,
     });
   },
 
   redo: () => {
     const { history, historyIndex } = get();
-    if (historyIndex >= history.length - 2) return;
+    // historyIndex is -1 initially, so historyIndex + 2 is the state after the first undo
+    // After undo: historyIndex = -1, can redo if history has at least 1 item
+    const nextIndex = historyIndex + 2;
+    if (nextIndex >= history.length) return;
 
     set({
-      stages: history[historyIndex + 2],
+      stages: [...history[nextIndex]],
       historyIndex: historyIndex + 1,
     });
   },
 
   canUndo: () => get().historyIndex >= 0,
-  canRedo: () => get().historyIndex < get().history.length - 2,
+  canRedo: () => {
+    const { history, historyIndex } = get();
+    return historyIndex + 2 < history.length;
+  },
 
   clearError: () => set({ error: null }),
 }));

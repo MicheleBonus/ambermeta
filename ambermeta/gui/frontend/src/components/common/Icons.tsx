@@ -23,6 +23,8 @@ import {
   X,
   Menu,
   MoreVertical,
+  Wand2,
+  Layers,
   type LucideIcon,
 } from 'lucide-react';
 import type { FileType } from '../../types';
@@ -52,6 +54,8 @@ export {
   X,
   Menu,
   MoreVertical,
+  Wand2,
+  Layers,
 };
 
 const FILE_TYPE_ICONS: Record<FileType, LucideIcon> = {

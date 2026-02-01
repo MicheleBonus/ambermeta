@@ -9,6 +9,7 @@ AmberMeta provides a comprehensive command-line interface for parsing, validatin
 - [Commands](#commands)
   - [plan](#plan-command)
   - [tui](#tui-command)
+  - [gui](#gui-command)
   - [validate](#validate-command)
   - [info](#info-command)
   - [init](#init-command)
@@ -221,6 +222,61 @@ ambermeta tui --show-all /path/to/project
 ```
 
 See [TUI Guide](tui.md) for detailed documentation.
+
+---
+
+### GUI Command
+
+Launch the web-based Graphical User Interface for building protocol manifests.
+
+```bash
+ambermeta gui [directory] [options]
+```
+
+#### Arguments
+
+| Argument | Description |
+|----------|-------------|
+| `directory` | Directory containing simulation files (default: current directory) |
+
+#### Options
+
+| Option | Description |
+|--------|-------------|
+| `--port PORT` | Port to run the server on (default: 8000) |
+| `--host HOST` | Host to bind to (default: 127.0.0.1) |
+| `--no-browser` | Don't automatically open browser |
+
+#### Features
+
+The GUI provides:
+- **Visual File Browser**: Navigate directory tree with drag-and-drop
+- **Stage Builder**: Create, edit, delete, and reorder stages visually
+- **Auto-Discovery**: One-click batch stage creation from file groups
+- **Properties Panel**: Edit stage properties and global settings
+- **Drag-and-Drop**: Assign files to stages by dragging
+- **Session Management**: Save and load sessions
+- **Export**: Save manifest in YAML, JSON, TOML, or CSV format
+- **Undo/Redo**: Full undo/redo support
+- **Keyboard Shortcuts**: Ctrl+S (save), Ctrl+O (load), Ctrl+A (auto-discover), Ctrl+E (export)
+
+#### Examples
+
+```bash
+# Launch GUI in current directory
+ambermeta gui
+
+# Launch on a specific port
+ambermeta gui --port 3000 /path/to/project
+
+# Allow network access (use with caution)
+ambermeta gui --host 0.0.0.0 /path/to/project
+
+# Don't auto-open browser
+ambermeta gui --no-browser /path/to/project
+```
+
+See [GUI Guide](gui.md) for detailed documentation.
 
 ---
 
