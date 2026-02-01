@@ -13,6 +13,7 @@ AmberMeta extracts, organizes, and validates metadata from AMBER molecular dynam
   - [Extracting Metadata from Files](#extracting-metadata-from-files)
   - [Building a Protocol from Directory](#building-a-protocol-from-directory)
   - [Using the Terminal UI (TUI)](#using-the-terminal-ui-tui)
+  - [Using the Web-Based GUI](#using-the-web-based-gui)
   - [Working with Manifests](#working-with-manifests)
 - [Command Line Interface](#command-line-interface)
 - [Python API](#python-api)
@@ -28,6 +29,7 @@ AmberMeta extracts, organizes, and validates metadata from AMBER molecular dynam
 - **Metadata Extraction** including atom counts, box dimensions, simulation settings, thermodynamic statistics, and timing information
 - **SimulationStage and SimulationProtocol** models that aggregate parsed files, flag validation issues, and compute total steps and simulated time
 - **Interactive Terminal UI (TUI)** for visually building protocol manifests with file browsing, stage creation, and export
+- **Web-Based GUI** with drag-and-drop interface, auto-discovery, and real-time stage editing in your browser
 - **Manifest-Driven Planning** with support for YAML, JSON, TOML, and CSV formats
 - **Smart File Discovery** with automatic sequence detection (e.g., `prod_001`, `prod_002`) and pattern-based filtering
 - **Automatic Restart Chain Detection** to link simulation stages based on atom counts and timestamps
@@ -54,6 +56,9 @@ pip install .
 ```bash
 # Terminal UI (TUI) support
 pip install -e ".[tui]"
+
+# Web-based GUI support
+pip install -e ".[gui]"
 
 # NetCDF trajectory reading (for .nc files)
 pip install -e ".[netcdf]"
@@ -112,6 +117,13 @@ ambermeta plan --recursive /path/to/simulations --summary-path protocol.json
 ```bash
 # Build a manifest interactively
 ambermeta tui /path/to/simulations
+```
+
+### Launch the Web-Based GUI
+
+```bash
+# Build a manifest with drag-and-drop in your browser
+ambermeta gui /path/to/simulations
 ```
 
 ### Use in Python
@@ -424,6 +436,64 @@ Export your manifest to:
 
 ---
 
+### Using the Web-Based GUI
+
+The GUI provides a modern web-based interface for building protocol manifests:
+
+```bash
+# Launch GUI in a directory
+ambermeta gui /path/to/simulations
+```
+
+This opens your browser at `http://localhost:8000` with a three-panel interface:
+
+#### Interface Layout
+
+```
+┌─────────────────┬──────────────────────────┬─────────────────────┐
+│  File Browser   │     Stage Builder        │  Properties Panel   │
+│  (Left Panel)   │     (Center Panel)       │   (Right Panel)     │
+└─────────────────┴──────────────────────────┴─────────────────────┘
+```
+
+**File Browser (Left)**
+- Navigate the directory tree
+- Drag files directly to stages
+- Right-click for context menu options
+
+**Stage Builder (Center)**
+- View all stages as expandable cards
+- Drag-and-drop to reorder stages
+- Expand cards to see file drop zones
+
+**Properties Panel (Right)**
+- Edit global settings (when no stage selected)
+- Edit stage properties (when stage selected)
+- Toggle auto-link restarts, validation options
+
+#### Key Features
+
+| Feature | Description |
+|---------|-------------|
+| **Drag-and-Drop** | Drag files from browser to stages |
+| **Auto-Discovery** | Click button or press `Ctrl+A` to auto-detect stages |
+| **Session Save/Load** | `Ctrl+S` / `Ctrl+O` to save and restore work |
+| **Undo/Redo** | `Ctrl+Z` / `Ctrl+Y` to undo and redo changes |
+| **Export** | `Ctrl+E` to export manifest |
+
+#### Keyboard Shortcuts
+
+| Key | Action |
+|-----|--------|
+| `Ctrl+S` | Save session |
+| `Ctrl+O` | Load session |
+| `Ctrl+A` | Auto-discover stages |
+| `Ctrl+E` | Export manifest |
+| `Ctrl+Z` | Undo |
+| `Ctrl+Y` | Redo |
+
+---
+
 ### Working with Manifests
 
 Manifests define your simulation protocol in a structured format:
@@ -515,6 +585,7 @@ Disable expansion with `--no-expand-env` or `expand_env=False`.
 |---------|-------------|
 | `plan` | Build and summarize a SimulationProtocol |
 | `tui` | Launch interactive terminal UI |
+| `gui` | Launch web-based GUI |
 | `validate` | Quick validation of simulation files |
 | `info` | Display detailed metadata for a file |
 | `init` | Generate example manifest templates |
@@ -550,6 +621,17 @@ ambermeta tui [directory] [options]
 Options:
   --recursive                   Enable recursive file discovery
   --show-all                    Show all files, not just simulation files
+```
+
+### GUI Command
+
+```bash
+ambermeta gui [directory] [options]
+
+Options:
+  --port PORT                   Port to run server on (default: 8000)
+  --host HOST                   Host to bind to (default: 127.0.0.1)
+  --no-browser                  Don't automatically open browser
 ```
 
 ### Validate Command
@@ -729,10 +811,10 @@ To create a complete simulation provenance record:
 
 - [Tutorials](docs/tutorials.md) - Step-by-step guides for common workflows
 - [Terminal UI Guide](docs/tui.md) - Complete TUI documentation
+- [Web GUI Guide](docs/gui.md) - Complete GUI documentation
 - [CLI Reference](docs/cli.md) - Detailed command-line documentation
 - [Manifest Schema](docs/manifest.md) - Full manifest format documentation
 - [Python API Reference](docs/api.md) - Complete API documentation
-- [GUI Implementation Plan](docs/gui-implementation-plan.md) - Future web-based GUI design
 - [Improvement Plan](IMPROVEMENT_PLAN.md) - Development roadmap and changelog
 
 ---

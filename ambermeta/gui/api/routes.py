@@ -359,7 +359,18 @@ async def update_stage(stage_id: str, update: StageUpdate) -> StageResponse:
             if update.role is not None:
                 stage.role = update.role
             if update.files is not None:
-                stage.files = update.files
+                # Merge files instead of replacing - only update fields that are set
+                # Empty string means "clear this field", None means "don't change"
+                if update.files.prmtop is not None:
+                    stage.files.prmtop = update.files.prmtop if update.files.prmtop else None
+                if update.files.mdin is not None:
+                    stage.files.mdin = update.files.mdin if update.files.mdin else None
+                if update.files.mdout is not None:
+                    stage.files.mdout = update.files.mdout if update.files.mdout else None
+                if update.files.mdcrd is not None:
+                    stage.files.mdcrd = update.files.mdcrd if update.files.mdcrd else None
+                if update.files.inpcrd is not None:
+                    stage.files.inpcrd = update.files.inpcrd if update.files.inpcrd else None
             if update.expected_gap_ps is not None:
                 stage.expected_gap_ps = update.expected_gap_ps
             if update.gap_tolerance_ps is not None:
