@@ -198,7 +198,10 @@ export function PropertiesPanel() {
 
           <div className="border-t border-gray-200 pt-4 mt-4">
             <h3 className="text-sm font-medium text-gray-700 mb-3">Options</h3>
-            <label className="flex items-center gap-2 mb-2">
+            <label
+              className="flex items-center gap-2 mb-2 cursor-help"
+              title="Automatically chain restart files between stages: first stage uses initial coordinates, subsequent stages use the restart output from the previous stage"
+            >
               <input
                 type="checkbox"
                 checked={settings.auto_link_restarts}

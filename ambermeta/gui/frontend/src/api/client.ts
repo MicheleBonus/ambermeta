@@ -142,3 +142,16 @@ export async function loadSession(filename: string): Promise<ProtocolState> {
 export async function getSequences(): Promise<Record<string, SequenceInfo>> {
   return request<Record<string, SequenceInfo>>('/sequences');
 }
+
+// Restart linking endpoints
+export interface LinkRestartsResponse {
+  status: string;
+  message: string;
+  updates: number;
+}
+
+export async function linkRestarts(): Promise<LinkRestartsResponse> {
+  return request<LinkRestartsResponse>('/link-restarts', {
+    method: 'POST',
+  });
+}
