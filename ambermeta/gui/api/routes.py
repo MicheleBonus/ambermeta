@@ -221,6 +221,31 @@ def _validate_stage(stage: StageResponse, settings: GlobalSettings) -> StageVali
     if not stage.files.inpcrd:
         validation.warnings.append("No coordinate file (inpcrd) assigned")
 
+    # HMR-related validation: Check if mdin has large timestep suggesting HMR usage
+    if stage.files.mdin and settings.hmr_prmtop:
+        try:
+            from ambermeta.parsers.mdin import MdinParser
+            mdin_data = MdinParser(stage.files.mdin).parse()
+            dt = getattr(mdin_data.details, 'dt', None) if mdin_data.details else None
+            if dt is not None and dt >= 0.004:
+                # Large timestep suggests HMR should be used
+                effective_prmtop = stage.files.prmtop or settings.global_prmtop
+                if effective_prmtop != settings.hmr_prmtop:
+                    validation.warnings.append(
+                        f"Large timestep (dt={dt} ps) detected. Consider using HMR prmtop."
+                    )
+        except Exception:
+            pass  # Ignore parsing errors during validation
+
+    # Warn if HMR prmtop is set for stage but global HMR isn't defined
+    if stage.files.prmtop and settings.hmr_prmtop:
+        if stage.files.prmtop == settings.hmr_prmtop:
+            # Using HMR prmtop explicitly
+            pass
+    elif stage.files.prmtop and not settings.global_prmtop:
+        # Stage has custom prmtop but no global set
+        pass
+
     return validation
 
 
@@ -504,7 +529,8 @@ async def export_protocol(request: ExportRequest) -> ExportResponse:
         stage_entry: Dict[str, Any] = {"name": stage.name}
 
         if stage.role and stage.role != StageRole.UNKNOWN:
-            stage_entry["stage_role"] = stage.role
+            # Ensure stage_role is serialized as a plain string, not a Python enum object
+            stage_entry["stage_role"] = stage.role.value if hasattr(stage.role, 'value') else str(stage.role)
 
         # Add files
         for file_key in ["prmtop", "mdin", "mdout", "mdcrd", "inpcrd"]:
@@ -627,6 +653,63 @@ async def update_settings(settings: GlobalSettings) -> GlobalSettings:
         stage.validation = _validate_stage(stage, settings)
 
     return settings
+
+
+# =============================================================================
+# Related Files Endpoint
+# =============================================================================
+
+
+@router.get("/files/related/{stem:path}")
+async def get_related_files(stem: str) -> Dict[str, str]:
+    """Find all simulation files related to a given stem (filename without extension).
+
+    This is used for auto-grouping related files when creating a stage from a dragged file.
+    Returns a dict mapping file_type to file_path for all related files.
+    """
+    state = get_state()
+    base_dir = state.base_directory
+
+    # Build the stem path - if stem has a file extension, remove it
+    stem_path = stem
+    if Path(stem).suffix.lower() in (".mdin", ".mdout", ".nc", ".rst", ".rst7", ".prmtop", ".in", ".out", ".crd", ".x", ".ncrst", ".restrt", ".inpcrd", ".mdcrd", ".parm7", ".top"):
+        stem_path = str(Path(stem).with_suffix(""))
+
+    # Get the directory and stem name
+    if "/" in stem_path or os.sep in stem_path:
+        stem_dir = Path(base_dir) / Path(stem_path).parent
+        stem_name = Path(stem_path).name
+    else:
+        stem_dir = Path(base_dir)
+        stem_name = stem_path
+
+    # Define file type mappings
+    file_type_extensions = {
+        "mdin": {".mdin", ".in"},
+        "mdout": {".mdout", ".out"},
+        "mdcrd": {".mdcrd", ".nc", ".crd", ".x"},
+        "inpcrd": {".rst", ".rst7", ".ncrst", ".restrt", ".inpcrd"},
+    }
+
+    related_files: Dict[str, str] = {}
+
+    try:
+        if stem_dir.exists():
+            for entry in stem_dir.iterdir():
+                if entry.is_file():
+                    # Check if the file stem matches
+                    entry_stem = entry.stem
+                    if entry_stem == stem_name:
+                        # Determine file type (exclude prmtop - it should be set globally)
+                        for file_type, extensions in file_type_extensions.items():
+                            if entry.suffix.lower() in extensions:
+                                if file_type not in related_files:
+                                    related_files[file_type] = str(entry)
+                                break
+    except Exception:
+        pass
+
+    return related_files
 
 
 # =============================================================================

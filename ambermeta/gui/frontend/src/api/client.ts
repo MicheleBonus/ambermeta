@@ -51,6 +51,12 @@ export async function getFileMetadata(path: string): Promise<{
   return request(`/files/metadata?${params}`);
 }
 
+export async function getRelatedFiles(stem: string): Promise<Record<string, string>> {
+  // Encode the stem properly for the URL path
+  const encodedStem = encodeURIComponent(stem);
+  return request<Record<string, string>>(`/files/related/${encodedStem}`);
+}
+
 // Stage endpoints
 export async function listStages(): Promise<Stage[]> {
   return request<Stage[]>('/stages');
