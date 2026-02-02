@@ -399,7 +399,19 @@ export default function App() {
     for (const stageData of stagesToCreate) {
       await addStage(stageData);
     }
-  }, [addStage]);
+    // After all stages are created, link restart files between them
+    // This ensures proper inpcrd chaining (first stage gets initial coords,
+    // subsequent stages use restart from previous stage)
+    try {
+      const result = await api.linkRestarts();
+      if (result.updates > 0) {
+        // Reload stages to get the updated inpcrd assignments
+        await loadStages();
+      }
+    } catch (err) {
+      console.warn('Could not link restart files:', err);
+    }
+  }, [addStage, loadStages]);
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -514,6 +526,17 @@ export default function App() {
           name: stageName,
           files: stageFiles,
         });
+
+        // Link restart files after creating a new stage
+        // This ensures proper inpcrd chaining with existing stages
+        try {
+          const result = await api.linkRestarts();
+          if (result.updates > 0) {
+            await loadStages();
+          }
+        } catch (err) {
+          console.warn('Could not link restart files:', err);
+        }
       }
       return;
     }
