@@ -208,20 +208,34 @@ export function FileBrowser() {
           style={{ left: contextMenu.x, top: contextMenu.y }}
         >
           {contextMenu.file.file_type === 'prmtop' && (
-            <button
-              className="w-full px-4 py-2 text-sm text-left hover:bg-gray-100"
-              onClick={() => {
-                updateSettings({
-                  ...settings,
-                  global_prmtop: contextMenu.file.path,
-                });
-                closeContextMenu();
-              }}
-            >
-              Set as Global Prmtop
-            </button>
+            <>
+              <button
+                className="w-full px-4 py-2 text-sm text-left hover:bg-gray-100"
+                onClick={() => {
+                  updateSettings({
+                    ...settings,
+                    global_prmtop: contextMenu.file.path,
+                  });
+                  closeContextMenu();
+                }}
+              >
+                Set as Global Prmtop
+              </button>
+              <button
+                className="w-full px-4 py-2 text-sm text-left hover:bg-gray-100"
+                onClick={() => {
+                  updateSettings({
+                    ...settings,
+                    hmr_prmtop: contextMenu.file.path,
+                  });
+                  closeContextMenu();
+                }}
+              >
+                Set as Global HMR Prmtop
+              </button>
+            </>
           )}
-          {!contextMenu.file.is_directory && (
+          {!contextMenu.file.is_directory && contextMenu.file.file_type !== 'prmtop' && (
             <button
               className="w-full px-4 py-2 text-sm text-left hover:bg-gray-100"
               onClick={async () => {

@@ -9,7 +9,7 @@ import {
   useSensors,
 } from '@dnd-kit/core';
 import { arrayMove } from '@dnd-kit/sortable';
-import type { FileInfo, ExportFormat, StageCreate } from './types';
+import type { FileInfo, ExportFormat, StageCreate, StageFiles } from './types';
 import { useProtocolStore } from './stores/protocolStore';
 import { FileBrowser } from './components/FileBrowser/FileBrowser';
 import { StageBuilder } from './components/StageBuilder/StageBuilder';
@@ -23,6 +23,7 @@ import {
   FolderOpen,
   Wand2,
 } from './components/common/Icons';
+import * as api from './api/client';
 
 function ExportModal({
   isOpen,
@@ -204,8 +205,9 @@ function AutoDiscoverModal({
       for (const file of fileList) {
         if (file.is_directory && file.children) {
           processFiles(file.children);
-        } else if (!file.is_directory && file.file_type !== 'folder' && file.file_type !== 'other') {
+        } else if (!file.is_directory && file.file_type !== 'folder' && file.file_type !== 'other' && file.file_type !== 'prmtop') {
           // Extract stem (filename without extension)
+          // Note: prmtop files are excluded from stage creation - they should be set as global prmtop instead
           const stem = file.name.replace(/\.[^/.]+$/, '');
           if (!groups[stem]) {
             groups[stem] = {};
@@ -485,12 +487,32 @@ export default function App() {
     // Handle file drop to create new stage
     if (activeId.startsWith('file-') && overId === 'stage-builder') {
       const file = active.data.current?.file as FileInfo;
-      if (file && !file.is_directory) {
+      // Prevent prmtop files from being used as stage bases - they should only be set as global/HMR prmtop
+      if (file && !file.is_directory && file.file_type !== 'prmtop') {
         // Create a new stage with this file
         const stageName = file.name.replace(/\.[^/.]+$/, ''); // Remove extension
+
+        // Try to auto-group related files (e.g., 01_min.mdin, 01_min.mdout, 01_min.nc)
+        let stageFiles: StageFiles = { [file.file_type]: file.path };
+
+        try {
+          // Fetch related files from the backend
+          const relatedFiles = await api.getRelatedFiles(file.path);
+          if (relatedFiles && Object.keys(relatedFiles).length > 0) {
+            // Merge the dragged file with related files
+            stageFiles = {
+              ...relatedFiles,
+              [file.file_type]: file.path, // Ensure dragged file takes precedence
+            } as StageFiles;
+          }
+        } catch (err) {
+          // If fetching related files fails, just use the dragged file
+          console.warn('Could not fetch related files:', err);
+        }
+
         await addStage({
           name: stageName,
-          files: { [file.file_type]: file.path },
+          files: stageFiles,
         });
       }
       return;

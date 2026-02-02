@@ -300,19 +300,73 @@ export function PropertiesPanel() {
           </select>
         </div>
 
-        {/* Files */}
+        {/* Topology Selection */}
         <div className="mb-4">
           <h3 className="text-sm font-medium text-gray-700 mb-3 border-b border-gray-200 pb-2">
-            Files
+            Topology
           </h3>
 
+          {/* Show topology selection when both global and HMR prmtop are available */}
+          {settings.global_prmtop && settings.hmr_prmtop && !localFiles.prmtop && (
+            <div className="mb-3 p-3 bg-gray-50 border border-gray-200 rounded-lg">
+              <label className="block text-xs font-medium text-gray-600 mb-2">
+                Use Topology
+              </label>
+              <div className="space-y-2">
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="topology_selection"
+                    checked={localFiles.prmtop !== settings.hmr_prmtop}
+                    onChange={() => handleFileChange('prmtop', undefined)}
+                    className="text-blue-500 focus:ring-blue-500"
+                  />
+                  <span className="text-sm">Normal (Global)</span>
+                  <span className="text-xs text-gray-400 truncate flex-1" title={settings.global_prmtop}>
+                    {settings.global_prmtop?.split('/').pop()}
+                  </span>
+                </label>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="topology_selection"
+                    checked={localFiles.prmtop === settings.hmr_prmtop}
+                    onChange={() => handleFileChange('prmtop', settings.hmr_prmtop)}
+                    className="text-blue-500 focus:ring-blue-500"
+                  />
+                  <span className="text-sm">HMR</span>
+                  <span className="text-xs text-gray-400 truncate flex-1" title={settings.hmr_prmtop}>
+                    {settings.hmr_prmtop?.split('/').pop()}
+                  </span>
+                </label>
+              </div>
+              <p className="text-xs text-gray-500 mt-2">
+                Tip: Use HMR prmtop for stages with dt ≥ 0.004 ps
+              </p>
+            </div>
+          )}
+
           <FileField
-            label="Topology (prmtop)"
+            label="Custom Topology (prmtop)"
             fileType="prmtop"
             value={localFiles.prmtop}
             onChange={(v) => handleFileChange('prmtop', v)}
             globalValue={settings.global_prmtop}
           />
+
+          {/* Show warning if no prmtop is set and no global exists */}
+          {!localFiles.prmtop && !settings.global_prmtop && (
+            <p className="text-xs text-amber-600 mt-1">
+              No topology file set. Set a global prmtop in Global Settings or add one here.
+            </p>
+          )}
+        </div>
+
+        {/* Files */}
+        <div className="mb-4">
+          <h3 className="text-sm font-medium text-gray-700 mb-3 border-b border-gray-200 pb-2">
+            Simulation Files
+          </h3>
 
           <FileField
             label="Input (mdin)"

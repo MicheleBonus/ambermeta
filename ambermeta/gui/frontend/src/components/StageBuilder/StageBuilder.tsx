@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useCallback } from 'react';
 import { useDroppable } from '@dnd-kit/core';
 import {
   SortableContext,
@@ -17,6 +17,7 @@ import {
   X,
   ChevronDown,
   ChevronRight,
+  ChevronsUpDown,
 } from '../common/Icons';
 import { FileIcon } from '../common/Icons';
 import { STAGE_ROLE_CONFIG } from '../../types';
@@ -26,10 +27,14 @@ interface StageCardProps {
   isSelected: boolean;
   onSelect: () => void;
   onDelete: () => void;
+  forceExpanded?: boolean;
 }
 
-function StageCard({ stage, isSelected, onSelect, onDelete }: StageCardProps) {
-  const [isExpanded, setIsExpanded] = useState(false);
+function StageCard({ stage, isSelected, onSelect, onDelete, forceExpanded }: StageCardProps) {
+  const [localExpanded, setLocalExpanded] = useState(false);
+  // If forceExpanded is set, use it; otherwise use local state
+  const isExpanded = forceExpanded !== undefined ? forceExpanded : localExpanded;
+  const setIsExpanded = setLocalExpanded;
 
   const {
     attributes,
@@ -230,6 +235,12 @@ export function StageBuilder() {
 
   const [showNewStageDialog, setShowNewStageDialog] = useState(false);
   const [newStageName, setNewStageName] = useState('');
+  const [allExpanded, setAllExpanded] = useState<boolean | undefined>(undefined);
+
+  const toggleAllExpanded = useCallback(() => {
+    // Toggle between all expanded and all collapsed
+    setAllExpanded(prev => prev === true ? false : true);
+  }, []);
 
   const handleAddStage = async () => {
     if (newStageName.trim()) {
@@ -255,13 +266,25 @@ export function StageBuilder() {
       {/* Header */}
       <div className="p-4 bg-white border-b border-gray-200 flex items-center justify-between">
         <h2 className="font-semibold text-gray-800 text-lg">Protocol Stages</h2>
-        <button
-          className="flex items-center gap-1 px-3 py-1.5 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors text-sm font-medium"
-          onClick={() => setShowNewStageDialog(true)}
-        >
-          <Plus className="w-4 h-4" />
-          Add Stage
-        </button>
+        <div className="flex items-center gap-2">
+          {stages.length > 0 && (
+            <button
+              className="flex items-center gap-1 px-3 py-1.5 text-gray-600 hover:bg-gray-100 rounded-lg transition-colors text-sm"
+              onClick={toggleAllExpanded}
+              title={allExpanded ? "Collapse All" : "Expand All"}
+            >
+              <ChevronsUpDown className="w-4 h-4" />
+              {allExpanded ? 'Collapse All' : 'Expand All'}
+            </button>
+          )}
+          <button
+            className="flex items-center gap-1 px-3 py-1.5 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors text-sm font-medium"
+            onClick={() => setShowNewStageDialog(true)}
+          >
+            <Plus className="w-4 h-4" />
+            Add Stage
+          </button>
+        </div>
       </div>
 
       {/* Stage list */}
@@ -290,6 +313,7 @@ export function StageBuilder() {
                   isSelected={selectedStageId === stage.id}
                   onSelect={() => setSelectedStage(stage.id)}
                   onDelete={() => handleDeleteStage(stage.id)}
+                  forceExpanded={allExpanded}
                 />
                 {index < stages.length - 1 && (
                   <div className="flex justify-center py-1">

@@ -138,14 +138,26 @@ Right-clicking on a file opens a context menu with options:
 | Option | Description | Availability |
 |--------|-------------|--------------|
 | **Set as Global Prmtop** | Set this topology as the global default | prmtop files only |
-| **Create Stage from This File** | Create a new stage with this file | All files |
+| **Set as Global HMR Prmtop** | Set as Hydrogen Mass Repartitioning topology | prmtop files only |
+| **Create Stage from This File** | Create a new stage with this file | Non-prmtop files only |
 | **Auto-Discover Stages...** | Open auto-discovery for this folder | Folders only |
+
+**Note:** Topology files (prmtop) cannot be used to create stages directly. They should be assigned as global topology or HMR topology, or assigned per-stage in the Properties Panel.
 
 ---
 
 ## Stage Builder
 
 The center panel displays all configured stages in a vertical list.
+
+### Header Controls
+
+The Stage Builder header includes:
+
+| Control | Description |
+|---------|-------------|
+| **Expand All / Collapse All** | Toggle button to expand or collapse all stage cards at once |
+| **Add Stage** | Button to create a new empty stage |
 
 ### Stage Cards
 
@@ -190,6 +202,7 @@ Drag files from the File Browser directly onto these drop zones.
 1. Drag a file from the File Browser
 2. Drop it in the Stage Builder area
 3. A new stage is created with the filename as the stage name
+4. **Auto-Grouping**: Related files with the same stem (e.g., `prod_001.mdin`, `prod_001.mdout`, `prod_001.nc`) are automatically included in the stage
 
 **Method 3: Context Menu**
 1. Right-click a file in the File Browser
@@ -233,10 +246,22 @@ When a stage is selected, edit its properties:
 |-------|-------------|
 | **Name** | Unique identifier (required) |
 | **Role** | Dropdown: Unknown, Minimization, Heating, Equilibration, Production |
+| **Topology Selection** | Choose between Normal and HMR topology (when both are set) |
 | **Files** | File paths for each type (shows "(using global)" if inheriting) |
 | **Expected Gap (ps)** | Expected time gap from previous stage |
 | **Tolerance (ps)** | Acceptable deviation from expected gap |
 | **Notes** | Documentation notes (one per line) |
+
+### Topology Selection
+
+When both a global prmtop and an HMR prmtop are set, stages show a topology selection option:
+
+| Option | Description |
+|--------|-------------|
+| **Normal (Global)** | Use the standard global topology file |
+| **HMR** | Use the Hydrogen Mass Repartitioning topology |
+
+**Tip:** Use HMR topology for stages with timestep (dt) ≥ 0.004 ps. The GUI will show a warning if a large timestep is detected but the HMR topology is not being used.
 
 ### File Fields
 
@@ -293,8 +318,19 @@ The GUI supports intuitive drag-and-drop interactions.
 1. Click and hold any file in the File Browser
 2. A visual indicator shows what you're dragging
 3. Drag to a drop target:
-   - **Stage Builder area**: Creates a new stage
+   - **Stage Builder area**: Creates a new stage with auto-grouping of related files
    - **File Drop Zone**: Assigns file to that slot
+
+**Note:** Topology files (prmtop) cannot be dragged to create new stages. Use the context menu to set them as global or HMR topology.
+
+### Auto-Grouping
+
+When you drag a file to create a new stage, the GUI automatically discovers and includes related files:
+
+- Files with the same stem (basename without extension) are grouped together
+- For example, dragging `01_min.mdin` will also include `01_min.mdout`, `01_min.rst`, `01_min.nc` if they exist
+- Topology files (prmtop) are excluded from auto-grouping (use global settings instead)
+- You can remove unwanted files from the stage after creation
 
 ### File Type Matching
 
@@ -511,6 +547,7 @@ The GUI backend provides a REST API that can be used programmatically:
 |----------|--------|-------------|
 | `/api/files` | GET | List discovered files |
 | `/api/files/metadata` | GET | Get file metadata |
+| `/api/files/related/{stem}` | GET | Get related files by stem (for auto-grouping) |
 | `/api/stages` | GET | List all stages |
 | `/api/stages` | POST | Create a new stage |
 | `/api/stages/{id}` | PUT | Update a stage |

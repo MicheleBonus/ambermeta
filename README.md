@@ -29,7 +29,7 @@ AmberMeta extracts, organizes, and validates metadata from AMBER molecular dynam
 - **Metadata Extraction** including atom counts, box dimensions, simulation settings, thermodynamic statistics, and timing information
 - **SimulationStage and SimulationProtocol** models that aggregate parsed files, flag validation issues, and compute total steps and simulated time
 - **Interactive Terminal UI (TUI)** for visually building protocol manifests with file browsing, stage creation, and export
-- **Web-Based GUI** with drag-and-drop interface, auto-discovery, and real-time stage editing in your browser
+- **Web-Based GUI** with drag-and-drop interface, auto-discovery, auto-grouping of related files, and real-time stage editing in your browser
 - **Manifest-Driven Planning** with support for YAML, JSON, TOML, and CSV formats
 - **Smart File Discovery** with automatic sequence detection (e.g., `prod_001`, `prod_002`) and pattern-based filtering
 - **Automatic Restart Chain Detection** to link simulation stages based on atom counts and timestamps
