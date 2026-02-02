@@ -56,8 +56,9 @@ class StageCreate(BaseModel):
     name: str
     role: StageRole = StageRole.UNKNOWN
     files: StageFiles = Field(default_factory=StageFiles)
-    expected_gap_ps: Optional[float] = None
-    gap_tolerance_ps: Optional[float] = None
+    use_hmr_prmtop: bool = False  # If True, use HMR prmtop instead of normal global prmtop
+    expected_gap_ps: Optional[float] = None  # Override global default if set
+    gap_tolerance_ps: Optional[float] = None  # Override global default if set
     notes: List[str] = Field(default_factory=list)
 
 
@@ -66,6 +67,7 @@ class StageUpdate(BaseModel):
     name: Optional[str] = None
     role: Optional[StageRole] = None
     files: Optional[StageFiles] = None
+    use_hmr_prmtop: Optional[bool] = None
     expected_gap_ps: Optional[float] = None
     gap_tolerance_ps: Optional[float] = None
     notes: Optional[List[str]] = None
@@ -85,8 +87,10 @@ class StageResponse(BaseModel):
     name: str
     role: StageRole
     files: StageFiles
-    expected_gap_ps: Optional[float] = None
-    gap_tolerance_ps: Optional[float] = None
+    use_hmr_prmtop: bool = False  # If True, use HMR prmtop instead of normal global prmtop
+    expected_gap_ps: Optional[float] = None  # User-specified or None to use global default
+    gap_tolerance_ps: Optional[float] = None  # User-specified or None to use global default
+    detected_duration_ps: Optional[float] = None  # Auto-detected from mdin (dt * nstlim)
     notes: List[str] = Field(default_factory=list)
     validation: StageValidation = Field(default_factory=StageValidation)
     sequence_base: Optional[str] = None
@@ -100,6 +104,8 @@ class GlobalSettings(BaseModel):
     """Global protocol settings."""
     global_prmtop: Optional[str] = None
     hmr_prmtop: Optional[str] = None
+    default_expected_gap_ps: Optional[float] = None  # Default expected gap for all stages
+    default_gap_tolerance_ps: Optional[float] = 0.1  # Default tolerance for all stages
     auto_link_restarts: bool = True
     validate_on_export: bool = True
     use_relative_paths: bool = False

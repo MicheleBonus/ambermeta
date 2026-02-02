@@ -35,8 +35,10 @@ export interface Stage {
   name: string;
   role: StageRole;
   files: StageFiles;
-  expected_gap_ps?: number;
-  gap_tolerance_ps?: number;
+  use_hmr_prmtop: boolean;  // If true, use HMR prmtop instead of normal global prmtop
+  expected_gap_ps?: number;  // User-specified or undefined to use global default
+  gap_tolerance_ps?: number;  // User-specified or undefined to use global default
+  detected_duration_ps?: number;  // Auto-detected from mdin (dt * nstlim)
   notes: string[];
   validation: StageValidation;
   sequence_base?: string;
@@ -47,6 +49,7 @@ export interface StageCreate {
   name: string;
   role?: StageRole;
   files?: StageFiles;
+  use_hmr_prmtop?: boolean;
   expected_gap_ps?: number;
   gap_tolerance_ps?: number;
   notes?: string[];
@@ -56,6 +59,7 @@ export interface StageUpdate {
   name?: string;
   role?: StageRole;
   files?: StageFiles;
+  use_hmr_prmtop?: boolean;
   expected_gap_ps?: number;
   gap_tolerance_ps?: number;
   notes?: string[];
@@ -65,6 +69,8 @@ export interface StageUpdate {
 export interface GlobalSettings {
   global_prmtop?: string;
   hmr_prmtop?: string;
+  default_expected_gap_ps?: number;  // Default expected gap for all stages
+  default_gap_tolerance_ps?: number;  // Default tolerance for all stages (default: 0.1)
   auto_link_restarts: boolean;
   validate_on_export: boolean;
   use_relative_paths: boolean;

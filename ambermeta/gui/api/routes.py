@@ -197,6 +197,77 @@ def _suggest_stage_role(name: str, mdin_path: Optional[str] = None) -> StageRole
     return StageRole.UNKNOWN
 
 
+def _detect_duration_from_mdin(mdin_path: Optional[str]) -> Optional[float]:
+    """Auto-detect stage duration from mdin file (dt * nstlim).
+
+    Returns the duration in picoseconds, or None if not detectable.
+    """
+    if not mdin_path or not os.path.isfile(mdin_path):
+        return None
+
+    try:
+        from ambermeta.parsers.mdin import MdinParser
+        mdin_data = MdinParser(mdin_path).parse()
+
+        # Get dt and nstlim from mdin
+        dt = None
+        nstlim = None
+
+        if mdin_data.details:
+            dt = getattr(mdin_data.details, 'dt', None)
+            nstlim = getattr(mdin_data.details, 'nstlim', None)
+
+        # Fallback to cntrl dict if details not available
+        if dt is None and hasattr(mdin_data, 'cntrl'):
+            dt = mdin_data.cntrl.get('dt')
+        if nstlim is None and hasattr(mdin_data, 'cntrl'):
+            nstlim = mdin_data.cntrl.get('nstlim')
+
+        if dt is not None and nstlim is not None:
+            # For minimization (imin=1), duration doesn't apply the same way
+            imin = None
+            if mdin_data.details:
+                imin = getattr(mdin_data.details, 'imin', None)
+            if imin is None and hasattr(mdin_data, 'cntrl'):
+                imin = mdin_data.cntrl.get('imin')
+
+            if imin == 1:
+                # Minimization - return None for duration
+                return None
+
+            return float(dt) * float(nstlim)
+    except Exception:
+        pass
+
+    return None
+
+
+def _should_use_hmr(mdin_path: Optional[str]) -> bool:
+    """Determine if HMR prmtop should be suggested based on mdin timestep.
+
+    Returns True if dt >= 0.004 ps (typical HMR threshold).
+    """
+    if not mdin_path or not os.path.isfile(mdin_path):
+        return False
+
+    try:
+        from ambermeta.parsers.mdin import MdinParser
+        mdin_data = MdinParser(mdin_path).parse()
+
+        dt = None
+        if mdin_data.details:
+            dt = getattr(mdin_data.details, 'dt', None)
+        if dt is None and hasattr(mdin_data, 'cntrl'):
+            dt = mdin_data.cntrl.get('dt')
+
+        if dt is not None and float(dt) >= 0.004:
+            return True
+    except Exception:
+        pass
+
+    return False
+
+
 def _validate_stage(stage: StageResponse, settings: GlobalSettings) -> StageValidation:
     """Validate a stage and return validation status."""
     validation = StageValidation(is_valid=True)
@@ -340,14 +411,24 @@ async def create_stage(stage: StageCreate) -> StageResponse:
     # Suggest role if not provided
     role = stage.role if stage.role != StageRole.UNKNOWN else _suggest_stage_role(stage.name)
 
+    # Auto-detect duration from mdin if available
+    detected_duration = _detect_duration_from_mdin(stage.files.mdin)
+
+    # Auto-suggest HMR prmtop usage based on timestep if HMR prmtop is available
+    use_hmr = stage.use_hmr_prmtop
+    if not use_hmr and state.settings.hmr_prmtop and stage.files.mdin:
+        use_hmr = _should_use_hmr(stage.files.mdin)
+
     # Create the stage response
     new_stage = StageResponse(
         id=stage_id,
         name=stage.name,
         role=role,
         files=stage.files,
+        use_hmr_prmtop=use_hmr,
         expected_gap_ps=stage.expected_gap_ps,
         gap_tolerance_ps=stage.gap_tolerance_ps,
+        detected_duration_ps=detected_duration,
         notes=stage.notes,
     )
 
@@ -390,12 +471,16 @@ async def update_stage(stage_id: str, update: StageUpdate) -> StageResponse:
                     stage.files.prmtop = update.files.prmtop if update.files.prmtop else None
                 if update.files.mdin is not None:
                     stage.files.mdin = update.files.mdin if update.files.mdin else None
+                    # Re-detect duration when mdin changes
+                    stage.detected_duration_ps = _detect_duration_from_mdin(stage.files.mdin)
                 if update.files.mdout is not None:
                     stage.files.mdout = update.files.mdout if update.files.mdout else None
                 if update.files.mdcrd is not None:
                     stage.files.mdcrd = update.files.mdcrd if update.files.mdcrd else None
                 if update.files.inpcrd is not None:
                     stage.files.inpcrd = update.files.inpcrd if update.files.inpcrd else None
+            if update.use_hmr_prmtop is not None:
+                stage.use_hmr_prmtop = update.use_hmr_prmtop
             if update.expected_gap_ps is not None:
                 stage.expected_gap_ps = update.expected_gap_ps
             if update.gap_tolerance_ps is not None:
@@ -523,6 +608,12 @@ async def export_protocol(request: ExportRequest) -> ExportResponse:
                 pass
         export_data["hmr_prmtop"] = hmr_path
 
+    # Add global default settings if set
+    if state.settings.default_expected_gap_ps is not None:
+        export_data["default_expected_gap_ps"] = state.settings.default_expected_gap_ps
+    if state.settings.default_gap_tolerance_ps is not None:
+        export_data["default_gap_tolerance_ps"] = state.settings.default_gap_tolerance_ps
+
     # Build stages
     stages_data = []
     for stage in state.stages:
@@ -532,8 +623,12 @@ async def export_protocol(request: ExportRequest) -> ExportResponse:
             # Ensure stage_role is serialized as a plain string, not a Python enum object
             stage_entry["stage_role"] = stage.role.value if hasattr(stage.role, 'value') else str(stage.role)
 
-        # Add files
-        for file_key in ["prmtop", "mdin", "mdout", "mdcrd", "inpcrd"]:
+        # Add use_hmr flag if set (instead of full prmtop path)
+        if stage.use_hmr_prmtop:
+            stage_entry["use_hmr"] = True
+
+        # Add files - skip prmtop if using global (normal or HMR)
+        for file_key in ["mdin", "mdout", "mdcrd", "inpcrd"]:
             file_path = getattr(stage.files, file_key)
             if file_path:
                 if request.use_relative_paths:
@@ -543,7 +638,24 @@ async def export_protocol(request: ExportRequest) -> ExportResponse:
                         pass
                 stage_entry[file_key] = file_path
 
-        # Add optional fields
+        # Only include custom prmtop if it's different from global (stage-specific override)
+        if stage.files.prmtop:
+            custom_prmtop = stage.files.prmtop
+            # Check if it's a true custom prmtop (not matching global or hmr)
+            is_custom = True
+            if state.settings.global_prmtop and custom_prmtop == state.settings.global_prmtop:
+                is_custom = False
+            if state.settings.hmr_prmtop and custom_prmtop == state.settings.hmr_prmtop:
+                is_custom = False
+            if is_custom:
+                if request.use_relative_paths:
+                    try:
+                        custom_prmtop = os.path.relpath(custom_prmtop, state.base_directory)
+                    except ValueError:
+                        pass
+                stage_entry["prmtop"] = custom_prmtop
+
+        # Add optional fields - only if they differ from global defaults
         if stage.expected_gap_ps is not None:
             stage_entry["expected_gap_ps"] = stage.expected_gap_ps
         if stage.gap_tolerance_ps is not None:

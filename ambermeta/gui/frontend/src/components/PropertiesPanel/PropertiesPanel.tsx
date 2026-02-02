@@ -180,7 +180,7 @@ export function PropertiesPanel() {
               HMR Prmtop (Optional)
             </label>
             <p className="text-xs text-gray-500 mb-2">
-              For hydrogen mass repartitioning
+              For hydrogen mass repartitioning (dt ≥ 0.004 ps)
             </p>
             <input
               type="text"
@@ -194,6 +194,51 @@ export function PropertiesPanel() {
               placeholder="Path to HMR prmtop file"
               className="w-full px-3 py-2 text-sm font-mono border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
+          </div>
+
+          <div className="border-t border-gray-200 pt-4 mt-4">
+            <h3 className="text-sm font-medium text-gray-700 mb-3">Default Gap Settings</h3>
+            <p className="text-xs text-gray-500 mb-3">
+              Applied to all stages unless overridden per-stage
+            </p>
+
+            <div className="mb-3">
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Default Expected Gap (ps)
+              </label>
+              <input
+                type="number"
+                step="0.001"
+                value={settings.default_expected_gap_ps ?? ''}
+                onChange={(e) =>
+                  updateSettings({
+                    ...settings,
+                    default_expected_gap_ps: e.target.value ? parseFloat(e.target.value) : undefined,
+                  })
+                }
+                placeholder="e.g., 0.0 for continuous"
+                className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+
+            <div className="mb-3">
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Default Tolerance (ps)
+              </label>
+              <input
+                type="number"
+                step="0.001"
+                value={settings.default_gap_tolerance_ps ?? 0.1}
+                onChange={(e) =>
+                  updateSettings({
+                    ...settings,
+                    default_gap_tolerance_ps: e.target.value ? parseFloat(e.target.value) : undefined,
+                  })
+                }
+                placeholder="Default: 0.1"
+                className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
           </div>
 
           <div className="border-t border-gray-200 pt-4 mt-4">
@@ -306,60 +351,55 @@ export function PropertiesPanel() {
             Topology
           </h3>
 
-          {/* Show topology selection when both global and HMR prmtop are available */}
-          {settings.global_prmtop && settings.hmr_prmtop && !localFiles.prmtop && (
+          {/* Show HMR toggle when HMR prmtop is available */}
+          {settings.hmr_prmtop && (
             <div className="mb-3 p-3 bg-gray-50 border border-gray-200 rounded-lg">
-              <label className="block text-xs font-medium text-gray-600 mb-2">
-                Use Topology
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={selectedStage.use_hmr_prmtop}
+                  onChange={(e) => {
+                    updateStage(selectedStage.id, { use_hmr_prmtop: e.target.checked });
+                  }}
+                  className="rounded border-gray-300 text-blue-500 focus:ring-blue-500"
+                />
+                <span className="text-sm font-medium">Use HMR Prmtop</span>
               </label>
-              <div className="space-y-2">
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="radio"
-                    name="topology_selection"
-                    checked={localFiles.prmtop !== settings.hmr_prmtop}
-                    onChange={() => handleFileChange('prmtop', undefined)}
-                    className="text-blue-500 focus:ring-blue-500"
-                  />
-                  <span className="text-sm">Normal (Global)</span>
-                  <span className="text-xs text-gray-400 truncate flex-1" title={settings.global_prmtop}>
-                    {settings.global_prmtop?.split('/').pop()}
-                  </span>
-                </label>
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="radio"
-                    name="topology_selection"
-                    checked={localFiles.prmtop === settings.hmr_prmtop}
-                    onChange={() => handleFileChange('prmtop', settings.hmr_prmtop)}
-                    className="text-blue-500 focus:ring-blue-500"
-                  />
-                  <span className="text-sm">HMR</span>
-                  <span className="text-xs text-gray-400 truncate flex-1" title={settings.hmr_prmtop}>
-                    {settings.hmr_prmtop?.split('/').pop()}
-                  </span>
-                </label>
-              </div>
-              <p className="text-xs text-gray-500 mt-2">
-                Tip: Use HMR prmtop for stages with dt ≥ 0.004 ps
+              <p className="text-xs text-gray-500 mt-1 ml-6">
+                {selectedStage.use_hmr_prmtop
+                  ? `Using: ${settings.hmr_prmtop?.split('/').pop()}`
+                  : `Using: ${settings.global_prmtop?.split('/').pop() || 'Global prmtop'}`}
               </p>
+              {selectedStage.detected_duration_ps !== undefined && selectedStage.detected_duration_ps !== null && (
+                <p className="text-xs text-blue-600 mt-1 ml-6">
+                  Detected duration: {selectedStage.detected_duration_ps.toFixed(3)} ps
+                </p>
+              )}
             </div>
           )}
-
-          <FileField
-            label="Custom Topology (prmtop)"
-            fileType="prmtop"
-            value={localFiles.prmtop}
-            onChange={(v) => handleFileChange('prmtop', v)}
-            globalValue={settings.global_prmtop}
-          />
 
           {/* Show warning if no prmtop is set and no global exists */}
           {!localFiles.prmtop && !settings.global_prmtop && (
             <p className="text-xs text-amber-600 mt-1">
-              No topology file set. Set a global prmtop in Global Settings or add one here.
+              No topology file set. Set a global prmtop in Global Settings.
             </p>
           )}
+
+          {/* Show custom prmtop field only when needed (advanced override) */}
+          <details className="mt-2">
+            <summary className="text-xs text-gray-500 cursor-pointer hover:text-gray-700">
+              Custom topology (advanced)
+            </summary>
+            <div className="mt-2">
+              <FileField
+                label="Stage-specific Prmtop"
+                fileType="prmtop"
+                value={localFiles.prmtop}
+                onChange={(v) => handleFileChange('prmtop', v)}
+                globalValue={settings.global_prmtop}
+              />
+            </div>
+          </details>
         </div>
 
         {/* Files */}
@@ -402,19 +442,33 @@ export function PropertiesPanel() {
           <h3 className="text-sm font-medium text-gray-700 mb-3 border-b border-gray-200 pb-2">
             Gap Settings
           </h3>
+
+          {/* Show detected duration if available */}
+          {selectedStage.detected_duration_ps !== undefined && selectedStage.detected_duration_ps !== null && (
+            <div className="mb-3 p-2 bg-blue-50 border border-blue-200 rounded-lg">
+              <p className="text-xs text-blue-700">
+                <span className="font-medium">Detected duration:</span> {selectedStage.detected_duration_ps.toFixed(3)} ps
+                <span className="text-blue-500 ml-1">(from mdin: dt × nstlim)</span>
+              </p>
+            </div>
+          )}
+
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="block text-xs text-gray-600 mb-1">
-                Expected (ps)
+                Expected Gap (ps)
               </label>
               <input
                 type="number"
                 step="0.1"
                 value={localExpectedGap}
                 onChange={(e) => setLocalExpectedGap(e.target.value)}
-                placeholder="0.0"
+                placeholder={settings.default_expected_gap_ps !== undefined ? `Global: ${settings.default_expected_gap_ps}` : "Not set"}
                 className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
+              {!localExpectedGap && settings.default_expected_gap_ps !== undefined && (
+                <p className="text-xs text-gray-400 mt-1">Using global: {settings.default_expected_gap_ps} ps</p>
+              )}
             </div>
             <div>
               <label className="block text-xs text-gray-600 mb-1">
@@ -425,9 +479,12 @@ export function PropertiesPanel() {
                 step="0.01"
                 value={localGapTolerance}
                 onChange={(e) => setLocalGapTolerance(e.target.value)}
-                placeholder="0.1"
+                placeholder={settings.default_gap_tolerance_ps !== undefined ? `Global: ${settings.default_gap_tolerance_ps}` : "0.1"}
                 className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
+              {!localGapTolerance && settings.default_gap_tolerance_ps !== undefined && (
+                <p className="text-xs text-gray-400 mt-1">Using global: {settings.default_gap_tolerance_ps} ps</p>
+              )}
             </div>
           </div>
         </div>

@@ -187,23 +187,42 @@ class Stage:
     name: str
     role: str = ""  # minimization, heating, equilibration, production
     files: Dict[str, str] = field(default_factory=dict)  # type -> path
-    expected_gap_ps: Optional[float] = None
-    gap_tolerance_ps: Optional[float] = None
+    use_hmr_prmtop: bool = False  # If True, use HMR prmtop instead of normal global
+    expected_gap_ps: Optional[float] = None  # Override global default if set
+    gap_tolerance_ps: Optional[float] = None  # Override global default if set
+    detected_duration_ps: Optional[float] = None  # Auto-detected from mdin (dt * nstlim)
     notes: List[str] = field(default_factory=list)
     sequence_base: Optional[str] = None
     sequence_index: Optional[int] = None
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self, global_prmtop: Optional[str] = None, hmr_prmtop: Optional[str] = None) -> Dict[str, Any]:
         """Convert stage to manifest dictionary format."""
         result: Dict[str, Any] = {"name": self.name}
         if self.role:
             result["stage_role"] = self.role
+
+        # Add use_hmr flag instead of full prmtop path
+        if self.use_hmr_prmtop:
+            result["use_hmr"] = True
+
+        # Add files (skip prmtop if using global)
         for file_type, path in self.files.items():
-            result[file_type] = path
+            if file_type == "prmtop":
+                # Only include custom prmtop if different from global
+                is_custom = True
+                if global_prmtop and path == global_prmtop:
+                    is_custom = False
+                if hmr_prmtop and path == hmr_prmtop:
+                    is_custom = False
+                if is_custom:
+                    result[file_type] = path
+            else:
+                result[file_type] = path
+
         if self.expected_gap_ps is not None:
-            result["gaps"] = {"expected": self.expected_gap_ps}
-            if self.gap_tolerance_ps is not None:
-                result["gaps"]["tolerance"] = self.gap_tolerance_ps
+            result["expected_gap_ps"] = self.expected_gap_ps
+        if self.gap_tolerance_ps is not None:
+            result["gap_tolerance_ps"] = self.gap_tolerance_ps
         if self.notes:
             result["notes"] = self.notes
         return result
@@ -225,6 +244,8 @@ class ProtocolState:
         self.stages: List[Stage] = []
         self.global_prmtop: Optional[str] = None
         self.hmr_prmtop: Optional[str] = None
+        self.default_expected_gap_ps: Optional[float] = None  # Default expected gap for all stages
+        self.default_gap_tolerance_ps: Optional[float] = 0.1  # Default tolerance for all stages
         self.auto_link_restarts: bool = True
 
         # Undo/redo stacks
@@ -530,11 +551,11 @@ class ProtocolState:
         manifest = []
 
         for stage in self.stages:
-            entry = stage.to_dict()
-
-            # Apply global prmtop if stage doesn't have one
-            if self.global_prmtop and "prmtop" not in entry:
-                entry["prmtop"] = self.global_prmtop
+            # Pass global prmtop info for proper use_hmr flag handling
+            entry = stage.to_dict(
+                global_prmtop=self.global_prmtop,
+                hmr_prmtop=self.hmr_prmtop
+            )
 
             # Convert to absolute paths if requested
             if use_absolute_paths:
@@ -568,6 +589,12 @@ class ProtocolState:
                 hmr_path = os.path.join(self.base_directory, hmr_path)
             manifest["hmr_prmtop"] = hmr_path
 
+        # Include default gap settings
+        if self.default_expected_gap_ps is not None:
+            manifest["default_expected_gap_ps"] = self.default_expected_gap_ps
+        if self.default_gap_tolerance_ps is not None:
+            manifest["default_gap_tolerance_ps"] = self.default_gap_tolerance_ps
+
         manifest["stages"] = self.to_manifest(use_absolute_paths)
 
         with open(path, "w", encoding="utf-8") as f:
@@ -589,6 +616,12 @@ class ProtocolState:
             if use_absolute_paths and not os.path.isabs(hmr_path):
                 hmr_path = os.path.join(self.base_directory, hmr_path)
             output["hmr_prmtop"] = hmr_path
+
+        # Include default gap settings
+        if self.default_expected_gap_ps is not None:
+            output["default_expected_gap_ps"] = self.default_expected_gap_ps
+        if self.default_gap_tolerance_ps is not None:
+            output["default_gap_tolerance_ps"] = self.default_gap_tolerance_ps
 
         output["stages"] = self.to_manifest(use_absolute_paths)
 
@@ -614,7 +647,13 @@ class ProtocolState:
                 hmr_path = os.path.join(self.base_directory, hmr_path)
             lines.append(f'hmr_prmtop = "{hmr_path}"')
 
-        if self.global_prmtop or self.hmr_prmtop:
+        # Include default gap settings
+        if self.default_expected_gap_ps is not None:
+            lines.append(f'default_expected_gap_ps = {self.default_expected_gap_ps}')
+        if self.default_gap_tolerance_ps is not None:
+            lines.append(f'default_gap_tolerance_ps = {self.default_gap_tolerance_ps}')
+
+        if self.global_prmtop or self.hmr_prmtop or self.default_expected_gap_ps is not None or self.default_gap_tolerance_ps is not None:
             lines.append("")
         for stage in manifest:
             lines.append("[[stages]]")
