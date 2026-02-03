@@ -57,8 +57,11 @@ pip install .
 # Terminal UI (TUI) support
 pip install -e ".[tui]"
 
-# Web-based GUI support
+# Web-based GUI support (Python backend)
 pip install -e ".[gui]"
+
+# Build the GUI frontend (requires Node.js and npm)
+cd ambermeta/gui/frontend && npm install && npm run build && cd ../../..
 
 # NetCDF trajectory reading (for .nc files)
 pip install -e ".[netcdf]"
@@ -438,7 +441,26 @@ Export your manifest to:
 
 ### Using the Web-Based GUI
 
-The GUI provides a modern web-based interface for building protocol manifests:
+The GUI provides a modern web-based interface for building protocol manifests.
+
+#### GUI Installation
+
+The GUI requires both Python dependencies and a built frontend:
+
+```bash
+# 1. Install Python GUI dependencies
+pip install -e ".[gui]"
+
+# 2. Build the React frontend (requires Node.js >= 18 and npm)
+cd ambermeta/gui/frontend
+npm install
+npm run build
+cd ../../..
+```
+
+If you see a placeholder page when launching the GUI, it means the frontend hasn't been built yet. Run the `npm install && npm run build` commands above.
+
+#### Launching the GUI
 
 ```bash
 # Launch GUI in a directory
