@@ -734,10 +734,13 @@ export default function App() {
           </div>
         )}
 
-        {/* Main content */}
+        {/* Main content - resizable panels */}
         <main className="flex-1 flex overflow-hidden">
-          {/* File Browser - Left panel */}
-          <aside className="hidden md:block w-72 flex-shrink-0">
+          {/* File Browser - Left panel (resizable) */}
+          <aside
+            className="hidden md:block flex-shrink-0 overflow-hidden"
+            style={{ width: 320, minWidth: 200, maxWidth: 500, resize: 'horizontal', overflow: 'auto' }}
+          >
             <FileBrowser />
           </aside>
 
@@ -746,9 +749,14 @@ export default function App() {
             <StageBuilder />
           </section>
 
-          {/* Properties Panel - Right */}
-          <aside className="hidden lg:block w-80 flex-shrink-0">
-            <PropertiesPanel />
+          {/* Properties Panel - Right (resizable from left edge) */}
+          <aside
+            className="hidden lg:block flex-shrink-0 overflow-hidden"
+            style={{ width: 340, minWidth: 260, maxWidth: 550, resize: 'horizontal', overflow: 'auto', direction: 'rtl' }}
+          >
+            <div style={{ direction: 'ltr' }}>
+              <PropertiesPanel />
+            </div>
           </aside>
         </main>
 

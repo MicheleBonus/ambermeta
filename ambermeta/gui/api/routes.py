@@ -23,6 +23,7 @@ from .schemas import (
     StageValidation,
     StageRole,
     StageReorderRequest,
+    BulkStageUpdate,
     ProtocolState,
     GlobalSettings,
     ExportRequest,
@@ -451,6 +452,47 @@ async def reorder_stages(request: StageReorderRequest) -> List[StageResponse]:
     return state.stages
 
 
+@router.put("/stages/bulk", response_model=List[StageResponse])
+async def bulk_update_stages(request: BulkStageUpdate) -> List[StageResponse]:
+    """Apply the same update to multiple stages at once."""
+    state = get_state()
+    stage_map = {stage.id: stage for stage in state.stages}
+
+    updated: List[StageResponse] = []
+    for stage_id in request.stage_ids:
+        stage = stage_map.get(stage_id)
+        if stage is None:
+            raise HTTPException(status_code=400, detail=f"Unknown stage ID: {stage_id}")
+
+        update = request.update
+        if update.name is not None:
+            stage.name = update.name
+        if update.role is not None:
+            stage.role = update.role
+        if update.files is not None:
+            if update.files.prmtop is not None:
+                stage.files.prmtop = update.files.prmtop if update.files.prmtop else None
+            if update.files.mdin is not None:
+                stage.files.mdin = update.files.mdin if update.files.mdin else None
+            if update.files.mdout is not None:
+                stage.files.mdout = update.files.mdout if update.files.mdout else None
+            if update.files.mdcrd is not None:
+                stage.files.mdcrd = update.files.mdcrd if update.files.mdcrd else None
+            if update.files.inpcrd is not None:
+                stage.files.inpcrd = update.files.inpcrd if update.files.inpcrd else None
+        if update.expected_gap_ps is not None:
+            stage.expected_gap_ps = update.expected_gap_ps
+        if update.gap_tolerance_ps is not None:
+            stage.gap_tolerance_ps = update.gap_tolerance_ps
+        if update.notes is not None:
+            stage.notes = update.notes
+
+        stage.validation = _validate_stage(stage, state.settings)
+        updated.append(stage)
+
+    return updated
+
+
 # =============================================================================
 # Protocol Endpoints
 # =============================================================================
@@ -867,7 +909,14 @@ def _link_restart_files(state: ProtocolState) -> int:
     # Handle first stage: look for initial coordinate file
     first_stage = state.stages[0]
     first_inpcrd = first_stage.files.inpcrd
-    if first_inpcrd:
+
+    # If user provided an explicit initial_coordinates in settings, use that
+    # for the first stage (highest priority for first step).
+    if state.settings.initial_coordinates:
+        if not first_inpcrd or first_inpcrd != state.settings.initial_coordinates:
+            first_stage.files.inpcrd = state.settings.initial_coordinates
+            updates_made += 1
+    elif first_inpcrd:
         first_inpcrd_stem = Path(first_inpcrd).stem
         first_stage_stem = Path(first_stage.name).stem
         # If the first stage's inpcrd matches its own stem, it's actually its OUTPUT

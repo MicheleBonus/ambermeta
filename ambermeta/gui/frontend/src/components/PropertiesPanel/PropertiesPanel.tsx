@@ -1,5 +1,5 @@
-import { useState, useEffect, useMemo } from 'react';
-import type { StageRole, StageFiles } from '../../types';
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import type { StageRole, StageFiles, StageUpdate } from '../../types';
 import { useProtocolStore } from '../../stores/protocolStore';
 import { FileIcon, X, Check, AlertTriangle } from '../common/Icons';
 import { STAGE_ROLE_CONFIG } from '../../types';
@@ -52,99 +52,358 @@ function FileField({ label, fileType, value, onChange, globalValue }: FileFieldP
   );
 }
 
+/**
+ * Multi-stage bulk edit panel: shown when multiple stages are selected.
+ * Changes apply immediately to all selected stages via the bulk update API.
+ */
+function BulkEditPanel() {
+  const {
+    stages,
+    selectedStageIds,
+    settings,
+    bulkUpdateStages,
+    clearSelection,
+  } = useProtocolStore();
+
+  const selectedStages = useMemo(
+    () => stages.filter(s => selectedStageIds.includes(s.id)),
+    [stages, selectedStageIds]
+  );
+
+  const handleBulkRoleChange = async (role: StageRole) => {
+    await bulkUpdateStages(selectedStageIds, { role });
+  };
+
+  const handleBulkPrmtopChange = async (prmtopPath: string | undefined) => {
+    await bulkUpdateStages(selectedStageIds, {
+      files: { prmtop: prmtopPath || '' },
+    });
+  };
+
+  const handleBulkGapChange = async (field: 'expected_gap_ps' | 'gap_tolerance_ps', value: string) => {
+    const numVal = value ? parseFloat(value) : undefined;
+    await bulkUpdateStages(selectedStageIds, { [field]: numVal });
+  };
+
+  // Collect available prmtops for dropdown
+  const availablePrmtops: { label: string; value: string }[] = [];
+  if (settings.global_prmtop) {
+    availablePrmtops.push({
+      label: `Normal: ${settings.global_prmtop.split('/').pop()}`,
+      value: settings.global_prmtop,
+    });
+  }
+  if (settings.hmr_prmtop) {
+    availablePrmtops.push({
+      label: `HMR: ${settings.hmr_prmtop.split('/').pop()}`,
+      value: settings.hmr_prmtop,
+    });
+  }
+
+  // Determine common values across selected stages
+  const commonRole = selectedStages.every(s => s.role === selectedStages[0]?.role)
+    ? selectedStages[0]?.role
+    : undefined;
+
+  return (
+    <div className="h-full flex flex-col bg-white border-l border-gray-200">
+      <div className="p-4 border-b border-gray-200">
+        <h2 className="font-semibold text-gray-800 flex items-center gap-2">
+          Bulk Edit
+          <span className="px-2 py-0.5 text-xs font-medium rounded-full bg-indigo-100 text-indigo-700">
+            {selectedStageIds.length} stages
+          </span>
+        </h2>
+        <p className="text-xs text-gray-500 mt-1">
+          Changes apply immediately to all selected stages
+        </p>
+      </div>
+
+      <div className="flex-1 overflow-y-auto p-4">
+        {/* Role */}
+        <div className="mb-4">
+          <label className="block text-sm font-medium text-gray-700 mb-1">
+            Role
+          </label>
+          <select
+            value={commonRole ?? '__mixed__'}
+            onChange={(e) => {
+              if (e.target.value !== '__mixed__') {
+                handleBulkRoleChange(e.target.value as StageRole);
+              }
+            }}
+            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+          >
+            {commonRole === undefined && (
+              <option value="__mixed__" disabled>(mixed)</option>
+            )}
+            {STAGE_ROLES.map((role) => (
+              <option key={role} value={role}>
+                {STAGE_ROLE_CONFIG[role].label}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        {/* Prmtop selection */}
+        {availablePrmtops.length > 0 && (
+          <div className="mb-4">
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Topology (prmtop)
+            </label>
+            <div className="space-y-2">
+              <button
+                className="w-full text-left px-3 py-2 text-sm border border-gray-300 rounded-lg hover:bg-blue-50 transition-colors"
+                onClick={() => handleBulkPrmtopChange(undefined)}
+              >
+                Use Global (default)
+              </button>
+              {availablePrmtops.map(p => (
+                <button
+                  key={p.value}
+                  className="w-full text-left px-3 py-2 text-sm font-mono border border-gray-300 rounded-lg hover:bg-blue-50 transition-colors truncate"
+                  onClick={() => handleBulkPrmtopChange(p.value)}
+                  title={p.value}
+                >
+                  {p.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Gap Settings */}
+        <div className="mb-4">
+          <h3 className="text-sm font-medium text-gray-700 mb-3 border-b border-gray-200 pb-2">
+            Gap Settings
+          </h3>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs text-gray-600 mb-1">
+                Expected (ps)
+              </label>
+              <input
+                type="number"
+                step="0.1"
+                placeholder="Set for all..."
+                onBlur={(e) => handleBulkGapChange('expected_gap_ps', e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    handleBulkGapChange('expected_gap_ps', (e.target as HTMLInputElement).value);
+                  }
+                }}
+                className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              />
+            </div>
+            <div>
+              <label className="block text-xs text-gray-600 mb-1">
+                Tolerance (ps)
+              </label>
+              <input
+                type="number"
+                step="0.01"
+                placeholder="Set for all..."
+                onBlur={(e) => handleBulkGapChange('gap_tolerance_ps', e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    handleBulkGapChange('gap_tolerance_ps', (e.target as HTMLInputElement).value);
+                  }
+                }}
+                className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              />
+            </div>
+          </div>
+        </div>
+
+        {/* Selected stages list */}
+        <div className="mb-4">
+          <h3 className="text-sm font-medium text-gray-700 mb-2">
+            Selected Stages
+          </h3>
+          <div className="space-y-1 max-h-48 overflow-y-auto">
+            {selectedStages.map(stage => {
+              const roleConfig = STAGE_ROLE_CONFIG[stage.role] || STAGE_ROLE_CONFIG[''];
+              return (
+                <div key={stage.id} className="flex items-center gap-2 px-2 py-1 text-sm bg-gray-50 rounded">
+                  <span className={`px-1.5 py-0.5 text-xs rounded ${roleConfig.bgColor} ${roleConfig.color}`}>
+                    {roleConfig.label}
+                  </span>
+                  <span className="truncate">{stage.name}</span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+
+      <div className="p-4 border-t border-gray-200">
+        <button
+          className="w-full px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg transition-colors text-sm"
+          onClick={clearSelection}
+        >
+          Clear Selection
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export function PropertiesPanel() {
-  const { stages, selectedStageId, settings, updateStage, updateSettings } =
-    useProtocolStore();
+  const {
+    stages,
+    selectedStageId,
+    selectedStageIds,
+    settings,
+    updateStage,
+    updateSettings,
+  } = useProtocolStore();
+
+  // Show bulk edit panel when multiple stages are selected
+  const isMultiSelect = selectedStageIds.length > 1;
 
   const selectedStage = useMemo(
     () => stages.find((s) => s.id === selectedStageId),
     [stages, selectedStageId]
   );
 
+  // Debounce timer ref for auto-saving
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Auto-save helper: debounces updates to the backend
+  const debouncedUpdate = useCallback(
+    (stageId: string, update: StageUpdate) => {
+      if (saveTimerRef.current) {
+        clearTimeout(saveTimerRef.current);
+      }
+      saveTimerRef.current = setTimeout(() => {
+        updateStage(stageId, update);
+      }, 300);
+    },
+    [updateStage]
+  );
+
+  // Build current update payload from local state
   const [localName, setLocalName] = useState('');
   const [localRole, setLocalRole] = useState<StageRole>('');
   const [localFiles, setLocalFiles] = useState<StageFiles>({});
   const [localExpectedGap, setLocalExpectedGap] = useState('');
   const [localGapTolerance, setLocalGapTolerance] = useState('');
   const [localNotes, setLocalNotes] = useState('');
-  const [hasChanges, setHasChanges] = useState(false);
+
+  // Track whether we're syncing from store (to avoid triggering auto-save during sync)
+  const isSyncing = useRef(false);
 
   // Sync local state when selected stage changes
   useEffect(() => {
     if (selectedStage) {
+      isSyncing.current = true;
       setLocalName(selectedStage.name);
       setLocalRole(selectedStage.role);
       setLocalFiles({ ...selectedStage.files });
       setLocalExpectedGap(selectedStage.expected_gap_ps?.toString() || '');
       setLocalGapTolerance(selectedStage.gap_tolerance_ps?.toString() || '');
       setLocalNotes(selectedStage.notes.join('\n'));
-      setHasChanges(false);
+      // Use requestAnimationFrame to ensure state updates have been applied
+      requestAnimationFrame(() => {
+        isSyncing.current = false;
+      });
     }
-  }, [selectedStage]);
+  }, [selectedStage?.id]);
 
-  // Mark as changed when any field changes
-  useEffect(() => {
-    if (!selectedStage) return;
+  // Auto-save when local fields change (for immediate fields like role, files)
+  const triggerSave = useCallback(
+    (overrides: Partial<StageUpdate> = {}) => {
+      if (!selectedStage || isSyncing.current) return;
+      const update: StageUpdate = {
+        name: localName,
+        role: localRole,
+        files: localFiles,
+        expected_gap_ps: localExpectedGap ? parseFloat(localExpectedGap) : undefined,
+        gap_tolerance_ps: localGapTolerance ? parseFloat(localGapTolerance) : undefined,
+        notes: localNotes.split('\n').filter(Boolean),
+        ...overrides,
+      };
+      debouncedUpdate(selectedStage.id, update);
+    },
+    [selectedStage, localName, localRole, localFiles, localExpectedGap, localGapTolerance, localNotes, debouncedUpdate]
+  );
 
-    const filesChanged =
-      JSON.stringify(localFiles) !== JSON.stringify(selectedStage.files);
-    const hasChange =
-      localName !== selectedStage.name ||
-      localRole !== selectedStage.role ||
-      filesChanged ||
-      localExpectedGap !== (selectedStage.expected_gap_ps?.toString() || '') ||
-      localGapTolerance !== (selectedStage.gap_tolerance_ps?.toString() || '') ||
-      localNotes !== selectedStage.notes.join('\n');
-
-    setHasChanges(hasChange);
-  }, [
-    selectedStage,
-    localName,
-    localRole,
-    localFiles,
-    localExpectedGap,
-    localGapTolerance,
-    localNotes,
-  ]);
-
-  const handleApply = async () => {
-    if (!selectedStage || !hasChanges) return;
-
-    await updateStage(selectedStage.id, {
-      name: localName,
-      role: localRole,
-      files: localFiles,
-      expected_gap_ps: localExpectedGap ? parseFloat(localExpectedGap) : undefined,
-      gap_tolerance_ps: localGapTolerance
-        ? parseFloat(localGapTolerance)
-        : undefined,
-      notes: localNotes.split('\n').filter(Boolean),
-    });
-  };
-
-  const handleReset = () => {
+  // Handlers that update local state AND trigger immediate save
+  const handleRoleChange = (role: StageRole) => {
+    setLocalRole(role);
     if (selectedStage) {
-      setLocalName(selectedStage.name);
-      setLocalRole(selectedStage.role);
-      setLocalFiles({ ...selectedStage.files });
-      setLocalExpectedGap(selectedStage.expected_gap_ps?.toString() || '');
-      setLocalGapTolerance(selectedStage.gap_tolerance_ps?.toString() || '');
-      setLocalNotes(selectedStage.notes.join('\n'));
-      setHasChanges(false);
+      updateStage(selectedStage.id, { role });
     }
   };
 
-  const handleFileChange = (
-    fileType: keyof StageFiles,
-    value: string | undefined
-  ) => {
-    setLocalFiles((prev) => ({
-      ...prev,
-      // Use empty string for cleared fields so they're included in JSON.stringify
-      // The backend treats empty string as "clear this field"
+  const handleFileChange = (fileType: keyof StageFiles, value: string | undefined) => {
+    const newFiles = {
+      ...localFiles,
       [fileType]: value === undefined ? '' : value,
-    }));
+    };
+    setLocalFiles(newFiles);
+    if (selectedStage) {
+      updateStage(selectedStage.id, { files: newFiles });
+    }
   };
+
+  const handleNameBlur = () => {
+    if (selectedStage && localName !== selectedStage.name) {
+      updateStage(selectedStage.id, { name: localName });
+    }
+  };
+
+  const handleGapBlur = () => {
+    if (!selectedStage) return;
+    const expected = localExpectedGap ? parseFloat(localExpectedGap) : undefined;
+    const tolerance = localGapTolerance ? parseFloat(localGapTolerance) : undefined;
+    if (
+      expected !== selectedStage.expected_gap_ps ||
+      tolerance !== selectedStage.gap_tolerance_ps
+    ) {
+      updateStage(selectedStage.id, {
+        expected_gap_ps: expected,
+        gap_tolerance_ps: tolerance,
+      });
+    }
+  };
+
+  const handleNotesBlur = () => {
+    if (!selectedStage) return;
+    const newNotes = localNotes.split('\n').filter(Boolean);
+    if (JSON.stringify(newNotes) !== JSON.stringify(selectedStage.notes)) {
+      updateStage(selectedStage.id, { notes: newNotes });
+    }
+  };
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (saveTimerRef.current) {
+        clearTimeout(saveTimerRef.current);
+      }
+    };
+  }, []);
+
+  // Collect available prmtops for dropdown selection
+  const availablePrmtops: { label: string; value: string | undefined }[] = [];
+  if (settings.global_prmtop) {
+    availablePrmtops.push({
+      label: `Normal: ${settings.global_prmtop.split('/').pop()}`,
+      value: undefined, // undefined = use global
+    });
+  }
+  if (settings.hmr_prmtop) {
+    availablePrmtops.push({
+      label: `HMR: ${settings.hmr_prmtop.split('/').pop()}`,
+      value: settings.hmr_prmtop,
+    });
+  }
+
+  // Show bulk edit panel when multiple stages are selected
+  if (isMultiSelect) {
+    return <BulkEditPanel />;
+  }
 
   // Show global settings when no stage is selected
   if (!selectedStage) {
@@ -192,6 +451,28 @@ export function PropertiesPanel() {
                 })
               }
               placeholder="Path to HMR prmtop file"
+              className="w-full px-3 py-2 text-sm font-mono border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+
+          <div className="mb-4">
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Initial Coordinates (Optional)
+            </label>
+            <p className="text-xs text-gray-500 mb-2">
+              Input coordinate file for the very first step (e.g., system.inpcrd, complex.rst7).
+              If set, this overrides auto-detection for the first stage.
+            </p>
+            <input
+              type="text"
+              value={settings.initial_coordinates || ''}
+              onChange={(e) =>
+                updateSettings({
+                  ...settings,
+                  initial_coordinates: e.target.value || undefined,
+                })
+              }
+              placeholder="Path to initial coordinate file"
               className="w-full px-3 py-2 text-sm font-mono border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
           </div>
@@ -268,6 +549,7 @@ export function PropertiesPanel() {
             <AlertTriangle className="w-4 h-4 text-yellow-500" />
           )}
         </h2>
+        <p className="text-xs text-gray-400 mt-1">Changes are saved automatically</p>
       </div>
 
       {/* Form */}
@@ -281,6 +563,8 @@ export function PropertiesPanel() {
             type="text"
             value={localName}
             onChange={(e) => setLocalName(e.target.value)}
+            onBlur={handleNameBlur}
+            onKeyDown={(e) => { if (e.key === 'Enter') handleNameBlur(); }}
             className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
           />
         </div>
@@ -292,7 +576,7 @@ export function PropertiesPanel() {
           </label>
           <select
             value={localRole}
-            onChange={(e) => setLocalRole(e.target.value as StageRole)}
+            onChange={(e) => handleRoleChange(e.target.value as StageRole)}
             className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
           >
             {STAGE_ROLES.map((role) => (
@@ -309,42 +593,45 @@ export function PropertiesPanel() {
             Topology
           </h3>
 
-          {/* Show topology selection when both global and HMR prmtop are available */}
-          {settings.global_prmtop && settings.hmr_prmtop && !localFiles.prmtop && (
+          {/* Dropdown for selecting from pre-loaded prmtops */}
+          {availablePrmtops.length > 0 && (
             <div className="mb-3 p-3 bg-gray-50 border border-gray-200 rounded-lg">
               <label className="block text-xs font-medium text-gray-600 mb-2">
                 Use Topology
               </label>
-              <div className="space-y-2">
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="radio"
-                    name="topology_selection"
-                    checked={localFiles.prmtop !== settings.hmr_prmtop}
-                    onChange={() => handleFileChange('prmtop', undefined)}
-                    className="text-blue-500 focus:ring-blue-500"
-                  />
-                  <span className="text-sm">Normal (Global)</span>
-                  <span className="text-xs text-gray-400 truncate flex-1" title={settings.global_prmtop}>
-                    {settings.global_prmtop?.split('/').pop()}
-                  </span>
-                </label>
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="radio"
-                    name="topology_selection"
-                    checked={localFiles.prmtop === settings.hmr_prmtop}
-                    onChange={() => handleFileChange('prmtop', settings.hmr_prmtop)}
-                    className="text-blue-500 focus:ring-blue-500"
-                  />
-                  <span className="text-sm">HMR</span>
-                  <span className="text-xs text-gray-400 truncate flex-1" title={settings.hmr_prmtop}>
-                    {settings.hmr_prmtop?.split('/').pop()}
-                  </span>
-                </label>
-              </div>
-              <p className="text-xs text-gray-500 mt-2">
-                Tip: Use HMR prmtop for stages with dt ≥ 0.004 ps
+              <select
+                value={
+                  localFiles.prmtop === settings.hmr_prmtop ? 'hmr' :
+                  !localFiles.prmtop ? 'global' :
+                  'custom'
+                }
+                onChange={(e) => {
+                  if (e.target.value === 'global') {
+                    handleFileChange('prmtop', undefined);
+                  } else if (e.target.value === 'hmr' && settings.hmr_prmtop) {
+                    handleFileChange('prmtop', settings.hmr_prmtop);
+                  }
+                }}
+                className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="global">
+                  Normal (Global): {settings.global_prmtop?.split('/').pop() || 'not set'}
+                </option>
+                {settings.hmr_prmtop && (
+                  <option value="hmr">
+                    HMR: {settings.hmr_prmtop.split('/').pop()}
+                  </option>
+                )}
+                {localFiles.prmtop &&
+                  localFiles.prmtop !== settings.global_prmtop &&
+                  localFiles.prmtop !== settings.hmr_prmtop && (
+                  <option value="custom">
+                    Custom: {localFiles.prmtop.split('/').pop()}
+                  </option>
+                )}
+              </select>
+              <p className="text-xs text-gray-500 mt-1">
+                Tip: Use HMR prmtop for stages with dt &ge; 0.004 ps
               </p>
             </div>
           )}
@@ -415,6 +702,8 @@ export function PropertiesPanel() {
                 step="0.1"
                 value={localExpectedGap}
                 onChange={(e) => setLocalExpectedGap(e.target.value)}
+                onBlur={handleGapBlur}
+                onKeyDown={(e) => { if (e.key === 'Enter') handleGapBlur(); }}
                 placeholder="0.0"
                 className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
@@ -428,6 +717,8 @@ export function PropertiesPanel() {
                 step="0.01"
                 value={localGapTolerance}
                 onChange={(e) => setLocalGapTolerance(e.target.value)}
+                onBlur={handleGapBlur}
+                onKeyDown={(e) => { if (e.key === 'Enter') handleGapBlur(); }}
                 placeholder="0.1"
                 className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
@@ -443,6 +734,7 @@ export function PropertiesPanel() {
           <textarea
             value={localNotes}
             onChange={(e) => setLocalNotes(e.target.value)}
+            onBlur={handleNotesBlur}
             placeholder="Add notes about this stage..."
             rows={3}
             className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
@@ -473,25 +765,6 @@ export function PropertiesPanel() {
             ))}
           </div>
         )}
-      </div>
-
-      {/* Actions */}
-      <div className="p-4 border-t border-gray-200 flex gap-2">
-        <button
-          className="flex-1 px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-          onClick={handleApply}
-          disabled={!hasChanges}
-        >
-          <Check className="w-4 h-4" />
-          Apply
-        </button>
-        <button
-          className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-          onClick={handleReset}
-          disabled={!hasChanges}
-        >
-          Reset
-        </button>
       </div>
     </div>
   );

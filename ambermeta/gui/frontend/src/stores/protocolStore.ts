@@ -15,6 +15,7 @@ interface ProtocolStore {
   stages: Stage[];
   settings: GlobalSettings;
   selectedStageId: string | null;
+  selectedStageIds: string[];
   files: FileInfo[];
   isLoading: boolean;
   error: string | null;
@@ -25,6 +26,8 @@ interface ProtocolStore {
 
   // Actions
   setSelectedStage: (id: string | null) => void;
+  toggleStageSelection: (id: string, shiftKey: boolean) => void;
+  clearSelection: () => void;
 
   // File actions
   loadFiles: (path?: string) => Promise<void>;
@@ -33,6 +36,7 @@ interface ProtocolStore {
   loadStages: () => Promise<void>;
   addStage: (stage: StageCreate) => Promise<void>;
   updateStage: (id: string, update: StageUpdate) => Promise<void>;
+  bulkUpdateStages: (ids: string[], update: StageUpdate) => Promise<void>;
   deleteStage: (id: string) => Promise<void>;
   reorderStages: (stageIds: string[]) => Promise<void>;
 
@@ -72,13 +76,56 @@ export const useProtocolStore = create<ProtocolStore>((set, get) => ({
   stages: [],
   settings: DEFAULT_SETTINGS,
   selectedStageId: null,
+  selectedStageIds: [],
   files: [],
   isLoading: false,
   error: null,
   history: [],
   historyIndex: -1,
 
-  setSelectedStage: (id) => set({ selectedStageId: id }),
+  setSelectedStage: (id) => set({
+    selectedStageId: id,
+    selectedStageIds: id ? [id] : [],
+  }),
+
+  toggleStageSelection: (id, shiftKey) => {
+    const { selectedStageIds, stages } = get();
+
+    if (shiftKey && selectedStageIds.length > 0) {
+      // Shift+click: select range from last selected to this one
+      const lastSelected = selectedStageIds[selectedStageIds.length - 1];
+      const lastIndex = stages.findIndex(s => s.id === lastSelected);
+      const currentIndex = stages.findIndex(s => s.id === id);
+      if (lastIndex !== -1 && currentIndex !== -1) {
+        const start = Math.min(lastIndex, currentIndex);
+        const end = Math.max(lastIndex, currentIndex);
+        const rangeIds = stages.slice(start, end + 1).map(s => s.id);
+        // Merge with existing selection
+        const merged = new Set([...selectedStageIds, ...rangeIds]);
+        set({
+          selectedStageIds: Array.from(merged),
+          selectedStageId: id,
+        });
+      }
+    } else {
+      // Regular click: toggle this one in selection
+      const isSelected = selectedStageIds.includes(id);
+      if (isSelected) {
+        const newIds = selectedStageIds.filter(sid => sid !== id);
+        set({
+          selectedStageIds: newIds,
+          selectedStageId: newIds.length > 0 ? newIds[newIds.length - 1] : null,
+        });
+      } else {
+        set({
+          selectedStageIds: [...selectedStageIds, id],
+          selectedStageId: id,
+        });
+      }
+    }
+  },
+
+  clearSelection: () => set({ selectedStageIds: [], selectedStageId: null }),
 
   loadFiles: async (path) => {
     set({ isLoading: true, error: null });
@@ -115,6 +162,7 @@ export const useProtocolStore = create<ProtocolStore>((set, get) => ({
         history: newHistory,
         historyIndex: newHistory.length - 1,
         selectedStageId: newStage.id,
+        selectedStageIds: [newStage.id],
         isLoading: false,
       });
     } catch (err) {
@@ -143,11 +191,36 @@ export const useProtocolStore = create<ProtocolStore>((set, get) => ({
     }
   },
 
+  bulkUpdateStages: async (ids, update) => {
+    set({ isLoading: true, error: null });
+    try {
+      const updatedStages = await api.bulkUpdateStages(ids, update);
+      const { stages, history, historyIndex } = get();
+
+      // Save current state to history
+      const newHistory = history.slice(0, historyIndex + 1);
+      newHistory.push([...stages]);
+
+      // Merge updated stages back into the list
+      const updatedMap = new Map(updatedStages.map(s => [s.id, s]));
+      const newStages = stages.map(s => updatedMap.get(s.id) || s);
+
+      set({
+        stages: newStages,
+        history: newHistory,
+        historyIndex: newHistory.length - 1,
+        isLoading: false,
+      });
+    } catch (err) {
+      set({ error: String(err), isLoading: false });
+    }
+  },
+
   deleteStage: async (id) => {
     set({ isLoading: true, error: null });
     try {
       await api.deleteStage(id);
-      const { stages, selectedStageId, history, historyIndex } = get();
+      const { stages, selectedStageId, selectedStageIds, history, historyIndex } = get();
 
       // Save current state to history
       const newHistory = history.slice(0, historyIndex + 1);
@@ -156,6 +229,7 @@ export const useProtocolStore = create<ProtocolStore>((set, get) => ({
       set({
         stages: stages.filter(s => s.id !== id),
         selectedStageId: selectedStageId === id ? null : selectedStageId,
+        selectedStageIds: selectedStageIds.filter(sid => sid !== id),
         history: newHistory,
         historyIndex: newHistory.length - 1,
         isLoading: false,

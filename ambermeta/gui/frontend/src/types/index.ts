@@ -65,6 +65,7 @@ export interface StageUpdate {
 export interface GlobalSettings {
   global_prmtop?: string;
   hmr_prmtop?: string;
+  initial_coordinates?: string;
   auto_link_restarts: boolean;
   validate_on_export: boolean;
   use_relative_paths: boolean;
