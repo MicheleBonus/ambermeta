@@ -1,5 +1,5 @@
-import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
-import type { StageRole, StageFiles, StageUpdate } from '../../types';
+import { useState, useEffect, useMemo, useRef } from 'react';
+import type { StageRole, StageFiles } from '../../types';
 import { useProtocolStore } from '../../stores/protocolStore';
 import { FileIcon, X, Check, AlertTriangle } from '../common/Icons';
 import { STAGE_ROLE_CONFIG } from '../../types';
@@ -266,22 +266,6 @@ export function PropertiesPanel() {
     [stages, selectedStageId]
   );
 
-  // Debounce timer ref for auto-saving
-  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  // Auto-save helper: debounces updates to the backend
-  const debouncedUpdate = useCallback(
-    (stageId: string, update: StageUpdate) => {
-      if (saveTimerRef.current) {
-        clearTimeout(saveTimerRef.current);
-      }
-      saveTimerRef.current = setTimeout(() => {
-        updateStage(stageId, update);
-      }, 300);
-    },
-    [updateStage]
-  );
-
   // Build current update payload from local state
   const [localName, setLocalName] = useState('');
   const [localRole, setLocalRole] = useState<StageRole>('');
@@ -309,24 +293,6 @@ export function PropertiesPanel() {
       });
     }
   }, [selectedStage?.id]);
-
-  // Auto-save when local fields change (for immediate fields like role, files)
-  const triggerSave = useCallback(
-    (overrides: Partial<StageUpdate> = {}) => {
-      if (!selectedStage || isSyncing.current) return;
-      const update: StageUpdate = {
-        name: localName,
-        role: localRole,
-        files: localFiles,
-        expected_gap_ps: localExpectedGap ? parseFloat(localExpectedGap) : undefined,
-        gap_tolerance_ps: localGapTolerance ? parseFloat(localGapTolerance) : undefined,
-        notes: localNotes.split('\n').filter(Boolean),
-        ...overrides,
-      };
-      debouncedUpdate(selectedStage.id, update);
-    },
-    [selectedStage, localName, localRole, localFiles, localExpectedGap, localGapTolerance, localNotes, debouncedUpdate]
-  );
 
   // Handlers that update local state AND trigger immediate save
   const handleRoleChange = (role: StageRole) => {
@@ -375,15 +341,6 @@ export function PropertiesPanel() {
       updateStage(selectedStage.id, { notes: newNotes });
     }
   };
-
-  // Cleanup on unmount
-  useEffect(() => {
-    return () => {
-      if (saveTimerRef.current) {
-        clearTimeout(saveTimerRef.current);
-      }
-    };
-  }, []);
 
   // Collect available prmtops for dropdown selection
   const availablePrmtops: { label: string; value: string | undefined }[] = [];
