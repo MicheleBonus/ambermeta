@@ -94,6 +94,7 @@ packages = ["ambermeta", "ambermeta.parsers", "ambermeta.legacy_extractors", "am
 
 [tool.setuptools.package-data]
 ambermeta = ["py.typed"]
+"ambermeta.gui" = ["static/**"]
 
 [tool.black]
 line-length = 100
