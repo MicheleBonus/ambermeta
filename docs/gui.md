@@ -238,7 +238,7 @@ When no stage is selected, the Properties Panel shows global settings:
 | **Validate on Export** | Run validation before exporting |
 | **Use Relative Paths** | Export with relative paths instead of absolute |
 
-### Stage Properties (Stage Selected)
+### Stage Properties (Single Stage Selected)
 
 When a stage is selected, edit its properties:
 
@@ -251,6 +251,31 @@ When a stage is selected, edit its properties:
 | **Expected Gap (ps)** | Expected time gap from previous stage |
 | **Tolerance (ps)** | Acceptable deviation from expected gap |
 | **Notes** | Documentation notes (one per line) |
+
+### Bulk Edit (Multiple Stages Selected)
+
+When `selectedStageIds.length > 1`, the Properties Panel switches to a multi-selection mode.
+
+#### Selecting Multiple Stages
+
+You can multi-select stages from the Stage Builder using:
+
+- **Ctrl+Click** (Windows/Linux) or **Cmd+Click** (macOS) to toggle individual stage selection
+- **Shift+Click** to select a range of stages
+- Stage card **checkbox toggles** for explicit include/exclude selection
+
+#### Bulk Edit Behavior
+
+- The panel title changes to **Bulk Edit** and shows the number of selected stages.
+- Bulk-editable fields are:
+  - **Role**
+  - **Topology choice** (global/default vs available topology options)
+  - **Gap settings**: **Expected (ps)** and **Tolerance (ps)**
+- Bulk edits apply **immediately** (there is no separate Apply button), matching `BulkEditPanel` behavior.
+
+#### Troubleshooting
+
+If only one stage is selected, the panel returns to single-stage properties and you will not see **Bulk Edit**.
 
 ### Topology Selection
 
@@ -270,7 +295,7 @@ Each file field shows:
 - A clear button (✗) to remove the file
 - "(using global)" indicator if using the global prmtop
 
-### Apply/Reset
+### Apply/Reset (Single-Stage Mode)
 
 - **Apply**: Save changes to the stage
 - **Reset**: Discard changes and revert to saved values
