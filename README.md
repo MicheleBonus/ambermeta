@@ -442,15 +442,22 @@ The GUI provides a modern web-based interface for building protocol manifests.
 
 #### GUI Installation
 
-The GUI frontend is pre-built and included in the repository. Only the Python dependencies need to be installed:
+Use this when you want the GUI from your **current local checkout** (including merged-but-not-yet-released changes). The GUI frontend is pre-built in the repo, so you only need to install Python dependencies:
 
 ```bash
-pip install -e ".[gui]"
+python -m pip install -e ".[gui]"
+```
+
+If you already have AmberMeta installed in the same environment, uninstall first to avoid stale site-packages shadowing your editable checkout:
+
+```bash
+python -m pip uninstall ambermeta -y
+python -m pip install -e ".[gui]"
 ```
 
 #### Rebuilding the Frontend (Development)
 
-If you modify the frontend source code in `ambermeta/gui/frontend/src/`, rebuild it:
+If you modify the frontend source code in `ambermeta/gui/frontend/src/`, or if you are using a source checkout and the GUI appears older than expected, rebuild frontend assets:
 
 ```bash
 cd ambermeta/gui/frontend
@@ -459,7 +466,7 @@ npm run build      # outputs to ambermeta/gui/static/
 cd ../../..
 ```
 
-If you see a placeholder page when launching the GUI, the frontend build may be missing. Run the commands above to rebuild it.
+If you see a placeholder page when launching the GUI, the frontend build may be missing. Run the commands above to rebuild it, then relaunch `ambermeta gui`.
 
 #### Launching the GUI
 
@@ -467,6 +474,29 @@ If you see a placeholder page when launching the GUI, the frontend build may be 
 # Launch GUI in a directory
 ambermeta gui /path/to/simulations
 ```
+
+After upgrading AmberMeta or rebuilding frontend assets, do a hard refresh in your browser (`Ctrl+Shift+R` / `Cmd+Shift+R`) to clear cached files. AmberMeta uses hashed assets to reduce cache issues, but a hard refresh is still the quickest fix when updates do not appear immediately.
+
+#### If features from a merged PR are missing
+
+1. Confirm you installed from your current local checkout (not an older published wheel):
+   ```bash
+   python -m pip install -e ".[gui]"
+   ```
+2. In existing environments, force a clean reinstall to remove stale package copies:
+   ```bash
+   python -m pip uninstall ambermeta -y
+   python -m pip install -e ".[gui]"
+   ```
+3. If the GUI still looks old, rebuild frontend assets from source and relaunch:
+   ```bash
+   cd ambermeta/gui/frontend
+   npm install        # first time only
+   npm run build
+   cd ../../..
+   ambermeta gui /path/to/simulations
+   ```
+4. Hard-refresh the browser tab (`Ctrl+Shift+R` / `Cmd+Shift+R`).
 
 This opens your browser at `http://localhost:8000` with a three-panel interface:
 
