@@ -14,6 +14,7 @@ import { useProtocolStore } from './stores/protocolStore';
 import { FileBrowser } from './components/FileBrowser/FileBrowser';
 import { StageBuilder } from './components/StageBuilder/StageBuilder';
 import { PropertiesPanel } from './components/PropertiesPanel/PropertiesPanel';
+import { ResizeHandle } from './components/common/ResizeHandle';
 import {
   Download,
   Undo2,
@@ -368,6 +369,10 @@ export default function App() {
   const [showAutoDiscoverModal, setShowAutoDiscoverModal] = useState(false);
   const [activeDragItem, setActiveDragItem] = useState<FileInfo | null>(null);
   const [showMobileMenu, setShowMobileMenu] = useState(false);
+
+  // Panel widths for resizable layout
+  const [leftPanelWidth, setLeftPanelWidth] = useState(320);
+  const [rightPanelWidth, setRightPanelWidth] = useState(340);
 
   // Initialize data on mount
   useEffect(() => {
@@ -736,27 +741,47 @@ export default function App() {
 
         {/* Main content - resizable panels */}
         <main className="flex-1 flex overflow-hidden">
-          {/* File Browser - Left panel (resizable) */}
+          {/* File Browser - Left panel */}
           <aside
-            className="hidden md:block flex-shrink-0 overflow-hidden"
-            style={{ width: 320, minWidth: 200, maxWidth: 500, resize: 'horizontal', overflow: 'auto' }}
+            className="hidden md:flex flex-shrink-0 overflow-hidden"
+            style={{ width: leftPanelWidth }}
           >
             <FileBrowser />
           </aside>
+
+          {/* Left resize handle */}
+          <div className="hidden md:block">
+            <ResizeHandle
+              direction="left"
+              currentWidth={leftPanelWidth}
+              onResize={setLeftPanelWidth}
+              minWidth={200}
+              maxWidth={500}
+            />
+          </div>
 
           {/* Stage Builder - Center */}
           <section className="flex-1 min-w-0">
             <StageBuilder />
           </section>
 
-          {/* Properties Panel - Right (resizable from left edge) */}
+          {/* Right resize handle */}
+          <div className="hidden lg:block">
+            <ResizeHandle
+              direction="right"
+              currentWidth={rightPanelWidth}
+              onResize={setRightPanelWidth}
+              minWidth={260}
+              maxWidth={550}
+            />
+          </div>
+
+          {/* Properties Panel - Right */}
           <aside
-            className="hidden lg:block flex-shrink-0 overflow-hidden"
-            style={{ width: 340, minWidth: 260, maxWidth: 550, resize: 'horizontal', overflow: 'auto', direction: 'rtl' }}
+            className="hidden lg:flex flex-shrink-0 overflow-hidden"
+            style={{ width: rightPanelWidth }}
           >
-            <div style={{ direction: 'ltr' }}>
-              <PropertiesPanel />
-            </div>
+            <PropertiesPanel />
           </aside>
         </main>
 

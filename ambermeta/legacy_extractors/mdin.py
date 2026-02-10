@@ -242,6 +242,87 @@ def _strip_comments(text: str) -> str:
     return "".join(result)
 
 
+def _extract_namelists(text: str) -> List[Dict[str, Any]]:
+    """Extract Fortran namelists from text, respecting quoted strings.
+
+    Unlike a simple regex like ``&name(.*?)(/|&end)``, this function tracks
+    single- and double-quote state so that ``/`` characters inside quoted
+    values (e.g. ``restraintmask=':1-50/@CA'``) do not prematurely terminate
+    the namelist.
+
+    Returns a list of dicts with keys ``name`` (lowercase namelist name),
+    ``body`` (raw text between the name and the terminator), and ``end_pos``
+    (character offset just past the terminator).
+    """
+    results: List[Dict[str, Any]] = []
+    i = 0
+    length = len(text)
+
+    while i < length:
+        # Look for '&' that starts a namelist
+        if text[i] != '&':
+            i += 1
+            continue
+
+        # Extract the namelist name
+        name_start = i + 1
+        name_end = name_start
+        while name_end < length and (text[name_end].isalnum() or text[name_end] == '_'):
+            name_end += 1
+
+        name = text[name_start:name_end]
+        if not name:
+            i += 1
+            continue
+
+        # Extract body until '/' or '&end', respecting quotes
+        body_start = name_end
+        j = body_start
+        in_single = False
+        in_double = False
+        found_end = False
+
+        while j < length:
+            ch = text[j]
+
+            if ch == "'" and not in_double:
+                in_single = not in_single
+            elif ch == '"' and not in_single:
+                in_double = not in_double
+            elif not in_single and not in_double:
+                if ch == '/':
+                    results.append({
+                        "name": name.lower(),
+                        "body": text[body_start:j],
+                        "end_pos": j + 1,
+                    })
+                    i = j + 1
+                    found_end = True
+                    break
+                # Check for &end (case-insensitive)
+                if ch == '&' and text[j:j + 4].lower() == '&end':
+                    results.append({
+                        "name": name.lower(),
+                        "body": text[body_start:j],
+                        "end_pos": j + 4,
+                    })
+                    i = j + 4
+                    found_end = True
+                    break
+            j += 1
+
+        if not found_end:
+            # End of text without a terminator – capture remaining content
+            results.append({
+                "name": name.lower(),
+                "body": text[body_start:],
+                "end_pos": length,
+            })
+            break
+
+    return results
+
+
 # -------------------------------
 # 5. Main Parser
 # -------------------------------
@@ -291,17 +372,19 @@ def parse_mdin_file(filepath: str) -> MdinMetadata:
     # restraintmask='!(:1-314)') are NOT comment characters.
     full_stripped = _strip_comments(full_content)
 
-    namelist_re = re.compile(
-        r"&(?P<name>[a-zA-Z0-9_]+)(?P<body>.*?)(?:/|&end)",
-        re.DOTALL | re.IGNORECASE,
-    )
+    # Extract namelists using a quote-aware parser so that '/'
+    # inside quoted values (e.g. restraintmask=':1-50/@CA') does
+    # not prematurely terminate a namelist.
+    namelists = _extract_namelists(full_stripped)
 
     last_pos = 0
     wt_entries: List[WtScheduleEntry] = []
 
-    for match in namelist_re.finditer(full_stripped):
-        name = match.group("name").lower()
-        body = match.group("body")
+    for nl in namelists:
+        name = nl["name"]
+        body = nl["body"]
+        last_pos = nl["end_pos"]
+
         params = _parse_namelist_string(body)
         params["_namelist"] = name
 
@@ -323,8 +406,6 @@ def parse_mdin_file(filepath: str) -> MdinMetadata:
                 )
                 wt_entries.append(entry)
             md.additional_namelists.append(params)
-
-        last_pos = match.end()
 
     md.wt_schedules = wt_entries
 
@@ -685,6 +766,26 @@ def _populate_warnings(md: MdinMetadata) -> None:
         md.warnings.append(
             "Title mentions restraints but ntr=0 in &cntrl."
         )
+
+    # Restraints active but restraintmask is empty, missing, or corrupted
+    if md.restraints_active:
+        mask = c.get("restraintmask")
+        if not mask or (isinstance(mask, str) and not mask.strip()):
+            md.warnings.append(
+                "ntr is set (restraints active) but restraintmask is empty or missing. "
+                "Ensure the mask is quoted, e.g. restraintmask='!(:1-314)'."
+            )
+        elif isinstance(mask, str) and "=" in mask:
+            # Likely corrupted: unquoted mask containing '!' was stripped as a
+            # comment, causing the parser to consume the next key=value pair as
+            # the mask value.
+            md.warnings.append(
+                f"restraintmask value looks corrupted ('{mask}'). "
+                "This usually happens when the mask is not quoted. "
+                "Use quotes: restraintmask='!(:1-314)' or restraintmask=\"!(:1-314)\"."
+            )
+            # Clear the corrupted value
+            c["restraintmask"] = ""
 
 # -------------------------------
 # 7. Summarizers

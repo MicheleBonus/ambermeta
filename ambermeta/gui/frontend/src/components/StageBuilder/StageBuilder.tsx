@@ -64,11 +64,16 @@ function StageCard({
   };
 
   const roleConfig = STAGE_ROLE_CONFIG[stage.role] || STAGE_ROLE_CONFIG[''];
-  const fileCount = Object.values(stage.files).filter(Boolean).length;
-  const totalFiles = 5; // prmtop, mdin, mdout, mdcrd, inpcrd
 
   // Determine the effective prmtop (stage-specific or global)
   const effectivePrmtop = stage.files.prmtop || globalPrmtop;
+
+  // Count effective files (including global prmtop if used)
+  const fileCount =
+    Object.entries(stage.files)
+      .filter(([key, val]) => key !== 'prmtop' && Boolean(val))
+      .length + (effectivePrmtop ? 1 : 0);
+  const totalFiles = 5; // prmtop, mdin, mdout, mdcrd, inpcrd
 
   const validationStatus = stage.validation.is_valid
     ? 'valid'

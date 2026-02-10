@@ -36,11 +36,12 @@ function DraggableFileItem({ file, onContextMenu }: Omit<FileTreeItemProps, 'lev
         ${isDragging ? 'bg-blue-50 ring-2 ring-blue-200' : ''}
       `}
       onContextMenu={(e) => onContextMenu?.(e, file)}
+      title={file.path}
     >
       <FileIcon type={file.file_type} className="w-4 h-4 flex-shrink-0" />
-      <span className="text-sm truncate font-mono">{file.name}</span>
+      <span className="text-sm truncate font-mono" title={file.name}>{file.name}</span>
       {file.size && (
-        <span className="text-xs text-gray-400 ml-auto">
+        <span className="text-xs text-gray-400 ml-auto flex-shrink-0">
           {formatFileSize(file.size)}
         </span>
       )}
@@ -60,6 +61,7 @@ function FileTreeItem({ file, level, onContextMenu }: FileTreeItemProps) {
           className="flex items-center gap-1 px-2 py-1 cursor-pointer hover:bg-gray-100 rounded transition-colors"
           onClick={() => setIsExpanded(!isExpanded)}
           style={{ paddingLeft: `${level * 12 + 8}px` }}
+          title={file.path}
         >
           {hasChildren ? (
             isExpanded ? (
@@ -71,7 +73,7 @@ function FileTreeItem({ file, level, onContextMenu }: FileTreeItemProps) {
             <span className="w-4" />
           )}
           <FileIcon type="folder" className="w-4 h-4" isOpen={isExpanded} />
-          <span className="text-sm truncate">{file.name}</span>
+          <span className="text-sm truncate" title={file.name}>{file.name}</span>
         </div>
         {isExpanded && hasChildren && (
           <div>
