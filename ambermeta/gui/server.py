@@ -73,12 +73,12 @@ def create_app(directory: str) -> "FastAPI":
     frontend_dist = gui_dir / "frontend" / "dist"
 
     # Check for built frontend
-    if frontend_dist.exists() and (frontend_dist / "index.html").exists():
-        # Serve built frontend from frontend/dist
-        static_path = frontend_dist
-    elif static_dir.exists() and (static_dir / "index.html").exists():
-        # Serve from static directory (for packaged distribution)
+    if static_dir.exists() and (static_dir / "index.html").exists():
+        # Serve from static directory (default build output / packaged distribution)
         static_path = static_dir
+    elif frontend_dist.exists() and (frontend_dist / "index.html").exists():
+        # Legacy fallback: serve from frontend/dist
+        static_path = frontend_dist
     else:
         # No frontend built, serve a placeholder
         static_path = None
