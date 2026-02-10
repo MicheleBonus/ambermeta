@@ -57,11 +57,8 @@ pip install .
 # Terminal UI (TUI) support
 pip install -e ".[tui]"
 
-# Web-based GUI support (Python backend)
+# Web-based GUI support (includes pre-built frontend)
 pip install -e ".[gui]"
-
-# Build the GUI frontend (requires Node.js and npm)
-cd ambermeta/gui/frontend && npm install && npm run build && cd ../../..
 
 # NetCDF trajectory reading (for .nc files)
 pip install -e ".[netcdf]"
@@ -445,20 +442,24 @@ The GUI provides a modern web-based interface for building protocol manifests.
 
 #### GUI Installation
 
-The GUI requires both Python dependencies and a built frontend:
+The GUI frontend is pre-built and included in the repository. Only the Python dependencies need to be installed:
 
 ```bash
-# 1. Install Python GUI dependencies
 pip install -e ".[gui]"
+```
 
-# 2. Build the React frontend (requires Node.js >= 18 and npm)
+#### Rebuilding the Frontend (Development)
+
+If you modify the frontend source code in `ambermeta/gui/frontend/src/`, rebuild it:
+
+```bash
 cd ambermeta/gui/frontend
-npm install
-npm run build
+npm install        # first time only
+npm run build      # outputs to ambermeta/gui/static/
 cd ../../..
 ```
 
-If you see a placeholder page when launching the GUI, it means the frontend hasn't been built yet. Run the `npm install && npm run build` commands above.
+If you see a placeholder page when launching the GUI, the frontend build may be missing. Run the commands above to rebuild it.
 
 #### Launching the GUI
 
