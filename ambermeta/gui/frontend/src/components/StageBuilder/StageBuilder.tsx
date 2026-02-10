@@ -25,12 +25,24 @@ import { STAGE_ROLE_CONFIG } from '../../types';
 interface StageCardProps {
   stage: Stage;
   isSelected: boolean;
-  onSelect: () => void;
+  isMultiSelected: boolean;
+  onSelect: (e: React.MouseEvent) => void;
+  onCheckboxToggle: (e: React.MouseEvent) => void;
   onDelete: () => void;
   forceExpanded?: boolean;
+  globalPrmtop?: string;
 }
 
-function StageCard({ stage, isSelected, onSelect, onDelete, forceExpanded }: StageCardProps) {
+function StageCard({
+  stage,
+  isSelected,
+  isMultiSelected,
+  onSelect,
+  onCheckboxToggle,
+  onDelete,
+  forceExpanded,
+  globalPrmtop,
+}: StageCardProps) {
   const [localExpanded, setLocalExpanded] = useState(false);
   // If forceExpanded is set, use it; otherwise use local state
   const isExpanded = forceExpanded !== undefined ? forceExpanded : localExpanded;
@@ -55,6 +67,9 @@ function StageCard({ stage, isSelected, onSelect, onDelete, forceExpanded }: Sta
   const fileCount = Object.values(stage.files).filter(Boolean).length;
   const totalFiles = 5; // prmtop, mdin, mdout, mdcrd, inpcrd
 
+  // Determine the effective prmtop (stage-specific or global)
+  const effectivePrmtop = stage.files.prmtop || globalPrmtop;
+
   const validationStatus = stage.validation.is_valid
     ? 'valid'
     : stage.validation.missing_files.length > 0
@@ -67,13 +82,22 @@ function StageCard({ stage, isSelected, onSelect, onDelete, forceExpanded }: Sta
       style={style}
       className={`
         bg-white rounded-lg border-2 transition-all cursor-pointer
-        ${isSelected ? 'border-blue-500 ring-2 ring-blue-200' : 'border-gray-200'}
+        ${isMultiSelected ? 'border-indigo-500 ring-2 ring-indigo-200' : isSelected ? 'border-blue-500 ring-2 ring-blue-200' : 'border-gray-200'}
         ${isDragging ? 'shadow-lg' : 'shadow-sm hover:shadow-md'}
       `}
       onClick={onSelect}
     >
       {/* Header */}
       <div className="flex items-center p-3 gap-2">
+        {/* Multi-select checkbox */}
+        <input
+          type="checkbox"
+          checked={isMultiSelected}
+          onChange={() => {}}
+          onClick={onCheckboxToggle}
+          className="rounded border-gray-300 text-indigo-500 focus:ring-indigo-500 flex-shrink-0"
+        />
+
         {/* Drag handle */}
         <div
           {...attributes}
@@ -147,14 +171,19 @@ function StageCard({ stage, isSelected, onSelect, onDelete, forceExpanded }: Sta
               (fileType) => {
                 const filePath = stage.files[fileType];
                 const hasFile = Boolean(filePath);
+                // For prmtop, show global if stage doesn't have its own
+                const isUsingGlobal = fileType === 'prmtop' && !filePath && !!effectivePrmtop;
+                const displayPath = filePath || (fileType === 'prmtop' ? effectivePrmtop : undefined);
+                const displayName = displayPath ? displayPath.split('/').pop() : undefined;
 
                 return (
                   <FileDropZone
                     key={fileType}
                     stageId={stage.id}
                     fileType={fileType}
-                    hasFile={hasFile}
-                    fileName={filePath ? filePath.split('/').pop() : undefined}
+                    hasFile={hasFile || isUsingGlobal}
+                    fileName={displayName}
+                    isGlobal={isUsingGlobal}
                   />
                 );
               }
@@ -187,6 +216,7 @@ interface FileDropZoneProps {
   fileType: 'prmtop' | 'mdin' | 'mdout' | 'mdcrd' | 'inpcrd';
   hasFile: boolean;
   fileName?: string;
+  isGlobal?: boolean;
 }
 
 function FileDropZone({
@@ -194,6 +224,7 @@ function FileDropZone({
   fileType,
   hasFile,
   fileName,
+  isGlobal,
 }: FileDropZoneProps) {
   const { isOver, setNodeRef } = useDroppable({
     id: `drop-${stageId}-${fileType}`,
@@ -207,14 +238,17 @@ function FileDropZone({
         flex flex-col items-center justify-center p-2 rounded border-2 border-dashed
         transition-all text-center min-h-[60px]
         ${isOver ? 'border-blue-400 bg-blue-50' : 'border-gray-200'}
-        ${hasFile ? 'bg-gray-50' : ''}
+        ${hasFile ? (isGlobal ? 'bg-blue-50' : 'bg-gray-50') : ''}
       `}
     >
       <FileIcon type={fileType} className="w-5 h-5 mb-1" />
       <span className="text-xs font-medium text-gray-600">{fileType}</span>
       {hasFile ? (
-        <span className="text-xs text-gray-500 truncate max-w-full" title={fileName}>
-          {fileName}
+        <span
+          className={`text-xs truncate max-w-full ${isGlobal ? 'text-blue-500 italic' : 'text-gray-500'}`}
+          title={`${fileName}${isGlobal ? ' (global)' : ''}`}
+        >
+          {isGlobal ? `(g) ${fileName}` : fileName}
         </span>
       ) : (
         <span className="text-xs text-gray-400">Drop here</span>
@@ -226,8 +260,11 @@ function FileDropZone({
 export function StageBuilder() {
   const {
     stages,
+    settings,
     selectedStageId,
+    selectedStageIds,
     setSelectedStage,
+    toggleStageSelection,
     addStage,
     deleteStage,
     isLoading,
@@ -256,16 +293,40 @@ export function StageBuilder() {
     }
   };
 
+  const handleStageClick = (stageId: string, e: React.MouseEvent) => {
+    if (e.ctrlKey || e.metaKey || e.shiftKey) {
+      // Multi-select mode
+      toggleStageSelection(stageId, e.shiftKey);
+    } else {
+      // Single-select mode
+      setSelectedStage(stageId);
+    }
+  };
+
+  const handleCheckboxToggle = (stageId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    toggleStageSelection(stageId, e.shiftKey);
+  };
+
   const { setNodeRef, isOver } = useDroppable({
     id: 'stage-builder',
     data: { type: 'new-stage' },
   });
 
+  const multiSelectCount = selectedStageIds.length;
+
   return (
     <div className="h-full flex flex-col bg-gray-50" ref={setNodeRef}>
       {/* Header */}
       <div className="p-4 bg-white border-b border-gray-200 flex items-center justify-between">
-        <h2 className="font-semibold text-gray-800 text-lg">Protocol Stages</h2>
+        <div className="flex items-center gap-3">
+          <h2 className="font-semibold text-gray-800 text-lg">Protocol Stages</h2>
+          {multiSelectCount > 1 && (
+            <span className="px-2 py-0.5 text-xs font-medium rounded-full bg-indigo-100 text-indigo-700">
+              {multiSelectCount} selected
+            </span>
+          )}
+        </div>
         <div className="flex items-center gap-2">
           {stages.length > 0 && (
             <button
@@ -286,6 +347,13 @@ export function StageBuilder() {
           </button>
         </div>
       </div>
+
+      {/* Multi-select hint */}
+      {stages.length > 0 && multiSelectCount <= 1 && (
+        <div className="px-4 py-1 text-xs text-gray-400 bg-gray-50 border-b border-gray-100">
+          Tip: Use Ctrl+Click or checkboxes to select multiple stages, Shift+Click for range
+        </div>
+      )}
 
       {/* Stage list */}
       <div className="flex-1 overflow-y-auto p-4 space-y-3">
@@ -311,9 +379,12 @@ export function StageBuilder() {
                 <StageCard
                   stage={stage}
                   isSelected={selectedStageId === stage.id}
-                  onSelect={() => setSelectedStage(stage.id)}
+                  isMultiSelected={selectedStageIds.includes(stage.id)}
+                  onSelect={(e) => handleStageClick(stage.id, e)}
+                  onCheckboxToggle={(e) => handleCheckboxToggle(stage.id, e)}
                   onDelete={() => handleDeleteStage(stage.id)}
                   forceExpanded={allExpanded}
+                  globalPrmtop={settings.global_prmtop}
                 />
                 {index < stages.length - 1 && (
                   <div className="flex justify-center py-1">

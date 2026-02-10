@@ -93,6 +93,16 @@ export async function reorderStages(stageIds: string[]): Promise<Stage[]> {
   });
 }
 
+export async function bulkUpdateStages(
+  stageIds: string[],
+  update: StageUpdate
+): Promise<Stage[]> {
+  return request<Stage[]>('/stages/bulk', {
+    method: 'PUT',
+    body: JSON.stringify({ stage_ids: stageIds, update }),
+  });
+}
+
 // Protocol endpoints
 export async function getProtocol(): Promise<ProtocolState> {
   return request<ProtocolState>('/protocol');

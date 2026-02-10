@@ -100,6 +100,7 @@ class GlobalSettings(BaseModel):
     """Global protocol settings."""
     global_prmtop: Optional[str] = None
     hmr_prmtop: Optional[str] = None
+    initial_coordinates: Optional[str] = None
     auto_link_restarts: bool = True
     validate_on_export: bool = True
     use_relative_paths: bool = False
@@ -115,6 +116,12 @@ class ProtocolState(BaseModel):
 class StageReorderRequest(BaseModel):
     """Request model for reordering stages."""
     stage_ids: List[str]
+
+
+class BulkStageUpdate(BaseModel):
+    """Request model for bulk-updating multiple stages at once."""
+    stage_ids: List[str]
+    update: StageUpdate
 
 
 class ExportFormat(str, Enum):

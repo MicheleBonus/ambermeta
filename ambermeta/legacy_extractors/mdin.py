@@ -203,7 +203,47 @@ def _as_float(val: Any) -> Optional[float]:
         return None
 
 # -------------------------------
-# 4. Main Parser
+# 4. Quote-aware comment stripping
+# -------------------------------
+
+def _strip_comments(text: str) -> str:
+    """Strip Fortran-style comments (! and #) while respecting quoted strings.
+
+    Characters '!' and '#' inside single- or double-quoted strings are left
+    intact.  This prevents mask expressions like ``restraintmask='!(:1-314)'``
+    from being mangled by comment stripping.
+    """
+    result: list[str] = []
+    in_single = False
+    in_double = False
+
+    i = 0
+    length = len(text)
+    while i < length:
+        ch = text[i]
+
+        if ch == "'" and not in_double:
+            in_single = not in_single
+            result.append(ch)
+        elif ch == '"' and not in_single:
+            in_double = not in_double
+            result.append(ch)
+        elif (ch == '!' or ch == '#') and not in_single and not in_double:
+            # Comment: skip until end of line
+            while i < length and text[i] != '\n':
+                i += 1
+            result.append('\n')
+            continue  # don't increment i again; the \n will be handled next
+        else:
+            result.append(ch)
+
+        i += 1
+
+    return "".join(result)
+
+
+# -------------------------------
+# 5. Main Parser
 # -------------------------------
 
 def parse_mdin_file(filepath: str) -> MdinMetadata:
@@ -246,8 +286,10 @@ def parse_mdin_file(filepath: str) -> MdinMetadata:
     content_lines = lines[start_index:]
     full_content = "".join(content_lines)
 
-    # Strip comments to simplify namelist parsing
-    full_stripped = re.sub(r"[!#].*?(\n|$)", "\n", full_content)
+    # Strip comments to simplify namelist parsing.
+    # Must be quote-aware: '!' and '#' inside quoted strings (e.g.
+    # restraintmask='!(:1-314)') are NOT comment characters.
+    full_stripped = _strip_comments(full_content)
 
     namelist_re = re.compile(
         r"&(?P<name>[a-zA-Z0-9_]+)(?P<body>.*?)(?:/|&end)",
@@ -301,7 +343,7 @@ def parse_mdin_file(filepath: str) -> MdinMetadata:
     return md
 
 # -------------------------------
-# 5. Interpretation / High-level Metadata
+# 6. Interpretation / High-level Metadata
 # -------------------------------
 
 def _interpret_parameters(md: MdinMetadata) -> None:
@@ -345,7 +387,15 @@ def _interpret_parameters(md: MdinMetadata) -> None:
     # --- Thermostat / Barostat / constraints ---
     ntt = c.get("ntt", 0)
     ntt_i = _as_int(ntt)
-    if ntt_i is not None:
+
+    # Determine if this is a minimization (imin != 0)
+    # Minimizations have no thermodynamic ensemble and no thermostat.
+    imin_val_early = _as_int(c.get("imin", 0)) or 0
+    is_minimization_early = imin_val_early != 0
+
+    if is_minimization_early:
+        md.temp_control = "None (minimization)"
+    elif ntt_i is not None:
         md.temp_control = THERMOSTATS.get(ntt_i, f"Unknown (ntt={ntt_i})")
     else:
         md.temp_control = str(ntt)
@@ -374,30 +424,40 @@ def _interpret_parameters(md: MdinMetadata) -> None:
     ntp_i = _as_int(ntp)
 
     # PBC description
+    # For minimizations, the volume/pressure qualifiers don't apply since
+    # there is no dynamics -- PBC simply means periodic images are used.
     if ntb_i is None:
         md.pbc = f"Template/Variable (ntb={ntb_val})"
     else:
         if ntb_i == 0:
             md.pbc = "Vacuum / No PBC"
         elif ntb_i == 1:
-            md.pbc = "PBC / Constant Volume"
+            if is_minimization_early:
+                md.pbc = "PBC (periodic boundary)"
+            else:
+                md.pbc = "PBC / Constant Volume"
         elif ntb_i >= 2:
-            md.pbc = "PBC / Constant Pressure"
+            if is_minimization_early:
+                md.pbc = "PBC (periodic boundary)"
+            else:
+                md.pbc = "PBC / Constant Pressure"
         else:
             md.pbc = f"Unknown (ntb={ntb_i})"
 
     # Pressure control description
-    if ntp_i is not None and ntp_i > 0:
+    if is_minimization_early:
+        md.press_control = "None (minimization)"
+    elif ntp_i is not None and ntp_i > 0:
         barostat_type = _as_int(c.get("barostat", 1)) # Default 1 (Berendsen) Manual p.10
-        
+
         # Refine description based on NTP value
         scaling_type = "Isotropic"
         if ntp_i == 2: scaling_type = "Anisotropic"
         if ntp_i == 3: scaling_type = "Semi-Isotropic"
-        
+
         algo = "Berendsen"
         if barostat_type == 2: algo = "Monte Carlo"
-        
+
         md.press_control = f"{algo} ({scaling_type})"
     else:
         md.press_control = "None"
@@ -468,16 +528,12 @@ def _interpret_parameters(md: MdinMetadata) -> None:
                 md.has_cutoff_schedule = True
 
     # --- Ensemble classification ---
-    # Determine if this is a minimization (imin != 0)
-    imin_val = _as_int(c.get("imin", 0)) or 0
-    is_minimization = imin_val != 0
-
     md.ensemble = _classify_ensemble(
         ntb=ntb_i,
         ntt=ntt_i,
         ntp=ntp_i,
         implicit=(md.implicit_solvent != "No"),
-        is_minimization=is_minimization,
+        is_minimization=is_minimization_early,
     )
 
     # --- Stage role heuristics ---
@@ -631,7 +687,7 @@ def _populate_warnings(md: MdinMetadata) -> None:
         )
 
 # -------------------------------
-# 6. Summarizers
+# 7. Summarizers
 # -------------------------------
 
 def summarize_metadata(md: MdinMetadata) -> str:
@@ -805,7 +861,7 @@ def summarize_protocol(metadatas: Sequence[MdinMetadata]) -> str:
     return "\n".join(lines)
 
 # -------------------------------
-# 7. CLI Entry Point
+# 8. CLI Entry Point
 # -------------------------------
 
 def _expand_inputs(paths: Sequence[str]) -> List[str]:
