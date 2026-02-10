@@ -1,0 +1,53 @@
+name: GUI Static Build Check
+
+on:
+  pull_request:
+    paths:
+      - 'ambermeta/gui/frontend/src/**'
+      - 'ambermeta/gui/frontend/vite.config.ts'
+      - 'ambermeta/gui/frontend/package.json'
+      - 'ambermeta/gui/frontend/package-lock.json'
+      - 'ambermeta/gui/static/**'
+      - '.github/workflows/gui-static-check.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'ambermeta/gui/frontend/src/**'
+      - 'ambermeta/gui/frontend/vite.config.ts'
+      - 'ambermeta/gui/frontend/package.json'
+      - 'ambermeta/gui/frontend/package-lock.json'
+      - 'ambermeta/gui/static/**'
+      - '.github/workflows/gui-static-check.yml'
+
+jobs:
+  gui-static-check:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: ambermeta/gui/frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: ambermeta/gui/frontend
+        run: npm ci
+
+      - name: Build frontend static assets
+        working-directory: ambermeta/gui/frontend
+        run: npm run build
+
+      - name: Verify static assets are committed
+        run: |
+          if ! git diff --quiet -- ambermeta/gui/static; then
+            echo "::error::Generated GUI static assets are out of date. Run 'npm ci && npm run build' in ambermeta/gui/frontend and commit changes in ambermeta/gui/static/."
+            echo "Changed files in ambermeta/gui/static/:"
+            git --no-pager diff --name-status -- ambermeta/gui/static
+            exit 1
+          fi
