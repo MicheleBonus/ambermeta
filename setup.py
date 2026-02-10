@@ -11,6 +11,10 @@ setup(
     long_description_content_type="text/markdown",
     python_requires=">=3.8",
     packages=find_packages(include=["ambermeta", "ambermeta.*"]),
+    package_data={
+        "ambermeta": ["py.typed"],
+        "ambermeta.gui": ["static/**/*", "static/*"],
+    },
     extras_require={
         "netcdf": ["netCDF4>=1.6", "scipy>=1.8", "numpy>=1.23"],
         "tui": ["textual>=0.40.0"],
