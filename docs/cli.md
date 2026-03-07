@@ -48,8 +48,8 @@ Supports prmtop, mdin, mdout, mdcrd (NetCDF), and restart files.
 positional arguments:
   {plan,validate,info,tui,init,gui}
     plan                Build and summarize a SimulationProtocol from
-                        manifest, recursive discovery, or explicit
-                        interactive mode
+                        manifest, recursive discovery, or explicit interactive
+                        mode
     validate            Validate simulation files without building full
                         protocol
     info                Display detailed metadata for a single file
@@ -123,7 +123,8 @@ ambermeta plan [directory] [options]
 <!-- BEGIN_CLI_HELP:plan -->
 ```text
 usage: ambermeta plan [-h] [-m MANIFEST] [--skip-cross-stage-validation]
-                      [--recursive] [--interactive] [-v] [--summary-path SUMMARY_PATH]
+                      [--recursive] [--interactive] [-v]
+                      [--summary-path SUMMARY_PATH]
                       [--summary-format {json,yaml}]
                       [--methods-summary-path METHODS_SUMMARY_PATH]
                       [--stats-csv STATS_CSV] [--no-expand-env]
@@ -131,9 +132,9 @@ usage: ambermeta plan [-h] [-m MANIFEST] [--skip-cross-stage-validation]
                       [--prmtop PRMTOP]
                       [directory]
 
-Build and summarize a SimulationProtocol from a manifest, recursive discovery, or explicit interactive mode.
-Interactive mode prompts for stage roles, file paths, restart (inpcrd) paths,
-and expected gap/tolerance values.
+Build and summarize a SimulationProtocol from manifest, recursive discovery,
+or explicit interactive mode. Interactive mode prompts for stage roles, file
+paths, restart (inpcrd) paths, and expected gap/tolerance values.
 
 positional arguments:
   directory             Directory containing the files referenced by the
@@ -152,7 +153,7 @@ options:
                         inferred from directory names (equil→equilibration,
                         prod→production).
   --interactive         Enable interactive prompt mode for manually defining
-                        stages
+                        stages.
   -v, --verbose         Show detailed metadata, warnings, and continuity
                         information for each stage
   --summary-path SUMMARY_PATH
