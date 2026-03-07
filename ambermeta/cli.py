@@ -1040,6 +1040,17 @@ def _plan_command(args: argparse.Namespace) -> int:
     pattern_filter = getattr(args, "pattern", None)
     auto_detect_restarts = getattr(args, "auto_detect_restarts", False)
     global_prmtop = getattr(args, "prmtop", None)
+    interactive = getattr(args, "interactive", False)
+
+    if not any((args.manifest, args.recursive, interactive)):
+        print("ERROR: Select a planning mode.")
+        print("Use one of: --manifest, --recursive, or --interactive.")
+        print("Examples:")
+        print("  ambermeta plan --manifest manifest.yaml /path/to/simulations")
+        print("  ambermeta plan --recursive /path/to/simulations")
+        print("  ambermeta plan --interactive /path/to/simulations")
+        print("Run 'ambermeta plan --help' for full usage.")
+        return 2
 
     # Progress callback for reporting
     def progress_reporter(stage_name: str, current: int, total: int) -> None:
@@ -1292,6 +1303,7 @@ Commands:
 Examples:
   ambermeta plan -m manifest.yaml           Build protocol from manifest
   ambermeta plan . --recursive              Auto-discover files recursively
+  ambermeta plan . --interactive            Prompt for stage definitions
   ambermeta plan -m manifest.yaml \\
     --methods-summary-path methods.json     Export publication-ready summary
   ambermeta tui /path/to/simulations        Launch interactive TUI
@@ -1331,9 +1343,9 @@ For documentation, visit: https://github.com/MicheleBonus/ambermeta
 
     plan_parser = subparsers.add_parser(
         "plan",
-        help="Build and summarize a SimulationProtocol from a manifest or interactive input",
+        help="Build and summarize a SimulationProtocol from manifest, recursive discovery, or explicit interactive mode",
         description=(
-            "Build and summarize a SimulationProtocol from a manifest or interactive input. "
+            "Build and summarize a SimulationProtocol from manifest, recursive discovery, or explicit interactive mode. "
             "Interactive mode prompts for stage roles, file paths, restart (inpcrd) paths, "
             "and expected gap/tolerance values."
         ),
@@ -1360,6 +1372,11 @@ For documentation, visit: https://github.com/MicheleBonus/ambermeta
         help="Auto-discover simulation files recursively (no interactive prompts). "
              "Files are grouped by stem (filename without extension) and stage roles "
              "are inferred from directory names (equil→equilibration, prod→production).",
+    )
+    plan_parser.add_argument(
+        "--interactive",
+        action="store_true",
+        help="Enable interactive prompt mode for manually defining stages.",
     )
     plan_parser.add_argument(
         "-v",

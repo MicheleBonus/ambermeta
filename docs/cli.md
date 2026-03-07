@@ -47,8 +47,9 @@ Supports prmtop, mdin, mdout, mdcrd (NetCDF), and restart files.
 
 positional arguments:
   {plan,validate,info,tui,init,gui}
-    plan                Build and summarize a SimulationProtocol from a
-                        manifest or interactive input
+    plan                Build and summarize a SimulationProtocol from
+                        manifest, recursive discovery, or explicit interactive
+                        mode
     validate            Validate simulation files without building full
                         protocol
     info                Display detailed metadata for a single file
@@ -73,6 +74,7 @@ Commands:
 Examples:
   ambermeta plan -m manifest.yaml           Build protocol from manifest
   ambermeta plan . --recursive              Auto-discover files recursively
+  ambermeta plan . --interactive            Prompt for stage definitions
   ambermeta plan -m manifest.yaml \
     --methods-summary-path methods.json     Export publication-ready summary
   ambermeta tui /path/to/simulations        Launch interactive TUI
@@ -112,7 +114,7 @@ ambermeta --quiet plan --recursive . --summary-path output.json
 
 ### Plan Command
 
-Build and summarize a SimulationProtocol from a manifest or interactive input.
+Build and summarize a SimulationProtocol from a manifest, recursive discovery, or explicit interactive mode.
 
 ```bash
 ambermeta plan [directory] [options]
@@ -121,7 +123,8 @@ ambermeta plan [directory] [options]
 <!-- BEGIN_CLI_HELP:plan -->
 ```text
 usage: ambermeta plan [-h] [-m MANIFEST] [--skip-cross-stage-validation]
-                      [--recursive] [-v] [--summary-path SUMMARY_PATH]
+                      [--recursive] [--interactive] [-v]
+                      [--summary-path SUMMARY_PATH]
                       [--summary-format {json,yaml}]
                       [--methods-summary-path METHODS_SUMMARY_PATH]
                       [--stats-csv STATS_CSV] [--no-expand-env]
@@ -129,9 +132,9 @@ usage: ambermeta plan [-h] [-m MANIFEST] [--skip-cross-stage-validation]
                       [--prmtop PRMTOP]
                       [directory]
 
-Build and summarize a SimulationProtocol from a manifest or interactive input.
-Interactive mode prompts for stage roles, file paths, restart (inpcrd) paths,
-and expected gap/tolerance values.
+Build and summarize a SimulationProtocol from manifest, recursive discovery,
+or explicit interactive mode. Interactive mode prompts for stage roles, file
+paths, restart (inpcrd) paths, and expected gap/tolerance values.
 
 positional arguments:
   directory             Directory containing the files referenced by the
@@ -149,6 +152,8 @@ options:
                         (filename without extension) and stage roles are
                         inferred from directory names (equil→equilibration,
                         prod→production).
+  --interactive         Enable interactive prompt mode for manually defining
+                        stages.
   -v, --verbose         Show detailed metadata, warnings, and continuity
                         information for each stage
   --summary-path SUMMARY_PATH
@@ -179,6 +184,8 @@ options:
 
 #### Modes of Operation
 
+You must select one mode explicitly using `--manifest`, `--recursive`, or `--interactive`.
+
 **1. Manifest Mode** (with `-m/--manifest`):
 ```bash
 ambermeta plan -m protocol.yaml /path/to/simulations
@@ -191,9 +198,9 @@ ambermeta plan --recursive /path/to/simulations
 ```
 Automatically discovers and groups simulation files. Stage roles are inferred from filenames.
 
-**3. Interactive Mode** (default):
+**3. Interactive Mode** (with `--interactive`):
 ```bash
-ambermeta plan /path/to/simulations
+ambermeta plan --interactive /path/to/simulations
 ```
 Prompts for stage definitions interactively.
 

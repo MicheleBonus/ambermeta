@@ -675,9 +675,12 @@ Disable expansion with `--no-expand-env` or `expand_env=False`.
 ```bash
 ambermeta plan [directory] [options]
 
+Note: choose one planning mode via `--manifest`, `--recursive`, or `--interactive`.
+
 Options:
   -m, --manifest PATH           Path to YAML/JSON/TOML/CSV manifest
   --recursive                   Scan subdirectories
+  --interactive                 Enable interactive stage prompts
   --prmtop PATH                 Global topology file for all stages
   --skip-cross-stage-validation Skip continuity checks
   -v, --verbose                 Show detailed metadata
