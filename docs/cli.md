@@ -297,16 +297,19 @@ ambermeta validate [options] files...
 
 <!-- BEGIN_CLI_HELP:validate -->
 ```text
-usage: ambermeta validate [-h] [--strict] files [files ...]
+usage: ambermeta validate [-h] [--strict] [--format {text,json,yaml}]
+                          files [files ...]
 
 Quick validation of simulation files with colored output.
 
 positional arguments:
-  files       Files to validate (prmtop, mdin, mdout, mdcrd, inpcrd)
+  files                 Files to validate (prmtop, mdin, mdout, mdcrd, inpcrd)
 
 options:
-  -h, --help  show this help message and exit
-  --strict    Treat warnings as errors
+  -h, --help            show this help message and exit
+  --strict              Treat warnings as errors
+  --format {text,json,yaml}
+                        Output format (default: text)
 ```
 <!-- END_CLI_HELP:validate -->
 

@@ -464,54 +464,104 @@ def _get_parser_for_file(filepath: str):
 
 def _validate_command(args: argparse.Namespace) -> int:
     """Validate simulation files and report issues."""
-    has_errors = False
-    has_warnings = False
-
-    print(Colors.header("\nValidation Results"))
-    print("=" * 50)
+    result: Dict[str, Any] = {
+        "status": "ok",
+        "files": [],
+        "warnings": [],
+        "errors": [],
+    }
 
     for filepath in args.files:
+        file_result: Dict[str, Any] = {
+            "file": filepath,
+            "status": "ok",
+            "warnings": [],
+            "errors": [],
+        }
+
         if not os.path.exists(filepath):
-            print(f"\n{Colors.error('ERROR')}: File not found: {filepath}")
-            has_errors = True
+            message = f"File not found: {filepath}"
+            file_result["status"] = "error"
+            file_result["errors"].append(message)
+            result["errors"].append({"file": filepath, "message": message})
+            result["files"].append(file_result)
             continue
 
         parser = _get_parser_for_file(filepath)
         if parser is None:
-            print(f"\n{Colors.warning('WARN')}: Unknown file type: {filepath}")
-            has_warnings = True
+            message = f"Unknown file type: {filepath}"
+            file_result["status"] = "warning"
+            file_result["warnings"].append(message)
+            result["warnings"].append({"file": filepath, "message": message})
+            result["files"].append(file_result)
             continue
 
         try:
-            result = parser.parse()
-            warnings = getattr(result, "warnings", []) or []
+            parse_result = parser.parse()
+            warnings = getattr(parse_result, "warnings", []) or []
 
             if warnings:
-                has_warnings = True
-                print(f"\n{Colors.warning('WARN')}: {filepath}")
+                file_result["status"] = "warning"
                 for warn in warnings:
+                    file_result["warnings"].append(str(warn))
+                    result["warnings"].append({"file": filepath, "message": str(warn)})
+
+        except (IOError, OSError, ValueError) as e:
+            message = str(e)
+            file_result["status"] = "error"
+            file_result["errors"].append(message)
+            result["errors"].append({"file": filepath, "message": message})
+
+        result["files"].append(file_result)
+
+    has_errors = bool(result["errors"])
+    has_warnings = bool(result["warnings"])
+
+    if has_errors:
+        result["status"] = "error"
+    elif has_warnings:
+        result["status"] = "warning"
+
+    if args.format == "json":
+        print(json.dumps(result, indent=2))
+    elif args.format == "yaml":
+        if yaml is None:
+            print(Colors.error("ERROR: PyYAML is required for YAML output"))
+            return 1
+        print(yaml.safe_dump(result, sort_keys=False))
+    else:
+        print(Colors.header("\nValidation Results"))
+        print("=" * 50)
+
+        for file_result in result["files"]:
+            filepath = file_result["file"]
+            status = file_result["status"]
+            if status == "error":
+                print(f"\n{Colors.error('ERROR')}: {filepath}")
+                for err in file_result["errors"]:
+                    print(f"  - {err}")
+            elif status == "warning":
+                print(f"\n{Colors.warning('WARN')}: {filepath}")
+                for warn in file_result["warnings"]:
                     print(f"  - {warn}")
             else:
                 print(f"\n{Colors.success('OK')}: {filepath}")
 
-        except (IOError, OSError, ValueError) as e:
-            print(f"\n{Colors.error('ERROR')}: {filepath}")
-            print(f"  - {e}")
-            has_errors = True
+        print("\n" + "=" * 50)
+        if has_errors:
+            print(Colors.error("Validation FAILED with errors"))
+        elif has_warnings and args.strict:
+            print(Colors.warning("Validation FAILED (strict mode, warnings present)"))
+        elif has_warnings:
+            print(Colors.warning("Validation PASSED with warnings"))
+        else:
+            print(Colors.success("Validation PASSED"))
 
-    print("\n" + "=" * 50)
     if has_errors:
-        print(Colors.error("Validation FAILED with errors"))
         return 1
-    elif has_warnings and args.strict:
-        print(Colors.warning("Validation FAILED (strict mode, warnings present)"))
+    if has_warnings and args.strict:
         return 1
-    elif has_warnings:
-        print(Colors.warning("Validation PASSED with warnings"))
-        return 0
-    else:
-        print(Colors.success("Validation PASSED"))
-        return 0
+    return 0
 
 
 def _info_command(args: argparse.Namespace) -> int:
@@ -1444,6 +1494,12 @@ For documentation, visit: https://github.com/MicheleBonus/ambermeta
         "--strict",
         action="store_true",
         help="Treat warnings as errors",
+    )
+    validate_parser.add_argument(
+        "--format",
+        choices=["text", "json", "yaml"],
+        default="text",
+        help="Output format (default: text)",
     )
 
     # UX-005: info subcommand
