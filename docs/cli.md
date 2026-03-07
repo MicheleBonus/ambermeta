@@ -32,14 +32,64 @@ ambermeta --help
 
 ## Global Options
 
-These options apply to all commands:
+CLI help below is generated directly from `ambermeta/cli.py::build_parser()`.
 
-| Option | Description |
-|--------|-------------|
-| `--log-level {DEBUG,INFO,WARNING,ERROR}` | Set logging verbosity (default: INFO) |
-| `--log-file PATH` | Write logs to a file in addition to stderr |
-| `-q, --quiet` | Suppress all output except errors |
-| `--help` | Show help message and exit |
+<!-- BEGIN_CLI_HELP:root -->
+```text
+usage: ambermeta [-h] [--log-level {DEBUG,INFO,WARNING,ERROR}]
+                 [--log-file LOG_FILE] [-q]
+                 {plan,validate,info,tui,init,gui} ...
+
+AmberMeta - Simulation provenance engine for AMBER molecular dynamics.
+
+Extract, organize, and validate metadata from AMBER simulation files.
+Supports prmtop, mdin, mdout, mdcrd (NetCDF), and restart files.
+
+positional arguments:
+  {plan,validate,info,tui,init,gui}
+    plan                Build and summarize a SimulationProtocol from a
+                        manifest or interactive input
+    validate            Validate simulation files without building full
+                        protocol
+    info                Display detailed metadata for a single file
+    tui                 Launch interactive TUI for building protocol manifests
+    init                Generate an example manifest file
+    gui                 Launch web-based GUI for building protocol manifests
+
+options:
+  -h, --help            show this help message and exit
+  --log-level {DEBUG,INFO,WARNING,ERROR}
+                        Set logging level (default: INFO)
+  --log-file LOG_FILE   Write logs to a file in addition to stderr
+  -q, --quiet           Suppress all output except errors
+
+Commands:
+  plan      Build a simulation protocol from manifest or auto-discovery
+  tui       Launch interactive terminal UI for building manifests
+  validate  Quick validation of simulation files
+  info      Display detailed metadata for a single file
+  init      Generate example manifest templates
+
+Examples:
+  ambermeta plan -m manifest.yaml           Build protocol from manifest
+  ambermeta plan . --recursive              Auto-discover files recursively
+  ambermeta plan -m manifest.yaml \
+    --methods-summary-path methods.json     Export publication-ready summary
+  ambermeta tui /path/to/simulations        Launch interactive TUI
+  ambermeta validate system.prmtop *.mdout  Validate multiple files
+  ambermeta info --format json system.prmtop  Show metadata as JSON
+  ambermeta init --template standard .      Generate manifest template
+
+File Types:
+  prmtop:  .prmtop, .top, .parm7    (topology/parameters)
+  mdin:    .mdin, .in               (input control)
+  mdout:   .mdout, .out             (output log)
+  mdcrd:   .nc, .mdcrd, .crd        (trajectory)
+  inpcrd:  .rst, .rst7, .ncrst      (coordinates/restart)
+
+For documentation, visit: https://github.com/MicheleBonus/ambermeta
+```
+<!-- END_CLI_HELP:root -->
 
 ### Examples
 
@@ -68,28 +118,64 @@ Build and summarize a SimulationProtocol from a manifest or interactive input.
 ambermeta plan [directory] [options]
 ```
 
-#### Arguments
+<!-- BEGIN_CLI_HELP:plan -->
+```text
+usage: ambermeta plan [-h] [-m MANIFEST] [--skip-cross-stage-validation]
+                      [--recursive] [-v] [--summary-path SUMMARY_PATH]
+                      [--summary-format {json,yaml}]
+                      [--methods-summary-path METHODS_SUMMARY_PATH]
+                      [--stats-csv STATS_CSV] [--no-expand-env]
+                      [--pattern PATTERN] [--auto-detect-restarts]
+                      [--prmtop PRMTOP]
+                      [directory]
 
-| Argument | Description |
-|----------|-------------|
-| `directory` | Directory containing simulation files (default: current directory) |
+Build and summarize a SimulationProtocol from a manifest or interactive input.
+Interactive mode prompts for stage roles, file paths, restart (inpcrd) paths,
+and expected gap/tolerance values.
 
-#### Options
+positional arguments:
+  directory             Directory containing the files referenced by the
+                        manifest (default: current directory)
 
-| Option | Description |
-|--------|-------------|
-| `-m, --manifest PATH` | Path to YAML/JSON/TOML/CSV manifest file |
-| `--recursive` | Auto-discover files recursively (no interactive prompts) |
-| `--prmtop PATH` | Global topology file for all stages |
-| `--skip-cross-stage-validation` | Skip continuity checks between stages |
-| `-v, --verbose` | Show detailed metadata and validation info |
-| `--summary-path PATH` | Write structured summary (JSON/YAML) |
-| `--summary-format {json,yaml}` | Force summary format (default: inferred from extension) |
-| `--methods-summary-path PATH` | Write methods-ready JSON for publications |
-| `--stats-csv PATH` | Export per-stage statistics to CSV |
-| `--no-expand-env` | Disable environment variable expansion in manifests |
-| `--pattern REGEX` | Filter discovered files by regex pattern |
-| `--auto-detect-restarts` | Automatically detect and link restart files |
+options:
+  -h, --help            show this help message and exit
+  -m MANIFEST, --manifest MANIFEST
+                        Path to a YAML or JSON manifest describing stages and
+                        file paths
+  --skip-cross-stage-validation
+                        Skip continuity checks between consecutive stages
+  --recursive           Auto-discover simulation files recursively (no
+                        interactive prompts). Files are grouped by stem
+                        (filename without extension) and stage roles are
+                        inferred from directory names (equil→equilibration,
+                        prod→production).
+  -v, --verbose         Show detailed metadata, warnings, and continuity
+                        information for each stage
+  --summary-path SUMMARY_PATH
+                        Path to write a structured protocol summary (JSON or
+                        YAML)
+  --summary-format {json,yaml}
+                        Force the structured summary format (default: inferred
+                        from file extension)
+  --methods-summary-path METHODS_SUMMARY_PATH
+                        Write a Materials & Methods-ready JSON summary with
+                        reproducibility-critical metadata (software versions,
+                        MD settings, system composition, and trajectory
+                        cadence) while omitting energies and other
+                        nonessential arrays
+  --stats-csv STATS_CSV
+                        Export per-stage statistics to a CSV file
+  --no-expand-env       Disable environment variable expansion in manifest
+                        paths
+  --pattern PATTERN     Regex pattern to filter discovered files (e.g.,
+                        'prod_.*' for production runs)
+  --auto-detect-restarts
+                        Automatically detect and link restart files between
+                        stages
+  --prmtop PRMTOP       Global prmtop file to use for all stages (avoids
+                        specifying it per stage)
+```
+<!-- END_CLI_HELP:plan -->
 
 #### Modes of Operation
 
@@ -148,35 +234,6 @@ Exports per-stage statistics:
 - Density (mean ± std)
 - Total energy (mean ± std)
 
-#### Examples
-
-```bash
-# Basic manifest usage
-ambermeta plan -m protocol.yaml
-
-# Recursive discovery with verbose output
-ambermeta plan --recursive -v /path/to/simulations
-
-# Filter to production runs only
-ambermeta plan --recursive --pattern "prod_\d+" /path/to/simulations
-
-# Auto-detect restart chains
-ambermeta plan --recursive --auto-detect-restarts /path/to/simulations
-
-# Skip validation for independent replicas
-ambermeta plan --recursive --skip-cross-stage-validation /path/to/replicas
-
-# Use global topology
-ambermeta plan --recursive --prmtop system.prmtop /path/to/simulations
-
-# Export all outputs
-ambermeta plan -m protocol.yaml \
-    --summary-path protocol.json \
-    --methods-summary-path methods.json \
-    --stats-csv stats.csv \
-    -v
-```
-
 ---
 
 ### Init Command
@@ -187,103 +244,39 @@ Generate an example manifest file.
 ambermeta init [options] [directory]
 ```
 
-#### Arguments
+<!-- BEGIN_CLI_HELP:init -->
+```text
+usage: ambermeta init [-h] [-o OUTPUT]
+                      [--template {minimal,standard,comprehensive}] [--auto]
+                      [--format {yaml,json,toml,csv}] [--validate] [--dry-run]
+                      [--force]
+                      [directory]
 
-| Argument | Description |
-|----------|-------------|
-| `directory` | Directory to scan for files (default: current directory) |
+Create a template manifest.yaml with example stages.
 
-#### Options
+positional arguments:
+  directory             Directory to scan for files (default: current
+                        directory)
 
-| Option | Description |
-|--------|-------------|
-| `-o, --output FILENAME` | Output filename (default: manifest.yaml) |
-| `--template {minimal,standard,comprehensive}` | Template complexity (default: standard) |
-| `--auto` | Non-interactive bootstrap: recurse, auto-group stages, and generate manifest |
-| `--format {yaml,json,toml,csv}` | Output format in `--auto` mode (default: infer from filename or yaml) |
-| `--validate` | Run validation immediately after auto bootstrap and print concise summary |
-| `--dry-run` | Preview auto-grouped stage mapping without writing output |
-| `--force` | Overwrite existing output without interactive prompt |
-
-#### Templates
-
-**Minimal**: Basic structure with single stage
-```yaml
-stages:
-  - name: production
-    prmtop: system.prmtop
-    mdin: prod.in
-    mdout: prod.out
+options:
+  -h, --help            show this help message and exit
+  -o OUTPUT, --output OUTPUT
+                        Output manifest filename (default: manifest.yaml)
+  --template {minimal,standard,comprehensive}
+                        Template complexity (default: standard)
+  --auto                Non-interactive bootstrap mode: recursively discover
+                        files and auto-generate grouped stages
+  --format {yaml,json,toml,csv}
+                        Manifest output format for --auto mode (default:
+                        inferred from output extension or yaml)
+  --validate            Run parsers against discovered files after writing the
+                        manifest and print a concise summary
+  --dry-run             Preview discovered stage grouping in --auto mode
+                        without writing output files
+  --force               Overwrite existing output file without prompting
+                        (required for non-interactive --auto mode)
 ```
-
-**Standard**: Common 4-stage workflow
-```yaml
-stages:
-  - name: minimize
-    stage_role: minimization
-    ...
-  - name: heat
-    stage_role: heating
-    ...
-  - name: equilibrate
-    stage_role: equilibration
-    ...
-  - name: production
-    stage_role: production
-    ...
-```
-
-**Comprehensive**: All available options with documentation
-```yaml
-settings:
-  strict_validation: false  # Skip cross-stage continuity checks
-  allow_gaps: false         # If strict_validation=true, treat unexpected gaps as informational
-
-stage_role_rules:
-  - pattern: "min.*"
-    role: minimization
-  ...
-
-stages:
-  - name: minimize_1
-    stage_role: minimization
-    gaps:
-      expected: 0.0
-      tolerance: 0.1
-    notes:
-      - "Initial minimization"
-  ...
-```
-
-`settings` and `stage_role_rules` are consumed by `ambermeta plan -m ...`:
-- `settings.strict_validation: false` is equivalent to `--skip-cross-stage-validation`.
-- `settings.allow_gaps: true` marks unexpected positive gaps as allowed information.
-- `stage_role_rules` assigns `stage_role` by stage name when `stage_role` is omitted.
-
-#### Examples
-
-```bash
-# Generate standard template
-ambermeta init my_project
-
-# Generate minimal template
-ambermeta init --template minimal my_project
-
-# Generate comprehensive template
-ambermeta init --template comprehensive my_project
-
-# Custom output filename
-ambermeta init -o my_protocol.yaml my_project
-
-# Generate in current directory
-ambermeta init --template standard .
-
-# First-run release bootstrap (non-interactive)
-ambermeta init --auto --format yaml --validate /path/to/release_run
-
-# Preview stage mapping before writing
-ambermeta init --auto --dry-run /path/to/release_run
-```
+<!-- END_CLI_HELP:init -->
 
 ---
 
@@ -295,44 +288,26 @@ Quick validation of simulation files with colored output.
 ambermeta validate [options] files...
 ```
 
-#### Arguments
+<!-- BEGIN_CLI_HELP:validate -->
+```text
+usage: ambermeta validate [-h] [--strict] files [files ...]
 
-| Argument | Description |
-|----------|-------------|
-| `files` | One or more files to validate |
+Quick validation of simulation files with colored output.
 
-#### Options
+positional arguments:
+  files       Files to validate (prmtop, mdin, mdout, mdcrd, inpcrd)
 
-| Option | Description |
-|--------|-------------|
-| `--strict` | Treat warnings as errors |
+options:
+  -h, --help  show this help message and exit
+  --strict    Treat warnings as errors
+```
+<!-- END_CLI_HELP:validate -->
 
 #### Output
 
 - **OK** (green): File parsed successfully without warnings
 - **WARN** (yellow): File parsed but has warnings
 - **ERROR** (red): File could not be parsed or is missing
-
-#### Examples
-
-```bash
-# Validate multiple files
-ambermeta validate system.prmtop equil.mdin prod.mdout
-
-# Validate with glob pattern
-ambermeta validate *.prmtop *.mdin
-
-# Strict mode (warnings are errors)
-ambermeta validate --strict system.prmtop
-
-# Validate all files in directory
-ambermeta validate simulations/*.prmtop simulations/*.mdout
-```
-
-#### Exit Codes
-
-- `0`: All files valid (no errors, no warnings in strict mode)
-- `1`: Validation failed (errors, or warnings in strict mode)
 
 ---
 
@@ -344,71 +319,21 @@ Display detailed metadata for a single simulation file.
 ambermeta info [options] file
 ```
 
-#### Arguments
+<!-- BEGIN_CLI_HELP:info -->
+```text
+usage: ambermeta info [-h] [--format {text,json,yaml}] file
 
-| Argument | Description |
-|----------|-------------|
-| `file` | File to inspect |
+Parse and display detailed metadata for AMBER simulation files.
 
-#### Options
+positional arguments:
+  file                  File to inspect (prmtop, mdin, mdout, mdcrd, inpcrd)
 
-| Option | Description |
-|--------|-------------|
-| `--format {text,json,yaml}` | Output format (default: text) |
-
-#### Supported File Types
-
-| File Type | Extensions |
-|-----------|------------|
-| prmtop | `.prmtop`, `.parm7`, `.top` |
-| mdin | `.mdin`, `.in` |
-| mdout | `.mdout`, `.out` |
-| mdcrd | `.nc`, `.mdcrd`, `.crd`, `.x` |
-| inpcrd | `.rst`, `.rst7`, `.ncrst`, `.inpcrd`, `.restrt` |
-
-#### Examples
-
-```bash
-# Text format (default)
-ambermeta info system.prmtop
-
-# JSON output
-ambermeta info --format json prod.mdout
-
-# YAML output
-ambermeta info --format yaml equil.mdin
-
-# Pipe JSON to jq for filtering
-ambermeta info --format json prod.mdout | jq '.natom'
+options:
+  -h, --help            show this help message and exit
+  --format {text,json,yaml}
+                        Output format (default: text)
 ```
-
-#### Sample Output
-
-**Text format:**
-```
-File Information: system.prmtop
-============================================================
-  natom: 45231
-  nres: 12543
-  box_dimensions: [80.5, 80.5, 80.5]
-  box_angles: [90.0, 90.0, 90.0]
-  solvent_type: TIP3P
-  ions: {'Na+': 42, 'Cl-': 38}
-  density: 1.0234
-  is_hmr: False
-```
-
-**JSON format:**
-```json
-{
-  "natom": 45231,
-  "nres": 12543,
-  "box_dimensions": [80.5, 80.5, 80.5],
-  "solvent_type": "TIP3P",
-  "ions": {"Na+": 42, "Cl-": 38},
-  "density": 1.0234
-}
-```
+<!-- END_CLI_HELP:info -->
 
 ---
 
@@ -417,21 +342,25 @@ File Information: system.prmtop
 Launch the interactive Terminal User Interface for building protocol manifests.
 
 ```bash
-ambermeta tui [directory] [options]
+ambermeta tui [directory]
 ```
 
-#### Arguments
+<!-- BEGIN_CLI_HELP:tui -->
+```text
+usage: ambermeta tui [-h] [directory]
 
-| Argument | Description |
-|----------|-------------|
-| `directory` | Directory containing simulation files (default: current directory) |
+Launch a terminal user interface for interactively building simulation
+protocol manifests. Features include file browser, stage management, sequence
+detection, and export to multiple formats.
 
-#### Options
+positional arguments:
+  directory   Directory containing simulation files (default: current
+              directory)
 
-| Option | Description |
-|--------|-------------|
-| `--recursive` | Enable recursive file discovery |
-| `--show-all` | Show all files, not just simulation files |
+options:
+  -h, --help  show this help message and exit
+```
+<!-- END_CLI_HELP:tui -->
 
 #### Features
 
@@ -442,19 +371,6 @@ The TUI provides:
 - **Global Settings**: Set global topology and HMR files
 - **Export**: Save manifest in YAML, JSON, TOML, or CSV format
 - **Undo/Redo**: Full undo/redo support
-
-#### Examples
-
-```bash
-# Launch TUI in current directory
-ambermeta tui
-
-# Launch with recursive discovery
-ambermeta tui --recursive /path/to/project
-
-# Show all files including non-simulation files
-ambermeta tui --show-all /path/to/project
-```
 
 See [TUI Guide](tui.md) for detailed documentation.
 
@@ -468,19 +384,27 @@ Launch the web-based Graphical User Interface for building protocol manifests.
 ambermeta gui [directory] [options]
 ```
 
-#### Arguments
+<!-- BEGIN_CLI_HELP:gui -->
+```text
+usage: ambermeta gui [-h] [--port PORT] [--no-browser] [--host HOST]
+                     [directory]
 
-| Argument | Description |
-|----------|-------------|
-| `directory` | Directory containing simulation files (default: current directory) |
+Launch a modern web-based graphical user interface for building simulation
+protocol manifests. Features include drag-and-drop file assignment, visual
+stage management, sequence detection, and export to multiple formats. Opens in
+your default web browser.
 
-#### Options
+positional arguments:
+  directory     Directory containing simulation files (default: current
+                directory)
 
-| Option | Description |
-|--------|-------------|
-| `--port PORT` | Port to run the server on (default: 8000) |
-| `--host HOST` | Host to bind to (default: 127.0.0.1) |
-| `--no-browser` | Don't automatically open browser |
+options:
+  -h, --help    show this help message and exit
+  --port PORT   Server port (default: 8765)
+  --no-browser  Don't automatically open the browser
+  --host HOST   Server host (default: 127.0.0.1)
+```
+<!-- END_CLI_HELP:gui -->
 
 #### Features
 
@@ -495,22 +419,6 @@ The GUI provides:
 - **Undo/Redo**: Full undo/redo support
 - **Keyboard Shortcuts**: Ctrl+S (save), Ctrl+O (load), Ctrl+A (auto-discover), Ctrl+E (export)
 
-#### Examples
-
-```bash
-# Launch GUI in current directory
-ambermeta gui
-
-# Launch on a specific port
-ambermeta gui --port 3000 /path/to/project
-
-# Allow network access (use with caution)
-ambermeta gui --host 0.0.0.0 /path/to/project
-
-# Don't auto-open browser
-ambermeta gui --no-browser /path/to/project
-```
-
 See [GUI Guide](gui.md) for detailed documentation.
 
 ## Examples
@@ -518,74 +426,50 @@ See [GUI Guide](gui.md) for detailed documentation.
 ### Complete Workflow
 
 ```bash
-# 1. Initialize a manifest template
-ambermeta init --template standard /path/to/simulations
+# 1. Initialize manifest template
+ambermeta init --template standard /path/to/project
 
-# 2. Edit the manifest
-vim /path/to/simulations/manifest.yaml
+# 2. Edit manifest.yaml to match your files
 
-# 3. Validate the manifest
-ambermeta plan -m /path/to/simulations/manifest.yaml -v
+# 3. Build and validate protocol
+ambermeta plan -m manifest.yaml /path/to/project --verbose
 
-# 4. Export summaries
-ambermeta plan -m /path/to/simulations/manifest.yaml \
-    --summary-path protocol.json \
-    --methods-summary-path methods.json \
-    --stats-csv stats.csv
+# 4. Export structured summary
+ambermeta plan -m manifest.yaml /path/to/project --summary-path protocol.json
+
+# 5. Generate publication methods summary
+ambermeta plan -m manifest.yaml /path/to/project --methods-summary-path methods.json
+
+# 6. Export statistics
+ambermeta plan -m manifest.yaml /path/to/project --stats-csv stats.csv
+
+# 7. Validate individual files as needed
+ambermeta validate /path/to/project/*.mdout
 ```
 
-### First-Run Release Workflow
+### Auto-Discovery Workflow
 
 ```bash
-# 1. Bootstrap manifest non-interactively from discovered files
-ambermeta init --auto --format yaml --validate /path/to/release_run
+# Discover and process all files recursively
+ambermeta plan --recursive /path/to/simulation_data
 
-# 2. Optionally preview mapping only (no file writes)
-ambermeta init --auto --dry-run /path/to/release_run
-
-# 3. Build and export release summaries
-ambermeta plan -m /path/to/release_run/manifest.yaml \
-    --summary-path /path/to/release_run/protocol.json \
-    --methods-summary-path /path/to/release_run/methods.json
+# With filtering and outputs
+ambermeta plan --recursive --pattern "prod_.*" /path/to/data \
+    --summary-path prod_summary.json \
+    --stats-csv prod_stats.csv
 ```
 
-### Quick Analysis
+### Quick Inspection Workflow
 
 ```bash
-# Discover and analyze all files
-ambermeta plan --recursive /path/to/simulations
-
-# With automatic restart detection
-ambermeta plan --recursive --auto-detect-restarts /path/to/simulations
-
-# Filter to specific files
-ambermeta plan --recursive --pattern "prod" /path/to/simulations
-```
-
-### File Inspection
-
-```bash
-# Check a topology file
+# Check file metadata
 ambermeta info system.prmtop
 
-# Inspect output statistics
-ambermeta info --format json prod.mdout | jq '.stats'
+# Validate critical files
+ambermeta validate --strict system.prmtop production.mdout
 
-# Validate multiple files
-ambermeta validate system.prmtop *.mdin *.mdout
-```
-
-### TUI Workflow
-
-```bash
-# Launch TUI
-ambermeta tui /path/to/simulations
-
-# In TUI:
-# 1. Press Ctrl+G to set global prmtop
-# 2. Press Ctrl+A to auto-generate stages
-# 3. Review and edit stages
-# 4. Press Ctrl+E to export manifest
+# Generate quick template
+ambermeta init --template minimal .
 ```
 
 ---
@@ -595,107 +479,33 @@ ambermeta tui /path/to/simulations
 | Code | Meaning |
 |------|---------|
 | `0` | Success |
-| `1` | Error or validation failure |
+| `1` | Error (invalid input, parse failure, validation failure, etc.) |
 
 ---
 
 ## Environment Variables
 
-AmberMeta respects the following environment variables:
+AmberMeta supports environment variable expansion in manifest files by default.
 
-| Variable | Description |
-|----------|-------------|
-| `AMBERMETA_LOG_LEVEL` | Default log level (DEBUG, INFO, WARNING, ERROR) |
-| `NO_COLOR` | Disable colored output when set |
-| `TERM` | Terminal type (affects color support detection) |
-
-### Manifest Environment Variables
-
-Manifests can reference environment variables using `${VAR}` or `$VAR` syntax:
-
+Example manifest snippet:
 ```yaml
-- name: production
-  prmtop: ${PROJECT_ROOT}/system.prmtop
-  mdin: $HOME/templates/prod.in
+stages:
+  - name: production
+    prmtop: ${PROJECT_DIR}/system.prmtop
+    mdout: ${PROJECT_DIR}/output/prod.mdout
 ```
 
-Set variables before running:
-```bash
-export PROJECT_ROOT=/path/to/project
-export OUTPUT_DIR=/scratch/output
-ambermeta plan -m manifest.yaml
-```
-
-Disable expansion with `--no-expand-env`:
+Disable expansion with:
 ```bash
 ambermeta plan -m manifest.yaml --no-expand-env
 ```
 
 ---
 
-## Logging Configuration
+## See Also
 
-### Log Levels
-
-| Level | Description |
-|-------|-------------|
-| `DEBUG` | Detailed debugging information |
-| `INFO` | General information (default) |
-| `WARNING` | Warning messages |
-| `ERROR` | Error messages only |
-
-### Examples
-
-```bash
-# Debug output to console
-ambermeta --log-level DEBUG plan -m manifest.yaml
-
-# Write logs to file
-ambermeta --log-file ambermeta.log plan -m manifest.yaml
-
-# Quiet mode (errors only)
-ambermeta --quiet plan --recursive . --summary-path output.json
-
-# Combine options
-ambermeta --log-level DEBUG --log-file debug.log plan -m manifest.yaml
-```
-
----
-
-## Tips and Best Practices
-
-### Large Projects
-
-```bash
-# Use pattern filtering to process subsets
-ambermeta plan --recursive --pattern "replica_01" /path/to/simulations
-
-# Export only statistics for analysis
-ambermeta plan --recursive --stats-csv all_stats.csv /path/to/simulations
-```
-
-### CI/CD Integration
-
-```bash
-# Strict validation in CI
-ambermeta validate --strict *.prmtop *.mdin
-
-# Generate reports
-ambermeta plan -m manifest.yaml --quiet --summary-path report.json
-```
-
-### Scripting
-
-```bash
-# Check exit codes
-if ambermeta validate --strict *.prmtop; then
-    echo "Validation passed"
-else
-    echo "Validation failed"
-    exit 1
-fi
-
-# Process JSON output
-ATOMS=$(ambermeta info --format json system.prmtop | jq '.natom')
-echo "System has $ATOMS atoms"
-```
+- [README](../README.md) - Project overview and quick start
+- [API Documentation](api.md) - Python API reference
+- [TUI Guide](tui.md) - Interactive terminal interface
+- [GUI Guide](gui.md) - Web-based graphical interface
+- [Tutorials](tutorials.md) - Step-by-step usage examples

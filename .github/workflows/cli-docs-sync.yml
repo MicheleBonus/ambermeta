@@ -1,0 +1,33 @@
+name: CLI Docs Sync Check
+
+on:
+  pull_request:
+    paths:
+      - 'ambermeta/cli.py'
+      - 'docs/cli.md'
+      - 'scripts/export_cli_help.py'
+      - '.github/workflows/cli-docs-sync.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'ambermeta/cli.py'
+      - 'docs/cli.md'
+      - 'scripts/export_cli_help.py'
+      - '.github/workflows/cli-docs-sync.yml'
+
+jobs:
+  cli-docs-sync:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Verify CLI docs are up to date
+        run: python scripts/export_cli_help.py --check
