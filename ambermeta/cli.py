@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import statistics
 import sys
 from typing import Any, Dict, Iterable, List, Optional
@@ -605,13 +606,15 @@ def _init_command(args: argparse.Namespace) -> int:
             elif ext in (".rst", ".rst7", ".ncrst", ".inpcrd"):
                 discovered_files["inpcrd"].append(rel_path)
 
+    stage_candidates = _build_stage_candidates(discovered_files)
+
     # Generate manifest content
     if args.template == "minimal":
-        manifest_content = _generate_minimal_manifest(discovered_files)
+        manifest_content = _generate_minimal_manifest(discovered_files, stage_candidates)
     elif args.template == "comprehensive":
-        manifest_content = _generate_comprehensive_manifest(discovered_files)
+        manifest_content = _generate_comprehensive_manifest(discovered_files, stage_candidates)
     else:
-        manifest_content = _generate_standard_manifest(discovered_files)
+        manifest_content = _generate_standard_manifest(discovered_files, stage_candidates)
 
     with open(output_path, "w", encoding="utf-8") as fh:
         fh.write(manifest_content)
@@ -626,8 +629,72 @@ def _init_command(args: argparse.Namespace) -> int:
     return 0
 
 
-def _generate_minimal_manifest(discovered: Dict[str, List[str]]) -> str:
+def _normalize_stage_stem(path: str) -> str:
+    """Normalize a file path stem into a stage grouping key."""
+    stem = os.path.splitext(os.path.basename(path))[0]
+    match = re.match(r"^(.*?)(?:[._-]?\d+)$", stem)
+    if match and match.group(1):
+        return match.group(1).rstrip("._-") or stem
+    return stem
+
+
+def _build_stage_candidates(discovered_files: Dict[str, List[str]]) -> List[Dict[str, Any]]:
+    """Build ordered stage candidates from discovered file groupings."""
+    grouped: Dict[str, Dict[str, Any]] = {}
+
+    for kind in ("mdin", "mdout", "mdcrd", "inpcrd"):
+        for path in sorted(discovered_files.get(kind, [])):
+            key = _normalize_stage_stem(path)
+            entry = grouped.setdefault(
+                key,
+                {
+                    "name": key,
+                    "stage_role": _suggest_stage_role(key),
+                    "files": {},
+                },
+            )
+            entry["files"][kind] = path
+
+    return [grouped[key] for key in sorted(grouped)]
+
+
+def _render_candidate_stages(
+    discovered: Dict[str, List[str]],
+    stage_candidates: List[Dict[str, Any]],
+    include_role: bool = True,
+) -> List[str]:
+    """Render candidate stages as YAML lines."""
+    prmtop = discovered["prmtop"][0] if discovered["prmtop"] else "system.prmtop"
+    lines: List[str] = []
+
+    for candidate in stage_candidates:
+        lines.append(f"  - name: {candidate['name']}")
+        if include_role and candidate.get("stage_role"):
+            lines.append(f"    stage_role: {candidate['stage_role']}")
+        lines.append(f"    prmtop: {prmtop}")
+
+        files = candidate.get("files", {})
+        for key in ("mdin", "mdout", "mdcrd", "inpcrd"):
+            value = files.get(key)
+            if value:
+                lines.append(f"    {key}: {value}")
+        lines.append("")
+
+    return lines
+
+
+def _generate_minimal_manifest(discovered: Dict[str, List[str]], stage_candidates: List[Dict[str, Any]]) -> str:
     """Generate a minimal manifest template."""
+    if stage_candidates:
+        rendered = _render_candidate_stages(discovered, stage_candidates, include_role=False)
+        body = "\n".join(rendered).rstrip()
+        return (
+            "# AmberMeta Manifest - Minimal Template\n"
+            "# Edit this file to define your simulation protocol stages\n\n"
+            "stages:\n"
+            f"{body}\n"
+        )
+
     return """# AmberMeta Manifest - Minimal Template
 # Edit this file to define your simulation protocol stages
 
@@ -640,8 +707,24 @@ stages:
 """
 
 
-def _generate_standard_manifest(discovered: Dict[str, List[str]]) -> str:
+def _generate_standard_manifest(discovered: Dict[str, List[str]], stage_candidates: List[Dict[str, Any]]) -> str:
     """Generate a standard manifest template."""
+    if stage_candidates:
+        rendered = _render_candidate_stages(discovered, stage_candidates, include_role=True)
+        body = "\n".join(rendered).rstrip()
+        return (
+            "# AmberMeta Manifest - Standard Template\n"
+            "# Edit this file to define your simulation protocol stages\n"
+            "#\n"
+            "# Each stage can include:\n"
+            "#   - name: Stage identifier (required)\n"
+            "#   - stage_role: minimization, heating, equilibration, production\n"
+            "#   - prmtop, mdin, mdout, mdcrd, inpcrd: File paths (relative to manifest)\n"
+            "#   - notes: Optional annotations\n\n"
+            "stages:\n"
+            f"{body}\n"
+        )
+
     prmtop = discovered["prmtop"][0] if discovered["prmtop"] else "system.prmtop"
 
     return f"""# AmberMeta Manifest - Standard Template
@@ -685,8 +768,35 @@ stages:
 """
 
 
-def _generate_comprehensive_manifest(discovered: Dict[str, List[str]]) -> str:
+def _generate_comprehensive_manifest(discovered: Dict[str, List[str]], stage_candidates: List[Dict[str, Any]]) -> str:
     """Generate a comprehensive manifest template with all options."""
+    if stage_candidates:
+        rendered = _render_candidate_stages(discovered, stage_candidates, include_role=True)
+        body = "\n".join(rendered).rstrip()
+        return (
+            "# AmberMeta Manifest - Comprehensive Template\n"
+            "# This template shows all available options for protocol definition\n"
+            "#\n"
+            "# Documentation: https://github.com/your-org/ambermeta\n\n"
+            "# Optional: Global settings\n"
+            "settings:\n"
+            "  strict_validation: false\n"
+            "  allow_gaps: false\n\n"
+            "# Optional: Stage role inference rules (regex patterns)\n"
+            "# Used when stage_role is not explicitly specified\n"
+            "stage_role_rules:\n"
+            "  - pattern: \"min.*\"\n"
+            "    role: minimization\n"
+            "  - pattern: \"heat.*\"\n"
+            "    role: heating\n"
+            "  - pattern: \"equil.*\"\n"
+            "    role: equilibration\n"
+            "  - pattern: \"prod.*\"\n"
+            "    role: production\n\n"
+            "stages:\n"
+            f"{body}\n"
+        )
+
     prmtop = discovered["prmtop"][0] if discovered["prmtop"] else "system.prmtop"
 
     return f"""# AmberMeta Manifest - Comprehensive Template
