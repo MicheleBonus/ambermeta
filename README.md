@@ -9,6 +9,7 @@ AmberMeta extracts, organizes, and validates metadata from AMBER molecular dynam
 - [Key Features](#key-features)
 - [Installation](#installation)
 - [Quick Start](#quick-start)
+- [CLI workflow in 5 commands](#cli-workflow-in-5-commands)
 - [Tutorials](#tutorials)
   - [Extracting Metadata from Files](#extracting-metadata-from-files)
   - [Building a Protocol from Directory](#building-a-protocol-from-directory)
@@ -18,6 +19,7 @@ AmberMeta extracts, organizes, and validates metadata from AMBER molecular dynam
 - [Command Line Interface](#command-line-interface)
 - [Python API](#python-api)
 - [Supported File Types](#supported-file-types)
+- [Optional interfaces (TUI/GUI)](#optional-interfaces-tuigui)
 - [Documentation](#documentation)
 - [License](#license)
 
@@ -25,17 +27,17 @@ AmberMeta extracts, organizes, and validates metadata from AMBER molecular dynam
 
 ## Key Features
 
-- **Structured Parsers** for AMBER files (`prmtop`, `mdin`, `mdout`, `inpcrd`, `mdcrd`) with optional NetCDF trajectory support
-- **Metadata Extraction** including atom counts, box dimensions, simulation settings, thermodynamic statistics, and timing information
+- **CLI-first workflow** with `init`, `plan`, `validate`, and `info` for day-to-day provenance tasks
+- **Manifest-driven planning** with support for YAML, JSON, TOML, and CSV formats
+- **Smart file discovery** with automatic sequence detection (e.g., `prod_001`, `prod_002`) and pattern-based filtering
+- **Cross-stage validation** to verify continuity between simulation stages
+- **Automatic restart chain detection** to link simulation stages based on atom counts and timestamps
+- **Structured parsers** for AMBER files (`prmtop`, `mdin`, `mdout`, `inpcrd`, `mdcrd`) with optional NetCDF trajectory support
+- **Metadata extraction** including atom counts, box dimensions, simulation settings, thermodynamic statistics, and timing information
 - **SimulationStage and SimulationProtocol** models that aggregate parsed files, flag validation issues, and compute total steps and simulated time
-- **Interactive Terminal UI (TUI)** for visually building protocol manifests with file browsing, stage creation, and export
-- **Web-Based GUI** with drag-and-drop interface, auto-discovery, auto-grouping of related files, and real-time stage editing in your browser
-- **Manifest-Driven Planning** with support for YAML, JSON, TOML, and CSV formats
-- **Smart File Discovery** with automatic sequence detection (e.g., `prod_001`, `prod_002`) and pattern-based filtering
-- **Automatic Restart Chain Detection** to link simulation stages based on atom counts and timestamps
 - **Fluent Builder API** for programmatic protocol construction
-- **Environment Variable Expansion** in manifest paths for portable configurations
-- **Cross-Stage Validation** to verify continuity between simulation stages
+- **Environment variable expansion** in manifest paths for portable configurations
+- **Optional interfaces**: interactive TUI and web GUI for visual manifest editing (not required for core CLI usage)
 
 ---
 
@@ -94,35 +96,36 @@ pip install -e ".[all,tests,dev]"
 
 ## Quick Start
 
-### Extract Metadata from a Single File
+### Initialize a manifest and run analysis (CLI)
 
 ```bash
-# Get detailed metadata about any AMBER file
-ambermeta info system.prmtop
-ambermeta info --format json prod.mdout
+# Bootstrap a manifest from discovered files
+ambermeta init --auto --format yaml --validate /path/to/simulations
+
+# Build protocol summary outputs
+ambermeta plan -m /path/to/simulations/manifest.yaml \
+  --summary-path /path/to/simulations/protocol.json \
+  --methods-summary-path /path/to/simulations/methods.json \
+  --stats-csv /path/to/simulations/stats.csv
 ```
 
-### Discover and Analyze All Files in a Directory
+### Validate and inspect files (CLI)
 
 ```bash
-# Recursively scan and build a protocol
-ambermeta plan --recursive /path/to/simulations
+# Quick validation pass
+ambermeta validate /path/to/simulations/system.prmtop /path/to/simulations/prod.mdout
 
-# Export a structured summary
-ambermeta plan --recursive /path/to/simulations --summary-path protocol.json
+# Inspect parsed metadata
+ambermeta info --format json /path/to/simulations/prod.mdout
 ```
 
-### Launch the Interactive TUI
+### Optional interfaces (not required)
 
 ```bash
-# Build a manifest interactively
+# Optional TUI for interactive manifest editing
 ambermeta tui /path/to/simulations
-```
 
-### Launch the Web-Based GUI
-
-```bash
-# Build a manifest with drag-and-drop in your browser
+# Optional GUI for browser-based editing
 ambermeta gui /path/to/simulations
 ```
 
@@ -138,6 +141,30 @@ protocol = auto_discover("/path/to/simulations", recursive=True)
 print(f"Found {len(protocol.stages)} stages")
 totals = protocol.totals()
 print(f"Total simulation time: {totals['time_ps']:.2f} ps")
+```
+
+---
+
+## CLI workflow in 5 commands
+
+```bash
+# 1) Bootstrap manifest from discovered files
+ambermeta init --auto --format yaml --validate /path/to/simulations
+
+# 2) Build protocol from the generated manifest
+ambermeta plan -m /path/to/simulations/manifest.yaml
+
+# 3) Validate key inputs/outputs directly
+ambermeta validate /path/to/simulations/system.prmtop /path/to/simulations/prod.mdout
+
+# 4) Inspect one file in detail
+ambermeta info --format json /path/to/simulations/prod.mdout
+
+# 5) Export publication/report artifacts
+ambermeta plan -m /path/to/simulations/manifest.yaml \
+  --summary-path /path/to/simulations/protocol.json \
+  --methods-summary-path /path/to/simulations/methods.json \
+  --stats-csv /path/to/simulations/stats.csv
 ```
 
 ---
@@ -863,6 +890,17 @@ To create a complete simulation provenance record:
    ```
 
 3. **Use the methods summary** as a starting point and add missing details before publication
+
+---
+
+## Optional interfaces (TUI/GUI)
+
+AmberMeta is fully usable from the command line; TUI and GUI are optional convenience layers for interactive manifest editing.
+
+- **TUI**: `ambermeta tui /path/to/simulations`
+- **GUI**: `ambermeta gui /path/to/simulations`
+
+See the tutorial sections above for walk-throughs: [Using the Terminal UI (TUI)](#using-the-terminal-ui-tui) and [Using the Web-Based GUI](#using-the-web-based-gui).
 
 ---
 
