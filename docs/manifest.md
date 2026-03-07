@@ -20,6 +20,7 @@ Format is auto-detected based on file extension.
 - **Accepted types:** the manifest must be either a list of stage dictionaries or a mapping whose keys are stage names and whose values are dictionaries. Mixed or other types raise an error.
 - **Stage dictionaries:** each stage entry is a mapping of metadata and file pointers. When the manifest is a mapping, the stage name key is copied into the stage entry when no explicit `name` is present.
 - **Global topology keys:** use `global_prmtop` for the shared topology and `hmr_prmtop` for the HMR topology at the manifest top level. `prmtop` at the top level is still accepted as a legacy alias when loading manifests.
+- **Global settings:** optional `settings` controls validation behavior and `stage_role_rules` configures name-based role inference for stages that do not set `stage_role` explicitly.
 - **Relative paths:** any relative file paths are resolved against the manifest directory when using `load_protocol_from_manifest` or the optional `directory` argument passed to `auto_discover`. The `ambermeta plan --manifest` command forwards its positional `directory` argument for this purpose.
 
 ---
@@ -48,6 +49,45 @@ Only these keys are consumed; others are ignored. At least one recognized file i
 
 ### Restart Sources
 Providing `inpcrd` marks the restart used for the stage. Programmatic callers may also pass a `restart_files` mapping to `auto_discover`/`load_protocol_from_manifest` to inject restarts by stage `name` or `stage_role` when absent from the manifest.
+
+---
+
+## Top-Level `settings` and `stage_role_rules`
+
+### `settings`
+
+Supported keys:
+
+- `strict_validation` (boolean, default `true`):
+  - `true` runs cross-stage continuity checks.
+  - `false` skips cross-stage continuity checks (equivalent to `skip_cross_stage_validation=True`).
+- `allow_gaps` (boolean, default `false`):
+  - only applies when cross-stage validation is enabled.
+  - when `true`, unconfigured positive gaps are recorded as informational notes rather than warnings.
+
+CLI `--skip-cross-stage-validation` overrides `settings.strict_validation`.
+
+### `stage_role_rules`
+
+Name-based inference rules used when a stage omits `stage_role`. Accepted forms:
+
+```yaml
+stage_role_rules:
+  - pattern: "^min"
+    role: minimization
+  - pattern: "^heat"
+    role: heating
+```
+
+or mapping style:
+
+```yaml
+stage_role_rules:
+  "^min": minimization
+  "^heat": heating
+```
+
+Rules are evaluated in order for list form. Invalid regexes are treated as literal strings.
 
 ---
 
