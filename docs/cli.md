@@ -8,11 +8,11 @@ AmberMeta provides a comprehensive command-line interface for parsing, validatin
 - [Global Options](#global-options)
 - [Commands](#commands)
   - [plan](#plan-command)
-  - [tui](#tui-command)
-  - [gui](#gui-command)
+  - [init](#init-command)
   - [validate](#validate-command)
   - [info](#info-command)
-  - [init](#init-command)
+  - [tui](#tui-command)
+  - [gui](#gui-command)
 - [Examples](#examples)
 - [Exit Codes](#exit-codes)
 - [Environment Variables](#environment-variables)
@@ -57,6 +57,8 @@ ambermeta --quiet plan --recursive . --summary-path output.json
 ---
 
 ## Commands
+
+> **Note:** TUI (`ambermeta tui`) and GUI (`ambermeta gui`) are optional extras. The core AmberMeta workflow is fully supported by the CLI commands below.
 
 ### Plan Command
 
@@ -177,106 +179,111 @@ ambermeta plan -m protocol.yaml \
 
 ---
 
-### TUI Command
+### Init Command
 
-Launch the interactive Terminal User Interface for building protocol manifests.
+Generate an example manifest file.
 
 ```bash
-ambermeta tui [directory] [options]
+ambermeta init [options] [directory]
 ```
 
 #### Arguments
 
 | Argument | Description |
 |----------|-------------|
-| `directory` | Directory containing simulation files (default: current directory) |
+| `directory` | Directory to scan for files (default: current directory) |
 
 #### Options
 
 | Option | Description |
 |--------|-------------|
-| `--recursive` | Enable recursive file discovery |
-| `--show-all` | Show all files, not just simulation files |
+| `-o, --output FILENAME` | Output filename (default: manifest.yaml) |
+| `--template {minimal,standard,comprehensive}` | Template complexity (default: standard) |
+| `--auto` | Non-interactive bootstrap: recurse, auto-group stages, and generate manifest |
+| `--format {yaml,json,toml,csv}` | Output format in `--auto` mode (default: infer from filename or yaml) |
+| `--validate` | Run validation immediately after auto bootstrap and print concise summary |
+| `--dry-run` | Preview auto-grouped stage mapping without writing output |
+| `--force` | Overwrite existing output without interactive prompt |
 
-#### Features
+#### Templates
 
-The TUI provides:
-- **File Browser**: Navigate directory tree with color-coded file types
-- **Stage Management**: Create, edit, delete, and reorder stages
-- **Sequence Detection**: Automatic detection of numbered file sequences
-- **Global Settings**: Set global topology and HMR files
-- **Export**: Save manifest in YAML, JSON, TOML, or CSV format
-- **Undo/Redo**: Full undo/redo support
+**Minimal**: Basic structure with single stage
+```yaml
+stages:
+  - name: production
+    prmtop: system.prmtop
+    mdin: prod.in
+    mdout: prod.out
+```
+
+**Standard**: Common 4-stage workflow
+```yaml
+stages:
+  - name: minimize
+    stage_role: minimization
+    ...
+  - name: heat
+    stage_role: heating
+    ...
+  - name: equilibrate
+    stage_role: equilibration
+    ...
+  - name: production
+    stage_role: production
+    ...
+```
+
+**Comprehensive**: All available options with documentation
+```yaml
+settings:
+  strict_validation: false  # Skip cross-stage continuity checks
+  allow_gaps: false         # If strict_validation=true, treat unexpected gaps as informational
+
+stage_role_rules:
+  - pattern: "min.*"
+    role: minimization
+  ...
+
+stages:
+  - name: minimize_1
+    stage_role: minimization
+    gaps:
+      expected: 0.0
+      tolerance: 0.1
+    notes:
+      - "Initial minimization"
+  ...
+```
+
+`settings` and `stage_role_rules` are consumed by `ambermeta plan -m ...`:
+- `settings.strict_validation: false` is equivalent to `--skip-cross-stage-validation`.
+- `settings.allow_gaps: true` marks unexpected positive gaps as allowed information.
+- `stage_role_rules` assigns `stage_role` by stage name when `stage_role` is omitted.
 
 #### Examples
 
 ```bash
-# Launch TUI in current directory
-ambermeta tui
+# Generate standard template
+ambermeta init my_project
 
-# Launch with recursive discovery
-ambermeta tui --recursive /path/to/project
+# Generate minimal template
+ambermeta init --template minimal my_project
 
-# Show all files including non-simulation files
-ambermeta tui --show-all /path/to/project
+# Generate comprehensive template
+ambermeta init --template comprehensive my_project
+
+# Custom output filename
+ambermeta init -o my_protocol.yaml my_project
+
+# Generate in current directory
+ambermeta init --template standard .
+
+# First-run release bootstrap (non-interactive)
+ambermeta init --auto --format yaml --validate /path/to/release_run
+
+# Preview stage mapping before writing
+ambermeta init --auto --dry-run /path/to/release_run
 ```
-
-See [TUI Guide](tui.md) for detailed documentation.
-
----
-
-### GUI Command
-
-Launch the web-based Graphical User Interface for building protocol manifests.
-
-```bash
-ambermeta gui [directory] [options]
-```
-
-#### Arguments
-
-| Argument | Description |
-|----------|-------------|
-| `directory` | Directory containing simulation files (default: current directory) |
-
-#### Options
-
-| Option | Description |
-|--------|-------------|
-| `--port PORT` | Port to run the server on (default: 8000) |
-| `--host HOST` | Host to bind to (default: 127.0.0.1) |
-| `--no-browser` | Don't automatically open browser |
-
-#### Features
-
-The GUI provides:
-- **Visual File Browser**: Navigate directory tree with drag-and-drop
-- **Stage Builder**: Create, edit, delete, and reorder stages visually
-- **Auto-Discovery**: One-click batch stage creation from file groups
-- **Properties Panel**: Edit stage properties and global settings
-- **Drag-and-Drop**: Assign files to stages by dragging
-- **Session Management**: Save and load sessions
-- **Export**: Save manifest in YAML, JSON, TOML, or CSV format
-- **Undo/Redo**: Full undo/redo support
-- **Keyboard Shortcuts**: Ctrl+S (save), Ctrl+O (load), Ctrl+A (auto-discover), Ctrl+E (export)
-
-#### Examples
-
-```bash
-# Launch GUI in current directory
-ambermeta gui
-
-# Launch on a specific port
-ambermeta gui --port 3000 /path/to/project
-
-# Allow network access (use with caution)
-ambermeta gui --host 0.0.0.0 /path/to/project
-
-# Don't auto-open browser
-ambermeta gui --no-browser /path/to/project
-```
-
-See [GUI Guide](gui.md) for detailed documentation.
 
 ---
 
@@ -405,113 +412,106 @@ File Information: system.prmtop
 
 ---
 
-### Init Command
+### TUI Command
 
-Generate an example manifest file.
+Launch the interactive Terminal User Interface for building protocol manifests.
 
 ```bash
-ambermeta init [options] [directory]
+ambermeta tui [directory] [options]
 ```
 
 #### Arguments
 
 | Argument | Description |
 |----------|-------------|
-| `directory` | Directory to scan for files (default: current directory) |
+| `directory` | Directory containing simulation files (default: current directory) |
 
 #### Options
 
 | Option | Description |
 |--------|-------------|
-| `-o, --output FILENAME` | Output filename (default: manifest.yaml) |
-| `--template {minimal,standard,comprehensive}` | Template complexity (default: standard) |
-| `--auto` | Non-interactive bootstrap: recurse, auto-group stages, and generate manifest |
-| `--format {yaml,json,toml,csv}` | Output format in `--auto` mode (default: infer from filename or yaml) |
-| `--validate` | Run validation immediately after auto bootstrap and print concise summary |
-| `--dry-run` | Preview auto-grouped stage mapping without writing output |
-| `--force` | Overwrite existing output without interactive prompt |
+| `--recursive` | Enable recursive file discovery |
+| `--show-all` | Show all files, not just simulation files |
 
-#### Templates
+#### Features
 
-**Minimal**: Basic structure with single stage
-```yaml
-stages:
-  - name: production
-    prmtop: system.prmtop
-    mdin: prod.in
-    mdout: prod.out
-```
-
-**Standard**: Common 4-stage workflow
-```yaml
-stages:
-  - name: minimize
-    stage_role: minimization
-    ...
-  - name: heat
-    stage_role: heating
-    ...
-  - name: equilibrate
-    stage_role: equilibration
-    ...
-  - name: production
-    stage_role: production
-    ...
-```
-
-**Comprehensive**: All available options with documentation
-```yaml
-settings:
-  strict_validation: false  # Skip cross-stage continuity checks
-  allow_gaps: false         # If strict_validation=true, treat unexpected gaps as informational
-
-stage_role_rules:
-  - pattern: "min.*"
-    role: minimization
-  ...
-
-stages:
-  - name: minimize_1
-    stage_role: minimization
-    gaps:
-      expected: 0.0
-      tolerance: 0.1
-    notes:
-      - "Initial minimization"
-  ...
-```
-
-`settings` and `stage_role_rules` are consumed by `ambermeta plan -m ...`:
-- `settings.strict_validation: false` is equivalent to `--skip-cross-stage-validation`.
-- `settings.allow_gaps: true` marks unexpected positive gaps as allowed information.
-- `stage_role_rules` assigns `stage_role` by stage name when `stage_role` is omitted.
+The TUI provides:
+- **File Browser**: Navigate directory tree with color-coded file types
+- **Stage Management**: Create, edit, delete, and reorder stages
+- **Sequence Detection**: Automatic detection of numbered file sequences
+- **Global Settings**: Set global topology and HMR files
+- **Export**: Save manifest in YAML, JSON, TOML, or CSV format
+- **Undo/Redo**: Full undo/redo support
 
 #### Examples
 
 ```bash
-# Generate standard template
-ambermeta init my_project
+# Launch TUI in current directory
+ambermeta tui
 
-# Generate minimal template
-ambermeta init --template minimal my_project
+# Launch with recursive discovery
+ambermeta tui --recursive /path/to/project
 
-# Generate comprehensive template
-ambermeta init --template comprehensive my_project
-
-# Custom output filename
-ambermeta init -o my_protocol.yaml my_project
-
-# Generate in current directory
-ambermeta init --template standard .
-
-# First-run release bootstrap (non-interactive)
-ambermeta init --auto --format yaml --validate /path/to/release_run
-
-# Preview stage mapping before writing
-ambermeta init --auto --dry-run /path/to/release_run
+# Show all files including non-simulation files
+ambermeta tui --show-all /path/to/project
 ```
 
+See [TUI Guide](tui.md) for detailed documentation.
+
 ---
+
+### GUI Command
+
+Launch the web-based Graphical User Interface for building protocol manifests.
+
+```bash
+ambermeta gui [directory] [options]
+```
+
+#### Arguments
+
+| Argument | Description |
+|----------|-------------|
+| `directory` | Directory containing simulation files (default: current directory) |
+
+#### Options
+
+| Option | Description |
+|--------|-------------|
+| `--port PORT` | Port to run the server on (default: 8000) |
+| `--host HOST` | Host to bind to (default: 127.0.0.1) |
+| `--no-browser` | Don't automatically open browser |
+
+#### Features
+
+The GUI provides:
+- **Visual File Browser**: Navigate directory tree with drag-and-drop
+- **Stage Builder**: Create, edit, delete, and reorder stages visually
+- **Auto-Discovery**: One-click batch stage creation from file groups
+- **Properties Panel**: Edit stage properties and global settings
+- **Drag-and-Drop**: Assign files to stages by dragging
+- **Session Management**: Save and load sessions
+- **Export**: Save manifest in YAML, JSON, TOML, or CSV format
+- **Undo/Redo**: Full undo/redo support
+- **Keyboard Shortcuts**: Ctrl+S (save), Ctrl+O (load), Ctrl+A (auto-discover), Ctrl+E (export)
+
+#### Examples
+
+```bash
+# Launch GUI in current directory
+ambermeta gui
+
+# Launch on a specific port
+ambermeta gui --port 3000 /path/to/project
+
+# Allow network access (use with caution)
+ambermeta gui --host 0.0.0.0 /path/to/project
+
+# Don't auto-open browser
+ambermeta gui --no-browser /path/to/project
+```
+
+See [GUI Guide](gui.md) for detailed documentation.
 
 ## Examples
 
