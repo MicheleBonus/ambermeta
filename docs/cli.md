@@ -13,6 +13,8 @@ AmberMeta provides a comprehensive command-line interface for parsing, validatin
   - [info](#info-command)
   - [tui](#tui-command)
   - [gui](#gui-command)
+  - [completion](#completion-command)
+- [Shell completion setup](#shell-completion-setup)
 - [Examples](#examples)
 - [Exit Codes](#exit-codes)
 - [Environment Variables](#environment-variables)
@@ -28,6 +30,23 @@ pip install -e .
 ambermeta --help
 ```
 
+### Enable shell completion
+
+You can generate completion scripts directly from the CLI:
+
+```bash
+# Bash
+ambermeta completion bash > ~/.local/share/bash-completion/completions/ambermeta
+
+# Zsh
+ambermeta completion zsh > ~/.zfunc/_ambermeta
+
+# Fish
+ambermeta completion fish > ~/.config/fish/completions/ambermeta.fish
+```
+
+Then reload your shell (`source ~/.bashrc`, `exec zsh`, or restart fish).
+
 ---
 
 ## Global Options
@@ -38,7 +57,7 @@ CLI help below is generated directly from `ambermeta/cli.py::build_parser()`.
 ```text
 usage: ambermeta [-h] [--log-level {DEBUG,INFO,WARNING,ERROR}]
                  [--log-file LOG_FILE] [-q]
-                 {plan,validate,info,tui,init,gui} ...
+                 {plan,validate,info,tui,init,gui,completion} ...
 
 AmberMeta - Simulation provenance engine for AMBER molecular dynamics.
 
@@ -46,7 +65,7 @@ Extract, organize, and validate metadata from AMBER simulation files.
 Supports prmtop, mdin, mdout, mdcrd (NetCDF), and restart files.
 
 positional arguments:
-  {plan,validate,info,tui,init,gui}
+  {plan,validate,info,tui,init,gui,completion}
     plan                Build and summarize a SimulationProtocol from
                         manifest, recursive discovery, or explicit interactive
                         mode
@@ -56,6 +75,7 @@ positional arguments:
     tui                 Launch interactive TUI for building protocol manifests
     init                Generate an example manifest file
     gui                 Launch web-based GUI for building protocol manifests
+    completion          Print shell completion script for bash, zsh, or fish
 
 options:
   -h, --help            show this help message and exit
@@ -430,6 +450,54 @@ The GUI provides:
 - **Keyboard Shortcuts**: Ctrl+S (save), Ctrl+O (load), Ctrl+A (auto-discover), Ctrl+E (export)
 
 See [GUI Guide](gui.md) for detailed documentation.
+
+---
+
+### Completion Command
+
+Print shell completion script for bash, zsh, or fish.
+
+```bash
+ambermeta completion {bash|zsh|fish}
+```
+
+<!-- BEGIN_CLI_HELP:completion -->
+```text
+usage: ambermeta completion [-h] {bash,zsh,fish}
+
+Generate shell completion scripts for ambermeta commands.
+
+positional arguments:
+  {bash,zsh,fish}  Shell type for completion script
+
+options:
+  -h, --help       show this help message and exit
+```
+<!-- END_CLI_HELP:completion -->
+
+## Shell completion setup
+
+Use these one-time commands to install completion for your shell:
+
+```bash
+# bash
+mkdir -p ~/.local/share/bash-completion/completions
+ambermeta completion bash > ~/.local/share/bash-completion/completions/ambermeta
+source ~/.bashrc
+
+# zsh
+mkdir -p ~/.zfunc
+ambermeta completion zsh > ~/.zfunc/_ambermeta
+echo 'fpath=(~/.zfunc $fpath)' >> ~/.zshrc
+autoload -Uz compinit && compinit
+
+# fish
+mkdir -p ~/.config/fish/completions
+ambermeta completion fish > ~/.config/fish/completions/ambermeta.fish
+```
+
+
+---
 
 ## Examples
 

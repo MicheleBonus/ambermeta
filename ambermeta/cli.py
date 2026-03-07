@@ -618,6 +618,165 @@ def _info_command(args: argparse.Namespace) -> int:
         return 1
 
 
+def _completion_script(shell: str) -> str:
+    """Return a shell completion script for the requested shell."""
+    scripts = {
+        "bash": r'''# ambermeta bash completion
+_ambermeta_completion() {
+    local cur prev
+    COMPREPLY=()
+    cur="${COMP_WORDS[COMP_CWORD]}"
+    prev="${COMP_WORDS[COMP_CWORD-1]}"
+
+    local commands="plan validate info init tui gui completion"
+    local global_opts="--help --log-level --log-file --quiet -q"
+
+    if [[ ${COMP_CWORD} -eq 1 ]]; then
+        COMPREPLY=( $(compgen -W "${commands} ${global_opts}" -- "$cur") )
+        return 0
+    fi
+
+    case "${COMP_WORDS[1]}" in
+        plan)
+            COMPREPLY=( $(compgen -W "--help -m --manifest --skip-cross-stage-validation --recursive --interactive -v --verbose --summary-path --summary-format --methods-summary-path --stats-csv --no-expand-env --pattern --auto-detect-restarts --prmtop" -- "$cur") )
+            ;;
+        validate)
+            COMPREPLY=( $(compgen -W "--help --strict --format" -- "$cur") )
+            ;;
+        info)
+            COMPREPLY=( $(compgen -W "--help --format" -- "$cur") )
+            ;;
+        init)
+            COMPREPLY=( $(compgen -W "--help -o --output --template --auto --format --validate --dry-run --force" -- "$cur") )
+            ;;
+        tui)
+            COMPREPLY=( $(compgen -W "--help" -- "$cur") )
+            ;;
+        gui)
+            COMPREPLY=( $(compgen -W "--help --host --port --reload --open-browser" -- "$cur") )
+            ;;
+        completion)
+            COMPREPLY=( $(compgen -W "--help bash zsh fish" -- "$cur") )
+            ;;
+    esac
+
+    if [[ ${#COMPREPLY[@]} -eq 0 && "$cur" != -* ]]; then
+        COMPREPLY=( $(compgen -f -- "$cur") )
+    fi
+}
+
+complete -F _ambermeta_completion ambermeta
+''',
+        "zsh": r'''#compdef ambermeta
+
+_ambermeta() {
+  local -a commands
+  commands=(
+    'plan:Build and summarize a SimulationProtocol'
+    'validate:Validate simulation files'
+    'info:Display metadata for a single file'
+    'init:Generate example manifest templates'
+    'tui:Launch interactive terminal UI'
+    'gui:Launch web-based GUI'
+    'completion:Print shell completion script'
+  )
+
+  _arguments \
+    '--log-level[Set logging level]:level:(DEBUG INFO WARNING ERROR)' \
+    '--log-file[Write logs to a file]:file:_files' \
+    '(-q --quiet)'{-q,--quiet}'[Suppress all output except errors]' \
+    '1:command:->cmds' \
+    '*::arg:->args'
+
+  case $state in
+    cmds)
+      _describe 'ambermeta command' commands
+      ;;
+    args)
+      case "$words[2]" in
+        plan)
+          _arguments '--manifest[Path to manifest file]:file:_files' '--recursive[Auto-discover files]' '--interactive[Prompt for stages]' '--summary-path[Write protocol summary]:file:_files' '--summary-format[Summary format]:format:(json yaml)' '--methods-summary-path[Write methods summary]:file:_files' '--stats-csv[Write stats CSV]:file:_files' '--pattern[Regex file filter]:pattern:' '--prmtop[Global topology file]:file:_files' '--skip-cross-stage-validation[Skip continuity checks]' '--no-expand-env[Disable env var expansion]' '--auto-detect-restarts[Link restarts automatically]' '(-v --verbose)'{-v,--verbose}'[Show detailed stage metadata]' '*:path:_files'
+          ;;
+        validate)
+          _arguments '--strict[Treat warnings as errors]' '--format[Output format]:format:(text json yaml)' '*:file:_files'
+          ;;
+        info)
+          _arguments '--format[Output format]:format:(text json yaml)' '1:file:_files'
+          ;;
+        init)
+          _arguments '--output[Manifest output filename]:file:_files' '--template[Template complexity]:template:(minimal standard comprehensive)' '--auto[Auto-generate grouped stages]' '--format[Manifest format]:format:(yaml json toml csv)' '--validate[Validate discovered files after writing manifest]' '--dry-run[Preview discovery without writing]' '--force[Overwrite existing output]' '*:path:_files'
+          ;;
+        gui)
+          _arguments '--host[Host interface]' '--port[Port number]' '--reload[Enable autoreload]' '--open-browser[Open browser after server starts]' '*:path:_files'
+          ;;
+        completion)
+          _arguments '1:shell:(bash zsh fish)'
+          ;;
+      esac
+      ;;
+  esac
+}
+
+_ambermeta "$@"
+''',
+        "fish": r'''# ambermeta fish completion
+complete -c ambermeta -f
+
+complete -c ambermeta -n "__fish_use_subcommand" -a "plan" -d "Build and summarize a SimulationProtocol"
+complete -c ambermeta -n "__fish_use_subcommand" -a "validate" -d "Validate simulation files"
+complete -c ambermeta -n "__fish_use_subcommand" -a "info" -d "Display metadata for a single file"
+complete -c ambermeta -n "__fish_use_subcommand" -a "init" -d "Generate example manifest templates"
+complete -c ambermeta -n "__fish_use_subcommand" -a "tui" -d "Launch interactive terminal UI"
+complete -c ambermeta -n "__fish_use_subcommand" -a "gui" -d "Launch web-based GUI"
+complete -c ambermeta -n "__fish_use_subcommand" -a "completion" -d "Print shell completion script"
+
+complete -c ambermeta -s q -l quiet -d "Suppress all output except errors"
+complete -c ambermeta -l log-level -d "Set logging level" -xa "DEBUG INFO WARNING ERROR"
+complete -c ambermeta -l log-file -d "Write logs to a file"
+
+complete -c ambermeta -n "__fish_seen_subcommand_from plan" -l manifest -d "Path to a YAML or JSON manifest"
+complete -c ambermeta -n "__fish_seen_subcommand_from plan" -l skip-cross-stage-validation -d "Skip continuity checks"
+complete -c ambermeta -n "__fish_seen_subcommand_from plan" -l recursive -d "Auto-discover simulation files recursively"
+complete -c ambermeta -n "__fish_seen_subcommand_from plan" -l interactive -d "Enable interactive prompt mode"
+complete -c ambermeta -n "__fish_seen_subcommand_from plan" -s v -l verbose -d "Show detailed metadata"
+complete -c ambermeta -n "__fish_seen_subcommand_from plan" -l summary-path -d "Write protocol summary"
+complete -c ambermeta -n "__fish_seen_subcommand_from plan" -l summary-format -d "Summary format" -xa "json yaml"
+complete -c ambermeta -n "__fish_seen_subcommand_from plan" -l methods-summary-path -d "Write methods summary JSON"
+complete -c ambermeta -n "__fish_seen_subcommand_from plan" -l stats-csv -d "Export per-stage statistics"
+complete -c ambermeta -n "__fish_seen_subcommand_from plan" -l no-expand-env -d "Disable environment var expansion"
+complete -c ambermeta -n "__fish_seen_subcommand_from plan" -l pattern -d "Regex filter for discovered files"
+complete -c ambermeta -n "__fish_seen_subcommand_from plan" -l auto-detect-restarts -d "Auto-link restart files"
+complete -c ambermeta -n "__fish_seen_subcommand_from plan" -l prmtop -d "Global prmtop file"
+
+complete -c ambermeta -n "__fish_seen_subcommand_from validate" -l strict -d "Treat warnings as errors"
+complete -c ambermeta -n "__fish_seen_subcommand_from validate" -l format -d "Output format" -xa "text json yaml"
+
+complete -c ambermeta -n "__fish_seen_subcommand_from info" -l format -d "Output format" -xa "text json yaml"
+
+complete -c ambermeta -n "__fish_seen_subcommand_from init" -s o -l output -d "Output manifest filename"
+complete -c ambermeta -n "__fish_seen_subcommand_from init" -l template -d "Template complexity" -xa "minimal standard comprehensive"
+complete -c ambermeta -n "__fish_seen_subcommand_from init" -l auto -d "Auto-discover and group stages"
+complete -c ambermeta -n "__fish_seen_subcommand_from init" -l format -d "Manifest output format" -xa "yaml json toml csv"
+complete -c ambermeta -n "__fish_seen_subcommand_from init" -l validate -d "Run parsers after writing manifest"
+complete -c ambermeta -n "__fish_seen_subcommand_from init" -l dry-run -d "Preview stage grouping only"
+complete -c ambermeta -n "__fish_seen_subcommand_from init" -l force -d "Overwrite output without prompting"
+
+complete -c ambermeta -n "__fish_seen_subcommand_from gui" -l host -d "Host interface"
+complete -c ambermeta -n "__fish_seen_subcommand_from gui" -l port -d "Port"
+complete -c ambermeta -n "__fish_seen_subcommand_from gui" -l reload -d "Enable autoreload"
+complete -c ambermeta -n "__fish_seen_subcommand_from gui" -l open-browser -d "Open browser on startup"
+
+complete -c ambermeta -n "__fish_seen_subcommand_from completion" -a "bash zsh fish"
+''',
+    }
+    return scripts[shell]
+
+
+def _completion_command(args: argparse.Namespace) -> int:
+    print(_completion_script(args.shell).rstrip())
+    return 0
+
+
 def _init_command(args: argparse.Namespace) -> int:
     """Generate an example manifest file."""
     directory = os.path.abspath(args.directory)
@@ -1619,6 +1778,17 @@ For documentation, visit: https://github.com/MicheleBonus/ambermeta
         help="Server host (default: 127.0.0.1)",
     )
 
+    completion_parser = subparsers.add_parser(
+        "completion",
+        help="Print shell completion script for bash, zsh, or fish",
+        description="Generate shell completion scripts for ambermeta commands.",
+    )
+    completion_parser.add_argument(
+        "shell",
+        choices=["bash", "zsh", "fish"],
+        help="Shell type for completion script",
+    )
+
     return parser
 
 
@@ -1646,6 +1816,8 @@ def main(argv: List[str] | None = None) -> int:
         return _tui_command(args)
     if args.command == "gui":
         return _gui_command(args)
+    if args.command == "completion":
+        return _completion_command(args)
 
     parser.print_help()
     return 1

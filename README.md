@@ -92,9 +92,29 @@ pip install -e ".[all]"
 pip install -e ".[all,tests,dev]"
 ```
 
+### Shell Completion (bash/zsh/fish)
+
+Generate and install completion scripts from the CLI:
+
+```bash
+# bash
+ambermeta completion bash > ~/.local/share/bash-completion/completions/ambermeta
+
+# zsh
+mkdir -p ~/.zfunc
+ambermeta completion zsh > ~/.zfunc/_ambermeta
+
+# fish
+ambermeta completion fish > ~/.config/fish/completions/ambermeta.fish
+```
+
+Reload your shell after installation.
+
 ---
 
 ## Quick Start
+
+Need ready-made workflows? See [CLI Recipes](docs/recipes.md).
 
 ### Initialize a manifest and run analysis (CLI)
 
@@ -913,6 +933,7 @@ See the tutorial sections above for walk-throughs: [Using the Terminal UI (TUI)]
 - [Terminal UI Guide](docs/tui.md) - Complete TUI documentation
 - [Web GUI Guide](docs/gui.md) - Complete GUI documentation
 - [CLI Reference](docs/cli.md) - Detailed command-line documentation
+- [CLI Recipes](docs/recipes.md) - High-value workflows for common CLI tasks
 - [Manifest Schema](docs/manifest.md) - Full manifest format documentation
 - [Python API Reference](docs/api.md) - Complete API documentation
 - [Improvement Plan](IMPROVEMENT_PLAN.md) - Development roadmap and changelog
