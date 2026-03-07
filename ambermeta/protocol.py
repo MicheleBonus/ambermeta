@@ -1699,6 +1699,9 @@ def load_protocol_from_manifest(
     if isinstance(manifest_data, dict):
         # Manifest may contain global settings
         manifest_global_prmtop = manifest_data.get("global_prmtop")
+        if manifest_global_prmtop is None:
+            # Backward compatibility for older GUI exports.
+            manifest_global_prmtop = manifest_data.get("prmtop")
         manifest_hmr_prmtop = manifest_data.get("hmr_prmtop")
 
         # Extract stages list

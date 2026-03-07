@@ -19,6 +19,7 @@ Format is auto-detected based on file extension.
 
 - **Accepted types:** the manifest must be either a list of stage dictionaries or a mapping whose keys are stage names and whose values are dictionaries. Mixed or other types raise an error.
 - **Stage dictionaries:** each stage entry is a mapping of metadata and file pointers. When the manifest is a mapping, the stage name key is copied into the stage entry when no explicit `name` is present.
+- **Global topology keys:** use `global_prmtop` for the shared topology and `hmr_prmtop` for the HMR topology at the manifest top level. `prmtop` at the top level is still accepted as a legacy alias when loading manifests.
 - **Relative paths:** any relative file paths are resolved against the manifest directory when using `load_protocol_from_manifest` or the optional `directory` argument passed to `auto_discover`. The `ambermeta plan --manifest` command forwards its positional `directory` argument for this purpose.
 
 ---
@@ -102,52 +103,55 @@ File paths support environment variable expansion using `${VAR}` or `$VAR` synta
 ### YAML List Format
 
 ```yaml
-# protocol.yaml - List of stages
-- name: minimize
-  stage_role: minimization
-  prmtop: systems/complex.prmtop
-  inpcrd: systems/complex.inpcrd
-  mdin: mdin/minim.in
-  mdout: logs/minim.out
-  notes: Single-point minimization; no trajectory expected.
+# protocol.yaml - Top-level globals + list of stages
+global_prmtop: systems/complex.prmtop
+hmr_prmtop: systems/complex_hmr.prmtop
+stages:
+  - name: minimize
+    stage_role: minimization
+    prmtop: systems/complex.prmtop
+    inpcrd: systems/complex.inpcrd
+    mdin: mdin/minim.in
+    mdout: logs/minim.out
+    notes: Single-point minimization; no trajectory expected.
 
-- name: heat
-  stage_role: heating
-  files:
-    mdin: mdin/heat.mdin
-    mdout: logs/heat.mdout
-  inpcrd: restarts/minim.rst7
-  gaps:
-    expected_ps: 0
-    tolerance_ps: 0.5
+  - name: heat
+    stage_role: heating
+    files:
+      mdin: mdin/heat.mdin
+      mdout: logs/heat.mdout
+    inpcrd: restarts/minim.rst7
+    gaps:
+      expected_ps: 0
+      tolerance_ps: 0.5
+      notes:
+        - Uses minim restart implicitly
+
+  - name: equilibrate
+    stage_role: equilibration
+    prmtop: systems/complex.prmtop
+    mdin: mdin/equil.in
+    mdout: logs/equil.out
+    mdcrd: traj/equil.nc
+    inpcrd: restarts/heat.rst7
+
+  - name: prod1
+    stage_role: production
+    mdin: mdin/prod1.in
+    mdout: logs/prod1.out
+    mdcrd: traj/prod1.nc
+    inpcrd: restarts/equil.rst7
+    expected_gap_ps: 0.0
+    gap_tolerance_ps: 0.1
+
+  - name: prod2
+    stage_role: production
+    files:
+      mdin: mdin/prod2.in
+      mdout: logs/prod2.out
+    gaps: 250  # Expect ~250 ps jump before this stage
     notes:
-      - Uses minim restart implicitly
-
-- name: equilibrate
-  stage_role: equilibration
-  prmtop: systems/complex.prmtop
-  mdin: mdin/equil.in
-  mdout: logs/equil.out
-  mdcrd: traj/equil.nc
-  inpcrd: restarts/heat.rst7
-
-- name: prod1
-  stage_role: production
-  mdin: mdin/prod1.in
-  mdout: logs/prod1.out
-  mdcrd: traj/prod1.nc
-  inpcrd: restarts/equil.rst7
-  expected_gap_ps: 0.0
-  gap_tolerance_ps: 0.1
-
-- name: prod2
-  stage_role: production
-  files:
-    mdin: mdin/prod2.in
-    mdout: logs/prod2.out
-  gaps: 250  # Expect ~250 ps jump before this stage
-  notes:
-    - Trajectory intentionally omitted
+      - Trajectory intentionally omitted
 ```
 
 ### YAML Mapping Format
@@ -238,6 +242,8 @@ production:
 
 ```toml
 # protocol.toml - Using array of tables
+global_prmtop = "systems/complex.prmtop"
+hmr_prmtop = "systems/complex_hmr.prmtop"
 
 [[stages]]
 name = "minimize"

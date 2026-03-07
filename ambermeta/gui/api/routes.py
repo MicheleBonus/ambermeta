@@ -560,7 +560,7 @@ async def export_protocol(request: ExportRequest) -> ExportResponse:
                 prmtop_path = os.path.relpath(prmtop_path, state.base_directory)
             except ValueError:
                 pass  # Keep absolute if on different drive
-        export_data["prmtop"] = prmtop_path
+        export_data["global_prmtop"] = prmtop_path
 
     # Add HMR prmtop if set
     if state.settings.hmr_prmtop:
@@ -635,8 +635,8 @@ async def export_protocol(request: ExportRequest) -> ExportResponse:
             lines = []
             if "base_directory" in export_data:
                 lines.append(f'base_directory = "{export_data["base_directory"]}"')
-            if "prmtop" in export_data:
-                lines.append(f'prmtop = "{export_data["prmtop"]}"')
+            if "global_prmtop" in export_data:
+                lines.append(f'global_prmtop = "{export_data["global_prmtop"]}"')
             if "hmr_prmtop" in export_data:
                 lines.append(f'hmr_prmtop = "{export_data["hmr_prmtop"]}"')
 

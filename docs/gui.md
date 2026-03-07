@@ -449,6 +449,21 @@ Actions tracked:
 2. Select a format from the list
 3. The file downloads automatically as `protocol.[format]`
 
+Exported manifests include top-level global topology keys using:
+- `global_prmtop` for the shared topology
+- `hmr_prmtop` for the HMR topology (when configured)
+
+Example YAML export:
+
+```yaml
+global_prmtop: systems/complex.prmtop
+hmr_prmtop: systems/complex_hmr.prmtop
+stages:
+  - name: prod_001
+    stage_role: production
+    mdin: production/prod_001.mdin
+```
+
 ### Path Options
 
 Configure "Use relative paths" in Global Settings to export with:
