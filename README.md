@@ -1,969 +1,282 @@
 # AmberMeta
 
-**A simulation provenance engine for AMBER molecular dynamics**
+**AmberMeta is a simulation provenance engine for AMBER molecular dynamics workflows.**
 
-AmberMeta extracts, organizes, and validates metadata from AMBER molecular dynamics simulation files. It parses common AMBER outputs, assembles them into ordered simulation protocols, and highlights gaps or inconsistencies so you can report your simulation provenance with confidence.
+It parses AMBER files (`prmtop`, `mdin`, `mdout`, `mdcrd`, `inpcrd`), assembles stages into a protocol, and helps you validate continuity and metadata before reporting results.
 
-## Table of Contents
+## What AmberMeta does
 
-- [Key Features](#key-features)
-- [Installation](#installation)
-- [Quick Start](#quick-start)
-- [CLI workflow in 5 commands](#cli-workflow-in-5-commands)
-- [Tutorials](#tutorials)
-  - [Extracting Metadata from Files](#extracting-metadata-from-files)
-  - [Building a Protocol from Directory](#building-a-protocol-from-directory)
-  - [Using the Terminal UI (TUI)](#using-the-terminal-ui-tui)
-  - [Using the Web-Based GUI](#using-the-web-based-gui)
-  - [Working with Manifests](#working-with-manifests)
-- [Command Line Interface](#command-line-interface)
-- [Python API](#python-api)
-- [Supported File Types](#supported-file-types)
-- [Optional interfaces (TUI/GUI)](#optional-interfaces-tuigui)
-- [Documentation](#documentation)
-- [License](#license)
+- Extracts metadata from AMBER simulation files.
+- Builds stage-ordered protocols from a manifest or file discovery.
+- Validates files and cross-stage continuity.
+- Exports machine-readable artifacts for reporting and downstream analysis.
 
 ---
 
-## Key Features
+## Install
 
-- **CLI-first workflow** with `init`, `plan`, `validate`, and `info` for day-to-day provenance tasks
-- **Manifest-driven planning** with support for YAML, JSON, TOML, and CSV formats
-- **Smart file discovery** with automatic sequence detection (e.g., `prod_001`, `prod_002`) and pattern-based filtering
-- **Cross-stage validation** to verify continuity between simulation stages
-- **Automatic restart chain detection** to link simulation stages based on atom counts and timestamps
-- **Structured parsers** for AMBER files (`prmtop`, `mdin`, `mdout`, `inpcrd`, `mdcrd`) with optional NetCDF trajectory support
-- **Metadata extraction** including atom counts, box dimensions, simulation settings, thermodynamic statistics, and timing information
-- **SimulationStage and SimulationProtocol** models that aggregate parsed files, flag validation issues, and compute total steps and simulated time
-- **Fluent Builder API** for programmatic protocol construction
-- **Environment variable expansion** in manifest paths for portable configurations
-- **Optional interfaces**: interactive TUI and web GUI for visual manifest editing (not required for core CLI usage)
+AmberMeta requires Python 3.8+.
 
----
-
-## Installation
-
-AmberMeta targets Python 3.8+. From the repository root, install in editable mode:
+### Core install
 
 ```bash
-# Using pip (recommended)
 python -m pip install -e .
-
-# Or using pyproject.toml directly
-pip install .
 ```
 
-### Optional Extras
+### Optional extras
 
 ```bash
-# Terminal UI (TUI) support
-pip install -e ".[tui]"
-
-# Web-based GUI support (includes pre-built frontend)
-pip install -e ".[gui]"
-
-# NetCDF trajectory reading (for .nc files)
-pip install -e ".[netcdf]"
+# NetCDF trajectory parsing support
+python -m pip install -e ".[netcdf]"
 
 # YAML manifest support
-pip install -e ".[yaml]"
+python -m pip install -e ".[yaml]"
 
-# TOML manifest support (Python < 3.11)
-pip install -e ".[toml]"
+# TOML manifest support (mainly for Python < 3.11)
+python -m pip install -e ".[toml]"
 
-# All optional dependencies
-pip install -e ".[all]"
+# Optional interfaces
+python -m pip install -e ".[tui]"
+python -m pip install -e ".[gui]"
 
-# Development tools (testing, linting, type checking)
-pip install -e ".[tests]"
-pip install -e ".[dev]"
+# Test and dev dependencies
+python -m pip install -e ".[tests]"
+python -m pip install -e ".[dev]"
+
+# Everything
+python -m pip install -e ".[all]"
 ```
-
-### Quick Install Commands
-
-```bash
-# Minimal installation
-pip install -e .
-
-# Full installation with all features
-pip install -e ".[all]"
-
-# For development
-pip install -e ".[all,tests,dev]"
-```
-
-### Shell Completion (bash/zsh/fish)
-
-Generate and install completion scripts from the CLI:
-
-```bash
-# bash
-ambermeta completion bash > ~/.local/share/bash-completion/completions/ambermeta
-
-# zsh
-mkdir -p ~/.zfunc
-ambermeta completion zsh > ~/.zfunc/_ambermeta
-
-# fish
-ambermeta completion fish > ~/.config/fish/completions/ambermeta.fish
-```
-
-Reload your shell after installation.
 
 ---
 
-## Quick Start
-
-Need ready-made workflows? See [CLI Recipes](docs/recipes.md).
-
-### Initialize a manifest and run analysis (CLI)
+## CLI quickstart (CLI-only path)
 
 ```bash
-# Bootstrap a manifest from discovered files
-ambermeta init --auto --format yaml --validate /path/to/simulations
+# 1) Bootstrap a manifest from a simulation directory
+ambermeta init /path/to/simulations --auto --output manifest.yaml --validate --force
 
-# Build protocol summary outputs
-ambermeta plan -m /path/to/simulations/manifest.yaml \
-  --summary-path /path/to/simulations/protocol.json \
-  --methods-summary-path /path/to/simulations/methods.json \
+# 2) Build protocol from the manifest and export artifacts
+ambermeta plan /path/to/simulations \
+  --manifest /path/to/simulations/manifest.yaml \
+  --summary-path /path/to/simulations/summary.json \
+  --methods-summary-path /path/to/simulations/methods-summary.json \
   --stats-csv /path/to/simulations/stats.csv
+
+# 3) Validate specific files
+ambermeta validate /path/to/simulations/system.prmtop /path/to/simulations/prod.mdout --format text
+
+# 4) Inspect one file deeply
+ambermeta info /path/to/simulations/prod.mdout --format json
 ```
 
-### Validate and inspect files (CLI)
+---
+
+## Command overview
+
+### `init`
+Create a starter manifest.
 
 ```bash
-# Quick validation pass
-ambermeta validate /path/to/simulations/system.prmtop /path/to/simulations/prod.mdout
-
-# Inspect parsed metadata
-ambermeta info --format json /path/to/simulations/prod.mdout
+ambermeta init /path/to/simulations --output manifest.yaml
+ambermeta init /path/to/simulations --auto --output manifest.yaml --format yaml --validate --force
+ambermeta init /path/to/simulations --auto --dry-run
 ```
 
-### Optional interfaces (not required)
+Key flags:
+- `-o, --output`
+- `--template {minimal,standard,comprehensive}`
+- `--auto`
+- `--format {yaml,json,toml,csv}`
+- `--validate`
+- `--dry-run`
+- `--force`
+
+### `plan`
+Build and summarize a protocol from a manifest, recursive discovery, or interactive prompts.
 
 ```bash
-# Optional TUI for interactive manifest editing
-ambermeta tui /path/to/simulations
-
-# Optional GUI for browser-based editing
-ambermeta gui /path/to/simulations
+ambermeta plan /path/to/simulations --manifest manifest.yaml
+ambermeta plan /path/to/simulations --recursive --pattern 'prod_.*' --auto-detect-restarts
+ambermeta plan /path/to/simulations --interactive
 ```
 
-### Use in Python
+Key flags:
+- `-m, --manifest`
+- `--recursive`
+- `--interactive`
+- `--pattern`
+- `--auto-detect-restarts`
+- `--skip-cross-stage-validation`
+- `--prmtop`
+- `--summary-path`
+- `--summary-format {json,yaml}`
+- `--methods-summary-path`
+- `--stats-csv`
+- `--no-expand-env`
+- `-v, --verbose`
+
+### `validate`
+Validate one or more files without building a full protocol.
+
+```bash
+ambermeta validate file1.prmtop file2.mdout
+ambermeta validate file1.prmtop file2.mdout --strict --format json
+```
+
+Key flags:
+- `--strict`
+- `--format {text,json,yaml}`
+
+### `info`
+Inspect a single file and print parsed metadata.
+
+```bash
+ambermeta info /path/to/file.prmtop
+ambermeta info /path/to/file.mdout --format yaml
+```
+
+Key flags:
+- `--format {text,json,yaml}`
+
+---
+
+## End-to-end examples
+
+### Example A: Manifest-driven workflow
+
+```bash
+ambermeta init ./runs --auto --output manifest.yaml --validate --force
+ambermeta plan ./runs --manifest manifest.yaml --summary-path summary.yaml --summary-format yaml
+ambermeta plan ./runs --manifest manifest.yaml --methods-summary-path methods-summary.json --stats-csv stats.csv
+```
+
+### Example B: Discovery-first workflow (no manifest file)
+
+```bash
+ambermeta plan ./runs --recursive --auto-detect-restarts --summary-path summary.json
+ambermeta validate ./runs/system.prmtop ./runs/prod_01.mdout --format text
+ambermeta info ./runs/prod_01.mdout --format json
+```
+
+---
+
+## Output artifacts
+
+When using `plan`, three export-oriented outputs are available:
+
+- `--summary-path <file>`
+  - Structured protocol summary (JSON or YAML).
+  - Use `--summary-format` to force format; otherwise inferred from extension.
+
+- `--methods-summary-path <file>`
+  - Publication-oriented JSON summary emphasizing reproducibility-critical metadata.
+
+- `--stats-csv <file>`
+  - Per-stage statistics in CSV form (one row per stage with available metrics).
+
+---
+
+## Python API quickstart
 
 ```python
-from ambermeta import auto_discover
+from ambermeta import auto_discover, load_protocol_from_manifest
 
-# Discover and parse all AMBER files
+# Auto-discover files recursively
 protocol = auto_discover("/path/to/simulations", recursive=True)
+print(len(protocol.stages), protocol.totals())
 
-# Print summary
-print(f"Found {len(protocol.stages)} stages")
-totals = protocol.totals()
-print(f"Total simulation time: {totals['time_ps']:.2f} ps")
+# Or load from a manifest
+protocol2 = load_protocol_from_manifest("/path/to/simulations/manifest.yaml", "/path/to/simulations")
+print(len(protocol2.stages), protocol2.totals())
 ```
-
----
-
-## CLI workflow in 5 commands
-
-```bash
-# 1) Bootstrap manifest from discovered files
-ambermeta init --auto --format yaml --validate /path/to/simulations
-
-# 2) Build protocol from the generated manifest
-ambermeta plan -m /path/to/simulations/manifest.yaml
-
-# 3) Validate key inputs/outputs directly
-ambermeta validate /path/to/simulations/system.prmtop /path/to/simulations/prod.mdout
-
-# 4) Inspect one file in detail
-ambermeta info --format json /path/to/simulations/prod.mdout
-
-# 5) Export publication/report artifacts
-ambermeta plan -m /path/to/simulations/manifest.yaml \
-  --summary-path /path/to/simulations/protocol.json \
-  --methods-summary-path /path/to/simulations/methods.json \
-  --stats-csv /path/to/simulations/stats.csv
-```
-
----
-
-## Tutorials
-
-### Extracting Metadata from Files
-
-The core goal of AmberMeta is to extract (meta)-data from simulation input and output files. Each file type provides different information:
-
-#### Topology Files (.prmtop, .parm7, .top)
-
-Topology files contain system composition information:
-
-```bash
-ambermeta info system.prmtop
-```
-
-```python
-from ambermeta.parsers import PrmtopParser
-
-parser = PrmtopParser("system.prmtop")
-meta = parser.parse()
-
-print(f"Atoms: {meta.natom}")
-print(f"Box dimensions: {meta.box_dimensions}")
-print(f"Residue count: {meta.nres}")
-print(f"Density: {meta.density} g/cc")
-print(f"Ion counts: {meta.ions}")
-print(f"Solvent type: {meta.solvent_type}")
-print(f"HMR (hydrogen mass repartitioning): {meta.is_hmr}")
-```
-
-**Extracted metadata:**
-- Atom count, residue count, and molecular composition
-- Box dimensions and type (orthorhombic, truncated octahedron, etc.)
-- Ion counts (Na+, Cl-, etc.)
-- Solvent detection (water model, ion content)
-- HMR detection for hydrogen mass repartitioning
-- System density calculation
-
-#### Input Control Files (.mdin, .in)
-
-Input files define simulation parameters:
-
-```bash
-ambermeta info equil.mdin
-```
-
-```python
-from ambermeta.parsers import MdinParser
-
-parser = MdinParser("equil.mdin")
-meta = parser.parse()
-
-print(f"Run length: {meta.length_steps} steps")
-print(f"Timestep: {meta.dt} ps")
-print(f"Temperature control: {meta.temperature_control}")
-print(f"Pressure control: {meta.pressure_control}")
-print(f"Stage role: {meta.inferred_stage_role}")
-print(f"Restraints: {meta.restraint_info}")
-```
-
-**Extracted metadata:**
-- Run length (steps) and timestep
-- Temperature control settings (NTT, target temperature)
-- Pressure control settings (NTP, barostat)
-- Constraint settings (SHAKE, hydrogen bonds)
-- Restraint information (masks, force constants)
-- Inferred stage role (minimization, heating, equilibration, production)
-
-#### Output Log Files (.mdout, .out)
-
-Output files contain simulation results and statistics:
-
-```bash
-ambermeta info prod.mdout
-```
-
-```python
-from ambermeta.parsers import MdoutParser
-
-parser = MdoutParser("prod.mdout")
-meta = parser.parse()
-
-print(f"Completion status: {'Complete' if meta.finished_properly else 'Incomplete'}")
-print(f"Thermostat: {meta.thermostat}")
-print(f"Barostat: {meta.barostat}")
-print(f"Box type: {meta.box_type}")
-
-# Access thermodynamic statistics
-if meta.stats:
-    print(f"Frames: {meta.stats.count}")
-    print(f"Time range: {meta.stats.time_start} - {meta.stats.time_end} ps")
-    print(f"Avg temperature: {meta.stats.temp_mean:.2f} K")
-    print(f"Avg pressure: {meta.stats.press_mean:.2f} bar")
-    print(f"Avg density: {meta.stats.density_mean:.4f} g/cc")
-```
-
-**Extracted metadata:**
-- Completion status (finished properly flag)
-- Thermostat and barostat settings
-- PME settings (cutoff, grid spacing)
-- Box type and dimensions
-- Streaming statistics (temperature, pressure, density, energy)
-- Timing information
-
-#### Trajectory Files (.nc, .mdcrd, .crd)
-
-Trajectory files contain coordinate data over time:
-
-```bash
-ambermeta info prod.nc
-```
-
-```python
-from ambermeta.parsers import MdcrdParser
-
-parser = MdcrdParser("prod.nc")
-meta = parser.parse()
-
-print(f"Frames: {meta.n_frames}")
-print(f"Time range: {meta.time_start} - {meta.time_end} ps")
-print(f"Average timestep: {meta.avg_dt} ps")
-print(f"Has box: {meta.has_box}")
-print(f"REMD trajectory: {meta.is_remd}")
-```
-
-**Extracted metadata:**
-- Frame count and timing
-- Box information (dimensions, volume statistics)
-- REMD detection and replica information
-- Coordinate sampling frequency
-
-#### Restart/Coordinate Files (.rst7, .rst, .ncrst, .inpcrd)
-
-Restart files link simulation stages:
-
-```bash
-ambermeta info equil.rst7
-```
-
-```python
-from ambermeta.parsers import InpcrdParser
-
-parser = InpcrdParser("equil.rst7")
-meta = parser.parse()
-
-print(f"Atoms: {meta.natoms}")
-print(f"Has box: {meta.has_box}")
-print(f"Has velocities: {meta.has_velocities}")
-print(f"Time: {meta.time} ps")
-```
-
-**Extracted metadata:**
-- Atom count and box dimensions
-- Velocity presence
-- Simulation time for continuity checking
-
----
-
-### Building a Protocol from Directory
-
-A protocol represents a complete simulation workflow with multiple stages:
-
-```python
-from ambermeta import auto_discover
-
-# Basic discovery
-protocol = auto_discover("/path/to/simulations")
-
-# Recursive discovery with role inference
-protocol = auto_discover(
-    "/path/to/simulations",
-    recursive=True,
-    grouping_rules={
-        "min": "minimization",
-        "heat": "heating",
-        "equil": "equilibration",
-        "prod": "production",
-    },
-)
-
-# With automatic restart chain detection
-protocol = auto_discover(
-    "/path/to/simulations",
-    recursive=True,
-    auto_detect_restarts=True,
-)
-
-# Filter by pattern (only production runs)
-protocol = auto_discover(
-    "/path/to/simulations",
-    pattern_filter=r"prod_\d+",
-)
-
-# Examine results
-for stage in protocol.stages:
-    summary = stage.summary()
-    print(f"\nStage: {stage.name}")
-    print(f"  Role: {summary['intent']}")
-    print(f"  Result: {summary['result']}")
-
-    # Check validation notes
-    for note in stage.validation:
-        print(f"  Note: {note}")
-
-# Get totals
-totals = protocol.totals()
-print(f"\nTotal steps: {totals['steps']:.0f}")
-print(f"Total time: {totals['time_ps']:.3f} ps")
-
-# Export for publication
-methods_data = protocol.to_methods_dict()
-```
-
-#### Using the Builder API
-
-For more control, use the fluent builder API:
-
-```python
-from ambermeta import ProtocolBuilder
-
-protocol = (
-    ProtocolBuilder()
-    .from_directory("/path/to/files", recursive=True)
-    .with_grouping_rules({
-        r"min.*": "minimization",
-        r"heat.*": "heating",
-        r"equil.*": "equilibration",
-        r"prod.*": "production",
-    })
-    .with_pattern_filter(r"(equil|prod)_\d+")
-    .include_roles(["equilibration", "production"])
-    .auto_detect_restarts()
-    .with_stage_tolerance("prod_001", expected_gap_ps=0.0, tolerance_ps=0.1)
-    .with_stage_tolerance("prod_002", expected_gap_ps=2.0, tolerance_ps=0.5)
-    .build()
-)
-```
-
----
-
-### Using the Terminal UI (TUI)
-
-The TUI provides an interactive interface for building protocol manifests:
-
-```bash
-# Launch TUI in a directory
-ambermeta tui /path/to/simulations
-```
-
-#### TUI Features
-
-**File Browser (Left Panel)**
-- Navigate the directory tree
-- Files are color-coded by type:
-  - `[P]` Green: prmtop (topology)
-  - `[I]` Yellow: mdin (input)
-  - `[O]` Cyan: mdout (output)
-  - `[T]` Magenta: mdcrd (trajectory)
-  - `[R]` Blue: inpcrd (restart)
-- Click a `.prmtop` file to quickly assign it as global or HMR topology
-- Click a folder to auto-generate stages from its contents
-
-**Stage List (Center Panel)**
-- View all configured stages
-- Columns show: Name, Role, File count, Sequence position
-- Select a stage to edit its properties
-
-**Stage Editor (Right Panel)**
-- Edit stage name, role, and file assignments
-- Configure expected gaps and tolerances
-- Add notes for documentation
-- View and edit sequence information
-
-#### Keyboard Shortcuts
-
-| Key | Action |
-|-----|--------|
-| `Ctrl+A` | Auto-generate stages from current folder |
-| `Ctrl+G` | Open global settings (prmtop, HMR, env vars) |
-| `Ctrl+E` | Export manifest |
-| `Ctrl+S` | Save session |
-| `Ctrl+Z` | Undo |
-| `Ctrl+Y` | Redo |
-| `Q` | Quit |
-
-#### Export Formats
-
-Export your manifest to:
-- **YAML** (.yaml, .yml) - Human-readable, requires PyYAML
-- **JSON** (.json) - Universal, native support
-- **TOML** (.toml) - Configuration-friendly format
-- **CSV** (.csv) - Spreadsheet-compatible
-
----
-
-### Using the Web-Based GUI
-
-The GUI provides a modern web-based interface for building protocol manifests.
-
-#### GUI Installation
-
-Use this when you want the GUI from your **current local checkout** (including merged-but-not-yet-released changes). The GUI frontend is pre-built in the repo, so you only need to install Python dependencies:
-
-```bash
-python -m pip install -e ".[gui]"
-```
-
-If you already have AmberMeta installed in the same environment, uninstall first to avoid stale site-packages shadowing your editable checkout:
-
-```bash
-python -m pip uninstall ambermeta -y
-python -m pip install -e ".[gui]"
-```
-
-#### Rebuilding the Frontend (Development)
-
-If you modify the frontend source code in `ambermeta/gui/frontend/src/`, or if you are using a source checkout and the GUI appears older than expected, rebuild frontend assets:
-
-```bash
-cd ambermeta/gui/frontend
-npm install        # first time only
-npm run build      # outputs to ambermeta/gui/static/
-cd ../../..
-```
-
-If you see a placeholder page when launching the GUI, the frontend build may be missing. Run the commands above to rebuild it, then relaunch `ambermeta gui`.
-
-#### Launching the GUI
-
-```bash
-# Launch GUI in a directory
-ambermeta gui /path/to/simulations
-```
-
-After upgrading AmberMeta or rebuilding frontend assets, do a hard refresh in your browser (`Ctrl+Shift+R` / `Cmd+Shift+R`) to clear cached files. AmberMeta uses hashed assets to reduce cache issues, but a hard refresh is still the quickest fix when updates do not appear immediately.
-
-#### If features from a merged PR are missing
-
-1. Confirm you installed from your current local checkout (not an older published wheel):
-   ```bash
-   python -m pip install -e ".[gui]"
-   ```
-2. In existing environments, force a clean reinstall to remove stale package copies:
-   ```bash
-   python -m pip uninstall ambermeta -y
-   python -m pip install -e ".[gui]"
-   ```
-3. If the GUI still looks old, rebuild frontend assets from source and relaunch:
-   ```bash
-   cd ambermeta/gui/frontend
-   npm install        # first time only
-   npm run build
-   cd ../../..
-   ambermeta gui /path/to/simulations
-   ```
-4. Hard-refresh the browser tab (`Ctrl+Shift+R` / `Cmd+Shift+R`).
-
-This opens your browser at `http://localhost:8000` with a three-panel interface:
-
-#### Interface Layout
-
-```
-┌─────────────────┬──────────────────────────┬─────────────────────┐
-│  File Browser   │     Stage Builder        │  Properties Panel   │
-│  (Left Panel)   │     (Center Panel)       │   (Right Panel)     │
-└─────────────────┴──────────────────────────┴─────────────────────┘
-```
-
-**File Browser (Left)**
-- Navigate the directory tree
-- Drag files directly to stages
-- Right-click for context menu options
-
-**Stage Builder (Center)**
-- View all stages as expandable cards
-- Drag-and-drop to reorder stages
-- Expand cards to see file drop zones
-
-**Properties Panel (Right)**
-- Edit global settings (when no stage selected)
-- Edit stage properties (when stage selected)
-- Toggle auto-link restarts, validation options
-
-#### Key Features
-
-| Feature | Description |
-|---------|-------------|
-| **Drag-and-Drop** | Drag files from browser to stages |
-| **Auto-Discovery** | Click button or press `Ctrl+A` to auto-detect stages |
-| **Session Save/Load** | `Ctrl+S` / `Ctrl+O` to save and restore work |
-| **Undo/Redo** | `Ctrl+Z` / `Ctrl+Y` to undo and redo changes |
-| **Export** | `Ctrl+E` to export manifest |
-
-#### Keyboard Shortcuts
-
-| Key | Action |
-|-----|--------|
-| `Ctrl+S` | Save session |
-| `Ctrl+O` | Load session |
-| `Ctrl+A` | Auto-discover stages |
-| `Ctrl+E` | Export manifest |
-| `Ctrl+Z` | Undo |
-| `Ctrl+Y` | Redo |
-
----
-
-### Working with Manifests
-
-Manifests define your simulation protocol in a structured format:
-
-#### YAML Example
-
-```yaml
-# protocol.yaml
-- name: minimize
-  stage_role: minimization
-  prmtop: system.prmtop
-  mdin: min.in
-  mdout: min.out
-  notes:
-    - "Steepest descent minimization"
-
-- name: heat
-  stage_role: heating
-  prmtop: system.prmtop
-  mdin: heat.in
-  mdout: heat.out
-  inpcrd: min.rst7
-  gaps:
-    expected: 0.0
-    tolerance: 0.1
-
-- name: equilibrate
-  stage_role: equilibration
-  prmtop: system.prmtop
-  mdin: equil.in
-  mdout: equil.out
-  mdcrd: equil.nc
-  inpcrd: heat.rst7
-
-- name: production
-  stage_role: production
-  prmtop: system.prmtop
-  mdin: prod.in
-  mdout: prod.out
-  mdcrd: prod.nc
-  inpcrd: equil.rst7
-```
-
-#### Using a Manifest
-
-```bash
-# Build protocol from manifest
-ambermeta plan --manifest protocol.yaml
-
-# With verbose output
-ambermeta plan --manifest protocol.yaml -v
-
-# Export structured summary
-ambermeta plan --manifest protocol.yaml --summary-path output.json
-
-# Export methods-ready summary for publications
-ambermeta plan --manifest protocol.yaml --methods-summary-path methods.json
-```
-
-```python
-from ambermeta import load_protocol_from_manifest
-
-protocol = load_protocol_from_manifest("protocol.yaml")
-
-for stage in protocol.stages:
-    print(f"{stage.name}: {stage.summary()['result']}")
-```
-
-#### Environment Variables in Manifests
-
-Use `${VAR}` or `$VAR` syntax for portable paths:
-
-```yaml
-- name: production
-  prmtop: ${PROJECT_ROOT}/systems/complex.prmtop
-  mdin: $HOME/templates/prod.in
-  mdout: ${OUTPUT_DIR}/prod.out
-```
-
-Disable expansion with `--no-expand-env` or `expand_env=False`.
-
----
-
-## Command Line Interface
-
-### Main Commands
-
-| Command | Description |
-|---------|-------------|
-| `plan` | Build and summarize a SimulationProtocol |
-| `tui` | Launch interactive terminal UI |
-| `gui` | Launch web-based GUI |
-| `validate` | Quick validation of simulation files |
-| `info` | Display detailed metadata for a file |
-| `init` | Generate example manifest templates |
-
-### Plan Command
-
-```bash
-ambermeta plan [directory] [options]
-
-Note: choose one planning mode via `--manifest`, `--recursive`, or `--interactive`.
-
-Options:
-  -m, --manifest PATH           Path to YAML/JSON/TOML/CSV manifest
-  --recursive                   Scan subdirectories
-  --interactive                 Enable interactive stage prompts
-  --prmtop PATH                 Global topology file for all stages
-  --skip-cross-stage-validation Skip continuity checks
-  -v, --verbose                 Show detailed metadata
-  --summary-path PATH           Write JSON/YAML summary
-  --summary-format {json,yaml}  Force summary format
-  --methods-summary-path PATH   Write methods-ready JSON for publications
-  --stats-csv PATH              Export statistics to CSV
-  --no-expand-env               Disable environment variable expansion
-  --pattern REGEX               Filter files by regex pattern
-  --auto-detect-restarts        Auto-detect restart file chains
-  --log-level LEVEL             Set logging level (DEBUG, INFO, WARNING, ERROR)
-  --log-file PATH               Write logs to file
-  -q, --quiet                   Suppress non-error output
-```
-
-### TUI Command
-
-```bash
-ambermeta tui [directory] [options]
-
-Options:
-  --recursive                   Enable recursive file discovery
-  --show-all                    Show all files, not just simulation files
-```
-
-### GUI Command
-
-```bash
-ambermeta gui [directory] [options]
-
-Options:
-  --port PORT                   Port to run server on (default: 8000)
-  --host HOST                   Host to bind to (default: 127.0.0.1)
-  --no-browser                  Don't automatically open browser
-```
-
-### Validate Command
-
-```bash
-# Validate individual files
-ambermeta validate system.prmtop equil.mdin prod.mdout
-
-# Strict mode (warnings become errors)
-ambermeta validate --strict *.prmtop
-```
-
-### Info Command
-
-```bash
-# Show metadata in text format
-ambermeta info system.prmtop
-
-# Output as JSON or YAML
-ambermeta info --format json system.prmtop
-ambermeta info --format yaml prod.mdout
-```
-
-### Init Command
-
-```bash
-# Generate standard manifest template
-ambermeta init my_project
-
-# Different complexity levels
-ambermeta init --template minimal my_project
-ambermeta init --template comprehensive my_project
-
-# Custom filename
-ambermeta init -o my_protocol.yaml my_project
-
-# First-run non-interactive bootstrap for release workflow
-ambermeta init --auto --format yaml --validate /path/to/release_run
-
-# Preview discovered stage grouping without writing files
-ambermeta init --auto --dry-run /path/to/release_run
-```
-
----
-
-## Python API
-
-### Core Classes
-
-```python
-from ambermeta import (
-    # Protocol building
-    SimulationProtocol,
-    SimulationStage,
-    ProtocolBuilder,
-
-    # Discovery and loading
-    auto_discover,
-    load_protocol_from_manifest,
-    load_manifest,
-
-    # Utilities
-    detect_numeric_sequences,
-    smart_group_files,
-    auto_detect_restart_chain,
-    infer_stage_role_from_content,
-)
-```
-
-### Individual Parsers
-
-```python
-from ambermeta.parsers import (
-    PrmtopParser,
-    MdinParser,
-    MdoutParser,
-    MdcrdParser,
-    InpcrdParser,
-)
-```
-
-### TUI Components (optional)
-
-```python
-from ambermeta import (
-    run_tui,
-    ProtocolState,
-    Stage,
-    TEXTUAL_AVAILABLE,
-)
-```
-
----
-
-## Supported File Types
-
-| Extension | Type | Description |
-|-----------|------|-------------|
-| `.prmtop`, `.top`, `.parm7` | prmtop | Topology/parameter file |
-| `.mdin`, `.in` | mdin | Input control file |
-| `.mdout`, `.out` | mdout | Output log file |
-| `.mdcrd`, `.nc`, `.crd`, `.x` | mdcrd | Trajectory file |
-| `.inpcrd`, `.rst`, `.rst7`, `.ncrst`, `.restrt` | inpcrd | Coordinate/restart file |
-
----
-
-## Information Not Extracted
-
-AmberMeta extracts extensive metadata from simulation files, but certain information cannot be automatically determined from AMBER files and must be provided manually for a complete simulation record:
-
-### Metadata That Must Be Provided by User
-
-| Category | Information | Notes |
-|----------|-------------|-------|
-| **Project Context** | System name | Custom identifier for your simulation system |
-| | Project identifier | Study or experiment ID |
-| | Purpose/objective | Scientific goal of the simulation |
-| | PDB ID (if applicable) | Source structure identifier |
-| **Preparation Details** | Force field name/version | e.g., "ff19SB", "GAFF2" - may be partially inferred |
-| | Solvation method | e.g., "TIP3P box with 12 Å buffer" |
-| | Protonation states | pH and method used |
-| | Missing residues | Any gaps filled or mutations made |
-| | Ligand parametrization | How ligand charges/parameters were generated |
-| **Hardware/Software** | AMBER version | Exact version (e.g., "AmberTools23") |
-| | GPU model | If using pmemd.cuda |
-| | Computational resources | HPC cluster name, node configuration |
-| | Total wall time | Actual time to complete simulation |
-| **Scientific Context** | Literature references | Papers describing methods |
-| | Biological relevance | Context for the simulation |
-| | Known limitations | Caveats about the setup |
-
-### What AmberMeta CAN Extract
-
-| Source | Extracted Information |
-|--------|----------------------|
-| **prmtop** | Atom count, residue composition, box dimensions, density, ions, water model, HMR status, charge |
-| **mdin** | Timestep, run length, thermostat/barostat settings, restraints, stage role |
-| **mdout** | Completion status, thermodynamic statistics (T, P, density), timing, PME settings |
-| **mdcrd** | Frame count, time range, box dimensions (NPT), REMD info |
-| **inpcrd** | Atom count, box, velocities, simulation time (for continuity) |
-
-### What AmberMeta Calculates/Infers
-
-| Derived Value | Method |
-|---------------|--------|
-| **Stage role** | Inferred from mdin parameters (imin, tempi, barostat) or filename |
-| **Observed density** | Calculated from mdout statistics (mean ± std) |
-| **Observed volume** | Calculated from mdcrd box dimensions (min, max, mean) |
-| **Sequence membership** | Detected from filename patterns (prod_001, 01_min) |
-| **Restart chain** | Linked via atom counts and timestamps |
-| **Total simulation time** | Sum of all stage durations |
-
-### Best Practices for Complete Records
-
-To create a complete simulation provenance record:
-
-1. **Use manifest notes** to add context that cannot be extracted:
-   ```yaml
-   - name: production
-     stage_role: production
-     notes:
-       - "Force field: ff19SB + OPC water"
-       - "Run on NERSC Perlmutter using 4x A100 GPUs"
-       - "Purpose: Binding free energy calculation"
-   ```
-
-2. **Maintain a separate metadata file** for project-level information:
-   ```yaml
-   # project_metadata.yaml
-   project_name: "EGFR kinase inhibitor binding study"
-   pdb_source: "5UG9"
-   preparation:
-     force_field: "ff19SB"
-     water_model: "OPC"
-     protonation: "H++ server at pH 7.4"
-   ```
-
-3. **Use the methods summary** as a starting point and add missing details before publication
 
 ---
 
 ## Optional interfaces (TUI/GUI)
 
-AmberMeta is fully usable from the command line; TUI and GUI are optional convenience layers for interactive manifest editing.
-
-- **TUI**: `ambermeta tui /path/to/simulations`
-- **GUI**: `ambermeta gui /path/to/simulations`
-
-See the tutorial sections above for walk-throughs: [Using the Terminal UI (TUI)](#using-the-terminal-ui-tui) and [Using the Web-Based GUI](#using-the-web-based-gui).
-
----
-
-## Documentation
-
-- [Tutorials](docs/tutorials.md) - Step-by-step guides for common workflows
-- [Terminal UI Guide](docs/tui.md) - Complete TUI documentation
-- [Web GUI Guide](docs/gui.md) - Complete GUI documentation
-- [CLI Reference](docs/cli.md) - Detailed command-line documentation
-- [CLI Recipes](docs/recipes.md) - High-value workflows for common CLI tasks
-- [Manifest Schema](docs/manifest.md) - Full manifest format documentation
-- [Python API Reference](docs/api.md) - Complete API documentation
-- [Improvement Plan](IMPROVEMENT_PLAN.md) - Development roadmap and changelog
-
----
-
-## Sample Data
-
-Sample AMBER inputs and outputs are in `tests/data/amber/md_test_files`. Try them with:
-
-```python
-from pathlib import Path
-from ambermeta import auto_discover
-
-sample_dir = Path("tests/data/amber/md_test_files")
-protocol = auto_discover(
-    str(sample_dir),
-    grouping_rules={"CH3L1": "equilibration", "^ntp_prod": "production"},
-    restart_files={"production": str(sample_dir / "ntp_prod_0000.rst")},
-)
-```
-
-Run the automated tests:
+These interfaces are optional wrappers around manifest/protocol workflows.
 
 ```bash
-pytest
+# TUI
+ambermeta tui /path/to/simulations
+
+# GUI
+ambermeta gui /path/to/simulations --host 127.0.0.1 --port 8765
+ambermeta gui /path/to/simulations --no-browser
 ```
+
+### Migration note (TUI/GUI ➜ CLI)
+
+If you previously relied on TUI/GUI, equivalent CLI flows are:
+
+- **Create/edit manifest interactively**
+  - Old: `ambermeta tui /path/to/simulations`
+  - CLI alternative: `ambermeta plan /path/to/simulations --interactive`
+
+- **Auto-group files from a folder**
+  - Old: GUI/TUI discovery actions
+  - CLI alternative: `ambermeta init /path/to/simulations --auto --output manifest.yaml --force`
+
+- **Run protocol analysis and export artifacts**
+  - Old: GUI export actions
+  - CLI alternative:
+    ```bash
+    ambermeta plan /path/to/simulations --manifest manifest.yaml \
+      --summary-path summary.json \
+      --methods-summary-path methods-summary.json \
+      --stats-csv stats.csv
+    ```
 
 ---
 
-## License
+## Limitations and roadmap
 
-See LICENSE file for details.
+Current limitations:
+
+- CLI is the most complete and stable interface; TUI/GUI are optional and may lag behind CLI capabilities.
+- Some parsing features depend on optional dependencies (for example NetCDF support).
+- Manifest parsing for YAML requires `pyyaml`.
+
+Roadmap themes:
+
+- Keep CLI as the source of truth for new functionality.
+- Continue improving validation depth and export consistency.
+- Improve parity between optional interfaces and CLI workflows.
+
+---
+
+## Maintenance rule for docs and CI
+
+README command snippets must stay synchronized with `ambermeta.cli.build_parser()`.
+
+At minimum, CI should validate:
+
+```bash
+ambermeta --help
+ambermeta init --help
+ambermeta plan --help
+ambermeta validate --help
+ambermeta info --help
+```
+
+and verify every documented flag exists in parser help output.
+
+---
+
+## Global CLI options
+
+These apply before subcommands:
+
+- `--log-level {DEBUG,INFO,WARNING,ERROR}`
+- `--log-file <path>`
+- `-q, --quiet`
+
+---
+
+## Shell completion
+
+```bash
+ambermeta completion bash
+ambermeta completion zsh
+ambermeta completion fish
+```
