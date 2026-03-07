@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import os
 import re
@@ -571,13 +572,20 @@ def _init_command(args: argparse.Namespace) -> int:
     """Generate an example manifest file."""
     directory = os.path.abspath(args.directory)
     output_path = os.path.join(directory, args.output)
+    auto_mode = getattr(args, "auto", False)
 
-    if os.path.exists(output_path):
-        print(Colors.warning(f"WARNING: {args.output} already exists"))
-        response = input("Overwrite? [y/N]: ").strip().lower()
-        if response != "y":
-            print("Aborted.")
+    if os.path.exists(output_path) and not getattr(args, "dry_run", False):
+        if getattr(args, "force", False):
+            pass
+        elif auto_mode:
+            print(Colors.error(f"ERROR: {args.output} already exists. Use --force to overwrite."))
             return 1
+        else:
+            print(Colors.warning(f"WARNING: {args.output} already exists"))
+            response = input("Overwrite? [y/N]: ").strip().lower()
+            if response != "y":
+                print("Aborted.")
+                return 1
 
     # Scan directory for common file patterns
     discovered_files = {
@@ -607,6 +615,21 @@ def _init_command(args: argparse.Namespace) -> int:
                 discovered_files["inpcrd"].append(rel_path)
 
     stage_candidates = _build_stage_candidates(discovered_files)
+
+    if auto_mode:
+        manifest_payload = _build_auto_manifest_payload(discovered_files, stage_candidates)
+        if getattr(args, "dry_run", False):
+            _print_auto_stage_preview(stage_candidates, discovered_files)
+            print("\nDry run complete; no files were written.")
+            return 0
+
+        manifest_format = _resolve_manifest_format(args)
+        _write_manifest_payload(output_path, manifest_payload, manifest_format)
+        print(Colors.success(f"Created {args.output} ({manifest_format})"))
+        _print_auto_stage_preview(stage_candidates, discovered_files)
+        if getattr(args, "validate", False):
+            _run_init_validation_summary(directory, stage_candidates, discovered_files)
+        return 0
 
     # Generate manifest content
     if args.template == "minimal":
@@ -656,6 +679,128 @@ def _build_stage_candidates(discovered_files: Dict[str, List[str]]) -> List[Dict
             entry["files"][kind] = path
 
     return [grouped[key] for key in sorted(grouped)]
+
+
+def _build_auto_manifest_payload(
+    discovered: Dict[str, List[str]], stage_candidates: List[Dict[str, Any]]
+) -> Dict[str, Any]:
+    prmtop = discovered["prmtop"][0] if discovered["prmtop"] else None
+    stages: List[Dict[str, Any]] = []
+    for candidate in stage_candidates:
+        stage: Dict[str, Any] = {"name": candidate["name"]}
+        if candidate.get("stage_role"):
+            stage["stage_role"] = candidate["stage_role"]
+        if prmtop:
+            stage["prmtop"] = prmtop
+        for key in ("mdin", "mdout", "mdcrd", "inpcrd"):
+            value = candidate.get("files", {}).get(key)
+            if value:
+                stage[key] = value
+        stages.append(stage)
+    return {"stages": stages}
+
+
+def _resolve_manifest_format(args: argparse.Namespace) -> str:
+    requested = getattr(args, "format", None)
+    if requested:
+        return requested
+
+    ext = os.path.splitext(getattr(args, "output", ""))[1].lower().lstrip(".")
+    ext_map = {"yml": "yaml", "yaml": "yaml", "json": "json", "toml": "toml", "csv": "csv"}
+    return ext_map.get(ext, "yaml")
+
+
+def _print_auto_stage_preview(stage_candidates: List[Dict[str, Any]], discovered: Dict[str, List[str]]) -> None:
+    print("\nAuto-grouped stages:")
+    if not stage_candidates:
+        print("  (no stages discovered)")
+        return
+
+    prmtop = discovered["prmtop"][0] if discovered["prmtop"] else None
+    for idx, candidate in enumerate(stage_candidates, start=1):
+        role = candidate.get("stage_role") or "unclassified"
+        print(f"  {idx}. {candidate['name']} [{role}]")
+        if prmtop:
+            print(f"     prmtop: {prmtop}")
+        for kind in ("mdin", "mdout", "mdcrd", "inpcrd"):
+            value = candidate.get("files", {}).get(kind)
+            if value:
+                print(f"     {kind}: {value}")
+
+
+def _write_manifest_payload(output_path: str, payload: Dict[str, Any], manifest_format: str) -> None:
+    if manifest_format == "json":
+        with open(output_path, "w", encoding="utf-8") as fh:
+            json.dump(payload, fh, indent=2)
+        return
+
+    if manifest_format == "yaml":
+        if yaml is None:
+            raise RuntimeError("PyYAML is required for YAML output")
+        with open(output_path, "w", encoding="utf-8") as fh:
+            yaml.safe_dump(payload, fh, sort_keys=False)
+        return
+
+    if manifest_format == "toml":
+        lines = []
+        for stage in payload.get("stages", []):
+            lines.append("[[stages]]")
+            for key, value in stage.items():
+                escaped = str(value).replace('"', '\\"')
+                lines.append(f'{key} = "{escaped}"')
+            lines.append("")
+        with open(output_path, "w", encoding="utf-8") as fh:
+            fh.write("\n".join(lines).rstrip() + "\n")
+        return
+
+    if manifest_format == "csv":
+        headers = ["stage", "stage_role", "prmtop", "mdin", "mdout", "mdcrd", "inpcrd"]
+        with open(output_path, "w", newline="", encoding="utf-8") as fh:
+            writer = csv.DictWriter(fh, fieldnames=headers)
+            writer.writeheader()
+            for stage in payload.get("stages", []):
+                writer.writerow(
+                    {
+                        "stage": stage.get("name", ""),
+                        "stage_role": stage.get("stage_role", ""),
+                        "prmtop": stage.get("prmtop", ""),
+                        "mdin": stage.get("mdin", ""),
+                        "mdout": stage.get("mdout", ""),
+                        "mdcrd": stage.get("mdcrd", ""),
+                        "inpcrd": stage.get("inpcrd", ""),
+                    }
+                )
+        return
+
+    raise ValueError(f"Unsupported manifest format: {manifest_format}")
+
+
+def _run_init_validation_summary(
+    directory: str, stage_candidates: List[Dict[str, Any]], discovered: Dict[str, List[str]]
+) -> None:
+    checked = 0
+    warnings = 0
+    errors = 0
+    unique_files = set(discovered.get("prmtop", []))
+    for candidate in stage_candidates:
+        for path in candidate.get("files", {}).values():
+            unique_files.add(path)
+
+    for rel_path in sorted(unique_files):
+        parser = _get_parser_for_file(os.path.join(directory, rel_path))
+        if parser is None:
+            warnings += 1
+            continue
+        checked += 1
+        try:
+            result = parser.parse()
+            file_warnings = getattr(result, "warnings", []) or []
+            warnings += len(file_warnings)
+        except (IOError, OSError, ValueError):
+            errors += 1
+
+    status = "OK" if errors == 0 else "FAILED"
+    print(f"\nValidation summary: {status} (files={checked}, warnings={warnings}, errors={errors})")
 
 
 def _render_candidate_stages(
@@ -1340,6 +1485,31 @@ For documentation, visit: https://github.com/MicheleBonus/ambermeta
         choices=["minimal", "standard", "comprehensive"],
         default="standard",
         help="Template complexity (default: standard)",
+    )
+    init_parser.add_argument(
+        "--auto",
+        action="store_true",
+        help="Non-interactive bootstrap mode: recursively discover files and auto-generate grouped stages",
+    )
+    init_parser.add_argument(
+        "--format",
+        choices=["yaml", "json", "toml", "csv"],
+        help="Manifest output format for --auto mode (default: inferred from output extension or yaml)",
+    )
+    init_parser.add_argument(
+        "--validate",
+        action="store_true",
+        help="Run parsers against discovered files after writing the manifest and print a concise summary",
+    )
+    init_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Preview discovered stage grouping in --auto mode without writing output files",
+    )
+    init_parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Overwrite existing output file without prompting (required for non-interactive --auto mode)",
     )
 
     # GUI subcommand

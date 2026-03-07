@@ -425,6 +425,11 @@ ambermeta init [options] [directory]
 |--------|-------------|
 | `-o, --output FILENAME` | Output filename (default: manifest.yaml) |
 | `--template {minimal,standard,comprehensive}` | Template complexity (default: standard) |
+| `--auto` | Non-interactive bootstrap: recurse, auto-group stages, and generate manifest |
+| `--format {yaml,json,toml,csv}` | Output format in `--auto` mode (default: infer from filename or yaml) |
+| `--validate` | Run validation immediately after auto bootstrap and print concise summary |
+| `--dry-run` | Preview auto-grouped stage mapping without writing output |
+| `--force` | Overwrite existing output without interactive prompt |
 
 #### Templates
 
@@ -493,6 +498,12 @@ ambermeta init -o my_protocol.yaml my_project
 
 # Generate in current directory
 ambermeta init --template standard .
+
+# First-run release bootstrap (non-interactive)
+ambermeta init --auto --format yaml --validate /path/to/release_run
+
+# Preview stage mapping before writing
+ambermeta init --auto --dry-run /path/to/release_run
 ```
 
 ---
@@ -516,6 +527,21 @@ ambermeta plan -m /path/to/simulations/manifest.yaml \
     --summary-path protocol.json \
     --methods-summary-path methods.json \
     --stats-csv stats.csv
+```
+
+### First-Run Release Workflow
+
+```bash
+# 1. Bootstrap manifest non-interactively from discovered files
+ambermeta init --auto --format yaml --validate /path/to/release_run
+
+# 2. Optionally preview mapping only (no file writes)
+ambermeta init --auto --dry-run /path/to/release_run
+
+# 3. Build and export release summaries
+ambermeta plan -m /path/to/release_run/manifest.yaml \
+    --summary-path /path/to/release_run/protocol.json \
+    --methods-summary-path /path/to/release_run/methods.json
 ```
 
 ### Quick Analysis

@@ -720,6 +720,12 @@ ambermeta init --template comprehensive my_project
 
 # Custom filename
 ambermeta init -o my_protocol.yaml my_project
+
+# First-run non-interactive bootstrap for release workflow
+ambermeta init --auto --format yaml --validate /path/to/release_run
+
+# Preview discovered stage grouping without writing files
+ambermeta init --auto --dry-run /path/to/release_run
 ```
 
 ---
