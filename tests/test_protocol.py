@@ -315,6 +315,101 @@ def test_load_protocol_from_manifest_uses_parent_directory(tmp_path, monkeypatch
     assert proto.stages[0].mdin.filename == str(stage_dir / "alpha.mdin")
 
 
+def test_manifest_stage_role_rules_are_applied(tmp_path, monkeypatch):
+    stage_dir = tmp_path / "protocol"
+    stage_dir.mkdir()
+
+    (stage_dir / "heat_01.mdin").write_text("")
+    manifest_path = stage_dir / "manifest.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "stage_role_rules": [{"pattern": "^heat", "role": "heating"}],
+                "stages": [{"name": "heat_01", "mdin": "heat_01.mdin"}],
+            }
+        )
+    )
+
+    monkeypatch.setattr(protocol, "MdinParser", _make_parser({"stage_role": None}))
+
+    proto = protocol.load_protocol_from_manifest(manifest_path, skip_cross_stage_validation=True)
+
+    assert len(proto.stages) == 1
+    stage = proto.stages[0]
+    assert stage.stage_role == "heating"
+    assert any("stage_role_rules" in note for note in stage.validation)
+
+
+def test_manifest_settings_strict_validation_controls_cross_stage_checks(tmp_path, monkeypatch):
+    stage_dir = tmp_path / "protocol"
+    stage_dir.mkdir()
+
+    (stage_dir / "stage1.mdcrd").write_text("")
+    (stage_dir / "stage2.rst").write_text("")
+
+    monkeypatch.setattr(protocol, "MdcrdParser", _make_parser({"time_end": 20.0}))
+    monkeypatch.setattr(protocol, "InpcrdParser", _make_parser({"time": 15.0}))
+
+    strict_manifest = stage_dir / "strict.json"
+    strict_manifest.write_text(
+        json.dumps(
+            {
+                "settings": {"strict_validation": True},
+                "stages": [
+                    {"name": "stage1", "mdcrd": "stage1.mdcrd"},
+                    {"name": "stage2", "inpcrd": "stage2.rst"},
+                ],
+            }
+        )
+    )
+
+    relaxed_manifest = stage_dir / "relaxed.json"
+    relaxed_manifest.write_text(
+        json.dumps(
+            {
+                "settings": {"strict_validation": False},
+                "stages": [
+                    {"name": "stage1", "mdcrd": "stage1.mdcrd"},
+                    {"name": "stage2", "inpcrd": "stage2.rst"},
+                ],
+            }
+        )
+    )
+
+    strict_proto = protocol.load_protocol_from_manifest(strict_manifest)
+    relaxed_proto = protocol.load_protocol_from_manifest(relaxed_manifest)
+
+    assert any("overlap" in note.lower() for note in strict_proto.stages[1].continuity)
+    assert relaxed_proto.stages[1].continuity == []
+
+
+def test_manifest_settings_allow_gaps_marks_unexpected_gap_as_allowed(tmp_path, monkeypatch):
+    stage_dir = tmp_path / "protocol"
+    stage_dir.mkdir()
+
+    (stage_dir / "stage1.mdcrd").write_text("")
+    (stage_dir / "stage2.rst").write_text("")
+
+    monkeypatch.setattr(protocol, "MdcrdParser", _make_parser({"time_end": 10.0}))
+    monkeypatch.setattr(protocol, "InpcrdParser", _make_parser({"time": 15.0}))
+
+    manifest_path = stage_dir / "manifest.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "settings": {"strict_validation": True, "allow_gaps": True},
+                "stages": [
+                    {"name": "stage1", "mdcrd": "stage1.mdcrd"},
+                    {"name": "stage2", "inpcrd": "stage2.rst"},
+                ],
+            }
+        )
+    )
+
+    proto = protocol.load_protocol_from_manifest(manifest_path)
+    assert any("allowed by manifest settings.allow_gaps" in note for note in proto.stages[1].continuity)
+
+
 def test_gap_expectations_are_reported(tmp_path, monkeypatch):
     stage_dir = tmp_path / "protocol"
     stage_dir.mkdir()

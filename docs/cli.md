@@ -462,8 +462,8 @@ stages:
 **Comprehensive**: All available options with documentation
 ```yaml
 settings:
-  strict_validation: false
-  allow_gaps: false
+  strict_validation: false  # Skip cross-stage continuity checks
+  allow_gaps: false         # If strict_validation=true, treat unexpected gaps as informational
 
 stage_role_rules:
   - pattern: "min.*"
@@ -480,6 +480,11 @@ stages:
       - "Initial minimization"
   ...
 ```
+
+`settings` and `stage_role_rules` are consumed by `ambermeta plan -m ...`:
+- `settings.strict_validation: false` is equivalent to `--skip-cross-stage-validation`.
+- `settings.allow_gaps: true` marks unexpected positive gaps as allowed information.
+- `stage_role_rules` assigns `stage_role` by stage name when `stage_role` is omitted.
 
 #### Examples
 

@@ -325,13 +325,13 @@ class SimulationStage:
 class SimulationProtocol:
     stages: List[SimulationStage] = field(default_factory=list)
 
-    def validate(self, cross_stage: bool = True) -> None:
+    def validate(self, cross_stage: bool = True, allow_unexpected_gaps: bool = False) -> None:
         for stage in self.stages:
             stage.validate()
         if cross_stage:
-            self._check_continuity()
+            self._check_continuity(allow_unexpected_gaps=allow_unexpected_gaps)
 
-    def _check_continuity(self) -> None:
+    def _check_continuity(self, allow_unexpected_gaps: bool = False) -> None:
         for prev, current in zip(self.stages, self.stages[1:]):
             prev_mdcrd = prev.mdcrd and prev.mdcrd.details
             curr_inpcrd = current.inpcrd and current.inpcrd.details
@@ -414,7 +414,10 @@ class SimulationProtocol:
                             f"Observed gap {gap:g} ps is within expected window ({current.expected_gap_ps:g}±{tolerance:g} ps)."
                         )
                 elif gap != 0:
-                    current._add_continuity_note("Gap detected without stated expectation; verify continuity.")
+                    if allow_unexpected_gaps:
+                        current._add_continuity_note("INFO: Gap detected and allowed by manifest settings.allow_gaps.")
+                    else:
+                        current._add_continuity_note("Gap detected without stated expectation; verify continuity.")
 
     def totals(self) -> Dict[str, float]:
         total_steps = 0.0
@@ -856,6 +859,7 @@ def _manifest_to_stages(
     include_roles: Optional[List[str]],
     include_stems: Optional[List[str]],
     restart_files: Optional[Dict[str, str]],
+    stage_role_rules: Optional[Dict[str, str]] = None,
     progress_callback: Optional[Callable[[str, int, int], None]] = None,
 ) -> List[SimulationStage]:
     """Convert manifest entries to SimulationStage objects.
@@ -877,6 +881,14 @@ def _manifest_to_stages(
     """
     kinds = {"prmtop", "inpcrd", "mdin", "mdout", "mdcrd"}
     stages: List[SimulationStage] = []
+
+    compiled_rules: List[tuple[Pattern[str], str]] = []
+    if stage_role_rules:
+        for pattern, role in stage_role_rules.items():
+            try:
+                compiled_rules.append((re.compile(pattern), role))
+            except re.error:
+                compiled_rules.append((re.compile(re.escape(pattern)), role))
     validate_manifest(manifest, directory)
 
     # Count total entries for progress reporting
@@ -910,6 +922,13 @@ def _manifest_to_stages(
                 resolved[kind] = path
 
         stage = SimulationStage(name=name, stage_role=stage_role)
+
+        if not stage.stage_role:
+            for pattern, role in compiled_rules:
+                if pattern.search(stage.name):
+                    stage.stage_role = role
+                    stage.validation.append(f"INFO: stage_role '{role}' inferred from stage_role_rules")
+                    break
 
         if "prmtop" in resolved:
             stage.prmtop = PrmtopParser(resolved["prmtop"]).parse()
@@ -1340,6 +1359,7 @@ def auto_discover(
     pattern_filter: Optional[str] = None,
     global_prmtop: Optional[str] = None,
     hmr_prmtop: Optional[str] = None,
+    allow_unexpected_gaps: bool = False,
     progress_callback: Optional[Callable[[str, int, int], None]] = None,
 ) -> SimulationProtocol:
     if manifest is not None:
@@ -1349,6 +1369,7 @@ def auto_discover(
             include_roles=include_roles,
             include_stems=include_stems,
             restart_files=restart_files,
+            stage_role_rules=grouping_rules,
             progress_callback=progress_callback,
         )
         # Apply auto restart detection if requested
@@ -1389,7 +1410,10 @@ def auto_discover(
                         stage.validation.append(f"INFO: using HMR prmtop (dt={dt} ps): {hmr_prmtop}")
 
         protocol = SimulationProtocol(stages=stages)
-        protocol.validate(cross_stage=not skip_cross_stage_validation)
+        protocol.validate(
+            cross_stage=not skip_cross_stage_validation,
+            allow_unexpected_gaps=allow_unexpected_gaps,
+        )
         return protocol
 
     # Use smart grouping for file discovery
@@ -1498,7 +1522,10 @@ def auto_discover(
                     stage.validation.append(f"INFO: using global prmtop: {global_prmtop}")
 
     protocol = SimulationProtocol(stages=stages)
-    protocol.validate(cross_stage=not skip_cross_stage_validation)
+    protocol.validate(
+        cross_stage=not skip_cross_stage_validation,
+        allow_unexpected_gaps=allow_unexpected_gaps,
+    )
     return protocol
 
 
@@ -1649,7 +1676,7 @@ def load_protocol_from_manifest(
     include_roles: Optional[List[str]] = None,
     include_stems: Optional[List[str]] = None,
     restart_files: Optional[Dict[str, str]] = None,
-    skip_cross_stage_validation: bool = False,
+    skip_cross_stage_validation: Optional[bool] = None,
     recursive: bool = False,
     expand_env: bool = True,
     global_prmtop: Optional[str] = None,
@@ -1694,6 +1721,9 @@ def load_protocol_from_manifest(
     # Extract global settings from manifest if present
     manifest_global_prmtop = None
     manifest_hmr_prmtop = None
+    manifest_stage_role_rules: Optional[Dict[str, str]] = None
+    manifest_skip_cross_stage_validation: Optional[bool] = None
+    manifest_allow_unexpected_gaps = False
     stages_list = manifest_data
 
     if isinstance(manifest_data, dict):
@@ -1703,6 +1733,33 @@ def load_protocol_from_manifest(
             # Backward compatibility for older GUI exports.
             manifest_global_prmtop = manifest_data.get("prmtop")
         manifest_hmr_prmtop = manifest_data.get("hmr_prmtop")
+
+        settings = manifest_data.get("settings")
+        if isinstance(settings, dict):
+            if "strict_validation" in settings:
+                strict_validation = bool(settings.get("strict_validation"))
+                manifest_skip_cross_stage_validation = not strict_validation
+            if "allow_gaps" in settings:
+                manifest_allow_unexpected_gaps = bool(settings.get("allow_gaps"))
+
+        stage_role_rules = manifest_data.get("stage_role_rules")
+        if isinstance(stage_role_rules, list):
+            parsed_rules: Dict[str, str] = {}
+            for rule in stage_role_rules:
+                if not isinstance(rule, dict):
+                    continue
+                pattern = rule.get("pattern")
+                role = rule.get("role")
+                if isinstance(pattern, str) and isinstance(role, str):
+                    parsed_rules[pattern] = role
+            manifest_stage_role_rules = parsed_rules or None
+        elif isinstance(stage_role_rules, dict):
+            parsed_rules = {
+                str(pattern): str(role)
+                for pattern, role in stage_role_rules.items()
+                if pattern is not None and role is not None
+            }
+            manifest_stage_role_rules = parsed_rules or None
 
         # Extract stages list
         if "stages" in manifest_data and isinstance(manifest_data["stages"], list):
@@ -1714,17 +1771,24 @@ def load_protocol_from_manifest(
     # CLI parameters override manifest settings
     effective_global_prmtop = global_prmtop or manifest_global_prmtop
     effective_hmr_prmtop = hmr_prmtop or manifest_hmr_prmtop
+    effective_skip_cross_stage_validation = (
+        skip_cross_stage_validation
+        if skip_cross_stage_validation is not None
+        else bool(manifest_skip_cross_stage_validation)
+    )
 
     return auto_discover(
         base_dir,
         manifest=stages_list,
+        grouping_rules=manifest_stage_role_rules,
         include_roles=include_roles,
         include_stems=include_stems,
         restart_files=restart_files,
-        skip_cross_stage_validation=skip_cross_stage_validation,
+        skip_cross_stage_validation=effective_skip_cross_stage_validation,
         recursive=recursive,
         global_prmtop=effective_global_prmtop,
         hmr_prmtop=effective_hmr_prmtop,
+        allow_unexpected_gaps=manifest_allow_unexpected_gaps,
         progress_callback=progress_callback,
     )
 
