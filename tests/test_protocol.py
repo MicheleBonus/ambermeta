@@ -260,6 +260,43 @@ def test_mdcrd_duration_within_one_timestep_is_accepted(tmp_path, monkeypatch):
     assert not duration_notes
 
 
+def test_load_protocol_from_gui_export_inherits_global_prmtop(tmp_path, monkeypatch):
+    base_dir = tmp_path / "protocol"
+    base_dir.mkdir()
+
+    global_prmtop = base_dir / "system.prmtop"
+    mdin_file = base_dir / "prod.mdin"
+    global_prmtop.write_text("")
+    mdin_file.write_text("")
+
+    # Mirrors GUI export shape: top-level global_prmtop + stages list.
+    manifest_path = base_dir / "protocol.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "base_directory": ".",
+                "global_prmtop": "system.prmtop",
+                "stages": [
+                    {
+                        "name": "prod",
+                        "stage_role": "production",
+                        "mdin": "prod.mdin",
+                    }
+                ],
+            }
+        )
+    )
+
+    monkeypatch.setattr(protocol, "PrmtopParser", _make_parser({"n_atoms": 10}))
+    monkeypatch.setattr(protocol, "MdinParser", _make_parser({"stage_role": "production", "length_steps": 100}))
+
+    proto = protocol.load_protocol_from_manifest(manifest_path, skip_cross_stage_validation=True)
+
+    assert len(proto.stages) == 1
+    assert proto.stages[0].prmtop is not None
+    assert proto.stages[0].prmtop.filename == str(global_prmtop)
+
+
 def test_load_protocol_from_manifest_uses_parent_directory(tmp_path, monkeypatch):
     stage_dir = tmp_path / "inputs"
     stage_dir.mkdir()
