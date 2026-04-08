@@ -284,7 +284,7 @@ def _parse_value(val_str: str) -> Any:
     val_str = val_str.strip().strip(',')
     if '*******' in val_str: return None
     try:
-        if '.' in val_str: return float(val_str)
+        if '.' in val_str or 'e' in val_str or 'E' in val_str: return float(val_str)
         return int(val_str)
     except ValueError:
         return val_str
@@ -292,7 +292,7 @@ def _parse_value(val_str: str) -> Any:
 def _extract_key_values(line: str) -> Dict[str, Any]:
     # Matches "Key = Value" or "Key=Value"
     # Keys can contain (), -, .
-    pattern = re.compile(r"([A-Za-z0-9_\-\(\)\./]+)\s*=\s*([-\d\.\*]+)")
+    pattern = re.compile(r"([A-Za-z0-9_\-\(\)\./]+)\s*=\s*([-\d\.\*eE\+]+)")
     matches = pattern.findall(line)
     return {k.strip(): _parse_value(v) for k, v in matches}
 
@@ -380,7 +380,7 @@ def parse_mdout(filepath: str) -> MdoutMetadata:
                 
         if "ntc" in line and "=" in line:
             kvs = _extract_key_values(line)
-            if 'ntc' in kvs and kvs['ntc'] > 1:
+            if 'ntc' in kvs and isinstance(kvs['ntc'], (int, float)) and kvs['ntc'] > 1:
                 md.shake_active = True
 
         # --- 4. Frame Processing ---
@@ -406,6 +406,8 @@ def parse_mdout(filepath: str) -> MdoutMetadata:
             
         if "Final Performance Info" in line:
             md.finished_properly = True
+        if "Master Timer" in line or "Total wall time" in line:
+            md.finished_properly = True
             
         if "ns/day =" in line:
             kvs = _extract_key_values(line)
@@ -415,8 +417,14 @@ def parse_mdout(filepath: str) -> MdoutMetadata:
             parts = line.split()
             for idx, p in enumerate(parts):
                 if "time:" in p and idx+1 < len(parts):
+                    raw = parts[idx+1]
                     try:
-                        md.wall_time_seconds = float(parts[idx+1])
+                        if ':' in raw:
+                            # HH:MM:SS format from PMEMD
+                            hms = raw.split(':')
+                            md.wall_time_seconds = int(hms[0]) * 3600 + int(hms[1]) * 60 + float(hms[2])
+                        else:
+                            md.wall_time_seconds = float(raw)
                     except (ValueError, IndexError) as e:
                         md.warnings.append(f"Failed to parse wall time: {e}")
 

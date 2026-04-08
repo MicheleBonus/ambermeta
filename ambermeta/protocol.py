@@ -136,26 +136,36 @@ class SimulationStage:
     continuity: List[str] = field(default_factory=list)
 
     def validate(self) -> None:
-        self.validation.extend(self._validate_atoms())
-        self.validation.extend(self._validate_box())
-        self.validation.extend(self._validate_timing())
-        self.validation.extend(self._validate_sampling())
+        existing = set(self.validation)
+        for msg in (
+            self._validate_atoms()
+            + self._validate_box()
+            + self._validate_timing()
+            + self._validate_sampling()
+        ):
+            if msg not in existing:
+                self.validation.append(msg)
+                existing.add(msg)
 
     def _validate_atoms(self) -> List[str]:
         counts = []
         labels = []
         # Use standardized n_atoms property across all metadata classes
-        if self.prmtop and self.prmtop.details and getattr(self.prmtop.details, "n_atoms", None):
-            counts.append(self.prmtop.details.n_atoms)
+        n_atoms = getattr(self.prmtop.details, "n_atoms", None) if self.prmtop and self.prmtop.details else None
+        if n_atoms is not None:
+            counts.append(n_atoms)
             labels.append("prmtop")
-        if self.inpcrd and self.inpcrd.details and getattr(self.inpcrd.details, "n_atoms", None):
-            counts.append(self.inpcrd.details.n_atoms)
+        n_atoms = getattr(self.inpcrd.details, "n_atoms", None) if self.inpcrd and self.inpcrd.details else None
+        if n_atoms is not None:
+            counts.append(n_atoms)
             labels.append("inpcrd")
-        if self.mdout and self.mdout.details and getattr(self.mdout.details, "n_atoms", None):
-            counts.append(self.mdout.details.n_atoms)
+        n_atoms = getattr(self.mdout.details, "n_atoms", None) if self.mdout and self.mdout.details else None
+        if n_atoms is not None:
+            counts.append(n_atoms)
             labels.append("mdout")
-        if self.mdcrd and self.mdcrd.details and getattr(self.mdcrd.details, "n_atoms", None):
-            counts.append(self.mdcrd.details.n_atoms)
+        n_atoms = getattr(self.mdcrd.details, "n_atoms", None) if self.mdcrd and self.mdcrd.details else None
+        if n_atoms is not None:
+            counts.append(n_atoms)
             labels.append("mdcrd")
 
         if not counts:
@@ -840,9 +850,9 @@ def validate_manifest(
             if path is None:
                 continue
             if directory and not os.path.isabs(path):
-                resolved[kind] = os.path.join(directory, path)
+                resolved[kind] = os.path.normpath(os.path.join(directory, path))
             else:
-                resolved[kind] = path
+                resolved[kind] = os.path.normpath(path)
 
         for kind, path in resolved.items():
             if not os.path.exists(path):
@@ -917,9 +927,9 @@ def _manifest_to_stages(
             if path is None:
                 continue
             if directory and not os.path.isabs(path):
-                resolved[kind] = os.path.join(directory, path)
+                resolved[kind] = os.path.normpath(os.path.join(directory, path))
             else:
-                resolved[kind] = path
+                resolved[kind] = os.path.normpath(path)
 
         stage = SimulationStage(name=name, stage_role=stage_role)
 
@@ -1070,30 +1080,30 @@ def infer_stage_role_from_path(path: str) -> Optional[str]:
     # Check all path parts (directories and filename)
     for part in parts:
         # Minimization patterns
-        if part.startswith("min") or "_min" in part or part == "em":
+        if part.startswith("min") or re.search(r'(?:^|_)min(?:$|_)', part) or part == "em":
             return "minimization"
 
         # Heating patterns
-        if "heat" in part or "warm" in part:
+        if re.search(r'(?:^|[_.\-])heat(?:[_.\-]|$|ing)', part) or re.search(r'(?:^|[_.\-])warm(?:[_.\-]|$)', part):
             return "heating"
 
         # Equilibration patterns
-        if part.startswith("equil") or part == "nvt" or part == "npt" or "_equil" in part:
+        if part.startswith("equil") or part == "nvt" or part == "npt" or re.search(r'(?:^|_)equil(?:$|_)', part):
             return "equilibration"
 
         # Production patterns
-        if part.startswith("prod") or "_prod" in part:
+        if part.startswith("prod") or re.search(r'(?:^|_)prod(?:$|_)', part):
             return "production"
 
     # Check for common filename patterns
     filename = parts[-1] if parts else ""
-    if any(x in filename for x in ("min", "minim", "em")):
+    if re.search(r'(?:^|[_.\-/])(?:min|minim)(?:[_.\-/]|$)', filename) or re.search(r'(?:^|[_.\-/])em(?:[_.\-/]|$)', filename):
         return "minimization"
-    if any(x in filename for x in ("heat", "warm")):
+    if re.search(r'(?:^|[_.\-/])(?:heat|warm)(?:[_.\-/]|$)', filename):
         return "heating"
-    if any(x in filename for x in ("equil", "nvt_", "npt_")):
+    if re.search(r'(?:^|[_.\-/])(?:equil|nvt|npt)(?:[_.\-/]|$)', filename):
         return "equilibration"
-    if "prod" in filename:
+    if re.search(r'(?:^|[_.\-/])prod(?:[_.\-/]|$)', filename):
         return "production"
 
     return None
@@ -1400,10 +1410,10 @@ def auto_discover(
                 for stage in stages:
                     # Check if stage uses large timestep (HMR typically requires dt >= 0.004 ps)
                     dt = None
-                    if stage.mdin and hasattr(stage.mdin, 'dt'):
-                        dt = stage.mdin.dt
-                    elif stage.mdout and hasattr(stage.mdout, 'dt'):
-                        dt = stage.mdout.dt
+                    if stage.mdin and stage.mdin.details and hasattr(stage.mdin.details, 'dt'):
+                        dt = stage.mdin.details.dt
+                    elif stage.mdout and stage.mdout.details and hasattr(stage.mdout.details, 'dt'):
+                        dt = stage.mdout.details.dt
 
                     if dt is not None and dt >= 0.004:
                         stage.prmtop = hmr_prmtop_data
@@ -1535,20 +1545,28 @@ def _expand_env_vars(value: Any) -> Any:
     Supports ${VAR} and $VAR syntax. Undefined variables are left unchanged.
     """
     if isinstance(value, str):
-        # Expand ${VAR} syntax
-        result = value
+        # Collect all replacements from the original value first to avoid double-expansion
+        replacements = []
         import re
+        # Expand ${VAR} syntax
         for match in re.finditer(r'\$\{([^}]+)\}', value):
             var_name = match.group(1)
             env_value = os.environ.get(var_name)
             if env_value is not None:
-                result = result.replace(match.group(0), env_value)
+                replacements.append((match.group(0), env_value))
         # Expand $VAR syntax (only if not followed by {)
-        for match in re.finditer(r'\$([A-Za-z_][A-Za-z0-9_]*)(?!\{)', result):
+        for match in re.finditer(r'\$([A-Za-z_][A-Za-z0-9_]*)(?!\{)', value):
             var_name = match.group(1)
+            # Skip if this was already matched as ${VAR}
+            if f'${{{var_name}}}' in value:
+                continue
             env_value = os.environ.get(var_name)
             if env_value is not None:
-                result = result.replace(match.group(0), env_value)
+                replacements.append((match.group(0), env_value))
+        # Apply all replacements to the original value
+        result = value
+        for old, new in replacements:
+            result = result.replace(old, new)
         return result
     elif isinstance(value, dict):
         return {k: _expand_env_vars(v) for k, v in value.items()}

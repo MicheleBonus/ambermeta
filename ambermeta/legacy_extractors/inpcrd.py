@@ -201,7 +201,9 @@ def _parse_ascii_box(md: InpcrdMetadata):
     # Efficiently read last line
     try:
         with open(md.filename, 'rb') as f:
-            f.seek(-100, 2) # Go to near end (100 bytes should cover 6*12 chars)
+            f.seek(0, 2)
+            size = f.tell()
+            f.seek(-min(size, 100), 2)  # Go to near end (100 bytes should cover 6*12 chars)
             last_chunk = f.read()
             lines = last_chunk.decode('utf-8', errors='ignore').strip().split('\n')
             if not lines:

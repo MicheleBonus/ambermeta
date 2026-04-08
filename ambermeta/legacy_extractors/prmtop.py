@@ -417,7 +417,13 @@ def extract_prmtop_metadata(filepath: str) -> PrmtopMetadata:
         dims = box_data[1:4]
         md.box_dimensions = dims
         md.box_angles = [90.0, beta, 90.0]
-        md.box_volume = dims[0] * dims[1] * dims[2]
+        alpha_rad = math.radians(90.0)
+        beta_rad = math.radians(beta)
+        gamma_rad = math.radians(90.0)
+        md.box_volume = dims[0] * dims[1] * dims[2] * math.sqrt(
+            1 - math.cos(alpha_rad)**2 - math.cos(beta_rad)**2 - math.cos(gamma_rad)**2
+            + 2 * math.cos(alpha_rad) * math.cos(beta_rad) * math.cos(gamma_rad)
+        )
         
         if md.box_volume > 0:
             md.density = (md.total_mass / md.box_volume) * 1.66054

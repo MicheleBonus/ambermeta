@@ -98,6 +98,7 @@ try:
     from textual.widget import Widget
     from textual.widgets import (
         Button,
+        Checkbox,
         DataTable,
         DirectoryTree,
         Footer,
@@ -112,10 +113,12 @@ try:
         Rule,
         Select,
         Static,
+        Switch,
         TabbedContent,
         TabPane,
         Tree,
     )
+    from textual.css.query import NoMatches
     from textual.widgets.tree import TreeNode
     from textual.widgets.option_list import Option
 
@@ -498,12 +501,13 @@ class ProtocolState:
 
         return new_stages
 
-    def create_stage_from_stem(self, stem: str, role: str = "") -> Optional[Stage]:
+    def create_stage_from_stem(self, stem: str, role: str = "", save_undo: bool = True) -> Optional[Stage]:
         """Create a single stage from a discovered stem."""
         if stem not in self._discovered_files:
             return None
 
-        self._save_state(f"Create stage '{stem}'")
+        if save_undo:
+            self._save_state(f"Create stage '{stem}'")
         files = {k: v for k, v in self._discovered_files[stem].items()
                 if not k.startswith("_")}
 
@@ -606,13 +610,13 @@ class ProtocolState:
             prmtop_path = self.global_prmtop
             if use_absolute_paths and not os.path.isabs(prmtop_path):
                 prmtop_path = os.path.join(self.base_directory, prmtop_path)
-            lines.append(f'global_prmtop = "{prmtop_path}"')
+            lines.append(f"global_prmtop = '{prmtop_path}'")
 
         if self.hmr_prmtop:
             hmr_path = self.hmr_prmtop
             if use_absolute_paths and not os.path.isabs(hmr_path):
                 hmr_path = os.path.join(self.base_directory, hmr_path)
-            lines.append(f'hmr_prmtop = "{hmr_path}"')
+            lines.append(f"hmr_prmtop = '{hmr_path}'")
 
         if self.global_prmtop or self.hmr_prmtop:
             lines.append("")
@@ -627,7 +631,7 @@ class ProtocolState:
                     # Handle lists like notes
                     lines.append(f'{key} = {json.dumps(value)}')
                 elif isinstance(value, str):
-                    lines.append(f'{key} = "{value}"')
+                    lines.append(f"{key} = '{value}'")
                 else:
                     lines.append(f'{key} = {value}')
             lines.append("")
@@ -1206,11 +1210,11 @@ if TEXTUAL_AVAILABLE:
                 yield Label("Options:", classes="section-label")
 
                 with Horizontal(classes="checkbox-row"):
-                    yield RadioButton(
-                        "Auto-link restart files between consecutive stages",
+                    yield Switch(
                         id="auto-restart",
                         value=self.state.auto_link_restarts,
                     )
+                    yield Label("Auto-link restart files between consecutive stages")
 
                 yield Rule()
 
@@ -1232,7 +1236,7 @@ if TEXTUAL_AVAILABLE:
             if event.button.id == "apply-settings":
                 prmtop_input = self.query_one("#global-prmtop", Input)
                 hmr_input = self.query_one("#hmr-prmtop", Input)
-                auto_restart = self.query_one("#auto-restart", RadioButton)
+                auto_restart = self.query_one("#auto-restart", Switch)
 
                 self.state.global_prmtop = prmtop_input.value.strip() or None
                 self.state.hmr_prmtop = hmr_input.value.strip() or None
@@ -1486,9 +1490,10 @@ if TEXTUAL_AVAILABLE:
                 files_str = ", ".join(sorted(file_types))
                 role_str = f"[{inferred_role}]" if inferred_role else "[dim]no role[/]"
 
-                checkbox = RadioButton(
+                idx = len(self._stem_info) - 1
+                checkbox = Checkbox(
                     f"{stem[:40]} ({files_str}) {role_str}",
-                    id=f"stem-{stem.replace('/', '_').replace('.', '_')}",
+                    id=f"stem-{idx}",
                     value=False,
                 )
                 container.mount(checkbox)
@@ -1519,18 +1524,19 @@ if TEXTUAL_AVAILABLE:
             else:
                 self.query_one("#role-breakdown", Static).update("")
 
-        def on_radio_button_changed(self, event: RadioButton.Changed) -> None:
+        def on_checkbox_changed(self, event: Checkbox.Changed) -> None:
             """Handle checkbox changes."""
-            if event.radio_button.id and event.radio_button.id.startswith("stem-"):
-                stem_key = event.radio_button.id[5:].replace("_", "/").replace("_", ".")
-                # Find the actual stem
-                for stem, _, _ in self._stem_info:
-                    if stem.replace("/", "_").replace(".", "_") == event.radio_button.id[5:]:
-                        if event.value:
-                            self.selected_stems.add(stem)
-                        else:
-                            self.selected_stems.discard(stem)
-                        break
+            if event.checkbox.id and event.checkbox.id.startswith("stem-"):
+                try:
+                    idx = int(event.checkbox.id[5:])
+                except (ValueError, IndexError):
+                    return
+                if 0 <= idx < len(self._stem_info):
+                    stem = self._stem_info[idx][0]
+                    if event.value:
+                        self.selected_stems.add(stem)
+                    else:
+                        self.selected_stems.discard(stem)
                 self._update_stats()
 
         def action_select_all(self) -> None:
@@ -1548,12 +1554,12 @@ if TEXTUAL_AVAILABLE:
 
         def _refresh_checkboxes(self) -> None:
             """Refresh checkbox states."""
-            for stem, _, _ in self._stem_info:
-                checkbox_id = f"stem-{stem.replace('/', '_').replace('.', '_')}"
+            for idx, (stem, _, _) in enumerate(self._stem_info):
+                checkbox_id = f"stem-{idx}"
                 try:
-                    checkbox = self.query_one(f"#{checkbox_id}", RadioButton)
+                    checkbox = self.query_one(f"#{checkbox_id}", Checkbox)
                     checkbox.value = stem in self.selected_stems
-                except Exception:
+                except NoMatches:
                     pass
 
         def on_button_pressed(self, event: Button.Pressed) -> None:
@@ -1575,13 +1581,16 @@ if TEXTUAL_AVAILABLE:
             default_role_select = self.query_one("#default-role", Select)
             default_role = default_role_select.value if default_role_select.value != Select.BLANK else ""
 
+            # Save undo state once for the entire batch
+            self.state._save_state("Auto-generate stages")
+
             count = 0
             for stem, files, inferred_role in self._stem_info:
                 if stem not in self.selected_stems:
                     continue
 
                 role = inferred_role or default_role
-                stage = self.state.create_stage_from_stem(stem, role)
+                stage = self.state.create_stage_from_stem(stem, role, save_undo=False)
                 if stage:
                     count += 1
 
@@ -2088,12 +2097,15 @@ if TEXTUAL_AVAILABLE:
         async def on_mount(self) -> None:
             """Initialize the application."""
             self.notify("Discovering simulation files...")
-            self.state.discover_files(recursive=True)
+            self.run_worker(self._discover_files, thread=True)
 
+        def _discover_files(self) -> None:
+            """Run blocking file discovery in a worker thread."""
+            self.state.discover_files(recursive=True)
             files_count = len(self.state.get_discovered_files())
             seq_count = len(self.state.get_sequences())
-
-            self.notify(f"Found {files_count} file groups, {seq_count} sequences")
+            self.call_from_thread(self.notify, f"Found {files_count} file groups, {seq_count} sequences")
+            self.call_from_thread(self.refresh_stages)
 
         def _folder_has_simulation_files(self, folder_path: str) -> Tuple[bool, List[str]]:
             """Check if a folder contains simulation files (mdin/mdout/mdcrd).
@@ -2106,7 +2118,12 @@ if TEXTUAL_AVAILABLE:
             has_simulation = False
             prmtop_files = []
 
-            for fname in os.listdir(folder_path):
+            try:
+                entries = os.listdir(folder_path)
+            except (PermissionError, OSError):
+                return False, []
+
+            for fname in entries:
                 full_path = os.path.join(folder_path, fname)
                 if not os.path.isfile(full_path):
                     continue
@@ -2173,7 +2190,7 @@ if TEXTUAL_AVAILABLE:
                     # Check if this is part of a sequence
                     stem = path.stem
                     for base, stems in self.state.get_sequences().items():
-                        if any(stem.startswith(s.rsplit("/", 1)[-1].rsplit(".", 1)[0]) for s in stems):
+                        if any(stem == s.rsplit("/", 1)[-1].rsplit(".", 1)[0] for s in stems):
                             # Store sequence info for later use
                             self._pending_sequence_base = base
                             self._pending_sequence_stems = stems
@@ -2386,6 +2403,12 @@ if TEXTUAL_AVAILABLE:
             if os.path.exists(path):
                 try:
                     self.state = ProtocolState.load_session(path)
+                    # Update child widget references
+                    try:
+                        stage_list = self.query_one(StageList)
+                        stage_list.state = self.state
+                    except Exception:
+                        pass
                     self.state.discover_files(recursive=True)
                     self.refresh_stages()
                     self.notify("Session loaded")

@@ -274,7 +274,7 @@ def analyze_sequence(metadatas: Sequence[TrajectoryMetadata]) -> str:
         return "No files."
 
     # Filter useful NetCDF files
-    valid = [m for m in metadatas if m.file_format == "NetCDF" and m.has_time]
+    valid = [m for m in metadatas if m.file_format == "NetCDF" and m.has_time and m.time_start is not None]
     
     if not valid:
         return "No NetCDF files with time data found to analyze sequence."

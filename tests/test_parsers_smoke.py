@@ -37,7 +37,9 @@ def test_mdout_parser(sample_md_data_dir):
 
 
 def test_mdcrd_parser(sample_md_data_dir):
+    # Note: .crd file is actually an inpcrd format file used as a smoke test
+    # to verify the parser doesn't crash on unexpected input
     trajectory_file = sample_md_data_dir / "CH3L1_HUMAN_6NAG.crd"
     result = MdcrdParser(str(trajectory_file)).parse()
-    assert result.filename == str(trajectory_file)
     assert result.details is not None
+    assert result.filename == str(trajectory_file)

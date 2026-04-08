@@ -233,7 +233,10 @@ def _strip_comments(text: str) -> str:
             while i < length and text[i] != '\n':
                 i += 1
             result.append('\n')
-            continue  # don't increment i again; the \n will be handled next
+            # Consume the newline so it isn't appended again on the next iteration
+            if i < length and text[i] == '\n':
+                i += 1
+            continue  # don't increment i again
         else:
             result.append(ch)
 

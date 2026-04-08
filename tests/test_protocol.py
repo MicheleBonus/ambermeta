@@ -119,7 +119,7 @@ def test_manifest_bypasses_inference_and_preserves_order(tmp_path, monkeypatch):
     proto = auto_discover(str(stage_dir), manifest=manifest, skip_cross_stage_validation=True)
 
     assert [stage.name for stage in proto.stages] == ["beta", "alpha"]
-    assert all(stage.validation is not None for stage in proto.stages)
+    assert all(isinstance(stage.validation, list) for stage in proto.stages)
     assert proto.stages[0].inpcrd is not None
 
 

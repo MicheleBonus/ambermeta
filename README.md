@@ -229,6 +229,52 @@ If you previously relied on TUI/GUI, equivalent CLI flows are:
 
 ---
 
+## Recent bug fixes (v0.2.1)
+
+A comprehensive audit of the full codebase identified and fixed 40 bugs across all modules.
+
+### Critical fixes
+- **HMR prmtop feature now works**: Fixed attribute access (`stage.mdin.dt` &rarr; `stage.mdin.details.dt`) that prevented HMR topology assignment from ever triggering.
+- **TUI auto-generate multi-select fixed**: Replaced `RadioButton` (mutual exclusion) with `Checkbox` so users can select multiple file groups.
+- **TUI session loading fixed**: Child widgets now receive the updated state reference after loading a session, preventing stale data display and silent corruption.
+
+### Security fixes
+- **5 path traversal vulnerabilities patched** in the GUI API (`/api/files`, `/api/files/metadata`, session save/load, related files). All paths are now validated against the base directory.
+- **CORS restricted to localhost** in the GUI server (was `allow_origins=["*"]`).
+
+### High-priority fixes
+- **Scientific notation parsing**: mdout regex and `_parse_value` now handle values like `1.234E+02` and `1E+05`.
+- **Wall time parsing**: PMEMD `HH:MM:SS` format is now correctly parsed (was silently returning 0).
+- **Validation deduplication**: `ProtocolBuilder.build()` no longer produces duplicate validation messages.
+- **Stage role inference**: `infer_stage_role_from_path` and `_suggest_stage_role` use word-boundary matching instead of loose substring checks (e.g., "membrane" no longer matches "minimization").
+- **TOML export**: Windows backslash paths are now properly escaped using TOML literal strings.
+- **Reorder safety**: The GUI reorder endpoint now rejects partial stage ID lists instead of silently dropping stages.
+- **License metadata corrected**: `pyproject.toml` and `setup.py` now declare BUSL-1.1 (matching the actual LICENSE file).
+- **GUI dependencies installable**: `setup.py` now includes the `gui` extras group.
+
+### Medium-priority fixes
+- Fixed crash on small inpcrd files (<100 bytes) during box dimension parsing.
+- Fixed `TypeError` when sorting 0-frame NetCDF trajectory files with `None` timestamps.
+- Fixed sander completion detection (was only checking for PMEMD's "Final Performance Info").
+- Fixed triclinic box volume calculation in prmtop parser (was using orthogonal `a*b*c` formula).
+- Fixed environment variable double-expansion when `${VAR}` values contain `$OTHER`.
+- Fixed shell completion scripts advertising non-existent flags (`--open-browser`, `--reload`).
+- Added warning when `--format` is used without `--auto` in `init` command.
+- Fixed TUI: `RadioButton` &rarr; `Switch` for auto-restart toggle, lossy widget ID encoding, permission-denied folder crash, blocking file discovery on async event loop, overly broad sequence detection.
+- Fixed TOML export falling through to manual formatter on Python 3.11+.
+- Fixed manifest path resolution on Windows (forward slash in manifests now normalized).
+
+### Low-priority fixes
+- Fixed `ntc` type check before numeric comparison in mdout parser.
+- Fixed double-newline generation in mdin comment stripping.
+- Fixed `_validate_atoms` treating `n_atoms=0` as missing data.
+- Fixed logging format style using raw argument instead of resolved log level.
+- Removed dead code (`_format_avg_std`, unused `stem_key` variable).
+- Narrowed exception handling in TUI (`NoMatches` instead of bare `Exception`).
+- Batch undo for auto-generated stages (single undo state instead of per-stem).
+
+---
+
 ## Limitations and roadmap
 
 Current limitations:

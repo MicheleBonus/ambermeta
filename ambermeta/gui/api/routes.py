@@ -42,6 +42,15 @@ _protocol_state: Optional[ProtocolState] = None
 _base_directory: str = "."
 
 
+def _validate_path_within_base(path_str: str) -> str:
+    """Validate that a path is within the base directory. Raises HTTPException if not."""
+    resolved = os.path.realpath(path_str)
+    base_resolved = os.path.realpath(_base_directory)
+    if not resolved.startswith(base_resolved + os.sep) and resolved != base_resolved:
+        raise HTTPException(status_code=403, detail="Access denied: path outside base directory")
+    return resolved
+
+
 def get_state() -> ProtocolState:
     """Get the current protocol state, initializing if needed."""
     global _protocol_state
@@ -262,6 +271,8 @@ async def list_files(
     """List discovered simulation files."""
     directory = path if path else _base_directory
 
+    _validate_path_within_base(directory)
+
     if not os.path.isdir(directory):
         raise HTTPException(status_code=404, detail=f"Directory not found: {directory}")
 
@@ -273,6 +284,8 @@ async def get_file_metadata(
     path: str = Query(..., description="File path to analyze")
 ) -> FileMetadata:
     """Get detailed metadata for a specific file."""
+    _validate_path_within_base(path)
+
     if not os.path.isfile(path):
         raise HTTPException(status_code=404, detail=f"File not found: {path}")
 
@@ -433,6 +446,20 @@ async def reorder_stages(request: StageReorderRequest) -> List[StageResponse]:
 
     # Build a map of id -> stage
     stage_map = {stage.id: stage for stage in state.stages}
+
+    # Validate that all stage IDs are accounted for
+    if len(request.stage_ids) != len(state.stages):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Expected {len(state.stages)} stage IDs, got {len(request.stage_ids)}"
+        )
+    existing_ids = {stage.id for stage in state.stages}
+    if set(request.stage_ids) != existing_ids:
+        missing = existing_ids - set(request.stage_ids)
+        raise HTTPException(
+            status_code=400,
+            detail=f"Missing stage IDs in reorder request: {missing}"
+        )
 
     # Validate all IDs exist
     for stage_id in request.stage_ids:
@@ -622,36 +649,38 @@ async def export_protocol(request: ExportRequest) -> ExportResponse:
 
     elif request.format == ExportFormat.TOML:
         try:
-            import sys
-            if sys.version_info >= (3, 11):
-                import tomllib
-                # tomllib is read-only, need tomli-w for writing
-                raise ImportError("tomllib cannot write")
-            else:
-                import toml
-                content = toml.dumps(export_data)
+            import toml
+            content = toml.dumps(export_data)
         except ImportError:
-            # Fallback to basic TOML formatting
-            lines = []
-            if "base_directory" in export_data:
-                lines.append(f'base_directory = "{export_data["base_directory"]}"')
-            if "global_prmtop" in export_data:
-                lines.append(f'global_prmtop = "{export_data["global_prmtop"]}"')
-            if "hmr_prmtop" in export_data:
-                lines.append(f'hmr_prmtop = "{export_data["hmr_prmtop"]}"')
+            try:
+                import tomli_w
+                raw = tomli_w.dumps(export_data)
+                content = raw.decode() if isinstance(raw, bytes) else raw
+            except ImportError:
+                # Fallback to basic TOML formatting
+                lines = []
+                if "base_directory" in export_data:
+                    val = export_data["base_directory"]
+                    lines.append(f"base_directory = '{val}'")
+                if "global_prmtop" in export_data:
+                    val = export_data["global_prmtop"]
+                    lines.append(f"global_prmtop = '{val}'")
+                if "hmr_prmtop" in export_data:
+                    val = export_data["hmr_prmtop"]
+                    lines.append(f"hmr_prmtop = '{val}'")
 
-            for stage in stages_data:
-                lines.append("")
-                lines.append("[[stages]]")
-                for key, value in stage.items():
-                    if isinstance(value, str):
-                        lines.append(f'{key} = "{value}"')
-                    elif isinstance(value, list):
-                        lines.append(f'{key} = {json.dumps(value)}')
-                    else:
-                        lines.append(f'{key} = {value}')
+                for stage in stages_data:
+                    lines.append("")
+                    lines.append("[[stages]]")
+                    for key, value in stage.items():
+                        if isinstance(value, str):
+                            lines.append(f"{key} = '{value}'")
+                        elif isinstance(value, list):
+                            lines.append(f'{key} = {json.dumps(value)}')
+                        else:
+                            lines.append(f'{key} = {value}')
 
-            content = "\n".join(lines)
+                content = "\n".join(lines)
         filename = "protocol.toml"
 
     elif request.format == ExportFormat.CSV:
@@ -740,6 +769,8 @@ async def get_related_files(stem: str) -> Dict[str, str]:
         "inpcrd": {".rst", ".rst7", ".ncrst", ".restrt", ".inpcrd"},
     }
 
+    _validate_path_within_base(str(stem_dir))
+
     related_files: Dict[str, str] = {}
 
     try:
@@ -770,6 +801,10 @@ async def save_session(request: SessionSaveRequest) -> Dict[str, str]:
     """Save the current session to a file."""
     state = get_state()
 
+    # Sanitize filename to prevent path traversal
+    if os.sep in request.filename or '/' in request.filename or '..' in request.filename:
+        raise HTTPException(status_code=400, detail="Invalid filename: must not contain path separators or '..'")
+
     # Serialize state
     session_data = state.model_dump()
 
@@ -778,6 +813,7 @@ async def save_session(request: SessionSaveRequest) -> Dict[str, str]:
         request.filename += ".json"
 
     filepath = os.path.join(state.base_directory, request.filename)
+    _validate_path_within_base(filepath)
 
     try:
         with open(filepath, "w") as f:
@@ -796,6 +832,8 @@ async def load_session(request: SessionLoadRequest) -> ProtocolState:
     filepath = request.filename
     if not os.path.isabs(filepath):
         filepath = os.path.join(_base_directory, filepath)
+
+    _validate_path_within_base(filepath)
 
     if not os.path.exists(filepath):
         raise HTTPException(status_code=404, detail=f"Session file not found: {filepath}")

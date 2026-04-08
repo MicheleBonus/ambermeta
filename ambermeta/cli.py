@@ -5,9 +5,8 @@ import csv
 import json
 import os
 import re
-import statistics
 import sys
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, List, Optional
 
 from ambermeta.logging_config import configure_logging, get_logger
 from ambermeta.protocol import (
@@ -194,30 +193,17 @@ def _suggest_stage_role(name: str) -> str:
     """Suggest a stage role based on the stage name."""
     name_lower = name.lower()
 
-    if any(x in name_lower for x in ("min", "minim", "em")):
+    if re.search(r'(?:^|[_.\-])(?:min|minim|em)(?:[_.\-]|$)', name_lower):
         return "minimization"
-    if any(x in name_lower for x in ("heat", "warm", "therm")):
+    if re.search(r'(?:^|[_.\-])(?:heat|warm|therm)(?:[_.\-]|$)', name_lower):
         return "heating"
-    if any(x in name_lower for x in ("equil", "nvt", "npt")):
+    if re.search(r'(?:^|[_.\-])(?:equil|nvt|npt)(?:[_.\-]|$)', name_lower):
         return "equilibration"
-    if any(x in name_lower for x in ("prod", "md", "run")):
+    if re.search(r'(?:^|[_.\-])(?:prod|md|run)(?:[_.\-]|$)', name_lower):
         return "production"
 
     return ""
 
-
-def _format_avg_std(values: Iterable[float], unit: str, precision: int = 3) -> Optional[str]:
-    data = [float(v) for v in values if isinstance(v, (int, float))]
-    if not data:
-        return None
-
-    avg = statistics.mean(data)
-    suffix = f" {unit}" if unit else ""
-    if len(data) == 1:
-        return f"{avg:.{precision}f}{suffix}"
-
-    stdev = statistics.stdev(data)
-    return f"{avg:.{precision}f} ± {stdev:.{precision}f}{suffix}"
 
 
 def _print_protocol(protocol: SimulationProtocol, verbose: bool = False) -> None:
@@ -653,7 +639,7 @@ _ambermeta_completion() {
             COMPREPLY=( $(compgen -W "--help" -- "$cur") )
             ;;
         gui)
-            COMPREPLY=( $(compgen -W "--help --host --port --reload --open-browser" -- "$cur") )
+            COMPREPLY=( $(compgen -W "--help --host --port --no-browser" -- "$cur") )
             ;;
         completion)
             COMPREPLY=( $(compgen -W "--help bash zsh fish" -- "$cur") )
@@ -707,7 +693,7 @@ _ambermeta() {
           _arguments '--output[Manifest output filename]:file:_files' '--template[Template complexity]:template:(minimal standard comprehensive)' '--auto[Auto-generate grouped stages]' '--format[Manifest format]:format:(yaml json toml csv)' '--validate[Validate discovered files after writing manifest]' '--dry-run[Preview discovery without writing]' '--force[Overwrite existing output]' '*:path:_files'
           ;;
         gui)
-          _arguments '--host[Host interface]' '--port[Port number]' '--reload[Enable autoreload]' '--open-browser[Open browser after server starts]' '*:path:_files'
+          _arguments '--host[Host interface]' '--port[Port number]' '--no-browser[Do not open browser after server starts]' '*:path:_files'
           ;;
         completion)
           _arguments '1:shell:(bash zsh fish)'
@@ -763,8 +749,7 @@ complete -c ambermeta -n "__fish_seen_subcommand_from init" -l force -d "Overwri
 
 complete -c ambermeta -n "__fish_seen_subcommand_from gui" -l host -d "Host interface"
 complete -c ambermeta -n "__fish_seen_subcommand_from gui" -l port -d "Port"
-complete -c ambermeta -n "__fish_seen_subcommand_from gui" -l reload -d "Enable autoreload"
-complete -c ambermeta -n "__fish_seen_subcommand_from gui" -l open-browser -d "Open browser on startup"
+complete -c ambermeta -n "__fish_seen_subcommand_from gui" -l no-browser -d "Do not open browser on startup"
 
 complete -c ambermeta -n "__fish_seen_subcommand_from completion" -a "bash zsh fish"
 ''',
@@ -839,6 +824,9 @@ def _init_command(args: argparse.Namespace) -> int:
         if getattr(args, "validate", False):
             _run_init_validation_summary(directory, stage_candidates, discovered_files)
         return 0
+
+    if hasattr(args, 'format') and args.format and args.format != "yaml" and not args.auto:
+        print(Colors.warning("WARNING: --format is only applied in --auto mode. Output will be YAML."))
 
     # Generate manifest content
     if args.template == "minimal":
@@ -1801,7 +1789,7 @@ def main(argv: List[str] | None = None) -> int:
     configure_logging(
         level=log_level,
         log_file=args.log_file,
-        format_style="verbose" if args.log_level == "DEBUG" else "default",
+        format_style="verbose" if log_level == "DEBUG" else "default",
     )
 
     if args.command == "plan":
