@@ -103,3 +103,13 @@ def test_discovery_strict_raises(tmp_path, monkeypatch):
     monkeypatch.setattr(MdinParser, "parse", boom)
     with pytest.raises(AmberMetaError):
         auto_discover(str(tmp_path), recursive=True, strict=True)
+
+
+def test_listdir_permission_denied_does_not_crash(tmp_path, monkeypatch):
+    (tmp_path / "prod_001.mdin").write_text("&cntrl\n/\n")
+
+    def denied(path, *a, **k):
+        raise PermissionError(f"denied: {path}")
+    monkeypatch.setattr(os, "listdir", denied)
+    protocol = auto_discover(str(tmp_path), recursive=False)
+    assert protocol is not None

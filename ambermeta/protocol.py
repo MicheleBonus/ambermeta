@@ -1219,7 +1219,11 @@ def auto_detect_restart_chain(
     ext_map = {".rst", ".rst7", ".ncrst", ".restrt", ".inpcrd"}
 
     # Scan for restart files
-    for fname in os.listdir(directory):
+    try:
+        restart_entries = os.listdir(directory)
+    except (PermissionError, OSError):
+        restart_entries = []
+    for fname in restart_entries:
         full_path = os.path.join(directory, fname)
         if not os.path.isfile(full_path):
             continue
@@ -1328,14 +1332,20 @@ def smart_group_files(
     discovered: List[tuple[str, str]] = []
 
     if recursive:
-        for root, _, filenames in os.walk(directory):
+        # onerror keeps an inaccessible subdirectory from propagating out of
+        # the walk; the default behaviour skips it, this makes that explicit.
+        for root, _, filenames in os.walk(directory, onerror=lambda e: None):
             for fname in filenames:
                 full_path = os.path.join(root, fname)
                 if os.path.isfile(full_path):
                     rel_path = os.path.relpath(full_path, directory)
                     discovered.append((rel_path, full_path))
     else:
-        for fname in os.listdir(directory):
+        try:
+            entries = os.listdir(directory)
+        except (PermissionError, OSError):
+            entries = []
+        for fname in entries:
             full_path = os.path.join(directory, fname)
             if os.path.isfile(full_path):
                 discovered.append((fname, full_path))
