@@ -926,6 +926,18 @@ def _print_auto_stage_preview(stage_candidates: List[Dict[str, Any]], discovered
                 print(f"     {kind}: {value}")
 
 
+def _toml_escape(value: Any) -> str:
+    """Escape a value for a TOML basic string.
+
+    Backslashes must be escaped *before* quotes so a Windows path such as
+    ``C:\\data\\file.prmtop`` produces valid, re-parseable TOML.
+    """
+    s = str(value)
+    s = s.replace("\\", "\\\\")
+    s = s.replace('"', '\\"')
+    return s
+
+
 def _write_manifest_payload(output_path: str, payload: Dict[str, Any], manifest_format: str) -> None:
     if manifest_format == "json":
         with open(output_path, "w", encoding="utf-8") as fh:
@@ -944,8 +956,7 @@ def _write_manifest_payload(output_path: str, payload: Dict[str, Any], manifest_
         for stage in payload.get("stages", []):
             lines.append("[[stages]]")
             for key, value in stage.items():
-                escaped = str(value).replace('"', '\\"')
-                lines.append(f'{key} = "{escaped}"')
+                lines.append(f'{key} = "{_toml_escape(value)}"')
             lines.append("")
         with open(output_path, "w", encoding="utf-8") as fh:
             fh.write("\n".join(lines).rstrip() + "\n")
