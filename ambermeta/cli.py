@@ -1287,15 +1287,16 @@ def _plan_command(args: argparse.Namespace) -> int:
         )
         # Apply auto-detect restarts if requested (after manifest loading)
         if auto_detect_restarts:
-            from ambermeta.protocol import auto_detect_restart_chain
+            from ambermeta.protocol import auto_detect_restart_chain, _safe_parse
             from ambermeta.parsers.inpcrd import InpcrdParser
             auto_restarts = auto_detect_restart_chain(protocol.stages, directory)
             for stage in protocol.stages:
                 if stage.name in auto_restarts and not stage.restart_path:
                     rst_path = auto_restarts[stage.name]
-                    stage.inpcrd = InpcrdParser(rst_path).parse()
-                    stage.restart_path = rst_path
-                    stage.validation.append(f"INFO: restart file auto-detected: {rst_path}")
+                    stage.inpcrd = _safe_parse(InpcrdParser, rst_path, "inpcrd", stage, strict=strict)
+                    if stage.inpcrd is not None:
+                        stage.restart_path = rst_path
+                        stage.validation.append(f"INFO: restart file auto-detected: {rst_path}")
     elif args.recursive:
         # Recursive mode: auto-discover files without interactive prompts
         print(f"\nScanning {directory} recursively for simulation files...")

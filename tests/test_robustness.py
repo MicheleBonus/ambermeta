@@ -1,5 +1,15 @@
+import json
+import os
+
+import pytest
+
+from ambermeta.cli import main
 from ambermeta.errors import AmberMetaError, FileLoadError, classify_exception
-from ambermeta.protocol import SimulationStage
+from ambermeta.protocol import (
+    SimulationStage,
+    auto_discover,
+    load_protocol_from_manifest,
+)
 
 
 def test_fileloaderror_fields():
@@ -27,14 +37,6 @@ def test_stage_degraded_property():
     assert stage.degraded is True
 
 
-import json
-import os
-
-import pytest
-
-from ambermeta.protocol import load_protocol_from_manifest
-
-
 def _write(p, text=""):
     with open(p, "w") as fh:
         fh.write(text)
@@ -53,6 +55,10 @@ def test_manifest_bad_mdout_keeps_stage(tmp_path):
     protocol = load_protocol_from_manifest(str(mpath), directory=str(tmp_path))
     assert len(protocol.stages) == 1
     stage = protocol.stages[0]
+    # The mdout parser is intentionally lenient (it returns an object with
+    # warnings rather than raising on garbage), so this asserts the pipeline
+    # does not crash and the readable files survive — not that a load_error
+    # is recorded. Missing/unreadable raising-parsers are covered separately.
     assert stage.mdin is not None
     assert stage.name == "prod"
 
@@ -83,9 +89,6 @@ def test_manifest_strict_raises_on_missing(tmp_path):
         load_protocol_from_manifest(str(mpath), directory=str(tmp_path), strict=True)
 
 
-from ambermeta.protocol import auto_discover
-
-
 def test_discovery_bad_file_keeps_going(tmp_path):
     (tmp_path / "min.mdin").write_text("&cntrl\n imin=1,\n/\n")
     (tmp_path / "prod_001.mdin").write_text("&cntrl\n nstlim=10, dt=0.002,\n/\n")
@@ -113,9 +116,6 @@ def test_listdir_permission_denied_does_not_crash(tmp_path, monkeypatch):
     monkeypatch.setattr(os, "listdir", denied)
     protocol = auto_discover(str(tmp_path), recursive=False)
     assert protocol is not None
-
-
-from ambermeta.cli import main
 
 
 def test_cli_plan_degraded_exits_zero(tmp_path, capsys):

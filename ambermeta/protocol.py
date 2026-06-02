@@ -878,8 +878,13 @@ def _safe_parse(parser_cls, path, kind, stage, *, strict):
     """Parse one file, isolating failures unless strict.
 
     On success: return the parsed metadata object.
-    On failure (graceful): record a FileLoadError on ``stage`` and return None.
+    On failure (graceful): record a FileLoadError on ``stage`` (when given) and
+    return None.
     On failure (strict): raise AmberMetaError.
+
+    ``stage`` may be None for files not tied to a single stage (e.g. a global
+    topology applied across stages); in that case no FileLoadError is recorded
+    and the caller decides how to surface the skip.
     """
     try:
         return parser_cls(path).parse()
@@ -887,10 +892,11 @@ def _safe_parse(parser_cls, path, kind, stage, *, strict):
             UnicodeDecodeError, ValueError) as exc:
         if strict:
             raise AmberMetaError(f"Failed to parse {kind} '{path}': {exc}") from exc
-        stage.load_errors.append(
-            FileLoadError(kind=kind, path=path,
-                          error_type=classify_exception(exc), message=str(exc))
-        )
+        if stage is not None:
+            stage.load_errors.append(
+                FileLoadError(kind=kind, path=path,
+                              error_type=classify_exception(exc), message=str(exc))
+            )
         return None
 
 
@@ -1434,17 +1440,18 @@ def auto_discover(
             for stage in stages:
                 if stage.name in auto_restarts and not stage.restart_path:
                     rst_path = auto_restarts[stage.name]
-                    stage.inpcrd = InpcrdParser(rst_path).parse()
-                    stage.restart_path = rst_path
-                    stage.validation.append(f"INFO: restart file auto-detected: {rst_path}")
+                    stage.inpcrd = _safe_parse(InpcrdParser, rst_path, "inpcrd", stage, strict=strict)
+                    if stage.inpcrd is not None:
+                        stage.restart_path = rst_path
+                        stage.validation.append(f"INFO: restart file auto-detected: {rst_path}")
 
         # Apply global prmtop to stages that don't have one
         if global_prmtop:
             global_prmtop_path = os.path.join(directory, global_prmtop) if not os.path.isabs(global_prmtop) else global_prmtop
             if os.path.exists(global_prmtop_path):
-                global_prmtop_data = PrmtopParser(global_prmtop_path).parse()
+                global_prmtop_data = _safe_parse(PrmtopParser, global_prmtop_path, "prmtop", None, strict=strict)
                 for stage in stages:
-                    if not stage.prmtop:
+                    if not stage.prmtop and global_prmtop_data is not None:
                         stage.prmtop = global_prmtop_data
                         stage.validation.append(f"INFO: using global prmtop: {global_prmtop}")
 
@@ -1452,7 +1459,7 @@ def auto_discover(
         if hmr_prmtop:
             hmr_prmtop_path = os.path.join(directory, hmr_prmtop) if not os.path.isabs(hmr_prmtop) else hmr_prmtop
             if os.path.exists(hmr_prmtop_path):
-                hmr_prmtop_data = PrmtopParser(hmr_prmtop_path).parse()
+                hmr_prmtop_data = _safe_parse(PrmtopParser, hmr_prmtop_path, "prmtop", None, strict=strict)
                 for stage in stages:
                     # Check if stage uses large timestep (HMR typically requires dt >= 0.004 ps)
                     dt = None
@@ -1461,7 +1468,7 @@ def auto_discover(
                     elif stage.mdout and stage.mdout.details and hasattr(stage.mdout.details, 'dt'):
                         dt = stage.mdout.details.dt
 
-                    if dt is not None and dt >= 0.004:
+                    if dt is not None and dt >= 0.004 and hmr_prmtop_data is not None:
                         stage.prmtop = hmr_prmtop_data
                         stage.validation.append(f"INFO: using HMR prmtop (dt={dt} ps): {hmr_prmtop}")
 
@@ -1565,17 +1572,18 @@ def auto_discover(
         for stage in stages:
             if stage.name in auto_restarts and not stage.restart_path:
                 rst_path = auto_restarts[stage.name]
-                stage.inpcrd = InpcrdParser(rst_path).parse()
-                stage.restart_path = rst_path
-                stage.validation.append(f"INFO: restart file auto-detected: {rst_path}")
+                stage.inpcrd = _safe_parse(InpcrdParser, rst_path, "inpcrd", stage, strict=strict)
+                if stage.inpcrd is not None:
+                    stage.restart_path = rst_path
+                    stage.validation.append(f"INFO: restart file auto-detected: {rst_path}")
 
     # Apply global prmtop to stages that don't have one
     if global_prmtop:
         global_prmtop_path = os.path.join(directory, global_prmtop) if not os.path.isabs(global_prmtop) else global_prmtop
         if os.path.exists(global_prmtop_path):
-            global_prmtop_data = PrmtopParser(global_prmtop_path).parse()
+            global_prmtop_data = _safe_parse(PrmtopParser, global_prmtop_path, "prmtop", None, strict=strict)
             for stage in stages:
-                if not stage.prmtop:
+                if not stage.prmtop and global_prmtop_data is not None:
                     stage.prmtop = global_prmtop_data
                     stage.validation.append(f"INFO: using global prmtop: {global_prmtop}")
 
