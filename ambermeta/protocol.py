@@ -839,6 +839,7 @@ def _normalize_manifest(manifest: Dict[str, Dict[str, str]] | List[Dict[str, str
 def validate_manifest(
     manifest: Dict[str, Dict[str, str]] | List[Dict[str, str]],
     directory: Optional[str] = None,
+    strict: bool = True,
 ) -> None:
     kinds = {"prmtop", "inpcrd", "mdin", "mdout", "mdcrd"}
     missing: List[str] = []
@@ -867,9 +868,30 @@ def validate_manifest(
             if not os.path.exists(path):
                 missing.append(f"stage '{name}', {kind}: {path}")
 
-    if missing:
+    if missing and strict:
         message = "Manifest references missing files:\n" + "\n".join(missing)
-        raise FileNotFoundError(message)
+        raise AmberMetaError(message)
+    # In graceful mode, missing files are recorded per-file by _safe_parse.
+
+
+def _safe_parse(parser_cls, path, kind, stage, *, strict):
+    """Parse one file, isolating failures unless strict.
+
+    On success: return the parsed metadata object.
+    On failure (graceful): record a FileLoadError on ``stage`` and return None.
+    On failure (strict): raise AmberMetaError.
+    """
+    try:
+        return parser_cls(path).parse()
+    except (FileNotFoundError, PermissionError, OSError,
+            UnicodeDecodeError, ValueError) as exc:
+        if strict:
+            raise AmberMetaError(f"Failed to parse {kind} '{path}': {exc}") from exc
+        stage.load_errors.append(
+            FileLoadError(kind=kind, path=path,
+                          error_type=classify_exception(exc), message=str(exc))
+        )
+        return None
 
 
 def _manifest_to_stages(
@@ -880,6 +902,7 @@ def _manifest_to_stages(
     restart_files: Optional[Dict[str, str]],
     stage_role_rules: Optional[Dict[str, str]] = None,
     progress_callback: Optional[Callable[[str, int, int], None]] = None,
+    strict: bool = False,
 ) -> List[SimulationStage]:
     """Convert manifest entries to SimulationStage objects.
 
@@ -908,7 +931,7 @@ def _manifest_to_stages(
                 compiled_rules.append((re.compile(pattern), role))
             except re.error:
                 compiled_rules.append((re.compile(re.escape(pattern)), role))
-    validate_manifest(manifest, directory)
+    validate_manifest(manifest, directory, strict=strict)
 
     # Count total entries for progress reporting
     entries = list(_normalize_manifest(manifest))
@@ -950,20 +973,21 @@ def _manifest_to_stages(
                     break
 
         if "prmtop" in resolved:
-            stage.prmtop = PrmtopParser(resolved["prmtop"]).parse()
+            stage.prmtop = _safe_parse(PrmtopParser, resolved["prmtop"], "prmtop", stage, strict=strict)
         if "mdin" in resolved:
-            stage.mdin = MdinParser(resolved["mdin"]).parse()
-            inferred_role = getattr(stage.mdin.details, "stage_role", None)
+            stage.mdin = _safe_parse(MdinParser, resolved["mdin"], "mdin", stage, strict=strict)
+            inferred_role = getattr(getattr(stage.mdin, "details", None), "stage_role", None) if stage.mdin else None
             if not stage.stage_role and inferred_role:
                 stage.stage_role = inferred_role
                 stage.validation.append(f"INFO: stage_role '{inferred_role}' inferred from mdin file")
         if "mdout" in resolved:
-            stage.mdout = MdoutParser(resolved["mdout"]).parse()
+            stage.mdout = _safe_parse(MdoutParser, resolved["mdout"], "mdout", stage, strict=strict)
         if "mdcrd" in resolved:
-            stage.mdcrd = MdcrdParser(resolved["mdcrd"]).parse()
+            stage.mdcrd = _safe_parse(MdcrdParser, resolved["mdcrd"], "mdcrd", stage, strict=strict)
         if "inpcrd" in resolved:
-            stage.inpcrd = InpcrdParser(resolved["inpcrd"]).parse()
-            stage.restart_path = resolved["inpcrd"]
+            stage.inpcrd = _safe_parse(InpcrdParser, resolved["inpcrd"], "inpcrd", stage, strict=strict)
+            if stage.inpcrd is not None:
+                stage.restart_path = resolved["inpcrd"]
 
         restart_source = None
         if restart_files:
@@ -973,8 +997,9 @@ def _manifest_to_stages(
                     break
 
         if restart_source and "inpcrd" not in resolved:
-            stage.inpcrd = InpcrdParser(restart_source).parse()
-            stage.restart_path = restart_source
+            stage.inpcrd = _safe_parse(InpcrdParser, restart_source, "inpcrd", stage, strict=strict)
+            if stage.inpcrd is not None:
+                stage.restart_path = restart_source
 
         if include_stems and stage.name not in include_stems:
             continue
@@ -1380,6 +1405,7 @@ def auto_discover(
     hmr_prmtop: Optional[str] = None,
     allow_unexpected_gaps: bool = False,
     progress_callback: Optional[Callable[[str, int, int], None]] = None,
+    strict: bool = False,
 ) -> SimulationProtocol:
     if manifest is not None:
         stages = _manifest_to_stages(
@@ -1390,6 +1416,7 @@ def auto_discover(
             restart_files=restart_files,
             stage_role_rules=grouping_rules,
             progress_callback=progress_callback,
+            strict=strict,
         )
         # Apply auto restart detection if requested
         if auto_detect_restarts:
@@ -1709,6 +1736,7 @@ def load_protocol_from_manifest(
     global_prmtop: Optional[str] = None,
     hmr_prmtop: Optional[str] = None,
     progress_callback: Optional[Callable[[str, int, int], None]] = None,
+    strict: bool = False,
 ) -> SimulationProtocol:
     """Build a protocol using a manifest file.
 
@@ -1817,6 +1845,7 @@ def load_protocol_from_manifest(
         hmr_prmtop=effective_hmr_prmtop,
         allow_unexpected_gaps=manifest_allow_unexpected_gaps,
         progress_callback=progress_callback,
+        strict=strict,
     )
 
 

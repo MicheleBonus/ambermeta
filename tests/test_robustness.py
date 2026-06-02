@@ -25,3 +25,59 @@ def test_stage_degraded_property():
     assert stage.degraded is False
     stage.load_errors.append(FileLoadError("mdout", "/x", "missing", "nope"))
     assert stage.degraded is True
+
+
+import json
+import os
+
+import pytest
+
+from ambermeta.protocol import load_protocol_from_manifest
+
+
+def _write(p, text=""):
+    with open(p, "w") as fh:
+        fh.write(text)
+
+
+def test_manifest_bad_mdout_keeps_stage(tmp_path):
+    prmtop = tmp_path / "s.prmtop"; _write(prmtop, "%VERSION\n%FLAG TITLE\n")
+    mdin = tmp_path / "s.mdin"; _write(mdin, "&cntrl\n nstlim=1000, dt=0.002,\n/\n")
+    mdout = tmp_path / "s.mdout"
+    with open(mdout, "wb") as fh:
+        fh.write(b"\x00\x01\x02not a real mdout")
+    manifest = {"prod": {"prmtop": str(prmtop), "mdin": str(mdin), "mdout": str(mdout)}}
+    mpath = tmp_path / "manifest.json"
+    _write(mpath, json.dumps(manifest))
+
+    protocol = load_protocol_from_manifest(str(mpath), directory=str(tmp_path))
+    assert len(protocol.stages) == 1
+    stage = protocol.stages[0]
+    assert stage.mdin is not None
+    assert stage.name == "prod"
+
+
+def test_manifest_missing_file_graceful(tmp_path):
+    # A missing prmtop (a parser that raises on absence) must be recorded as a
+    # per-file load error and must NOT abort building the stage.
+    mdin = tmp_path / "s.mdin"; _write(mdin, "&cntrl\n nstlim=10, dt=0.002,\n/\n")
+    manifest = {"prod": {"mdin": str(mdin), "prmtop": str(tmp_path / "absent.prmtop")}}
+    mpath = tmp_path / "manifest.json"
+    _write(mpath, json.dumps(manifest))
+
+    protocol = load_protocol_from_manifest(str(mpath), directory=str(tmp_path))
+    assert len(protocol.stages) == 1
+    stage = protocol.stages[0]
+    assert stage.mdin is not None  # readable file survived
+    errs = stage.load_errors
+    assert any(e.kind == "prmtop" and e.error_type == "missing" for e in errs)
+
+
+def test_manifest_strict_raises_on_missing(tmp_path):
+    prmtop = tmp_path / "s.prmtop"; _write(prmtop, "%VERSION\n")
+    manifest = {"prod": {"prmtop": str(prmtop), "mdout": str(tmp_path / "absent.mdout")}}
+    mpath = tmp_path / "manifest.json"
+    _write(mpath, json.dumps(manifest))
+
+    with pytest.raises(AmberMetaError):
+        load_protocol_from_manifest(str(mpath), directory=str(tmp_path), strict=True)
