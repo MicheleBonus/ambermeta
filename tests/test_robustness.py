@@ -113,3 +113,53 @@ def test_listdir_permission_denied_does_not_crash(tmp_path, monkeypatch):
     monkeypatch.setattr(os, "listdir", denied)
     protocol = auto_discover(str(tmp_path), recursive=False)
     assert protocol is not None
+
+
+from ambermeta.cli import main
+
+
+def test_cli_plan_degraded_exits_zero(tmp_path, capsys):
+    (tmp_path / "prod_001.mdin").write_text("&cntrl\n nstlim=10, dt=0.002,\n/\n")
+    (tmp_path / "prod_001.mdout").write_bytes(b"\x00\x01garbage")
+    rc = main(["plan", str(tmp_path), "--recursive"])
+    assert rc == 0
+
+
+def test_cli_plan_strict_exits_one(tmp_path, monkeypatch, capsys):
+    (tmp_path / "prod_001.mdin").write_text("&cntrl\n/\n")
+    from ambermeta.parsers.mdin import MdinParser
+
+    def boom(self):
+        raise ValueError("synthetic")
+    monkeypatch.setattr(MdinParser, "parse", boom)
+    rc = main(["plan", str(tmp_path), "--recursive", "--strict"])
+    captured = capsys.readouterr()
+    assert rc == 1
+    assert "Traceback" not in captured.err
+
+
+def test_main_converts_unexpected_exception_cleanly(tmp_path, monkeypatch, capsys):
+    import ambermeta.cli as cli
+
+    def boom(args):
+        raise RuntimeError("kaboom internal")
+    monkeypatch.setattr(cli, "_info_command", boom)
+    f = tmp_path / "x.prmtop"; f.write_text("%VERSION\n")
+    rc = cli.main(["info", str(f)])
+    captured = capsys.readouterr()
+    assert rc == 1
+    assert "Traceback" not in captured.out and "Traceback" not in captured.err
+    assert "Unexpected error" in (captured.out + captured.err)
+
+
+def test_main_converts_ambermetaerror_cleanly(tmp_path, monkeypatch, capsys):
+    import ambermeta.cli as cli
+
+    def boom(args):
+        raise AmberMetaError("manifest references missing files")
+    monkeypatch.setattr(cli, "_plan_command", boom)
+    rc = cli.main(["plan", str(tmp_path), "--recursive"])
+    captured = capsys.readouterr()
+    assert rc == 1
+    assert "manifest references missing files" in (captured.out + captured.err)
+    assert "Traceback" not in (captured.out + captured.err)

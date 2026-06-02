@@ -8,6 +8,7 @@ import re
 import sys
 from typing import Any, Dict, List, Optional
 
+from ambermeta.errors import AmberMetaError
 from ambermeta.logging_config import configure_logging, get_logger
 from ambermeta.protocol import (
     SimulationProtocol,
@@ -1238,6 +1239,7 @@ def _plan_command(args: argparse.Namespace) -> int:
     auto_detect_restarts = getattr(args, "auto_detect_restarts", False)
     global_prmtop = getattr(args, "prmtop", None)
     interactive = getattr(args, "interactive", False)
+    strict = getattr(args, "strict", False)
 
     if not any((args.manifest, args.recursive, interactive)):
         print("ERROR: Select a planning mode.")
@@ -1269,6 +1271,7 @@ def _plan_command(args: argparse.Namespace) -> int:
             expand_env=expand_env,
             global_prmtop=global_prmtop,
             progress_callback=progress_reporter,
+            strict=strict,
         )
         # Apply auto-detect restarts if requested (after manifest loading)
         if auto_detect_restarts:
@@ -1292,6 +1295,7 @@ def _plan_command(args: argparse.Namespace) -> int:
             auto_detect_restarts=auto_detect_restarts,
             pattern_filter=pattern_filter,
             global_prmtop=global_prmtop,
+            strict=strict,
         )
         if not protocol.stages:
             print("No simulation files discovered; exiting.")
@@ -1317,7 +1321,19 @@ def _plan_command(args: argparse.Namespace) -> int:
             auto_detect_restarts=auto_detect_restarts,
             pattern_filter=pattern_filter,
             global_prmtop=global_prmtop,
+            strict=strict,
         )
+
+    degraded = [s for s in protocol.stages if s.degraded]
+    if degraded:
+        total_errors = sum(len(s.load_errors) for s in degraded)
+        print(
+            f"\n{Colors.warning('WARNING')}: {len(degraded)} stage(s) had "
+            f"{total_errors} unreadable file(s):"
+        )
+        for stage in degraded:
+            for err in stage.load_errors:
+                print(f"  - {stage.name}: {err.kind} ({err.error_type}) {err.path}")
 
     _print_protocol(protocol, verbose=args.verbose)
 
@@ -1564,6 +1580,12 @@ For documentation, visit: https://github.com/MicheleBonus/ambermeta
         help="Skip continuity checks between consecutive stages",
     )
     plan_parser.add_argument(
+        "--strict",
+        action="store_true",
+        help="Abort on the first unreadable/malformed input file instead of "
+             "skipping it. Default is to skip the file and continue.",
+    )
+    plan_parser.add_argument(
         "--recursive",
         action="store_true",
         help="Auto-discover simulation files recursively (no interactive prompts). "
@@ -1792,23 +1814,41 @@ def main(argv: List[str] | None = None) -> int:
         format_style="verbose" if log_level == "DEBUG" else "default",
     )
 
-    if args.command == "plan":
-        return _plan_command(args)
-    if args.command == "validate":
-        return _validate_command(args)
-    if args.command == "info":
-        return _info_command(args)
-    if args.command == "init":
-        return _init_command(args)
-    if args.command == "tui":
-        return _tui_command(args)
-    if args.command == "gui":
-        return _gui_command(args)
-    if args.command == "completion":
-        return _completion_command(args)
+    def _dispatch() -> int:
+        if args.command == "plan":
+            return _plan_command(args)
+        if args.command == "validate":
+            return _validate_command(args)
+        if args.command == "info":
+            return _info_command(args)
+        if args.command == "init":
+            return _init_command(args)
+        if args.command == "tui":
+            return _tui_command(args)
+        if args.command == "gui":
+            return _gui_command(args)
+        if args.command == "completion":
+            return _completion_command(args)
 
-    parser.print_help()
-    return 1
+        parser.print_help()
+        return 1
+
+    try:
+        return _dispatch()
+    except AmberMetaError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 1
+    except KeyboardInterrupt:
+        print("Interrupted.", file=sys.stderr)
+        return 130
+    except Exception as exc:  # noqa: BLE001 - top-level guard
+        logger.debug("Unhandled exception", exc_info=True)
+        print(
+            f"Unexpected error ({type(exc).__name__}: {exc}). "
+            "Re-run with --log-level DEBUG for the full traceback.",
+            file=sys.stderr,
+        )
+        return 1
 
 
 if __name__ == "__main__":
