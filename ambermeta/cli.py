@@ -8,6 +8,7 @@ import re
 import sys
 from typing import Any, Dict, List, Optional
 
+from ambermeta.errors import AmberMetaError
 from ambermeta.logging_config import configure_logging, get_logger
 from ambermeta.protocol import (
     SimulationProtocol,
@@ -624,7 +625,7 @@ _ambermeta_completion() {
 
     case "${COMP_WORDS[1]}" in
         plan)
-            COMPREPLY=( $(compgen -W "--help -m --manifest --skip-cross-stage-validation --recursive --interactive -v --verbose --summary-path --summary-format --methods-summary-path --stats-csv --no-expand-env --pattern --auto-detect-restarts --prmtop" -- "$cur") )
+            COMPREPLY=( $(compgen -W "--help -m --manifest --skip-cross-stage-validation --strict --recursive --interactive -v --verbose --summary-path --summary-format --methods-summary-path --stats-csv --no-expand-env --pattern --auto-detect-restarts --prmtop" -- "$cur") )
             ;;
         validate)
             COMPREPLY=( $(compgen -W "--help --strict --format" -- "$cur") )
@@ -681,7 +682,7 @@ _ambermeta() {
     args)
       case "$words[2]" in
         plan)
-          _arguments '--manifest[Path to manifest file]:file:_files' '--recursive[Auto-discover files]' '--interactive[Prompt for stages]' '--summary-path[Write protocol summary]:file:_files' '--summary-format[Summary format]:format:(json yaml)' '--methods-summary-path[Write methods summary]:file:_files' '--stats-csv[Write stats CSV]:file:_files' '--pattern[Regex file filter]:pattern:' '--prmtop[Global topology file]:file:_files' '--skip-cross-stage-validation[Skip continuity checks]' '--no-expand-env[Disable env var expansion]' '--auto-detect-restarts[Link restarts automatically]' '(-v --verbose)'{-v,--verbose}'[Show detailed stage metadata]' '*:path:_files'
+          _arguments '--manifest[Path to manifest file]:file:_files' '--recursive[Auto-discover files]' '--interactive[Prompt for stages]' '--summary-path[Write protocol summary]:file:_files' '--summary-format[Summary format]:format:(json yaml)' '--methods-summary-path[Write methods summary]:file:_files' '--stats-csv[Write stats CSV]:file:_files' '--pattern[Regex file filter]:pattern:' '--prmtop[Global topology file]:file:_files' '--skip-cross-stage-validation[Skip continuity checks]' '--strict[Abort on first unreadable file]' '--no-expand-env[Disable env var expansion]' '--auto-detect-restarts[Link restarts automatically]' '(-v --verbose)'{-v,--verbose}'[Show detailed stage metadata]' '*:path:_files'
           ;;
         validate)
           _arguments '--strict[Treat warnings as errors]' '--format[Output format]:format:(text json yaml)' '*:file:_files'
@@ -722,6 +723,7 @@ complete -c ambermeta -l log-file -d "Write logs to a file"
 
 complete -c ambermeta -n "__fish_seen_subcommand_from plan" -l manifest -d "Path to a YAML or JSON manifest"
 complete -c ambermeta -n "__fish_seen_subcommand_from plan" -l skip-cross-stage-validation -d "Skip continuity checks"
+complete -c ambermeta -n "__fish_seen_subcommand_from plan" -l strict -d "Abort on first unreadable file"
 complete -c ambermeta -n "__fish_seen_subcommand_from plan" -l recursive -d "Auto-discover simulation files recursively"
 complete -c ambermeta -n "__fish_seen_subcommand_from plan" -l interactive -d "Enable interactive prompt mode"
 complete -c ambermeta -n "__fish_seen_subcommand_from plan" -s v -l verbose -d "Show detailed metadata"
@@ -925,6 +927,18 @@ def _print_auto_stage_preview(stage_candidates: List[Dict[str, Any]], discovered
                 print(f"     {kind}: {value}")
 
 
+def _toml_escape(value: Any) -> str:
+    """Escape a value for a TOML basic string.
+
+    Backslashes must be escaped *before* quotes so a Windows path such as
+    ``C:\\data\\file.prmtop`` produces valid, re-parseable TOML.
+    """
+    s = str(value)
+    s = s.replace("\\", "\\\\")
+    s = s.replace('"', '\\"')
+    return s
+
+
 def _write_manifest_payload(output_path: str, payload: Dict[str, Any], manifest_format: str) -> None:
     if manifest_format == "json":
         with open(output_path, "w", encoding="utf-8") as fh:
@@ -943,8 +957,7 @@ def _write_manifest_payload(output_path: str, payload: Dict[str, Any], manifest_
         for stage in payload.get("stages", []):
             lines.append("[[stages]]")
             for key, value in stage.items():
-                escaped = str(value).replace('"', '\\"')
-                lines.append(f'{key} = "{escaped}"')
+                lines.append(f'{key} = "{_toml_escape(value)}"')
             lines.append("")
         with open(output_path, "w", encoding="utf-8") as fh:
             fh.write("\n".join(lines).rstrip() + "\n")
@@ -1238,6 +1251,7 @@ def _plan_command(args: argparse.Namespace) -> int:
     auto_detect_restarts = getattr(args, "auto_detect_restarts", False)
     global_prmtop = getattr(args, "prmtop", None)
     interactive = getattr(args, "interactive", False)
+    strict = getattr(args, "strict", False)
 
     if not any((args.manifest, args.recursive, interactive)):
         print("ERROR: Select a planning mode.")
@@ -1269,18 +1283,20 @@ def _plan_command(args: argparse.Namespace) -> int:
             expand_env=expand_env,
             global_prmtop=global_prmtop,
             progress_callback=progress_reporter,
+            strict=strict,
         )
         # Apply auto-detect restarts if requested (after manifest loading)
         if auto_detect_restarts:
-            from ambermeta.protocol import auto_detect_restart_chain
+            from ambermeta.protocol import auto_detect_restart_chain, _safe_parse
             from ambermeta.parsers.inpcrd import InpcrdParser
             auto_restarts = auto_detect_restart_chain(protocol.stages, directory)
             for stage in protocol.stages:
                 if stage.name in auto_restarts and not stage.restart_path:
                     rst_path = auto_restarts[stage.name]
-                    stage.inpcrd = InpcrdParser(rst_path).parse()
-                    stage.restart_path = rst_path
-                    stage.validation.append(f"INFO: restart file auto-detected: {rst_path}")
+                    stage.inpcrd = _safe_parse(InpcrdParser, rst_path, "inpcrd", stage, strict=strict)
+                    if stage.inpcrd is not None:
+                        stage.restart_path = rst_path
+                        stage.validation.append(f"INFO: restart file auto-detected: {rst_path}")
     elif args.recursive:
         # Recursive mode: auto-discover files without interactive prompts
         print(f"\nScanning {directory} recursively for simulation files...")
@@ -1292,6 +1308,7 @@ def _plan_command(args: argparse.Namespace) -> int:
             auto_detect_restarts=auto_detect_restarts,
             pattern_filter=pattern_filter,
             global_prmtop=global_prmtop,
+            strict=strict,
         )
         if not protocol.stages:
             print("No simulation files discovered; exiting.")
@@ -1317,7 +1334,19 @@ def _plan_command(args: argparse.Namespace) -> int:
             auto_detect_restarts=auto_detect_restarts,
             pattern_filter=pattern_filter,
             global_prmtop=global_prmtop,
+            strict=strict,
         )
+
+    degraded = [s for s in protocol.stages if s.degraded]
+    if degraded:
+        total_errors = sum(len(s.load_errors) for s in degraded)
+        print(
+            f"\n{Colors.warning('WARNING')}: {len(degraded)} stage(s) had "
+            f"{total_errors} unreadable file(s):"
+        )
+        for stage in degraded:
+            for err in stage.load_errors:
+                print(f"  - {stage.name}: {err.kind} ({err.error_type}) {err.path}")
 
     _print_protocol(protocol, verbose=args.verbose)
 
@@ -1564,6 +1593,12 @@ For documentation, visit: https://github.com/MicheleBonus/ambermeta
         help="Skip continuity checks between consecutive stages",
     )
     plan_parser.add_argument(
+        "--strict",
+        action="store_true",
+        help="Abort on the first unreadable/malformed input file instead of "
+             "skipping it. Default is to skip the file and continue.",
+    )
+    plan_parser.add_argument(
         "--recursive",
         action="store_true",
         help="Auto-discover simulation files recursively (no interactive prompts). "
@@ -1792,23 +1827,41 @@ def main(argv: List[str] | None = None) -> int:
         format_style="verbose" if log_level == "DEBUG" else "default",
     )
 
-    if args.command == "plan":
-        return _plan_command(args)
-    if args.command == "validate":
-        return _validate_command(args)
-    if args.command == "info":
-        return _info_command(args)
-    if args.command == "init":
-        return _init_command(args)
-    if args.command == "tui":
-        return _tui_command(args)
-    if args.command == "gui":
-        return _gui_command(args)
-    if args.command == "completion":
-        return _completion_command(args)
+    def _dispatch() -> int:
+        if args.command == "plan":
+            return _plan_command(args)
+        if args.command == "validate":
+            return _validate_command(args)
+        if args.command == "info":
+            return _info_command(args)
+        if args.command == "init":
+            return _init_command(args)
+        if args.command == "tui":
+            return _tui_command(args)
+        if args.command == "gui":
+            return _gui_command(args)
+        if args.command == "completion":
+            return _completion_command(args)
 
-    parser.print_help()
-    return 1
+        parser.print_help()
+        return 1
+
+    try:
+        return _dispatch()
+    except AmberMetaError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 1
+    except KeyboardInterrupt:
+        print("Interrupted.", file=sys.stderr)
+        return 130
+    except Exception as exc:  # noqa: BLE001 - top-level guard
+        logger.debug("Unhandled exception", exc_info=True)
+        print(
+            f"Unexpected error ({type(exc).__name__}: {exc}). "
+            "Re-run with --log-level DEBUG for the full traceback.",
+            file=sys.stderr,
+        )
+        return 1
 
 
 if __name__ == "__main__":
