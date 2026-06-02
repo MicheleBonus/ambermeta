@@ -107,6 +107,7 @@ Key flags:
 - `--pattern`
 - `--auto-detect-restarts`
 - `--skip-cross-stage-validation`
+- `--strict` (abort on the first unreadable/malformed input file; default is to skip it and continue)
 - `--prmtop`
 - `--summary-path`
 - `--summary-format {json,yaml}`
@@ -114,6 +115,14 @@ Key flags:
 - `--stats-csv`
 - `--no-expand-env`
 - `-v, --verbose`
+
+**Handling unreadable files:** By default, `plan` is fault-tolerant. If an input
+file is missing, malformed, or unreadable (permission denied), that file is
+skipped, the error is recorded against its stage, and a summary of skipped files
+is printed; the run still completes and exits `0`. Pass `--strict` to make any
+unreadable file a hard error (clean message, exit `1`, no traceback). A stage
+keeps every file that *did* parse — a corrupt `mdout` does not discard a good
+`prmtop` or `mdin`.
 
 ### `validate`
 Validate one or more files without building a full protocol.
