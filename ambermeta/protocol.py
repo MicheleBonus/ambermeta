@@ -14,6 +14,7 @@ from ambermeta.parsers.mdin import MdinData, MdinParser
 from ambermeta.parsers.mdout import MdoutData, MdoutParser
 from ambermeta.parsers.prmtop import PrmtopData, PrmtopParser
 from ambermeta.legacy_extractors.prmtop import ION_RESNAMES, WATER_RESNAMES
+from ambermeta.errors import AmberMetaError, FileLoadError, classify_exception
 
 try:  # pragma: no cover - optional dependency
     import yaml
@@ -134,6 +135,12 @@ class SimulationStage:
     restart_path: Optional[str] = None
     validation: List[str] = field(default_factory=list)
     continuity: List[str] = field(default_factory=list)
+    load_errors: List[FileLoadError] = field(default_factory=list)
+
+    @property
+    def degraded(self) -> bool:
+        """True when one or more of this stage's files failed to parse."""
+        return bool(self.load_errors)
 
     def validate(self) -> None:
         existing = set(self.validation)
@@ -321,6 +328,8 @@ class SimulationStage:
             "summary": self.summary(),
             "validation": list(self.validation),
             "continuity": list(self.continuity),
+            "degraded": self.degraded,
+            "load_errors": [e.to_dict() for e in self.load_errors],
             "files": {
                 "prmtop": _serialize_metadata(self.prmtop),
                 "inpcrd": _serialize_metadata(self.inpcrd),

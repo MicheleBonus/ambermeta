@@ -14,6 +14,7 @@ from ambermeta.protocol import (
     load_manifest,
     load_protocol_from_manifest,
 )
+from ambermeta.errors import AmberMetaError, FileLoadError
 
 # TUI is optional - only available if textual is installed
 try:
@@ -26,6 +27,8 @@ except ImportError:
 
 __all__ = [
     "__version__",
+    "AmberMetaError",
+    "FileLoadError",
     "SimulationProtocol",
     "SimulationStage",
     "ProtocolBuilder",
