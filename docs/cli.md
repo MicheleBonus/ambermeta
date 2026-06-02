@@ -143,7 +143,7 @@ ambermeta plan [directory] [options]
 <!-- BEGIN_CLI_HELP:plan -->
 ```text
 usage: ambermeta plan [-h] [-m MANIFEST] [--skip-cross-stage-validation]
-                      [--recursive] [--interactive] [-v]
+                      [--strict] [--recursive] [--interactive] [-v]
                       [--summary-path SUMMARY_PATH]
                       [--summary-format {json,yaml}]
                       [--methods-summary-path METHODS_SUMMARY_PATH]
@@ -167,6 +167,9 @@ options:
                         file paths
   --skip-cross-stage-validation
                         Skip continuity checks between consecutive stages
+  --strict              Abort on the first unreadable/malformed input file
+                        instead of skipping it. Default is to skip the file
+                        and continue.
   --recursive           Auto-discover simulation files recursively (no
                         interactive prompts). Files are grouped by stem
                         (filename without extension) and stage roles are
