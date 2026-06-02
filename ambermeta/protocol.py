@@ -1499,21 +1499,22 @@ def auto_discover(
             )
 
         if "prmtop" in file_kinds:
-            stage.prmtop = PrmtopParser(file_kinds["prmtop"]).parse()
+            stage.prmtop = _safe_parse(PrmtopParser, file_kinds["prmtop"], "prmtop", stage, strict=strict)
         if "mdin" in file_kinds:
-            stage.mdin = MdinParser(file_kinds["mdin"]).parse()
+            stage.mdin = _safe_parse(MdinParser, file_kinds["mdin"], "mdin", stage, strict=strict)
             # Try mdin-based inference first
-            inferred_role = getattr(stage.mdin.details, "stage_role", None)
+            inferred_role = getattr(getattr(stage.mdin, "details", None), "stage_role", None) if stage.mdin else None
             if not stage.stage_role and inferred_role:
                 stage.stage_role = inferred_role
                 stage.validation.append(f"INFO: stage_role '{inferred_role}' inferred from mdin file")
         if "mdout" in file_kinds:
-            stage.mdout = MdoutParser(file_kinds["mdout"]).parse()
+            stage.mdout = _safe_parse(MdoutParser, file_kinds["mdout"], "mdout", stage, strict=strict)
         if "mdcrd" in file_kinds:
-            stage.mdcrd = MdcrdParser(file_kinds["mdcrd"]).parse()
+            stage.mdcrd = _safe_parse(MdcrdParser, file_kinds["mdcrd"], "mdcrd", stage, strict=strict)
         if "inpcrd" in file_kinds:
-            stage.inpcrd = InpcrdParser(file_kinds["inpcrd"]).parse()
-            stage.restart_path = file_kinds["inpcrd"]
+            stage.inpcrd = _safe_parse(InpcrdParser, file_kinds["inpcrd"], "inpcrd", stage, strict=strict)
+            if stage.inpcrd is not None:
+                stage.restart_path = file_kinds["inpcrd"]
 
         # Try content-based role inference if still no role
         if not stage.stage_role:
@@ -1542,8 +1543,9 @@ def auto_discover(
                     break
 
         if restart_source:
-            stage.inpcrd = InpcrdParser(restart_source).parse()
-            stage.restart_path = restart_source
+            stage.inpcrd = _safe_parse(InpcrdParser, restart_source, "inpcrd", stage, strict=strict)
+            if stage.inpcrd is not None:
+                stage.restart_path = restart_source
 
         stages.append(stage)
 

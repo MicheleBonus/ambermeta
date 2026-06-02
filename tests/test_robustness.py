@@ -81,3 +81,25 @@ def test_manifest_strict_raises_on_missing(tmp_path):
 
     with pytest.raises(AmberMetaError):
         load_protocol_from_manifest(str(mpath), directory=str(tmp_path), strict=True)
+
+
+from ambermeta.protocol import auto_discover
+
+
+def test_discovery_bad_file_keeps_going(tmp_path):
+    (tmp_path / "min.mdin").write_text("&cntrl\n imin=1,\n/\n")
+    (tmp_path / "prod_001.mdin").write_text("&cntrl\n nstlim=10, dt=0.002,\n/\n")
+    (tmp_path / "prod_001.mdout").write_bytes(b"\x00\x01\x02garbage")
+    protocol = auto_discover(str(tmp_path), recursive=True)
+    assert len(protocol.stages) >= 1
+
+
+def test_discovery_strict_raises(tmp_path, monkeypatch):
+    (tmp_path / "prod_001.mdin").write_text("&cntrl\n nstlim=10,\n/\n")
+    from ambermeta.parsers.mdin import MdinParser
+
+    def boom(self):
+        raise ValueError("synthetic parse failure")
+    monkeypatch.setattr(MdinParser, "parse", boom)
+    with pytest.raises(AmberMetaError):
+        auto_discover(str(tmp_path), recursive=True, strict=True)
