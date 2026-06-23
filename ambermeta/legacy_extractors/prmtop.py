@@ -259,6 +259,9 @@ class PrmtopMetadata:
     hmr_hydrogen_mass_summary: Optional[str] = None
     hmr_detection_method: Optional[str] = None
 
+    # Parser warnings (e.g. incomplete CHARGE/MASS data)
+    warnings: List[str] = field(default_factory=list)
+
 
 def _classify_simulation(md: PrmtopMetadata):
     """
@@ -379,6 +382,11 @@ def extract_prmtop_metadata(filepath: str) -> PrmtopMetadata:
     charges = prmtop.get("CHARGE")
     if charges:
         valid_charges = [c for c in charges if c is not None]
+        if md.natom and len(valid_charges) != md.natom:
+            md.warnings.append(
+                f"CHARGE has {len(valid_charges)} valid of {md.natom} atoms; "
+                "neutrality verdict is uncertain."
+            )
         if valid_charges:
             raw_sum = sum(valid_charges)
             md.total_charge = raw_sum / 18.2223
@@ -388,6 +396,11 @@ def extract_prmtop_metadata(filepath: str) -> PrmtopMetadata:
     masses = prmtop.get("MASS")
     if masses:
         valid_masses = [m for m in masses if m is not None]
+        if md.natom and len(valid_masses) != md.natom:
+            md.warnings.append(
+                f"MASS has {len(valid_masses)} valid of {md.natom} atoms; "
+                "total mass is uncertain."
+            )
         md.total_mass = sum(valid_masses)
 
     atomic_numbers = prmtop.get("ATOMIC_NUMBER")

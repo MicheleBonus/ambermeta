@@ -70,6 +70,20 @@ def test_hmr_detected_without_atomic_number(tmp_path):
     assert md.hmr_detection_method == "atom_name"
 
 
+def test_charge_completeness_warning(tmp_path):
+    from ambermeta.legacy_extractors.prmtop import extract_prmtop_metadata
+    p = tmp_path / "charge.prmtop"
+    # natom=3 but only 2 valid CHARGE tokens (one blank -> None)
+    lines = [
+        "%VERSION x", "%FLAG POINTERS", "%FORMAT(10I8)", f"{3:8d}",
+        "%FLAG CHARGE", "%FORMAT(3E16.8)",
+        f"{1.0:16.8E}{2.0:16.8E}            ",  # third field blank
+    ]
+    p.write_text("\n".join(lines) + "\n")
+    md = extract_prmtop_metadata(str(p))
+    assert any("charge" in w.lower() for w in md.warnings)
+
+
 def test_nbond_total_and_short_pointers(tmp_path):
     from ambermeta.legacy_extractors.prmtop import extract_prmtop_metadata
     p = tmp_path / "ptr.prmtop"
