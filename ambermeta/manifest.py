@@ -328,7 +328,7 @@ def write_manifest(payload: Dict[str, Any], path: str, fmt: str) -> None:
                 writer.writerow({
                     "name": stage.get("name", ""),
                     "stage_role": stage.get("stage_role", ""),
-                    "prmtop": stage.get("prmtop", ""),
+                    "prmtop": stage.get("prmtop") or payload.get("global_prmtop", ""),
                     "mdin": stage.get("mdin", ""),
                     "mdout": stage.get("mdout", ""),
                     "mdcrd": stage.get("mdcrd", ""),

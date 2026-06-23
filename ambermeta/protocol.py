@@ -1080,6 +1080,8 @@ def detect_numeric_sequences(filenames: List[str]) -> Dict[str, List[str]]:
         match = suffix_pattern.match(stem)
         if match:
             base = match.group(1)
+            if base.isdigit():
+                continue  # skip pure-numeric bases (e.g. "0001", "0002")
             num = int(match.group(2))
             groups.setdefault(f"suffix:{base}", []).append((num, filename))
             continue

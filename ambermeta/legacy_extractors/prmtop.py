@@ -375,7 +375,7 @@ def extract_prmtop_metadata(filepath: str) -> PrmtopMetadata:
         md.natom = pointers[0] if len(pointers) > 0 else None
         md.nres = pointers[11] if len(pointers) > 11 else None
         if len(pointers) > 12:
-            nbonh = pointers[2] if len(pointers) > 2 else 0
+            nbonh = pointers[2]
             md.nbond = (nbonh or 0) + (pointers[12] or 0)
 
     # 3. Chemistry
@@ -410,8 +410,7 @@ def extract_prmtop_metadata(filepath: str) -> PrmtopMetadata:
         n = min(len(masses), len(atomic_numbers))
         hydrogen_masses = [masses[i] for i in range(n)
                            if atomic_numbers[i] == 1 and masses[i] is not None]
-        if atomic_numbers:
-            md.hmr_detection_method = "atomic_number"
+        md.hmr_detection_method = "atomic_number"
     elif masses and atom_names:
         n = min(len(masses), len(atom_names))
         hydrogen_masses = [masses[i] for i in range(n)
@@ -443,10 +442,10 @@ def extract_prmtop_metadata(filepath: str) -> PrmtopMetadata:
         md.box_volume = dims[0] * dims[1] * dims[2] * math.sqrt(
             max(0.0, 1 - 3 * cos_a ** 2 + 2 * cos_a ** 3)
         )
-        
+
         if md.box_volume > 0:
             md.density = (md.total_mass / md.box_volume) * 1.66054
-        
+
         if abs(beta - 90.0) > 0.01:
             md.force_field_features.append("Truncated Octahedron/Triclinic")
         else:

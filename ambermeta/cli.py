@@ -838,6 +838,15 @@ def _init_command(args: argparse.Namespace) -> int:
             return 0
 
         manifest_format = _resolve_manifest_format(args)
+        if manifest_format == "csv" and manifest_payload.get("hmr_prmtop"):
+            print(
+                Colors.warning(
+                    "WARNING: CSV format cannot represent a separate HMR topology; "
+                    "only the standard topology is written. "
+                    "Use yaml/json/toml to preserve HMR."
+                ),
+                file=sys.stderr,
+            )
         from ambermeta import manifest as manifest_io
         manifest_io.write_manifest(manifest_payload, output_path, manifest_format)
         _out(Colors.success(f"Created {args.output} ({manifest_format})"))
@@ -1005,7 +1014,7 @@ def _render_candidate_stages(
     include_role: bool = True,
 ) -> List[str]:
     """Render candidate stages as YAML lines."""
-    prmtop = discovered["prmtop"][0] if discovered["prmtop"] else "system.prmtop"
+    prmtop = sorted(discovered["prmtop"])[0] if discovered["prmtop"] else "system.prmtop"
     lines: List[str] = []
 
     for candidate in stage_candidates:
@@ -1066,7 +1075,7 @@ def _generate_standard_manifest(discovered: Dict[str, List[str]], stage_candidat
             f"{body}\n"
         )
 
-    prmtop = discovered["prmtop"][0] if discovered["prmtop"] else "system.prmtop"
+    prmtop = sorted(discovered["prmtop"])[0] if discovered["prmtop"] else "system.prmtop"
 
     return f"""# AmberMeta Manifest - Standard Template
 # Edit this file to define your simulation protocol stages
@@ -1138,7 +1147,7 @@ def _generate_comprehensive_manifest(discovered: Dict[str, List[str]], stage_can
             f"{body}\n"
         )
 
-    prmtop = discovered["prmtop"][0] if discovered["prmtop"] else "system.prmtop"
+    prmtop = sorted(discovered["prmtop"])[0] if discovered["prmtop"] else "system.prmtop"
 
     return f"""# AmberMeta Manifest - Comprehensive Template
 # This template shows all available options for protocol definition

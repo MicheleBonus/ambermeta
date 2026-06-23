@@ -188,3 +188,21 @@ def test_init_auto_empty_warns_nonzero(tmp_path):
     (tmp_path / "system.prmtop").write_text("dummy")  # only a topology
     rc = main(["init", str(tmp_path), "--auto", "-o", "m.yaml", "--force"])
     assert rc == 1
+
+
+def test_init_auto_csv_preserves_topology(tmp_path):
+    """CSV round-trip: global_prmtop must survive write_manifest -> load_manifest."""
+    d = tmp_path
+    (d / "system.prmtop").write_text("dummy")
+    (d / "prod.in").write_text("&cntrl\n/\n")
+    (d / "prod.out").write_text("Final Performance Info\n")
+    rc = main(["init", str(d), "--auto", "--format", "csv",
+               "-o", "manifest.csv", "--force"])
+    assert rc == 0
+    loaded = m.load_manifest(str(d / "manifest.csv"), expand_env=False)
+    stages = loaded if isinstance(loaded, list) else loaded.get("stages", [])
+    assert stages, "expected at least one stage"
+    # The topology path must survive the CSV round-trip
+    assert stages[0].get("prmtop", "").endswith("system.prmtop"), (
+        f"topology lost in CSV round-trip; got: {stages[0].get('prmtop', '')!r}"
+    )
