@@ -39,3 +39,15 @@ def test_plan_interactive_mode_runs_only_with_opt_in(monkeypatch, tmp_path):
     result = cli._plan_command(args)
 
     assert result == 0
+
+
+def test_quiet_suppresses_stdout(tmp_path, capsys, monkeypatch):
+    import ambermeta.cli as _cli
+    from ambermeta.cli import main
+    (tmp_path / "manifest.yaml").write_text("stages: []\n")
+    # monkeypatch ensures _QUIET is restored to False after this test
+    monkeypatch.setattr(_cli, "_QUIET", _cli._QUIET)
+    main(["-q", "plan", str(tmp_path), "--manifest",
+          str(tmp_path / "manifest.yaml")])
+    out = capsys.readouterr().out
+    assert out.strip() == ""
