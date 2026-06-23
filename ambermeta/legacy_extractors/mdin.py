@@ -706,17 +706,15 @@ def _classify_stage(md: MdinMetadata) -> str:
     # 2) Look for explicit cues in the title
     if "heat" in title or "thermal" in title:
         return "Heating / thermalization"
+    if "prod" in title or "production" in title:
+        if ntr_i != 0:
+            return f"Production with restraints [{md.ensemble}]"
+        return f"Production [{md.ensemble}]"
     if "equil" in title or "nvt" in title or "npt equil" in title:
         # refine by restraints
         if ntr_i != 0:
             return f"Equilibration with positional restraints [{md.ensemble}]"
-        else:
-            return f"Equilibration [{md.ensemble}]"
-    if "prod" in title or "production" in title:
-        if ntr_i != 0:
-            return f"Production with restraints [{md.ensemble}]"
-        else:
-            return f"Production [{md.ensemble}]"
+        return f"Equilibration [{md.ensemble}]"
 
     # 3) Fallback to numeric heuristics
     if total_ns is not None:

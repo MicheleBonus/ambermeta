@@ -106,3 +106,13 @@ def test_nbond_total_and_short_pointers(tmp_path):
     md2 = extract_prmtop_metadata(str(short))  # must not raise
     assert md2.natom == 4
     assert md2.nres is None
+
+
+def test_nvt_production_not_mislabeled(tmp_path):
+    """CORE-P6: a title containing 'prod' and 'nvt' must classify as Production, not Equilibration."""
+    from ambermeta.legacy_extractors.mdin import parse_mdin_file
+    p = tmp_path / "prod.in"
+    p.write_text("Production NVT run\n&cntrl\n imin=0, nstlim=5000000,\n/\n")
+    md = parse_mdin_file(str(p))
+    from ambermeta.legacy_extractors.mdin import _classify_stage
+    assert "Production" in _classify_stage(md)
