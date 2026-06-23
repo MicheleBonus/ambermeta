@@ -1009,10 +1009,13 @@ def detect_numeric_sequences(filenames: List[str]) -> Dict[str, List[str]]:
     import re
 
     # Pattern to detect numeric suffixes: name_001, name.001, name001, name-001
-    suffix_pattern = re.compile(r'^(.+?)[-_.]?(\d{2,})$')
+    # \d+ (not \d{2,}) so single-digit sequences (prod_1, prod_2, prod_3) are detected.
+    # The base group (.+?) ensures a stem that is *only* a number never matches here.
+    suffix_pattern = re.compile(r'^(.+?)[-_.]?(\d+)$')
 
     # Pattern to detect numeric prefixes: 01_name, 01.name, 01-name
-    prefix_pattern = re.compile(r'^(\d{2,})[-_.]?(.+)$')
+    # The trailing group (.+) ensures a stem that is *only* a number never matches here.
+    prefix_pattern = re.compile(r'^(\d+)[-_.]?(.+)$')
 
     groups: Dict[str, List[tuple[int, str]]] = {}
 
@@ -1436,7 +1439,8 @@ def auto_discover(
                 compiled_rules.append((re.compile(re.escape(pattern)), role))
 
     stages: List[SimulationStage] = []
-    for stem, kinds in sorted(grouped.items()):
+    for stem in _ordered_stems(grouped):
+        kinds = grouped[stem]
         # Skip internal metadata keys
         file_kinds = {k: v for k, v in kinds.items() if not k.startswith("_")}
 
