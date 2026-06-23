@@ -1985,6 +1985,4 @@ __all__ = [
     "load_manifest",
     "load_protocol_from_manifest",
     "HMR_TIMESTEP_THRESHOLD_PS",
-    "_apply_global_and_hmr_prmtop",
-    "_resolve",
 ]
