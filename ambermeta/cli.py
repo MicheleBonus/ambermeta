@@ -702,6 +702,9 @@ _ambermeta() {
         init)
           _arguments '--output[Manifest output filename]:file:_files' '--template[Template complexity]:template:(minimal standard comprehensive)' '--auto[Auto-generate grouped stages]' '--format[Manifest format]:format:(yaml json toml csv)' '--validate[Validate discovered files after writing manifest]' '--dry-run[Preview discovery without writing]' '--force[Overwrite existing output]' '*:path:_files'
           ;;
+        tui)
+          _arguments '*:path:_files'
+          ;;
         gui)
           _arguments '--host[Host interface]' '--port[Port number]' '--no-browser[Do not open browser after server starts]' '*:path:_files'
           ;;
