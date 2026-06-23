@@ -157,6 +157,14 @@ def test_init_auto_csv_roundtrips(tmp_path):
     assert [s["name"] for s in stages] == ["prod_001"]
 
 
+def test_prmtop_substring_not_misclassified(tmp_path):
+    from ambermeta.cli import _scan_directory_files
+    (tmp_path / "gen_prmtop.in").write_text("&cntrl\n/\n")
+    files = _scan_directory_files(str(tmp_path))
+    assert "gen_prmtop.in" in files["mdin"]
+    assert "gen_prmtop.in" not in files["prmtop"]
+
+
 def test_init_auto_keeps_every_numbered_file(tmp_path):
     d = tmp_path
     (d / "system.prmtop").write_text("dummy")

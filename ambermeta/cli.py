@@ -174,9 +174,7 @@ def _scan_directory_files(directory: str) -> Dict[str, List[str]]:
             ext = os.path.splitext(f)[1].lower()
             fl = f.lower()
 
-            if ext in (".prmtop", ".parm7", ".top") or "prmtop" in fl:
-                files["prmtop"].append(f)
-            elif ext in (".in", ".mdin") or "mdin" in fl:
+            if ext in (".in", ".mdin") or "mdin" in fl:
                 files["mdin"].append(f)
             elif ext in (".out", ".mdout") or "mdout" in fl:
                 files["mdout"].append(f)
@@ -184,6 +182,8 @@ def _scan_directory_files(directory: str) -> Dict[str, List[str]]:
                 files["mdcrd"].append(f)
             elif ext in (".rst", ".rst7", ".ncrst", ".inpcrd"):
                 files["inpcrd"].append(f)
+            elif ext in (".prmtop", ".parm7", ".top") or "prmtop" in fl:
+                files["prmtop"].append(f)
     except OSError:
         pass
 
@@ -799,9 +799,7 @@ def _init_command(args: argparse.Namespace) -> int:
             ext = os.path.splitext(f)[1].lower()
             fl = f.lower()
 
-            if ext in (".prmtop", ".parm7", ".top") or "prmtop" in fl:
-                discovered_files["prmtop"].append(rel_path)
-            elif ext in (".in", ".mdin") or "mdin" in fl:
+            if ext in (".in", ".mdin") or "mdin" in fl:
                 discovered_files["mdin"].append(rel_path)
             elif ext in (".out", ".mdout") or "mdout" in fl:
                 discovered_files["mdout"].append(rel_path)
@@ -809,6 +807,8 @@ def _init_command(args: argparse.Namespace) -> int:
                 discovered_files["mdcrd"].append(rel_path)
             elif ext in (".rst", ".rst7", ".ncrst", ".inpcrd"):
                 discovered_files["inpcrd"].append(rel_path)
+            elif ext in (".prmtop", ".parm7", ".top") or "prmtop" in fl:
+                discovered_files["prmtop"].append(rel_path)
 
     stage_candidates = _build_stage_candidates(directory)
 
