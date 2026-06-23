@@ -116,3 +116,18 @@ def test_nvt_production_not_mislabeled(tmp_path):
     md = parse_mdin_file(str(p))
     from ambermeta.legacy_extractors.mdin import _classify_stage
     assert "Production" in _classify_stage(md)
+
+
+def test_inpcrd_tiny_system_box_not_velocities(tmp_path):
+    from ambermeta.legacy_extractors.inpcrd import parse_inpcrd
+    p = tmp_path / "tiny.rst"
+    # 2 atoms -> 1 coord line (6 floats); + 1 box line. Must read as box, not vel.
+    p.write_text(
+        "title\n"
+        "    2\n"
+        "  1.0000000  2.0000000  3.0000000  4.0000000  5.0000000  6.0000000\n"
+        " 10.0000000 10.0000000 10.0000000 90.0000000 90.0000000 90.0000000\n"
+    )
+    md = parse_inpcrd(str(p))
+    assert md.has_box is True
+    assert md.has_velocities is False

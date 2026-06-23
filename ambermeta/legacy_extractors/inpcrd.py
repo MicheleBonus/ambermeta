@@ -75,6 +75,14 @@ class InpcrdMetadata:
 # 3. Helper Functions
 # -------------------------------
 
+def _is_float(tok: str) -> bool:
+    try:
+        float(tok.replace("D", "E").replace("d", "e"))
+        return True
+    except ValueError:
+        return False
+
+
 def _calc_volume(lengths: List[float], angles: List[float]) -> float:
     """
     Calculate volume of a triclinic cell.
@@ -169,29 +177,40 @@ def _parse_ascii_inpcrd(filepath: str) -> InpcrdMetadata:
     # 4. Coords + Vels + Box: lines ~ 2 * lines_per_structure + 1
     
     md.has_coordinates = True # Implied by inpcrd
-    
-    remainder_box = 0
-    
-    if line_count >= (2 * lines_per_structure):
+
+    def _looks_like_box(p: str) -> bool:
+        try:
+            with open(p) as fh:
+                last = [ln for ln in fh if ln.strip()][-1]
+        except (OSError, IndexError):
+            return False
+        toks = last.split()
+        return len(toks) in (3, 6) and all(
+            _is_float(t) for t in toks)
+
+    extra = line_count - lines_per_structure
+    if extra == 1:
+        md.has_velocities = False
+        md.has_box = True
+        _parse_ascii_box(md)
+    elif line_count >= 2 * lines_per_structure:
         md.has_velocities = True
         remainder_box = line_count - (2 * lines_per_structure)
+        if remainder_box >= 1 and _looks_like_box(md.filename):
+            md.has_box = True
+            _parse_ascii_box(md)
     elif line_count >= lines_per_structure:
         md.has_velocities = False
         remainder_box = line_count - lines_per_structure
+        if remainder_box >= 1 and _looks_like_box(md.filename):
+            md.has_box = True
+            _parse_ascii_box(md)
     else:
-        md.warnings.append(f"File too short. Expected at least {lines_per_structure} lines for {md.natoms} atoms, found {line_count}.")
+        md.warnings.append(
+            f"File too short. Expected at least {lines_per_structure} lines "
+            f"for {md.natoms} atoms, found {line_count}.")
         return md
-        
-    # Check for Box
-    if remainder_box == 1:
-        md.has_box = True
-        _parse_ascii_box(md)
-    elif remainder_box > 1:
-        # Sometimes files have trailing newlines
-        md.warnings.append(f"Unexpected trailing lines ({remainder_box}). Assuming Box exists at end.")
-        md.has_box = True
-        _parse_ascii_box(md)
-    
+
     return md
 
 def _parse_ascii_box(md: InpcrdMetadata):
