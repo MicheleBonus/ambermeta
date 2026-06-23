@@ -15,22 +15,14 @@ from ambermeta.parsers.mdout import MdoutData, MdoutParser
 from ambermeta.parsers.prmtop import PrmtopData, PrmtopParser
 from ambermeta.legacy_extractors.prmtop import ION_RESNAMES, WATER_RESNAMES
 from ambermeta.errors import AmberMetaError, FileLoadError, classify_exception
-
-try:  # pragma: no cover - optional dependency
-    import yaml
-except ImportError:  # pragma: no cover - optional dependency
-    yaml = None
-
-try:  # pragma: no cover - optional dependency
-    import tomllib  # Python 3.11+
-except ImportError:  # pragma: no cover - optional dependency
-    try:
-        import tomli as tomllib  # Fallback for older Python
-    except ImportError:
-        tomllib = None
-
-import csv
-from io import StringIO
+from ambermeta.manifest import (
+    load_manifest,
+    validate_manifest,
+    _expand_env_vars,
+    _normalize_manifest,
+    normalize_stage_keys,
+    STAGE_FILE_KINDS,
+)
 
 
 def _serialize_value(value: Any, _visited: Optional[set] = None) -> Any:
@@ -819,61 +811,6 @@ class SimulationProtocol:
         return _prune_methods_value(payload)
 
 
-def _normalize_manifest(manifest: Dict[str, Dict[str, str]] | List[Dict[str, str]]):
-    if isinstance(manifest, dict):
-        for name, entry in manifest.items():
-            if not isinstance(entry, dict):
-                raise TypeError("Manifest entries must be dictionaries")
-            normalized = dict(entry)
-            normalized.setdefault("name", name)
-            yield normalized
-    elif isinstance(manifest, list):
-        for entry in manifest:
-            if not isinstance(entry, dict):
-                raise TypeError("Manifest entries must be dictionaries")
-            yield dict(entry)
-    else:
-        raise TypeError("Manifest must be a list or dictionary")
-
-
-def validate_manifest(
-    manifest: Dict[str, Dict[str, str]] | List[Dict[str, str]],
-    directory: Optional[str] = None,
-    strict: bool = True,
-) -> None:
-    kinds = {"prmtop", "inpcrd", "mdin", "mdout", "mdcrd"}
-    missing: List[str] = []
-    for entry in _normalize_manifest(manifest):
-        name = entry.get("name")
-        if not name:
-            raise ValueError("Each manifest entry must include a 'name'.")
-
-        files = entry.get("files", {})
-        paths = {k: v for k, v in entry.items() if k in kinds}
-        if isinstance(files, dict):
-            for kind, path in files.items():
-                if kind in kinds and path is not None:
-                    paths.setdefault(kind, path)
-
-        resolved = {}
-        for kind, path in paths.items():
-            if path is None:
-                continue
-            if directory and not os.path.isabs(path):
-                resolved[kind] = os.path.normpath(os.path.join(directory, path))
-            else:
-                resolved[kind] = os.path.normpath(path)
-
-        for kind, path in resolved.items():
-            if not os.path.exists(path):
-                missing.append(f"stage '{name}', {kind}: {path}")
-
-    if missing and strict:
-        message = "Manifest references missing files:\n" + "\n".join(missing)
-        raise AmberMetaError(message)
-    # In graceful mode, missing files are recorded per-file by _safe_parse.
-
-
 def _safe_parse(parser_cls, path, kind, stage, *, strict):
     """Parse one file, isolating failures unless strict.
 
@@ -1593,154 +1530,6 @@ def auto_discover(
         allow_unexpected_gaps=allow_unexpected_gaps,
     )
     return protocol
-
-
-def _expand_env_vars(value: Any) -> Any:
-    """Recursively expand environment variables in string values.
-
-    Supports ${VAR} and $VAR syntax. Undefined variables are left unchanged.
-    """
-    if isinstance(value, str):
-        # Collect all replacements from the original value first to avoid double-expansion
-        replacements = []
-        import re
-        # Expand ${VAR} syntax
-        for match in re.finditer(r'\$\{([^}]+)\}', value):
-            var_name = match.group(1)
-            env_value = os.environ.get(var_name)
-            if env_value is not None:
-                replacements.append((match.group(0), env_value))
-        # Expand $VAR syntax (only if not followed by {)
-        for match in re.finditer(r'\$([A-Za-z_][A-Za-z0-9_]*)(?!\{)', value):
-            var_name = match.group(1)
-            # Skip if this was already matched as ${VAR}
-            if f'${{{var_name}}}' in value:
-                continue
-            env_value = os.environ.get(var_name)
-            if env_value is not None:
-                replacements.append((match.group(0), env_value))
-        # Apply all replacements to the original value
-        result = value
-        for old, new in replacements:
-            result = result.replace(old, new)
-        return result
-    elif isinstance(value, dict):
-        return {k: _expand_env_vars(v) for k, v in value.items()}
-    elif isinstance(value, list):
-        return [_expand_env_vars(item) for item in value]
-    return value
-
-
-def _parse_csv_manifest(text: str) -> List[Dict[str, Any]]:
-    """Parse a CSV manifest file into a list of stage dictionaries.
-
-    Expected CSV format:
-    name,stage_role,prmtop,mdin,mdout,mdcrd,inpcrd,notes
-
-    First row must be headers.
-    """
-    reader = csv.DictReader(StringIO(text))
-    stages: List[Dict[str, Any]] = []
-
-    for row in reader:
-        stage: Dict[str, Any] = {}
-        for key, value in row.items():
-            if key is None or value is None:
-                continue
-            key = key.strip()
-            value = value.strip()
-            if not value:
-                continue
-            # Handle special fields
-            if key in ("expected_gap_ps", "gap_tolerance_ps"):
-                try:
-                    stage[key] = float(value)
-                except ValueError:
-                    stage[key] = value
-            elif key == "notes":
-                # Support semicolon-separated notes
-                stage[key] = [n.strip() for n in value.split(";") if n.strip()]
-            else:
-                stage[key] = value
-        if stage.get("name"):
-            stages.append(stage)
-
-    return stages
-
-
-def _parse_toml_manifest(text: str) -> Dict[str, Any] | List[Dict[str, Any]]:
-    """Parse a TOML manifest file.
-
-    TOML manifests can have two formats:
-    1. Array of tables: [[stages]]
-    2. Table per stage: [stage.name]
-    """
-    if tomllib is None:
-        raise ImportError(
-            "tomllib/tomli is required to read TOML manifests. "
-            "Install with `pip install tomli` (Python < 3.11) or use Python 3.11+."
-        )
-
-    data = tomllib.loads(text)
-
-    # If there's a 'stages' key with a list, return that
-    if "stages" in data and isinstance(data["stages"], list):
-        return data["stages"]
-
-    # If the data is a dict with stage names as keys
-    return data
-
-
-def load_manifest(
-    manifest_path: str | os.PathLike[str],
-    expand_env: bool = True,
-) -> Dict[str, Any] | List[Dict[str, Any]]:
-    """Load a manifest from YAML, JSON, TOML, or CSV.
-
-    Parameters
-    ----------
-    manifest_path:
-        Path to a manifest describing simulation stages.
-        Supported formats: .yaml, .yml, .json, .toml, .csv
-    expand_env:
-        If True, expand environment variables in file paths using ${VAR} or $VAR syntax.
-        Default is True.
-
-    Returns
-    -------
-    Manifest data as a list of stage dictionaries or a mapping.
-    """
-
-    path = Path(manifest_path)
-    if not path.exists():
-        raise FileNotFoundError(f"Manifest not found: {manifest_path}")
-
-    text = path.read_text(encoding="utf-8")
-    suffix = path.suffix.lower()
-
-    if suffix in {".yaml", ".yml"}:
-        if yaml is None:
-            raise ImportError("PyYAML is required to read YAML manifests. Install with `pip install pyyaml`.")
-        manifest = yaml.safe_load(text)
-    elif suffix == ".toml":
-        manifest = _parse_toml_manifest(text)
-    elif suffix == ".csv":
-        manifest = _parse_csv_manifest(text)
-    else:
-        # Default to JSON
-        manifest = json.loads(text)
-
-    if manifest is None:
-        return {}
-
-    if not isinstance(manifest, (dict, list)):
-        raise TypeError("Manifest must be a mapping or list of stage entries.")
-
-    # Expand environment variables if requested
-    if expand_env:
-        manifest = _expand_env_vars(manifest)
-
-    return manifest
 
 
 def load_protocol_from_manifest(
