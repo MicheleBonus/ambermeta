@@ -146,6 +146,9 @@ def _normalize_manifest(
     (in protocol.py) to iterate over stages regardless of whether the
     manifest is a list or a dict-of-stages.
     """
+    if isinstance(manifest, dict) and isinstance(manifest.get("stages"), list):
+        yield from _normalize_manifest(manifest["stages"])
+        return
     if isinstance(manifest, dict):
         for name, entry in manifest.items():
             if not isinstance(entry, dict):
@@ -219,9 +222,9 @@ def normalize_stage_keys(entry: Dict[str, Any]) -> Dict[str, Any]:
     if "name" not in out and "stage" in out:
         out["name"] = out.pop("stage")
 
-    # stage_role alias (keep original key in case it's useful downstream)
+    # stage_role alias
     if "stage_role" not in out and "role" in out:
-        out["stage_role"] = out["role"]
+        out["stage_role"] = out.pop("role")
 
     # gaps: only build if no gaps/gap key already present
     if "gaps" not in out and "gap" not in out:
@@ -305,6 +308,10 @@ def write_manifest(payload: Dict[str, Any], path: str, fmt: str) -> None:
                         lines.append(f"{k}_{gk} = {gv}")
                 elif isinstance(v, list):  # notes
                     lines.append(f"{k} = {json.dumps(v)}")
+                elif isinstance(v, bool):
+                    lines.append(f"{k} = {str(v).lower()}")
+                elif isinstance(v, (int, float)):
+                    lines.append(f"{k} = {v}")
                 else:
                     lines.append(f'{k} = "{_toml_escape(v)}"')
             lines.append("")
