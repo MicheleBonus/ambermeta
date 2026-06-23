@@ -46,6 +46,30 @@ def test_sequence_detects_single_digits():
     assert any(len(v) == 3 for v in seqs.values())
 
 
+def _write_prmtop_atoms(path, atom_names, masses):
+    name_line = "".join(f"{n:<4}" for n in atom_names)
+    lines = [
+        "%VERSION VERSION_STAMP = V0001.000",
+        "%FLAG POINTERS", "%FORMAT(10I8)", f"{len(atom_names):8d}",
+        "%FLAG ATOM_NAME", "%FORMAT(20a4)", name_line,
+        "%FLAG MASS", "%FORMAT(5E16.8)",
+        "".join(f"{m:16.8E}" for m in masses),
+    ]
+    path.write_text("\n".join(lines) + "\n")
+
+
+def test_hmr_detected_without_atomic_number(tmp_path):
+    from ambermeta.legacy_extractors.prmtop import extract_prmtop_metadata
+    p = tmp_path / "hmr.prmtop"
+    # No ATOMIC_NUMBER; identify H by ATOM_NAME starting with 'H'
+    _write_prmtop_atoms(p,
+        atom_names=["N", "H1", "H2", "CA"],
+        masses=[14.01, 3.024, 3.024, 12.01])
+    md = extract_prmtop_metadata(str(p))
+    assert md.hmr_active is True
+    assert md.hmr_detection_method == "atom_name"
+
+
 def test_nbond_total_and_short_pointers(tmp_path):
     from ambermeta.legacy_extractors.prmtop import extract_prmtop_metadata
     p = tmp_path / "ptr.prmtop"
