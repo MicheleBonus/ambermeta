@@ -810,7 +810,7 @@ def _init_command(args: argparse.Namespace) -> int:
             elif ext in (".rst", ".rst7", ".ncrst", ".inpcrd"):
                 discovered_files["inpcrd"].append(rel_path)
 
-    stage_candidates = _build_stage_candidates(discovered_files)
+    stage_candidates = _build_stage_candidates(directory)
 
     if auto_mode:
         manifest_payload = _build_auto_manifest_payload(discovered_files, stage_candidates)
@@ -852,33 +852,26 @@ def _init_command(args: argparse.Namespace) -> int:
     return 0
 
 
-def _normalize_stage_stem(path: str) -> str:
-    """Normalize a file path stem into a stage grouping key."""
-    stem = os.path.splitext(os.path.basename(path))[0]
-    match = re.match(r"^(.*?)(?:[._-]?\d+)$", stem)
-    if match and match.group(1):
-        return match.group(1).rstrip("._-") or stem
-    return stem
+def _build_stage_candidates(directory: str) -> List[Dict[str, Any]]:
+    """Build ordered stage candidates using the engine's discovery (one stage
+    per discovered file group, identical for every role)."""
+    from ambermeta.protocol import smart_group_files, _ordered_stems
 
-
-def _build_stage_candidates(discovered_files: Dict[str, List[str]]) -> List[Dict[str, Any]]:
-    """Build ordered stage candidates from discovered file groupings."""
-    grouped: Dict[str, Dict[str, Any]] = {}
-
-    for kind in ("mdin", "mdout", "mdcrd", "inpcrd"):
-        for path in sorted(discovered_files.get(kind, [])):
-            key = _normalize_stage_stem(path)
-            entry = grouped.setdefault(
-                key,
-                {
-                    "name": key,
-                    "stage_role": _suggest_stage_role(key),
-                    "files": {},
-                },
-            )
-            entry["files"][kind] = path
-
-    return [grouped[key] for key in sorted(grouped)]
+    grouped = smart_group_files(directory, recursive=True)
+    candidates: List[Dict[str, Any]] = []
+    for stem in _ordered_stems(grouped):
+        kinds = grouped[stem]
+        files = {k: os.path.relpath(v, directory)
+                 for k, v in kinds.items()
+                 if k in ("mdin", "mdout", "mdcrd", "inpcrd")}
+        if not files:
+            continue  # prmtop-only groups are not stages
+        candidates.append({
+            "name": stem,
+            "stage_role": _suggest_stage_role(stem),
+            "files": files,
+        })
+    return candidates
 
 
 def _build_auto_manifest_payload(

@@ -982,6 +982,14 @@ def _manifest_to_stages(
     return stages
 
 
+def _ordered_stems(grouped: Dict[str, Any]) -> List[str]:
+    """Return stems in natural (numeric-aware) order so prod_2 precedes prod_10."""
+    def key(stem: str):
+        return [int(tok) if tok.isdigit() else tok.lower()
+                for tok in re.split(r'(\d+)', stem)]
+    return sorted(grouped.keys(), key=key)
+
+
 def detect_numeric_sequences(filenames: List[str]) -> Dict[str, List[str]]:
     """Detect numeric sequences in filenames for automatic grouping.
 
