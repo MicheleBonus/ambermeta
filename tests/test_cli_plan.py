@@ -97,3 +97,9 @@ def test_pattern_warns_in_manifest_mode(tmp_path, capsys):
           "--pattern", "prod_.*"])
     out = capsys.readouterr()              # call ONCE
     assert "pattern" in (out.out + out.err).lower()
+
+
+def test_skip_flag_defaults_to_none():
+    from ambermeta.cli import build_parser
+    args = build_parser().parse_args(["plan", "."])
+    assert args.skip_cross_stage_validation is None

@@ -1286,7 +1286,7 @@ def _plan_command(args: argparse.Namespace) -> int:
         protocol = auto_discover(
             directory,
             manifest=None,
-            skip_cross_stage_validation=args.skip_cross_stage_validation,
+            skip_cross_stage_validation=bool(args.skip_cross_stage_validation),
             recursive=True,
             auto_detect_restarts=auto_detect_restarts,
             pattern_filter=pattern_filter,
@@ -1312,7 +1312,7 @@ def _plan_command(args: argparse.Namespace) -> int:
         protocol = auto_discover(
             directory,
             manifest=manifest,
-            skip_cross_stage_validation=args.skip_cross_stage_validation,
+            skip_cross_stage_validation=bool(args.skip_cross_stage_validation),
             recursive=False,
             auto_detect_restarts=auto_detect_restarts,
             pattern_filter=pattern_filter,
@@ -1572,8 +1572,9 @@ For documentation, visit: https://github.com/MicheleBonus/ambermeta
     )
     plan_parser.add_argument(
         "--skip-cross-stage-validation",
-        action="store_true",
-        help="Skip continuity checks between consecutive stages",
+        action="store_const", const=True, default=None,
+        help="Skip continuity checks between consecutive stages "
+             "(overrides the manifest's settings.strict_validation)",
     )
     plan_parser.add_argument(
         "--strict",
