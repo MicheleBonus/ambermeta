@@ -3,7 +3,8 @@ from __future__ import annotations
 import json
 from types import SimpleNamespace
 
-from ambermeta.cli import _init_command
+from ambermeta import manifest as m
+from ambermeta.cli import _init_command, main
 
 
 def test_init_standard_uses_discovered_stage_files(tmp_path):
@@ -113,3 +114,17 @@ def test_init_auto_mode_dry_run_does_not_write_output(tmp_path):
     result = _init_command(args)
     assert result == 0
     assert not (tmp_path / "manifest.yaml").exists()
+
+
+def test_init_auto_csv_roundtrips(tmp_path):
+    d = tmp_path
+    (d / "system.prmtop").write_text("dummy")
+    (d / "prod_001.in").write_text("&cntrl\n/\n")
+    (d / "prod_001.out").write_text("Final Performance Info\n")
+    rc = main(["init", str(d), "--auto", "--format", "csv",
+               "-o", "manifest.csv", "--force"])
+    assert rc == 0
+    loaded = m.load_manifest(str(d / "manifest.csv"), expand_env=False)
+    stages = loaded if isinstance(loaded, list) else loaded["stages"]
+    # _normalize_stage_stem strips the numeric suffix; "prod_001" → "prod"
+    assert [s["name"] for s in stages] == ["prod"]

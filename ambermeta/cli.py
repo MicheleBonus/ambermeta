@@ -820,7 +820,8 @@ def _init_command(args: argparse.Namespace) -> int:
             return 0
 
         manifest_format = _resolve_manifest_format(args)
-        _write_manifest_payload(output_path, manifest_payload, manifest_format)
+        from ambermeta import manifest as manifest_io
+        manifest_io.write_manifest(manifest_payload, output_path, manifest_format)
         print(Colors.success(f"Created {args.output} ({manifest_format})"))
         _print_auto_stage_preview(stage_candidates, discovered_files)
         if getattr(args, "validate", False):
@@ -926,63 +927,6 @@ def _print_auto_stage_preview(stage_candidates: List[Dict[str, Any]], discovered
             if value:
                 print(f"     {kind}: {value}")
 
-
-def _toml_escape(value: Any) -> str:
-    """Escape a value for a TOML basic string.
-
-    Backslashes must be escaped *before* quotes so a Windows path such as
-    ``C:\\data\\file.prmtop`` produces valid, re-parseable TOML.
-    """
-    s = str(value)
-    s = s.replace("\\", "\\\\")
-    s = s.replace('"', '\\"')
-    return s
-
-
-def _write_manifest_payload(output_path: str, payload: Dict[str, Any], manifest_format: str) -> None:
-    if manifest_format == "json":
-        with open(output_path, "w", encoding="utf-8") as fh:
-            json.dump(payload, fh, indent=2)
-        return
-
-    if manifest_format == "yaml":
-        if yaml is None:
-            raise RuntimeError("PyYAML is required for YAML output")
-        with open(output_path, "w", encoding="utf-8") as fh:
-            yaml.safe_dump(payload, fh, sort_keys=False)
-        return
-
-    if manifest_format == "toml":
-        lines = []
-        for stage in payload.get("stages", []):
-            lines.append("[[stages]]")
-            for key, value in stage.items():
-                lines.append(f'{key} = "{_toml_escape(value)}"')
-            lines.append("")
-        with open(output_path, "w", encoding="utf-8") as fh:
-            fh.write("\n".join(lines).rstrip() + "\n")
-        return
-
-    if manifest_format == "csv":
-        headers = ["stage", "stage_role", "prmtop", "mdin", "mdout", "mdcrd", "inpcrd"]
-        with open(output_path, "w", newline="", encoding="utf-8") as fh:
-            writer = csv.DictWriter(fh, fieldnames=headers)
-            writer.writeheader()
-            for stage in payload.get("stages", []):
-                writer.writerow(
-                    {
-                        "stage": stage.get("name", ""),
-                        "stage_role": stage.get("stage_role", ""),
-                        "prmtop": stage.get("prmtop", ""),
-                        "mdin": stage.get("mdin", ""),
-                        "mdout": stage.get("mdout", ""),
-                        "mdcrd": stage.get("mdcrd", ""),
-                        "inpcrd": stage.get("inpcrd", ""),
-                    }
-                )
-        return
-
-    raise ValueError(f"Unsupported manifest format: {manifest_format}")
 
 
 def _run_init_validation_summary(
