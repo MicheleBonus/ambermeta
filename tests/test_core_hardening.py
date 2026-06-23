@@ -1,5 +1,7 @@
-"""Tests for CORE-D2/D7: natural stage ordering and single-digit sequence detection."""
+"""Tests for CORE-D2/D7/H2/H3/D3/D4: natural stage ordering, single-digit sequence
+detection, shared global/HMR prmtop helper, and missing-file warning/raise."""
 import math
+import pytest
 
 from ambermeta.protocol import detect_numeric_sequences, _ordered_stems
 
@@ -131,3 +133,34 @@ def test_inpcrd_tiny_system_box_not_velocities(tmp_path):
     md = parse_inpcrd(str(p))
     assert md.has_box is True
     assert md.has_velocities is False
+
+
+# ---------------------------------------------------------------------------
+# CORE-H2/H3/D3/D4 — shared global/HMR prmtop helper
+# ---------------------------------------------------------------------------
+
+def test_hmr_prmtop_applied_in_discovery_branch(tmp_path, caplog):
+    import ambermeta.protocol as P
+    # discovery branch: manifest=None
+    # Build a stage with a large-dt mdin so HMR topology is selected.
+    (tmp_path / "prod.in").write_text("&cntrl\n imin=0, dt=0.004, nstlim=10,\n/\n")
+    (tmp_path / "prod.out").write_text("Final Performance Info\n")
+    # minimal HMR prmtop
+    _write_prmtop_atoms(tmp_path / "hmr.prmtop",
+                        atom_names=["N", "H1"], masses=[14.0, 3.024])
+    proto = P.auto_discover(str(tmp_path), manifest=None,
+                            hmr_prmtop="hmr.prmtop")
+    prod = [s for s in proto.stages if "prod" in s.name][0]
+    assert prod.prmtop is not None  # HMR topology applied in discovery branch
+
+
+def test_missing_global_prmtop_warns(tmp_path, caplog):
+    import ambermeta.protocol as P
+    (tmp_path / "prod.in").write_text("&cntrl\n imin=0, nstlim=10,\n/\n")
+    proto = P.auto_discover(str(tmp_path), manifest=None,
+                            global_prmtop="nope.prmtop")
+    # graceful mode: protocol returned, no exception
+    assert proto is not None
+    with pytest.raises(P.AmberMetaError):
+        P.auto_discover(str(tmp_path), manifest=None,
+                        global_prmtop="nope.prmtop", strict=True)

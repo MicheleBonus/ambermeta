@@ -15,6 +15,7 @@ from ambermeta.parsers.mdout import MdoutData, MdoutParser
 from ambermeta.parsers.prmtop import PrmtopData, PrmtopParser
 from ambermeta.legacy_extractors.prmtop import ION_RESNAMES, WATER_RESNAMES
 from ambermeta.errors import AmberMetaError, FileLoadError, classify_exception
+from ambermeta.logging_config import get_logger
 from ambermeta.manifest import (
     load_manifest,
     validate_manifest,
@@ -23,6 +24,11 @@ from ambermeta.manifest import (
     normalize_stage_keys,
     STAGE_FILE_KINDS,
 )
+
+logger = get_logger(__name__)
+
+# Timestep threshold (ps) at or above which HMR is assumed to be active.
+HMR_TIMESTEP_THRESHOLD_PS = 0.003  # >= 3 fs indicates HMR
 
 
 def _serialize_value(value: Any, _visited: Optional[set] = None) -> Any:
@@ -811,6 +817,54 @@ class SimulationProtocol:
         return _prune_methods_value(payload)
 
 
+def _resolve(directory: Optional[str], path: str) -> str:
+    return path if os.path.isabs(path) else os.path.join(directory or ".", path)
+
+
+def _apply_global_and_hmr_prmtop(stages, directory, *, global_prmtop,
+                                 hmr_prmtop, strict) -> None:
+    """Apply global and/or HMR prmtop to stages.
+
+    - global_prmtop: applied to every stage that has no prmtop yet.
+    - hmr_prmtop: applied to stages whose timestep (dt) meets or exceeds
+      HMR_TIMESTEP_THRESHOLD_PS; overrides any previously set prmtop.
+    - Missing files: warn (or raise under strict).
+    """
+    def _load_topology(path, label):
+        full = _resolve(directory, path)
+        if not os.path.exists(full):
+            msg = f"Requested {label} prmtop not found: {full}"
+            if strict:
+                raise AmberMetaError(msg)
+            logger.warning(msg)
+            for st in stages:
+                st.validation.append(f"WARNING: {msg}")
+            return None
+        return _safe_parse(PrmtopParser, full, "prmtop", None, strict=strict)
+
+    if global_prmtop:
+        data = _load_topology(global_prmtop, "global")
+        if data is not None:
+            for st in stages:
+                if not st.prmtop:
+                    st.prmtop = data
+                    st.validation.append(f"INFO: using global prmtop: {global_prmtop}")
+
+    if hmr_prmtop:
+        data = _load_topology(hmr_prmtop, "HMR")
+        if data is not None:
+            for st in stages:
+                dt = None
+                if st.mdin and st.mdin.details:
+                    dt = getattr(st.mdin.details, "dt", None)
+                if dt is None and st.mdout and st.mdout.details:
+                    dt = getattr(st.mdout.details, "dt", None)
+                if isinstance(dt, (int, float)) and dt >= HMR_TIMESTEP_THRESHOLD_PS:
+                    st.prmtop = data
+                    st.validation.append(
+                        f"INFO: using HMR prmtop (dt={dt} ps): {hmr_prmtop}")
+
+
 def _safe_parse(parser_cls, path, kind, stage, *, strict):
     """Parse one file, isolating failures unless strict.
 
@@ -1393,32 +1447,10 @@ def auto_discover(
                         stage.restart_path = rst_path
                         stage.validation.append(f"INFO: restart file auto-detected: {rst_path}")
 
-        # Apply global prmtop to stages that don't have one
-        if global_prmtop:
-            global_prmtop_path = os.path.join(directory, global_prmtop) if not os.path.isabs(global_prmtop) else global_prmtop
-            if os.path.exists(global_prmtop_path):
-                global_prmtop_data = _safe_parse(PrmtopParser, global_prmtop_path, "prmtop", None, strict=strict)
-                for stage in stages:
-                    if not stage.prmtop and global_prmtop_data is not None:
-                        stage.prmtop = global_prmtop_data
-                        stage.validation.append(f"INFO: using global prmtop: {global_prmtop}")
-
-        # Apply HMR prmtop to stages with large timesteps (dt >= 0.004 ps)
-        if hmr_prmtop:
-            hmr_prmtop_path = os.path.join(directory, hmr_prmtop) if not os.path.isabs(hmr_prmtop) else hmr_prmtop
-            if os.path.exists(hmr_prmtop_path):
-                hmr_prmtop_data = _safe_parse(PrmtopParser, hmr_prmtop_path, "prmtop", None, strict=strict)
-                for stage in stages:
-                    # Check if stage uses large timestep (HMR typically requires dt >= 0.004 ps)
-                    dt = None
-                    if stage.mdin and stage.mdin.details and hasattr(stage.mdin.details, 'dt'):
-                        dt = stage.mdin.details.dt
-                    elif stage.mdout and stage.mdout.details and hasattr(stage.mdout.details, 'dt'):
-                        dt = stage.mdout.details.dt
-
-                    if dt is not None and dt >= 0.004 and hmr_prmtop_data is not None:
-                        stage.prmtop = hmr_prmtop_data
-                        stage.validation.append(f"INFO: using HMR prmtop (dt={dt} ps): {hmr_prmtop}")
+        _apply_global_and_hmr_prmtop(stages, directory,
+                                     global_prmtop=global_prmtop,
+                                     hmr_prmtop=hmr_prmtop,
+                                     strict=strict)
 
         protocol = SimulationProtocol(stages=stages)
         protocol.validate(
@@ -1526,15 +1558,10 @@ def auto_discover(
                     stage.restart_path = rst_path
                     stage.validation.append(f"INFO: restart file auto-detected: {rst_path}")
 
-    # Apply global prmtop to stages that don't have one
-    if global_prmtop:
-        global_prmtop_path = os.path.join(directory, global_prmtop) if not os.path.isabs(global_prmtop) else global_prmtop
-        if os.path.exists(global_prmtop_path):
-            global_prmtop_data = _safe_parse(PrmtopParser, global_prmtop_path, "prmtop", None, strict=strict)
-            for stage in stages:
-                if not stage.prmtop and global_prmtop_data is not None:
-                    stage.prmtop = global_prmtop_data
-                    stage.validation.append(f"INFO: using global prmtop: {global_prmtop}")
+    _apply_global_and_hmr_prmtop(stages, directory,
+                                 global_prmtop=global_prmtop,
+                                 hmr_prmtop=hmr_prmtop,
+                                 strict=strict)
 
     protocol = SimulationProtocol(stages=stages)
     protocol.validate(
@@ -1957,4 +1984,7 @@ __all__ = [
     "smart_group_files",
     "load_manifest",
     "load_protocol_from_manifest",
+    "HMR_TIMESTEP_THRESHOLD_PS",
+    "_apply_global_and_hmr_prmtop",
+    "_resolve",
 ]
