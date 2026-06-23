@@ -88,3 +88,12 @@ def test_plan_no_mode_errors_to_stderr_under_quiet(tmp_path, capsys, monkeypatch
     assert rc == 2
     assert "Select a planning mode" in captured.err
     assert captured.out.strip() == ""
+
+
+def test_pattern_warns_in_manifest_mode(tmp_path, capsys):
+    from ambermeta.cli import main
+    (tmp_path / "manifest.yaml").write_text("stages: []\n", encoding="utf-8")
+    main(["plan", str(tmp_path), "--manifest", str(tmp_path / "manifest.yaml"),
+          "--pattern", "prod_.*"])
+    out = capsys.readouterr()              # call ONCE
+    assert "pattern" in (out.out + out.err).lower()

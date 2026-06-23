@@ -1240,6 +1240,12 @@ def _plan_command(args: argparse.Namespace) -> int:
         print("Run 'ambermeta plan --help' for full usage.", file=sys.stderr)
         return 2
 
+    # Warn if --pattern is used without --recursive
+    if pattern_filter and not args.recursive:
+        print(Colors.warning(
+            "WARNING: --pattern only applies to --recursive discovery; ignored."),
+            file=sys.stderr)
+
     # Progress callback for reporting
     def progress_reporter(stage_name: str, current: int, total: int) -> None:
         if sys.stdout.isatty():
