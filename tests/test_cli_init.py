@@ -94,13 +94,34 @@ def test_init_auto_mode_json_output_structure(tmp_path):
     assert result == 0
 
     payload = json.loads((tmp_path / "manifest.json").read_text(encoding="utf-8"))
-    assert list(payload.keys()) == ["stages"]
+    # topology lives at top-level, not per-stage
+    assert "global_prmtop" in payload
+    assert payload["global_prmtop"] == "system.prmtop"
+    assert "hmr_prmtop" not in payload
+    assert "stages" in payload
     # After fix: stem is kept as-is, no numeric suffix stripped
     assert payload["stages"][0]["name"] == "heat_001"
     assert payload["stages"][0]["stage_role"] == "heating"
-    assert payload["stages"][0]["prmtop"] == "system.prmtop"
+    # prmtop is no longer per-stage; topology is at top-level
+    assert "prmtop" not in payload["stages"][0]
     assert payload["stages"][0]["mdin"] == "heat_001.mdin"
     assert payload["stages"][0]["mdout"] == "heat_001.mdout"
+
+
+def test_init_auto_splits_normal_and_hmr_topology(tmp_path):
+    from ambermeta import manifest as m
+    from ambermeta.cli import main
+    d = tmp_path
+    # normal + HMR topologies, distinguishable by H masses
+    from test_core_hardening import _write_prmtop_atoms
+    _write_prmtop_atoms(d / "system.prmtop", ["N", "H1"], [14.0, 1.008])
+    _write_prmtop_atoms(d / "system.hmr.prmtop", ["N", "H1"], [14.0, 3.024])
+    (d / "prod.in").write_text("&cntrl\n imin=0, dt=0.004, nstlim=10,\n/\n")
+    (d / "prod.out").write_text("Final Performance Info\n")
+    main(["init", str(d), "--auto", "-o", "manifest.yaml", "--force"])
+    loaded = m.load_manifest(str(d / "manifest.yaml"), expand_env=False)
+    assert loaded.get("global_prmtop", "").endswith("system.prmtop")
+    assert loaded.get("hmr_prmtop", "").endswith("system.hmr.prmtop")
 
 
 def test_init_auto_mode_dry_run_does_not_write_output(tmp_path):

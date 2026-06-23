@@ -813,9 +813,9 @@ def _init_command(args: argparse.Namespace) -> int:
     stage_candidates = _build_stage_candidates(directory)
 
     if auto_mode:
-        manifest_payload = _build_auto_manifest_payload(discovered_files, stage_candidates)
+        manifest_payload = _build_auto_manifest_payload(directory, discovered_files, stage_candidates)
         if getattr(args, "dry_run", False):
-            _print_auto_stage_preview(stage_candidates, discovered_files)
+            _print_auto_stage_preview(stage_candidates, manifest_payload)
             print("\nDry run complete; no files were written.")
             return 0
 
@@ -823,9 +823,9 @@ def _init_command(args: argparse.Namespace) -> int:
         from ambermeta import manifest as manifest_io
         manifest_io.write_manifest(manifest_payload, output_path, manifest_format)
         print(Colors.success(f"Created {args.output} ({manifest_format})"))
-        _print_auto_stage_preview(stage_candidates, discovered_files)
+        _print_auto_stage_preview(stage_candidates, manifest_payload)
         if getattr(args, "validate", False):
-            _run_init_validation_summary(directory, stage_candidates, discovered_files)
+            _run_init_validation_summary(directory, stage_candidates, manifest_payload)
         return 0
 
     if hasattr(args, 'format') and args.format and args.format != "yaml" and not args.auto:
@@ -874,23 +874,48 @@ def _build_stage_candidates(directory: str) -> List[Dict[str, Any]]:
     return candidates
 
 
+def _classify_topologies(directory: str, prmtops: List[str]):
+    """Return (global_prmtop, hmr_prmtop) chosen deterministically from the
+    discovered topology files using HMR detection. Warns on ambiguity."""
+    from ambermeta.legacy_extractors.prmtop import extract_prmtop_metadata
+    prmtops = sorted(prmtops)
+    normal, hmr = [], []
+    for rel in prmtops:
+        try:
+            md = extract_prmtop_metadata(os.path.join(directory, rel))
+            (hmr if md.hmr_active else normal).append(rel)
+        except (IOError, OSError, ValueError, LookupError):
+            normal.append(rel)
+    if len(prmtops) > 1:
+        print(Colors.warning(
+            f"WARNING: {len(prmtops)} topology files found; "
+            f"normal={normal or '-'}, HMR={hmr or '-'}."))
+    global_prmtop = normal[0] if normal else (prmtops[0] if prmtops else None)
+    hmr_prmtop = hmr[0] if hmr else None
+    return global_prmtop, hmr_prmtop
+
+
 def _build_auto_manifest_payload(
-    discovered: Dict[str, List[str]], stage_candidates: List[Dict[str, Any]]
+    directory: str, discovered: Dict[str, List[str]], stage_candidates: List[Dict[str, Any]]
 ) -> Dict[str, Any]:
-    prmtop = discovered["prmtop"][0] if discovered["prmtop"] else None
+    global_prmtop, hmr_prmtop = _classify_topologies(
+        directory, sorted(discovered.get("prmtop", [])))
+    payload: Dict[str, Any] = {}
+    if global_prmtop:
+        payload["global_prmtop"] = global_prmtop
+    if hmr_prmtop:
+        payload["hmr_prmtop"] = hmr_prmtop
     stages: List[Dict[str, Any]] = []
-    for candidate in stage_candidates:
-        stage: Dict[str, Any] = {"name": candidate["name"]}
-        if candidate.get("stage_role"):
-            stage["stage_role"] = candidate["stage_role"]
-        if prmtop:
-            stage["prmtop"] = prmtop
-        for key in ("mdin", "mdout", "mdcrd", "inpcrd"):
-            value = candidate.get("files", {}).get(key)
-            if value:
-                stage[key] = value
+    for c in stage_candidates:
+        stage: Dict[str, Any] = {"name": c["name"]}
+        if c.get("stage_role"):
+            stage["stage_role"] = c["stage_role"]
+        for k in ("mdin", "mdout", "mdcrd", "inpcrd"):
+            if c.get("files", {}).get(k):
+                stage[k] = c["files"][k]
         stages.append(stage)
-    return {"stages": stages}
+    payload["stages"] = stages
+    return payload
 
 
 def _resolve_manifest_format(args: argparse.Namespace) -> str:
@@ -903,18 +928,21 @@ def _resolve_manifest_format(args: argparse.Namespace) -> str:
     return ext_map.get(ext, "yaml")
 
 
-def _print_auto_stage_preview(stage_candidates: List[Dict[str, Any]], discovered: Dict[str, List[str]]) -> None:
+def _print_auto_stage_preview(stage_candidates: List[Dict[str, Any]], payload: Dict[str, Any]) -> None:
     print("\nAuto-grouped stages:")
     if not stage_candidates:
         print("  (no stages discovered)")
         return
 
-    prmtop = discovered["prmtop"][0] if discovered["prmtop"] else None
+    global_prmtop = payload.get("global_prmtop")
+    hmr_prmtop = payload.get("hmr_prmtop")
+    if global_prmtop:
+        print(f"  global_prmtop: {global_prmtop}")
+    if hmr_prmtop:
+        print(f"  hmr_prmtop: {hmr_prmtop}")
     for idx, candidate in enumerate(stage_candidates, start=1):
         role = candidate.get("stage_role") or "unclassified"
         print(f"  {idx}. {candidate['name']} [{role}]")
-        if prmtop:
-            print(f"     prmtop: {prmtop}")
         for kind in ("mdin", "mdout", "mdcrd", "inpcrd"):
             value = candidate.get("files", {}).get(kind)
             if value:
@@ -923,12 +951,15 @@ def _print_auto_stage_preview(stage_candidates: List[Dict[str, Any]], discovered
 
 
 def _run_init_validation_summary(
-    directory: str, stage_candidates: List[Dict[str, Any]], discovered: Dict[str, List[str]]
+    directory: str, stage_candidates: List[Dict[str, Any]], payload: Dict[str, Any]
 ) -> None:
     checked = 0
     warnings = 0
     errors = 0
-    unique_files = set(discovered.get("prmtop", []))
+    unique_files = set()
+    for key in ("global_prmtop", "hmr_prmtop"):
+        if payload.get(key):
+            unique_files.add(payload[key])
     for candidate in stage_candidates:
         for path in candidate.get("files", {}).values():
             unique_files.add(path)
