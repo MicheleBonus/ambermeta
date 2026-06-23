@@ -141,10 +141,13 @@ def test_fixed_spa_rejects_traversal(tmp_path):
         f"Encoded traversal leaked secret! status={r.status_code}, body={r.text[:200]}"
     )
 
-    # Decoded traversal via direct relative path
+    # Note: "/../secret.txt" is normalised to "/secret.txt" by httpx before it
+    # reaches the handler, so this exercises the "path does not exist → index
+    # fallback" case, NOT a traversal escape.  The %2F-encoded vector above is
+    # the real traversal test.
     r2 = client.get("/../secret.txt")
     assert "TOPSECRET" not in r2.text, (
-        f"Decoded traversal leaked secret! status={r2.status_code}, body={r2.text[:200]}"
+        f"Normalised path unexpectedly leaked secret! status={r2.status_code}, body={r2.text[:200]}"
     )
 
 
@@ -189,3 +192,62 @@ def test_fixed_spa_serves_static_asset(tmp_path):
     r = client.get("/assets/app.js")
     assert r.status_code == 200
     assert "hello" in r.text
+
+
+# ---------------------------------------------------------------------------
+# PRODUCTION: exercise the real create_app / serve_spa against the real static
+# ---------------------------------------------------------------------------
+
+@pytest.mark.filterwarnings("ignore::DeprecationWarning")
+def test_production_serve_spa_blocks_real_traversal(tmp_path):
+    """
+    Exercise the PRODUCTION serve_spa registered by ``server.create_app``.
+
+    ``create_app`` resolves ``static_path`` from
+    ``Path(__file__).parent / "static"`` (i.e. ``ambermeta/gui/static/``),
+    which the repo ships with a real ``index.html`` and ``assets/`` tree.
+    The ``directory`` arg to ``create_app`` is only the file-operations base
+    dir — it plays no role in static serving.
+
+    This test will FAIL if someone removes the ``".." in path`` guard (or
+    either of the other containment checks) from the real serve_spa, catching
+    production regressions that the _build_fixed_app tests cannot.
+    """
+    import ambermeta.gui.server as server
+    from fastapi.testclient import TestClient
+
+    # tmp_path just needs to be a valid directory (used as the file-ops base).
+    app = server.create_app(str(tmp_path))
+    client = TestClient(app, raise_server_exceptions=False)
+
+    # --- positive control: root returns 200 and the real index.html ----------
+    r_root = client.get("/")
+    assert r_root.status_code == 200, (
+        f"serve_root returned {r_root.status_code}; is static/index.html present?"
+    )
+    # The shipped index.html must contain something real (not placeholder text)
+    assert "TOPSECRET" not in r_root.text
+
+    # --- traversal vector 1: one level up — would reach server.py ------------
+    # server.py lives one directory above static/ and contains the unique token
+    # "def create_app".  The fixed code must NOT serve it.
+    r_one = client.get("/..%2Fserver.py")
+    assert "def create_app" not in r_one.text, (
+        "Path-traversal guard regression: /..%2Fserver.py leaked server.py contents. "
+        f"status={r_one.status_code}, body={r_one.text[:300]}"
+    )
+
+    # --- traversal vector 2: two levels up — would reach ambermeta/__init__.py
+    r_two = client.get("/..%2F..%2F__init__.py")
+    # The file may or may not exist, but must never be served raw; production
+    # code returns index.html instead, which will NOT contain the traversal path.
+    assert "..%2F" not in r_two.text, (
+        "Path-traversal guard regression: double-encoded traversal leaked file. "
+        f"status={r_two.status_code}, body={r_two.text[:300]}"
+    )
+
+    # --- positive control: a legitimate nested SPA path falls back to index ---
+    r_spa = client.get("/some/spa/route")
+    assert r_spa.status_code == 200, (
+        f"Legitimate SPA route was over-blocked: status={r_spa.status_code}"
+    )
