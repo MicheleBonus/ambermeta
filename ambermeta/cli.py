@@ -822,6 +822,12 @@ def _init_command(args: argparse.Namespace) -> int:
     stage_candidates = _build_stage_candidates(directory)
 
     if auto_mode:
+        if not stage_candidates:
+            print(Colors.warning(
+                "WARNING: no mdin/mdout/mdcrd/inpcrd files found; "
+                "no stages generated."), file=sys.stderr)
+            return 1
+
         manifest_payload = _build_auto_manifest_payload(directory, discovered_files, stage_candidates)
         if getattr(args, "dry_run", False):
             _print_auto_stage_preview(stage_candidates, manifest_payload)
@@ -1319,6 +1325,12 @@ def _plan_command(args: argparse.Namespace) -> int:
             global_prmtop=global_prmtop,
             strict=strict,
         )
+
+    if not protocol.stages:
+        print(Colors.warning(
+            "WARNING: manifest produced 0 stages; check format/column names."),
+            file=sys.stderr)
+        return 1
 
     degraded = [s for s in protocol.stages if s.degraded]
     if degraded:

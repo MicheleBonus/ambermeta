@@ -180,3 +180,11 @@ def test_init_auto_keeps_every_numbered_file(tmp_path):
     assert names == [f"ntp_prod_{i:04d}" for i in range(1, 6)]
     # each stage keeps its own mdin/mdout, none collapsed
     assert all(s.get("mdin") and s.get("mdout") for s in stages)
+
+
+def test_init_auto_empty_warns_nonzero(tmp_path):
+    """init --auto with no discoverable simulation files should warn and return 1."""
+    from ambermeta.cli import main
+    (tmp_path / "system.prmtop").write_text("dummy")  # only a topology
+    rc = main(["init", str(tmp_path), "--auto", "-o", "m.yaml", "--force"])
+    assert rc == 1

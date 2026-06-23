@@ -26,14 +26,20 @@ def test_plan_parser_accepts_interactive_flag(tmp_path):
 
 
 def test_plan_interactive_mode_runs_only_with_opt_in(monkeypatch, tmp_path):
+    # Justification: the guard introduced by CORE-C7 returns 1 on empty stages, so
+    # this test now provides a one-stage protocol to confirm the interactive path is
+    # reachable and exits 0 when stages are actually present.
     parser = cli.build_parser()
     args = parser.parse_args(["plan", "--interactive", str(tmp_path)])
 
+    fake_stage = SimpleNamespace(degraded=False)
     monkeypatch.setattr(cli, "_interactive_manifest", lambda directory: [{"name": "prod"}])
     monkeypatch.setattr(
         cli,
         "auto_discover",
-        lambda *a, **k: SimpleNamespace(stages=[], to_dict=lambda: {}, to_methods_dict=lambda: {}),
+        lambda *a, **k: SimpleNamespace(
+            stages=[fake_stage], to_dict=lambda: {}, to_methods_dict=lambda: {}
+        ),
     )
     monkeypatch.setattr(cli, "_print_protocol", lambda protocol, verbose=False: None)
 
@@ -103,3 +109,11 @@ def test_skip_flag_defaults_to_none():
     from ambermeta.cli import build_parser
     args = build_parser().parse_args(["plan", "."])
     assert args.skip_cross_stage_validation is None
+
+
+def test_plan_empty_manifest_nonzero(tmp_path):
+    """plan --manifest with stages: [] should warn and return 1."""
+    from ambermeta.cli import main
+    (tmp_path / "m.yaml").write_text("stages: []\n")
+    rc = main(["plan", str(tmp_path), "--manifest", str(tmp_path / "m.yaml")])
+    assert rc == 1
