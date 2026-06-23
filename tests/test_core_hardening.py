@@ -176,10 +176,40 @@ def test_hmr_inference_uses_shared_threshold():
 
 
 def test_restart_chain_scans_subdirs(tmp_path):
-    import ambermeta.protocol as P
-    sub = tmp_path / "prod"; sub.mkdir()
-    (sub / "prod_001.rst").write_text("title\n    1\n  1.0 2.0 3.0\n")
-    found = P.auto_detect_restart_chain.__code__.co_varnames
-    # signature must accept recursive
+    """Behavioral test: recursive=True finds restart files in subdirectories;
+    recursive=False (flat listdir) does not."""
+    import shutil
     import inspect
-    assert "recursive" in inspect.signature(P.auto_detect_restart_chain).parameters
+    from ambermeta.protocol import SimulationStage, auto_detect_restart_chain
+    from ambermeta.parsers.prmtop import PrmtopParser
+
+    # Build one stage with a real prmtop so atom-count matching is available
+    real_top = "tests/data/amber/md_test_files/CH3L1_HUMAN_6NAG.top"
+    real_rst = "tests/data/amber/md_test_files/ntp_prod_0000.rst"
+    prmtop_data = PrmtopParser(real_top).parse()
+
+    stage = SimulationStage(name="prod_002")
+    stage.prmtop = prmtop_data
+
+    # Place the restart file inside a subdirectory (flat scan must miss it)
+    sub = tmp_path / "subdir"
+    sub.mkdir()
+    shutil.copy(real_rst, sub / "prod_001.rst")
+
+    # --- flat scan must NOT find it ---
+    flat_result = auto_detect_restart_chain([stage], str(tmp_path), recursive=False)
+    assert flat_result.get("prod_002") is None, (
+        "Flat scan should not find a restart in a subdirectory"
+    )
+
+    # --- recursive scan MUST find it ---
+    rec_result = auto_detect_restart_chain([stage], str(tmp_path), recursive=True)
+    assert "prod_002" in rec_result, (
+        "Recursive scan should find prod_001.rst in subdirectory for stage prod_002"
+    )
+    assert rec_result["prod_002"].endswith("prod_001.rst"), (
+        f"Expected path ending in prod_001.rst, got: {rec_result['prod_002']}"
+    )
+
+    # Secondary: signature sanity check
+    assert "recursive" in inspect.signature(auto_detect_restart_chain).parameters
