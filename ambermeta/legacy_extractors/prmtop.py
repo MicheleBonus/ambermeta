@@ -368,9 +368,11 @@ def extract_prmtop_metadata(filepath: str) -> PrmtopMetadata:
     # 2. Pointers
     pointers = prmtop.get("POINTERS")
     if pointers:
-        md.natom = pointers[0]
-        md.nres = pointers[11]
-        md.nbond = pointers[12]
+        md.natom = pointers[0] if len(pointers) > 0 else None
+        md.nres = pointers[11] if len(pointers) > 11 else None
+        if len(pointers) > 12:
+            nbonh = pointers[2] if len(pointers) > 2 else 0
+            md.nbond = (nbonh or 0) + (pointers[12] or 0)
 
     # 3. Chemistry
     charges = prmtop.get("CHARGE")

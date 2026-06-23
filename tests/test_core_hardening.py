@@ -44,3 +44,18 @@ def test_natural_order_unpadded():
 def test_sequence_detects_single_digits():
     seqs = detect_numeric_sequences(["prod_1", "prod_2", "prod_3"])
     assert any(len(v) == 3 for v in seqs.values())
+
+
+def test_nbond_total_and_short_pointers(tmp_path):
+    from ambermeta.legacy_extractors.prmtop import extract_prmtop_metadata
+    p = tmp_path / "ptr.prmtop"
+    # index2=NBONH=5, index11=nres=2, index12=NBONA=3
+    _write_prmtop(p, {"POINTERS": ("10I8", [4, 0, 5, 0, 0, 0, 0, 0, 0, 0, 0, 2, 3])})
+    md = extract_prmtop_metadata(str(p))
+    assert md.nbond == 8  # 5 + 3, not 3
+
+    short = tmp_path / "short.prmtop"
+    _write_prmtop(short, {"POINTERS": ("10I8", [4, 0, 0])})  # < 13 entries
+    md2 = extract_prmtop_metadata(str(short))  # must not raise
+    assert md2.natom == 4
+    assert md2.nres is None
