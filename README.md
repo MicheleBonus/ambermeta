@@ -91,6 +91,13 @@ Key flags:
 - `--dry-run`
 - `--force`
 
+**`--auto` mode behavior:** Recursively discovers simulation files and produces
+one stage per file-group stem (numbered sequences such as `prod_01`, `prod_02`
+are each kept as a separate stage, not collapsed). Discovered topology files are
+classified automatically: if a prmtop has HMR-scaled masses, it is emitted as
+top-level `hmr_prmtop`; otherwise as `global_prmtop`. HMR detection falls back
+to atom name patterns when the `ATOMIC_NUMBER` section is absent.
+
 ### `plan`
 Build and summarize a protocol from a manifest, recursive discovery, or interactive prompts.
 
@@ -104,9 +111,9 @@ Key flags:
 - `-m, --manifest`
 - `--recursive`
 - `--interactive`
-- `--pattern`
+- `--pattern` (only applies with `--recursive`; ignored otherwise with a warning)
 - `--auto-detect-restarts`
-- `--skip-cross-stage-validation`
+- `--skip-cross-stage-validation` (overrides `settings.strict_validation` in the manifest)
 - `--strict` (abort on the first unreadable/malformed input file; default is to skip it and continue)
 - `--prmtop`
 - `--summary-path`
@@ -123,6 +130,11 @@ is printed; the run still completes and exits `0`. Pass `--strict` to make any
 unreadable file a hard error (clean message, exit `1`, no traceback). A stage
 keeps every file that *did* parse — a corrupt `mdout` does not discard a good
 `prmtop` or `mdin`.
+
+**Cross-stage validation:** By default, continuity checks between consecutive
+stages are enabled unless `settings.strict_validation: false` is set in the
+manifest. Pass `--skip-cross-stage-validation` to skip them unconditionally,
+overriding the manifest setting.
 
 ### `validate`
 Validate one or more files without building a full protocol.
@@ -324,7 +336,7 @@ These apply before subcommands:
 
 - `--log-level {DEBUG,INFO,WARNING,ERROR}`
 - `--log-file <path>`
-- `-q, --quiet`
+- `-q, --quiet` — suppresses all stdout output; errors and usage messages still go to stderr
 
 ---
 
