@@ -826,7 +826,7 @@ def _safe_parse(parser_cls, path, kind, stage, *, strict):
     try:
         return parser_cls(path).parse()
     except (FileNotFoundError, PermissionError, OSError,
-            UnicodeDecodeError, ValueError) as exc:
+            UnicodeDecodeError, ValueError, LookupError) as exc:
         if strict:
             raise AmberMetaError(f"Failed to parse {kind} '{path}': {exc}") from exc
         if stage is not None:

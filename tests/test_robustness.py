@@ -163,3 +163,16 @@ def test_main_converts_ambermetaerror_cleanly(tmp_path, monkeypatch, capsys):
     assert rc == 1
     assert "manifest references missing files" in (captured.out + captured.err)
     assert "Traceback" not in (captured.out + captured.err)
+
+
+def test_safe_parse_swallows_lookup_error(tmp_path):
+    from ambermeta.protocol import _safe_parse, SimulationStage
+
+    class Boom:
+        def __init__(self, path): ...
+        def parse(self): raise IndexError("truncated")
+
+    stage = SimulationStage(name="s")
+    result = _safe_parse(Boom, "x.prmtop", "prmtop", stage, strict=False)
+    assert result is None
+    assert stage.load_errors and stage.load_errors[0].kind == "prmtop"
