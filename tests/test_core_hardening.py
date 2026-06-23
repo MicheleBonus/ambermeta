@@ -164,3 +164,12 @@ def test_missing_global_prmtop_warns(tmp_path, caplog):
     with pytest.raises(P.AmberMetaError):
         P.auto_discover(str(tmp_path), manifest=None,
                         global_prmtop="nope.prmtop", strict=True)
+
+
+def test_hmr_inference_uses_shared_threshold():
+    import ambermeta.protocol as P
+    assert P.HMR_TIMESTEP_THRESHOLD_PS == 0.003
+    # _collect_system must not hardcode a different number; guard via source check
+    import inspect
+    src = inspect.getsource(P.SimulationProtocol.to_methods_dict)
+    assert "0.003" not in src  # uses the constant, not a literal

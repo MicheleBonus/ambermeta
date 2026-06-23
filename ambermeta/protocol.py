@@ -682,14 +682,14 @@ class SimulationProtocol:
                 )
 
             # Infer HMR from timestep if not already detected from prmtop
-            # Timestep >= 0.003 ps (3 fs) is a definitive indicator of HMR
+            # Timestep >= HMR_TIMESTEP_THRESHOLD_PS is a definitive indicator of HMR
             dt = None
             if stage.mdin and stage.mdin.details:
                 dt = getattr(stage.mdin.details, "dt", None)
             if dt is None and stage.mdout and stage.mdout.details:
                 dt = getattr(stage.mdout.details, "dt", None)
             if dt is not None and isinstance(dt, (int, float)):
-                if dt >= 0.003:
+                if dt >= HMR_TIMESTEP_THRESHOLD_PS:
                     # Large timestep indicates HMR is active
                     if composition.get("hmr_active") is None or composition.get("hmr_active") is False:
                         composition["hmr_active"] = True
