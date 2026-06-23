@@ -84,6 +84,15 @@ def test_charge_completeness_warning(tmp_path):
     assert any("charge" in w.lower() for w in md.warnings)
 
 
+def test_mdout_captures_1_4_terms():
+    from ambermeta.legacy_extractors.mdout import _extract_key_values
+    line = " 1-4 NB =  1393.4892  1-4 EEL = 15687.4768  VDWAALS = 21666.9998"
+    kv = _extract_key_values(line)
+    assert kv["1-4 NB"] == 1393.4892
+    assert kv["1-4 EEL"] == 15687.4768
+    assert kv["VDWAALS"] == 21666.9998
+
+
 def test_nbond_total_and_short_pointers(tmp_path):
     from ambermeta.legacy_extractors.prmtop import extract_prmtop_metadata
     p = tmp_path / "ptr.prmtop"
