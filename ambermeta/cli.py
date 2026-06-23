@@ -565,12 +565,12 @@ def _info_command(args: argparse.Namespace) -> int:
     filepath = args.file
 
     if not os.path.exists(filepath):
-        print(Colors.error(f"ERROR: File not found: {filepath}"))
+        print(Colors.error(f"ERROR: File not found: {filepath}"), file=sys.stderr)
         return 1
 
     parser = _get_parser_for_file(filepath)
     if parser is None:
-        print(Colors.error(f"ERROR: Unknown file type: {filepath}"))
+        print(Colors.error(f"ERROR: Unknown file type: {filepath}"), file=sys.stderr)
         return 1
 
     try:
@@ -590,8 +590,8 @@ def _info_command(args: argparse.Namespace) -> int:
             print(yaml.safe_dump(payload, sort_keys=False))
         else:
             # Text format
-            print(Colors.header(f"\nFile Information: {os.path.basename(filepath)}"))
-            print("=" * 60)
+            _out(Colors.header(f"\nFile Information: {os.path.basename(filepath)}"))
+            _out("=" * 60)
 
             if details:
                 for key, value in vars(details).items():
@@ -599,18 +599,18 @@ def _info_command(args: argparse.Namespace) -> int:
                         continue
                     if isinstance(value, (list, dict)) and not value:
                         continue
-                    print(f"  {key}: {value}")
+                    _out(f"  {key}: {value}")
 
             warnings = getattr(result, "warnings", []) or []
             if warnings:
-                print(f"\n{Colors.warning('Warnings:')}")
+                _out(f"\n{Colors.warning('Warnings:')}")
                 for warn in warnings:
-                    print(f"  - {warn}")
+                    _out(f"  - {warn}")
 
         return 0
 
     except (IOError, OSError, ValueError) as e:
-        print(Colors.error(f"ERROR: Failed to parse file: {e}"))
+        print(Colors.error(f"ERROR: Failed to parse file: {e}"), file=sys.stderr)
         return 1
 
 
@@ -1231,13 +1231,13 @@ def _plan_command(args: argparse.Namespace) -> int:
     strict = getattr(args, "strict", False)
 
     if not any((args.manifest, args.recursive, interactive)):
-        _out("ERROR: Select a planning mode.")
-        _out("Use one of: --manifest, --recursive, or --interactive.")
-        _out("Examples:")
-        _out("  ambermeta plan --manifest manifest.yaml /path/to/simulations")
-        _out("  ambermeta plan --recursive /path/to/simulations")
-        _out("  ambermeta plan --interactive /path/to/simulations")
-        _out("Run 'ambermeta plan --help' for full usage.")
+        print("ERROR: Select a planning mode.", file=sys.stderr)
+        print("Use one of: --manifest, --recursive, or --interactive.", file=sys.stderr)
+        print("Examples:", file=sys.stderr)
+        print("  ambermeta plan --manifest manifest.yaml /path/to/simulations", file=sys.stderr)
+        print("  ambermeta plan --recursive /path/to/simulations", file=sys.stderr)
+        print("  ambermeta plan --interactive /path/to/simulations", file=sys.stderr)
+        print("Run 'ambermeta plan --help' for full usage.", file=sys.stderr)
         return 2
 
     # Progress callback for reporting
