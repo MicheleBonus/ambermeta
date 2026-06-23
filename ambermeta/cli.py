@@ -1257,7 +1257,7 @@ def _plan_command(args: argparse.Namespace) -> int:
         if auto_detect_restarts:
             from ambermeta.protocol import auto_detect_restart_chain, _safe_parse
             from ambermeta.parsers.inpcrd import InpcrdParser
-            auto_restarts = auto_detect_restart_chain(protocol.stages, directory)
+            auto_restarts = auto_detect_restart_chain(protocol.stages, directory, recursive=args.recursive)
             for stage in protocol.stages:
                 if stage.name in auto_restarts and not stage.restart_path:
                     rst_path = auto_restarts[stage.name]

@@ -1202,6 +1202,7 @@ def infer_stage_role_from_content(
 def auto_detect_restart_chain(
     stages: List[SimulationStage],
     directory: str,
+    recursive: bool = False,
 ) -> Dict[str, str]:
     """Automatically detect restart file chains between stages.
 
@@ -1216,6 +1217,8 @@ def auto_detect_restart_chain(
         List of simulation stages to analyze.
     directory:
         Base directory for finding restart files.
+    recursive:
+        When True, scan subdirectories recursively (mirrors ``smart_group_files``).
 
     Returns
     -------
@@ -1227,15 +1230,19 @@ def auto_detect_restart_chain(
     ext_map = {".rst", ".rst7", ".ncrst", ".restrt", ".inpcrd"}
 
     # Scan for restart files
-    try:
-        restart_entries = os.listdir(directory)
-    except (PermissionError, OSError):
-        restart_entries = []
-    for fname in restart_entries:
-        full_path = os.path.join(directory, fname)
+    entries: List[str] = []
+    if recursive:
+        for root, _, files in os.walk(directory, onerror=lambda e: None):
+            entries.extend(os.path.join(root, fn) for fn in files)
+    else:
+        try:
+            entries = [os.path.join(directory, fn) for fn in os.listdir(directory)]
+        except (PermissionError, OSError):
+            entries = []
+    for full_path in entries:
         if not os.path.isfile(full_path):
             continue
-        _, ext = os.path.splitext(fname)
+        _, ext = os.path.splitext(full_path)
         if ext.lower() not in ext_map:
             continue
         try:
@@ -1438,7 +1445,7 @@ def auto_discover(
         )
         # Apply auto restart detection if requested
         if auto_detect_restarts:
-            auto_restarts = auto_detect_restart_chain(stages, directory)
+            auto_restarts = auto_detect_restart_chain(stages, directory, recursive=recursive)
             for stage in stages:
                 if stage.name in auto_restarts and not stage.restart_path:
                     rst_path = auto_restarts[stage.name]
@@ -1549,7 +1556,7 @@ def auto_discover(
 
     # Apply auto restart detection if requested
     if auto_detect_restarts:
-        auto_restarts = auto_detect_restart_chain(stages, directory)
+        auto_restarts = auto_detect_restart_chain(stages, directory, recursive=recursive)
         for stage in stages:
             if stage.name in auto_restarts and not stage.restart_path:
                 rst_path = auto_restarts[stage.name]

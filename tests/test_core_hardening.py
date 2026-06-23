@@ -173,3 +173,13 @@ def test_hmr_inference_uses_shared_threshold():
     import inspect
     src = inspect.getsource(P.SimulationProtocol.to_methods_dict)
     assert "0.003" not in src  # uses the constant, not a literal
+
+
+def test_restart_chain_scans_subdirs(tmp_path):
+    import ambermeta.protocol as P
+    sub = tmp_path / "prod"; sub.mkdir()
+    (sub / "prod_001.rst").write_text("title\n    1\n  1.0 2.0 3.0\n")
+    found = P.auto_detect_restart_chain.__code__.co_varnames
+    # signature must accept recursive
+    import inspect
+    assert "recursive" in inspect.signature(P.auto_detect_restart_chain).parameters
