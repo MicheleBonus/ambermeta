@@ -1,0 +1,527 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AmberMeta — Documentation</title>
+<meta name="description" content="AmberMeta: a provenance engine for AMBER molecular-dynamics workflows. Reads prmtop/mdin/mdout/mdcrd/inpcrd, reconstructs the staged protocol, validates continuity, and exports a machine-readable record. CLI + offline browser GUI.">
+<style>
+:root{
+  --bg:#fafaf9; --panel:#ffffff; --ink:#1c1c1a; --muted:#6b6b66; --faint:#9a9a95;
+  --line:#e6e6e3; --line-strong:#d6d6d2;
+  --accent:#2f66d0; --accent-soft:#eaf1fc; --accent-line:#cfe0fb;
+  --code-bg:#f5f5f3; --code-ink:#26303f;
+  --warn-bg:#fff7ed; --warn-line:#f3cd97; --warn-ink:#9a5512;
+  --ok-bg:#e7f4ec; --ok-line:#a8d8bc; --ok-ink:#15803d;
+  --err-ink:#b91c1c;
+  --maxw:880px;
+  --font:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  --mono:"SFMono-Regular",ui-monospace,Menlo,Consolas,"Liberation Mono",monospace;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--font);font-size:16px;line-height:1.65;-webkit-font-smoothing:antialiased}
+a{color:var(--accent);text-decoration:none}
+a:hover{text-decoration:underline}
+
+/* layout */
+.layout{display:flex;align-items:flex-start}
+nav.side{position:sticky;top:0;height:100vh;overflow-y:auto;flex:0 0 282px;width:282px;
+  background:var(--panel);border-right:1px solid var(--line);padding:22px 18px 60px}
+nav.side .brand{font-weight:800;font-size:1.2rem;letter-spacing:-.01em;color:var(--ink);display:block;margin:2px 6px 2px}
+nav.side .tag{display:block;color:var(--faint);font-size:.74rem;margin:0 6px 18px;line-height:1.45}
+nav.side .group{font-size:.7rem;text-transform:uppercase;letter-spacing:.08em;color:var(--faint);font-weight:700;margin:18px 6px 6px}
+nav.side a{display:block;color:var(--muted);padding:4px 8px;border-radius:7px;font-size:.875rem;line-height:1.35}
+nav.side a:hover{background:var(--accent-soft);color:var(--accent);text-decoration:none}
+nav.side a.sub{padding-left:18px;font-size:.83rem;color:var(--faint)}
+
+main{flex:1 1 auto;min-width:0;padding:38px 46px 120px;max-width:calc(var(--maxw) + 92px);margin:0 auto}
+.wrap{max-width:var(--maxw)}
+
+/* hero */
+header.hero{border-bottom:1px solid var(--line);padding-bottom:22px;margin-bottom:8px}
+header.hero h1{font-size:2.1rem;letter-spacing:-.02em;margin:.1em 0 .15em}
+header.hero p.lede{font-size:1.06rem;color:var(--muted);margin:.2em 0 1em;max-width:64ch}
+.pills{display:flex;flex-wrap:wrap;gap:7px;margin-top:6px}
+.pill{font-size:.74rem;font-weight:600;padding:3px 10px;border-radius:20px;background:var(--accent-soft);color:var(--accent);border:1px solid var(--accent-line)}
+.pill.neutral{background:#f1f1ef;color:var(--muted);border-color:var(--line-strong)}
+
+/* sections & headings */
+section{padding-top:30px;margin-top:8px}
+section>h2{font-size:1.6rem;letter-spacing:-.015em;margin:.2em 0 .5em;padding-bottom:.18em;border-bottom:2px solid var(--line)}
+h3{font-size:1.2rem;letter-spacing:-.01em;margin:1.5em 0 .4em}
+h4{font-size:1.0rem;margin:1.25em 0 .3em;color:var(--ink)}
+.anchor{color:var(--line-strong);font-weight:400;margin-left:.4em;opacity:0;transition:opacity .15s;font-size:.8em}
+h2:hover .anchor,h3:hover .anchor{opacity:1}
+p,li{max-width:76ch}
+
+/* code */
+code{font-family:var(--mono);font-size:.86em;background:var(--code-bg);color:var(--code-ink);padding:.12em .38em;border-radius:5px}
+pre{background:var(--code-bg);border:1px solid var(--line);border-radius:10px;padding:14px 16px;overflow-x:auto;line-height:1.5;margin:1em 0}
+pre code{background:none;padding:0;font-size:.84rem;color:var(--code-ink)}
+pre .o{color:var(--muted)}            /* command output / comments */
+pre .p{color:var(--accent);font-weight:600}  /* prompt */
+
+/* tables */
+table{border-collapse:collapse;width:100%;margin:1.1em 0;font-size:.9rem}
+thead th{text-align:left;background:#f4f4f2;border-bottom:2px solid var(--line-strong);padding:8px 11px;font-weight:700;color:var(--ink)}
+tbody td{border-bottom:1px solid var(--line);padding:7px 11px;vertical-align:top}
+tbody tr:hover{background:#fbfbfa}
+table code{font-size:.84em}
+
+/* callouts */
+aside{border-radius:10px;padding:13px 16px;margin:1.2em 0;font-size:.93rem;border:1px solid;line-height:1.55}
+aside>strong:first-child{display:inline}
+aside.note{background:var(--accent-soft);border-color:var(--accent-line);color:#1f3f70}
+aside.note strong{color:#1d3a6b}
+aside.warn{background:var(--warn-bg);border-color:var(--warn-line);color:var(--warn-ink)}
+aside.warn strong{color:#8a4a0f}
+aside.key{background:var(--ok-bg);border-color:var(--ok-line);color:var(--ok-ink)}
+aside.key strong{color:#125c33}
+
+/* badges */
+.badge{display:inline-block;font-size:.68rem;font-weight:700;text-transform:uppercase;letter-spacing:.04em;padding:2px 7px;border-radius:5px;vertical-align:middle;margin-left:.3em}
+.badge.cli{background:var(--accent-soft);color:var(--accent)}
+.badge.gui{background:#f1ecfb;color:#6d4bb0}
+
+/* misc */
+hr.soft{border:none;border-top:1px solid var(--line);margin:2.4em 0}
+.lead{font-size:1.04rem;color:var(--muted)}
+footer.foot{border-top:1px solid var(--line);margin-top:60px;padding-top:22px;color:var(--faint);font-size:.84rem}
+footer.foot a{color:var(--muted)}
+@media (max-width:880px){
+  nav.side{display:none}
+  main{padding:24px 20px 80px}
+}
+</style>
+</head>
+<body>
+<div class="layout">
+<nav class="side">
+  <a class="brand" href="#top">AmberMeta</a>
+  <span class="tag">Provenance engine for AMBER molecular-dynamics workflows</span>
+
+  <div class="group">Getting started</div>
+  <a href="#overview">Overview</a>
+  <a href="#install">Installation</a>
+  <a href="#quickstart">Quickstart</a>
+
+  <div class="group">Using AmberMeta</div>
+  <a href="#cli">Command-line interface</a>
+  <a href="#manifests">Manifests</a>
+  <a href="#api">Python API</a>
+  <a href="#gui">Browser GUI</a>
+
+  <div class="group">Internals</div>
+  <a href="#architecture">Architecture</a>
+
+  <div class="group">Reference</div>
+  <a href="#fields">Parser metadata fields</a>
+  <a href="#reference">Exit codes &amp; environment</a>
+  <a href="#docs">Markdown docs</a>
+</nav>
+
+<main>
+<a id="top"></a>
+<header class="hero">
+  <h1>AmberMeta Documentation</h1>
+  <p class="lede">A provenance engine for AMBER molecular-dynamics workflows. It reads the files a run already produced — <code>prmtop</code>, <code>mdin</code>, <code>mdout</code>, <code>mdcrd</code>, <code>inpcrd</code> — reconstructs the staged protocol behind them, validates that the stages connect, and exports a machine-readable record for a methods section or a downstream pipeline.</p>
+  <div class="pills">
+    <span class="pill">v1.0.0</span>
+    <span class="pill neutral">Python ≥ 3.8 · BUSL-1.1</span>
+    <span class="pill neutral">CLI + GUI · offline</span>
+  </div>
+</header>
+
+<section id="overview" class="wrap">
+<h2>Overview <a class="anchor" href="#overview">#</a></h2>
+
+<p><strong>AmberMeta answers the questions that are tedious to answer by hand</strong> about a finished AMBER simulation: <em>What was actually run? In what order? Do the restarts line up? Is the topology hydrogen-mass-repartitioned? What were the ensemble, thermostat, barostat, and cutoff? Did the run finish?</em> You point it at a directory — or a manifest — and it reconstructs the protocol and reports the provenance.</p>
+
+<table>
+<thead><tr><th>Capability</th><th>What you get</th></tr></thead>
+<tbody>
+<tr><td><strong>Metadata extraction</strong></td><td>Per-file parsers for topology, input, output, trajectory, and restart files: atom/residue counts, box geometry, density, solvent model, HMR status, ensemble, thermostat/barostat, cutoff, SHAKE, completion, and streaming thermodynamics (temperature/pressure/density/energy, mean&nbsp;±&nbsp;σ).</td></tr>
+<tr><td><strong>Protocol assembly</strong></td><td>Groups loose files into ordered stages, detects numbered sequences (<code>prod_0001 … prod_0050</code>), infers each stage's role, and links the restart chain.</td></tr>
+<tr><td><strong>Continuity validation</strong></td><td>Per-file checks (atom-count agreement, box sanity) and cross-stage checks (timing gaps, restart→trajectory continuity), with configurable tolerances.</td></tr>
+<tr><td><strong>Canonical manifests</strong></td><td>A <em>tolerant reader</em> (YAML / JSON / TOML / CSV, legacy aliases, several shapes) and a <em>canonical writer</em> (one deterministic on-disk form). The CLI and GUI write byte-identical manifests.</td></tr>
+<tr><td><strong>Reproducibility exports</strong></td><td>A full protocol summary (JSON/YAML), a Materials-&amp;-Methods-ready summary, and a per-stage statistics CSV.</td></tr>
+</tbody>
+</table>
+
+<p>Two interfaces sit on one shared core:</p>
+<table>
+<thead><tr><th>Surface</th><th>Use it when</th><th>Entry point</th></tr></thead>
+<tbody>
+<tr><td><strong>CLI</strong></td><td>Scripting, CI, SSH/cluster, headless batch</td><td><code>ambermeta &lt;command&gt;</code></td></tr>
+<tr><td><strong>GUI</strong></td><td>Interactively assembling or auditing a manifest</td><td><code>ambermeta gui</code></td></tr>
+</tbody>
+</table>
+
+<aside class="note"><strong>One engine, two faces.</strong> The CLI is the complete, headless interface — everything AmberMeta does is reachable without the GUI. The GUI is an optional, offline, localhost-only manifest editor that imports the same core through a single bridge module; it re-implements no logic. There is no separate TUI.</aside>
+</section>
+
+<section id="install" class="wrap">
+<h2>Installation <a class="anchor" href="#install">#</a></h2>
+<p>AmberMeta targets <strong>Python&nbsp;3.8+</strong>. The base install is dependency-light; optional features live behind extras.</p>
+<pre><code><span class="p">$</span> python -m pip install -e .</code></pre>
+
+<table>
+<thead><tr><th>Extra</th><th>Pulls in</th><th>Enables</th></tr></thead>
+<tbody>
+<tr><td><em>(base)</em></td><td>stdlib only</td><td>All parsers except NetCDF; JSON &amp; CSV manifests; full CLI</td></tr>
+<tr><td><code>netcdf</code></td><td><code>netCDF4</code>, <code>scipy</code>, <code>numpy</code></td><td>NetCDF trajectory (<code>.nc</code>) and restart (<code>.ncrst</code>) parsing</td></tr>
+<tr><td><code>gui</code></td><td><code>fastapi</code>, <code>uvicorn</code>, <code>websockets</code>, <code>python-multipart</code>, <code>pyyaml</code></td><td>The browser GUI (<code>ambermeta gui</code>)</td></tr>
+<tr><td><code>yaml</code></td><td><code>pyyaml</code></td><td>YAML manifests</td></tr>
+<tr><td><code>toml</code></td><td><code>tomli</code> (only on Python &lt; 3.11)</td><td>TOML manifests (3.11+ uses stdlib <code>tomllib</code>)</td></tr>
+<tr><td><code>all</code></td><td>netcdf + gui + yaml + toml</td><td>The full runtime feature set (not <code>tests</code>/<code>dev</code>)</td></tr>
+</tbody>
+</table>
+
+<pre><code><span class="p">$</span> python -m pip install -e ".[all]"     <span class="o"># all runtime features</span>
+<span class="p">$</span> python -m pip install -e ".[gui]"     <span class="o"># just the GUI</span></code></pre>
+
+<aside class="warn"><strong>The GUI ships an offline bundle.</strong> The pre-built frontend lives under <code>ambermeta/gui/static/</code> — no Node.js, no build step, and no CDN at runtime; it works on an air-gapped workstation. The <code>gui</code> extra only adds the Python web server.</aside>
+</section>
+
+<section id="quickstart" class="wrap">
+<h2>Quickstart <a class="anchor" href="#quickstart">#</a></h2>
+<p>Every command below runs against the sample data in <code>tests/data/amber/md_test_files/</code> — a real 64,528-atom glycoprotein system with a six-member NPT production sequence — so the output is reproducible.</p>
+
+<h3>Preview how a directory groups into stages</h3>
+<pre><code><span class="p">$</span> ambermeta init tests/data/amber/md_test_files --auto --dry-run
+
+<span class="o">Auto-grouped stages:
+  global_prmtop: CH3L1_HUMAN_6NAG.top
+  1. CH3L1_HUMAN_6NAG [unclassified]
+     mdcrd: CH3L1_HUMAN_6NAG.crd
+  2. ntp_prod_0000 [production]
+     inpcrd: ntp_prod_0000.rst
+  3. ntp_prod_0001 [production]
+     mdin: ntp_prod_0001.mdin
+     mdout: ntp_prod_0001.mdout
+     inpcrd: ntp_prod_0001.rst
+  ...
+Dry run complete; no files were written.</span></code></pre>
+
+<h3>Reconstruct and summarize a directory</h3>
+<pre><code><span class="p">$</span> ambermeta plan tests/data/amber/md_test_files --recursive
+
+<span class="o">Scanning .../md_test_files recursively for simulation files...
+Discovered 7 stage(s).
+
+Protocol summary
+================
+Stages: 7
+Total steps: 25000000
+Total simulated time (ps): 100000.000
+
+- ntp_prod_0001
+  intent: Production [NPT (isotropic)]
+  result: Completed
+  mdout: status=complete, steps=5000000, dt=0.004 ps, thermostat=Langevin @ 300 K, barostat=Berendsen
+  stats: frames=200, time=1020–20920 ps, temp=300.43 ± 1.25 K, density=1.0370 ± 0.0012 g/cc
+  evidence: INFO: Part of sequence 'ntp_prod' (item 2 of 6); INFO: stage_role inferred from mdin file</span></code></pre>
+
+<h3>Inspect a single file</h3>
+<pre><code><span class="p">$</span> ambermeta info tests/data/amber/md_test_files/CH3L1_HUMAN_6NAG.top
+
+<span class="o">File Information: CH3L1_HUMAN_6NAG.top
+============================================================
+  natom: 64528
+  nres: 15102
+  total_charge: 8.02e-05
+  box_dimensions: [98.34, 76.05, 81.23]
+  density: 0.8434
+  solvent_type: Explicit Solvent
+  simulation_category: Protein in Explicit Water
+  hmr_active: False
+  hmr_detection_method: atomic_number</span></code></pre>
+
+<h3>Validate files for CI</h3>
+<pre><code><span class="p">$</span> ambermeta validate tests/data/amber/md_test_files/*.{top,mdin,mdout,rst}
+
+<span class="o">Validation Results
+==================================================
+OK: CH3L1_HUMAN_6NAG.top
+OK: ntp_prod_0001.mdin
+OK: ntp_prod_0001.mdout
+OK: ntp_prod_0001.rst
+==================================================
+Validation PASSED</span></code></pre>
+</section>
+
+<section id="cli" class="wrap">
+<h2>Command-line interface <a class="anchor" href="#cli">#</a></h2>
+<p>The CLI is the complete, headless surface. Six commands sit under one entry point; global options (<code>--log-level</code>, <code>--log-file</code>, <code>-q/--quiet</code>) precede the subcommand.</p>
+
+<table>
+<thead><tr><th>Command</th><th>Purpose</th></tr></thead>
+<tbody>
+<tr><td><code>plan</code></td><td>Build &amp; summarize a protocol; export reproducibility artifacts</td></tr>
+<tr><td><code>init</code></td><td>Generate a manifest (template, or <code>--auto</code> from a directory)</td></tr>
+<tr><td><code>validate</code></td><td>Validate files without building a full protocol</td></tr>
+<tr><td><code>info</code></td><td>Print parsed metadata for a single file</td></tr>
+<tr><td><code>gui</code></td><td>Launch the browser GUI</td></tr>
+<tr><td><code>completion</code></td><td>Emit a shell-completion script (bash / zsh / fish)</td></tr>
+</tbody>
+</table>
+
+<h3 id="cli-plan"><code>plan</code> <span class="badge cli">build + export</span></h3>
+<p>Build a protocol from a manifest, recursive discovery, or interactive prompts — and export artifacts. <strong>Pick exactly one mode:</strong> <code>--manifest</code>, <code>--recursive</code>, or <code>--interactive</code>.</p>
+<table>
+<thead><tr><th>Export flag</th><th>Output</th></tr></thead>
+<tbody>
+<tr><td><code>--summary-path FILE</code></td><td>Full protocol summary (JSON/YAML; <code>--summary-format</code> forces it)</td></tr>
+<tr><td><code>--methods-summary-path FILE</code></td><td>Materials-&amp;-Methods JSON: software, MD engine settings, system composition, restraints</td></tr>
+<tr><td><code>--stats-csv FILE</code></td><td>Per-stage statistics, one row per stage</td></tr>
+</tbody>
+</table>
+<aside class="warn"><strong>Fault-tolerant by default.</strong> A missing/malformed/unreadable file is skipped, the error is recorded against its stage, and the run exits <code>0</code>. <code>--strict</code> makes the first bad file a hard error (clean message, exit <code>1</code>, no traceback). A stage keeps every file that <em>did</em> parse.</aside>
+
+<h3 id="cli-init"><code>init</code> <span class="badge cli">bootstrap</span></h3>
+<p><code>--auto</code> discovers files recursively and writes <strong>one stage per file-group stem</strong> — numbered sequences stay separate, not collapsed. Topology is classified automatically: an HMR-scaled prmtop becomes top-level <code>hmr_prmtop</code>, others <code>global_prmtop</code>. Use <code>--dry-run</code> to preview; <code>--auto</code> needs <code>--force</code> to overwrite.</p>
+
+<h3 id="cli-validate"><code>validate</code> &amp; <code>info</code> <span class="badge cli">inspect</span></h3>
+<p><code>validate</code> reports <strong>OK</strong> / <strong>WARN</strong> / <strong>ERROR</strong> per file and exits <code>0</code>/<code>1</code> (<code>--strict</code> turns warnings into failures). <code>info</code> prints one file's parsed metadata as text, JSON, or YAML — the field names are the <a href="#fields">parser metadata fields</a>.</p>
+
+<aside class="note"><strong>The full flag list is generated from the parser and kept in sync by CI.</strong> See the <a href="https://github.com/MicheleBonus/ambermeta/blob/main/docs/cli.md">CLI reference</a> for every flag, with verbatim <code>--help</code> output.</aside>
+</section>
+
+<section id="manifests" class="wrap">
+<h2>Manifests <a class="anchor" href="#manifests">#</a></h2>
+<p>A manifest is the durable, hand-editable description of a protocol. AmberMeta reads four formats and writes one canonical form.</p>
+
+<table>
+<thead><tr><th>Format</th><th>Extension</th><th>Requires</th></tr></thead>
+<tbody>
+<tr><td>YAML</td><td><code>.yaml</code>, <code>.yml</code></td><td><code>pyyaml</code></td></tr>
+<tr><td>JSON</td><td><code>.json</code></td><td>stdlib</td></tr>
+<tr><td>TOML</td><td><code>.toml</code></td><td><code>tomllib</code> (3.11+) or <code>tomli</code></td></tr>
+<tr><td>CSV</td><td><code>.csv</code></td><td>stdlib</td></tr>
+</tbody>
+</table>
+
+<p>A manifest is <strong>either</strong> a list of stage dictionaries <strong>or</strong> a mapping of stage-name&nbsp;→&nbsp;dictionary. A stage recognizes exactly five file slots — <code>prmtop</code>, <code>mdin</code>, <code>mdout</code>, <code>mdcrd</code>, <code>inpcrd</code> — given either under a <code>files</code> mapping or as top-level keys.</p>
+
+<pre><code><span class="o"># protocol.yaml</span>
+global_prmtop: systems/complex.prmtop
+hmr_prmtop: systems/complex_hmr.prmtop
+stages:
+  - name: minimize
+    stage_role: minimization
+    mdin: mdin/min.in
+    mdout: logs/min.out
+  - name: prod1
+    stage_role: production
+    mdin: mdin/prod1.in
+    mdout: logs/prod1.out
+    mdcrd: traj/prod1.nc
+    inpcrd: restarts/equil.rst7
+    expected_gap_ps: 0.0
+    gap_tolerance_ps: 0.1</code></pre>
+
+<table>
+<thead><tr><th>Stage key</th><th>Required</th><th>Meaning</th></tr></thead>
+<tbody>
+<tr><td><code>name</code></td><td><strong>yes</strong></td><td>Unique identifier; used for ordering and restart lookup</td></tr>
+<tr><td><code>stage_role</code></td><td>no</td><td>Inferred from content/path if omitted (always with an <code>INFO</code> note)</td></tr>
+<tr><td><code>prmtop … inpcrd</code></td><td>no</td><td>The five file slots</td></tr>
+<tr><td><code>gaps</code> / <code>expected_gap_ps</code> / <code>gap_tolerance_ps</code></td><td>no</td><td>Expected discontinuity before this stage</td></tr>
+<tr><td><code>notes</code></td><td>no</td><td>String or list → validation notes</td></tr>
+</tbody>
+</table>
+
+<p>Top-level <code>settings</code> controls validation: <code>strict_validation</code> (default <code>true</code>) toggles cross-stage continuity checks; <code>allow_gaps</code> (default <code>false</code>) records unconfigured gaps as info rather than warnings. Paths support <code>${VAR}</code>/<code>$VAR</code> expansion unless disabled.</p>
+
+<aside class="note"><strong>Tolerant in, canonical out.</strong> The reader accepts legacy aliases (<code>stage</code>→<code>name</code>, <code>role</code>→<code>stage_role</code>) and several shapes; the writer emits exactly one deterministic form. There is one on-disk representation to diff and review. Full schema: <a href="https://github.com/MicheleBonus/ambermeta/blob/main/docs/manifest.md">manifest reference</a>.</aside>
+</section>
+
+<section id="api" class="wrap">
+<h2>Python API <a class="anchor" href="#api">#</a></h2>
+<p>The same engine is a library. The supported import surface is everything re-exported from <code>ambermeta</code>.</p>
+
+<aside class="warn"><strong>The one thing to get right.</strong> A parser's <code>parse()</code> returns a wrapper that carries <code>filename</code> and <code>warnings</code>. <strong>The parsed metadata lives on <code>.details</code>.</strong> Field names are AMBER-flavored: <code>hmr_active</code> (not <code>is_hmr</code>), <code>residue_composition</code> (not <code>residue_counts</code>), <code>temp_control</code>/<code>press_control</code>/<code>stage_role</code> on <code>mdin</code>.</aside>
+
+<pre><code><span class="o"># Reconstruct a protocol from a directory...</span>
+from ambermeta import auto_discover, load_protocol_from_manifest
+
+protocol = auto_discover("runs/", recursive=True, auto_detect_restarts=True)
+print(len(protocol.stages), protocol.totals())
+<span class="o"># 7 {'steps': 25000000.0, 'time_ps': 100000.0}</span>
+
+<span class="o"># ...or from a manifest</span>
+protocol = load_protocol_from_manifest("protocol.yaml", directory="runs/")
+
+<span class="o"># Per-file parsing — note the .details accessor</span>
+from ambermeta.parsers import PrmtopParser
+meta = PrmtopParser("system.prmtop").parse().details
+print(meta.natom, meta.hmr_active, meta.solvent_type)</code></pre>
+
+<h3>Core objects</h3>
+<table>
+<thead><tr><th>Object</th><th>Key members</th></tr></thead>
+<tbody>
+<tr><td><code>SimulationProtocol</code></td><td><code>stages</code>; <code>validate(cross_stage=True, allow_unexpected_gaps=False)</code>, <code>totals() → {"steps","time_ps"}</code>, <code>to_dict()</code>, <code>to_methods_dict()</code></td></tr>
+<tr><td><code>SimulationStage</code></td><td><code>name</code>, <code>stage_role</code>, the five file wrappers, <code>expected_gap_ps</code>/<code>gap_tolerance_ps</code>, <code>validation</code>, <code>continuity</code>, <code>load_errors</code>; <code>degraded</code> (property), <code>summary()</code>, <code>to_dict()</code></td></tr>
+<tr><td><code>ProtocolBuilder</code></td><td>Fluent: <code>from_directory</code>/<code>from_manifest</code>, <code>with_grouping_rules</code>, <code>with_pattern_filter</code>, <code>with_stage_tolerance</code>, <code>auto_detect_restarts</code>, <code>add_stage</code>, <code>build()</code></td></tr>
+</tbody>
+</table>
+
+<p>Streaming thermodynamics live on <code>mdout</code>'s <code>stats</code> (a <code>ThermoStats</code>): per-quantity <code>StreamingStats</code> via <code>stats.temp_stats</code>, <code>stats.pressure_stats</code>, <code>stats.density_stats</code>, … each exposing <code>.mean</code> and <code>.stdev</code>.</p>
+
+<pre><code>md = MdoutParser("prod.mdout").parse().details
+print(md.finished_properly)            <span class="o"># True</span>
+print(md.stats.temp_stats.mean)        <span class="o"># 300.43200000000013</span>
+print(md.stats.temp_stats.stdev)       <span class="o"># 1.2504190252445306</span></code></pre>
+
+<aside class="note">Full signatures, every parser field, and the export structures are in the <a href="https://github.com/MicheleBonus/ambermeta/blob/main/docs/api.md">Python API reference</a>.</aside>
+</section>
+
+<section id="gui" class="wrap">
+<h2>Browser GUI <a class="anchor" href="#gui">#</a></h2>
+<p>A three-pane browser app — <strong>Files</strong> · <strong>Stages</strong> · <strong>Properties</strong> — for assembling and auditing a manifest. Single-user, localhost-only, fully offline.</p>
+
+<pre><code><span class="p">$</span> ambermeta gui tests/data/amber/md_test_files     <span class="o"># opens http://127.0.0.1:8765</span>
+<span class="p">$</span> ambermeta gui runs/ --port 9000 --no-browser</code></pre>
+
+<p>A typical session: <strong>Discover</strong> auto-groups the directory into stages → drag files from <strong>Files</strong> onto stage slots (or use the picker) → edit a stage's name/role/gaps/notes in <strong>Properties</strong> → <strong>Link Restarts</strong> chains the <code>inpcrd</code> files → <strong>Validate</strong> reports issues with jump-to-issue → <strong>Save</strong> writes the canonical manifest, byte-identical to the CLI's.</p>
+
+<aside class="key"><strong>Built to be safe on a workstation.</strong> The server binds <code>127.0.0.1</code>, pins CORS to localhost, and confines every file path to the launch directory (resolved through symlinks; escapes get <code>403</code>). State is server-authoritative — undo/redo and validation run server-side. It is not a multi-user service.</aside>
+
+<p>The frontend (React + TypeScript + Vite + Tailwind, drag-and-drop via dnd-kit) talks to a small REST API under <code>/api</code> you can drive directly:</p>
+<table>
+<thead><tr><th>Area</th><th>Endpoints</th></tr></thead>
+<tbody>
+<tr><td>Document</td><td><code>GET /api/document</code>, <code>/document/open</code>, <code>/document/save</code>, <code>/document/preview</code>, <code>/document/discover</code></td></tr>
+<tr><td>Stages</td><td><code>POST /api/stages</code>, <code>PUT/DELETE /api/stages/{id}</code>, <code>/stages/reorder</code>, <code>/stages/bulk</code></td></tr>
+<tr><td>State</td><td><code>GET/PUT /api/settings</code>, <code>POST /api/undo</code>·<code>/redo</code>, <code>/validate</code>, <code>/link-restarts</code>, <code>GET /api/sequences</code></td></tr>
+<tr><td>Files</td><td><code>GET /api/files</code>, <code>/files/metadata</code>, <code>/files/related/{stem}</code></td></tr>
+</tbody>
+</table>
+<aside class="note">Full endpoint shapes, data models, and the UI tour are in the <a href="https://github.com/MicheleBonus/ambermeta/blob/main/docs/gui.md">GUI guide</a>.</aside>
+</section>
+
+<section id="architecture" class="wrap">
+<h2>Architecture <a class="anchor" href="#architecture">#</a></h2>
+<p>AmberMeta is one engine with two faces. A single core — parsers, a manifest contract, protocol assembly, and a validation model — does all the work; the CLI and GUI are thin presentation layers over it. The same pipeline runs whether the entry point is <code>ambermeta plan</code>, <code>load_protocol_from_manifest()</code>, or a GUI <strong>Validate</strong> click:</p>
+
+<pre><code>directory or manifest
+  → discovery / manifest   group files into stages, order them
+  → parsing                Parser → .details (legacy *Metadata); failures → FileLoadError
+  → assembly               build SimulationStage per group; infer role; link restarts
+  → validation             per-stage + cross-stage continuity (notes, not exceptions)
+  → export                 to_dict / to_methods_dict / stats CSV / canonical manifest</code></pre>
+
+<table>
+<thead><tr><th>Layer</th><th>Responsibility</th></tr></thead>
+<tbody>
+<tr><td>Parsing</td><td><code>parsers/</code> wrappers + <code>legacy_extractors/</code> populate typed <code>*Metadata</code> on <code>.details</code>; <code>mdout</code> stats use Welford's online algorithm</td></tr>
+<tr><td>Manifest</td><td>Tolerant reader (<code>load_manifest</code>, <code>normalize_stage_keys</code>) + canonical writer (<code>write_manifest</code>); <code>STAGE_FILE_KINDS</code>, <code>CSV_COLUMNS</code></td></tr>
+<tr><td>Assembly</td><td><code>auto_discover</code> / <code>ProtocolBuilder</code>: group → sequence-detect → role-infer → link restarts</td></tr>
+<tr><td>Validation</td><td>Per-stage (<code>SimulationStage.validate</code>) + cross-stage continuity; outcomes are <code>INFO</code>/<code>WARNING</code> notes</td></tr>
+<tr><td>GUI bridge</td><td><code>core_bridge.py</code> is the only GUI module importing the core; server-authoritative document; byte-identical manifests</td></tr>
+</tbody>
+</table>
+
+<aside class="key"><strong>Invariants worth remembering.</strong> (1) <code>parse().details</code> carries the metadata. (2) Tolerant reader, canonical writer. (3) One file group → one stage; sequences preserved, not collapsed. (4) Inference is always announced with an <code>INFO</code> note. (5) Failures are data (<code>FileLoadError</code>), not crashes — <code>--strict</code> opts into hard failure. (6) The GUI imports the core only through <code>core_bridge.py</code>.</aside>
+<aside class="note">The full internals walkthrough is in the <a href="https://github.com/MicheleBonus/ambermeta/blob/main/docs/architecture.md">architecture document</a>.</aside>
+</section>
+
+<section id="fields" class="wrap">
+<h2>Parser metadata fields <a class="anchor" href="#fields">#</a></h2>
+<p>These are the fields on <code>.details</code> — what <code>ambermeta info</code> prints and what your code reads. Each metadata object also carries <code>filename</code> and <code>warnings</code>.</p>
+
+<h3><code>prmtop</code> — <code>PrmtopMetadata</code></h3>
+<table>
+<thead><tr><th>Field</th><th>Type</th><th>Meaning</th></tr></thead>
+<tbody>
+<tr><td><code>natom</code> / <code>n_atoms</code></td><td>int</td><td>Atom count (<code>n_atoms</code> is a property alias)</td></tr>
+<tr><td><code>nres</code>, <code>nbond</code></td><td>int</td><td>Residue / bond count</td></tr>
+<tr><td><code>total_charge</code>, <code>is_neutral</code></td><td>float, bool</td><td>Net charge</td></tr>
+<tr><td><code>box_dimensions</code> / <code>box_angles</code></td><td>List[float]</td><td><code>[a,b,c]</code> Å / <code>[α,β,γ]</code> deg</td></tr>
+<tr><td><code>box_volume</code>, <code>density</code></td><td>float</td><td>Å³ / g·cm⁻³</td></tr>
+<tr><td><code>solvent_type</code>, <code>simulation_category</code></td><td>str</td><td>e.g. <code>Explicit Solvent</code>, <code>Protein in Explicit Water</code></td></tr>
+<tr><td><code>residue_composition</code></td><td>Dict[str,int]</td><td>Residue-name → count (includes ions, water)</td></tr>
+<tr><td><code>hmr_active</code></td><td>Optional[bool]</td><td>HMR detected from masses</td></tr>
+<tr><td><code>hmr_hydrogen_mass_summary</code>, <code>hmr_detection_method</code></td><td>str</td><td>HMR detail / how it was detected</td></tr>
+</tbody>
+</table>
+
+<h3><code>mdin</code> — <code>MdinMetadata</code></h3>
+<table>
+<thead><tr><th>Field</th><th>AMBER key</th><th>Field</th><th>AMBER key</th></tr></thead>
+<tbody>
+<tr><td><code>length_steps</code></td><td>nstlim</td><td><code>temp_control</code></td><td>ntt</td></tr>
+<tr><td><code>dt</code></td><td>dt</td><td><code>target_temp</code></td><td>temp0</td></tr>
+<tr><td><code>ensemble</code></td><td>derived</td><td><code>press_control</code></td><td>ntp</td></tr>
+<tr><td><code>stage_role</code></td><td>inferred</td><td><code>constraints</code></td><td>ntc</td></tr>
+<tr><td><code>cutoff</code></td><td>cut</td><td><code>cntrl_parameters</code></td><td>raw &amp;cntrl</td></tr>
+</tbody>
+</table>
+
+<h3><code>mdout</code> — <code>MdoutMetadata</code></h3>
+<table>
+<thead><tr><th>Field</th><th>Meaning</th></tr></thead>
+<tbody>
+<tr><td><code>program</code>, <code>version</code>, <code>run_date</code>, <code>gpu_model</code></td><td>Provenance from header/footer</td></tr>
+<tr><td><code>natoms</code>, <code>nres</code>, <code>box_type</code></td><td>System</td></tr>
+<tr><td><code>thermostat</code>, <code>barostat</code>, <code>target_temp</code>, <code>shake_active</code></td><td>Engine settings</td></tr>
+<tr><td><code>stats</code></td><td><code>ThermoStats</code> — streaming temperature/pressure/density/energy</td></tr>
+<tr><td><code>wall_time_seconds</code>, <code>ns_per_day</code>, <code>finished_properly</code></td><td>Performance &amp; completion</td></tr>
+</tbody>
+</table>
+
+<h3><code>mdcrd</code> / <code>inpcrd</code></h3>
+<p><code>TrajectoryMetadata</code>: <code>file_format</code>, <code>n_atoms</code>, <code>n_frames</code>, <code>time_start</code>/<code>time_end</code>/<code>avg_dt</code>, <code>has_box</code>/<code>box_type</code>, <code>volume_stats</code>, REMD fields. &nbsp;<code>InpcrdMetadata</code>: <code>natoms</code>, <code>time</code> (drives continuity), <code>has_velocities</code>/<code>has_box</code>, <code>box_dimensions</code>/<code>box_angles</code>/<code>box_volume</code>.</p>
+</section>
+
+<section id="reference" class="wrap">
+<h2>Exit codes &amp; environment <a class="anchor" href="#reference">#</a></h2>
+<table>
+<thead><tr><th>Code</th><th>Meaning</th></tr></thead>
+<tbody>
+<tr><td><code>0</code></td><td>Success (including a fault-tolerant <code>plan</code> that skipped bad files)</td></tr>
+<tr><td><code>1</code></td><td>Error — invalid input, parse/validation failure, or a <code>--strict</code> hard stop</td></tr>
+</tbody>
+</table>
+
+<h3>File types</h3>
+<table>
+<thead><tr><th>Kind</th><th>Extensions</th></tr></thead>
+<tbody>
+<tr><td><code>prmtop</code></td><td><code>.prmtop</code>, <code>.parm7</code>, <code>.top</code></td></tr>
+<tr><td><code>mdin</code></td><td><code>.mdin</code>, <code>.in</code></td></tr>
+<tr><td><code>mdout</code></td><td><code>.mdout</code>, <code>.out</code></td></tr>
+<tr><td><code>mdcrd</code></td><td><code>.mdcrd</code>, <code>.nc</code>, <code>.crd</code>, <code>.x</code></td></tr>
+<tr><td><code>inpcrd</code></td><td><code>.inpcrd</code>, <code>.rst</code>, <code>.rst7</code>, <code>.restrt</code>, <code>.ncrst</code></td></tr>
+</tbody>
+</table>
+
+<p>Manifest paths support <code>${VAR}</code>/<code>$VAR</code> expansion by default; disable with <code>--no-expand-env</code>. Undefined variables are left unchanged.</p>
+</section>
+
+<section id="docs" class="wrap">
+<h2>Markdown docs <a class="anchor" href="#docs">#</a></h2>
+<p>This page is the standalone, offline overview. The repository carries the exhaustive markdown references, which render on GitHub:</p>
+<table>
+<thead><tr><th>Document</th><th>Contents</th></tr></thead>
+<tbody>
+<tr><td><a href="https://github.com/MicheleBonus/ambermeta/blob/main/docs/architecture.md">architecture.md</a></td><td>Engine internals and invariants</td></tr>
+<tr><td><a href="https://github.com/MicheleBonus/ambermeta/blob/main/docs/cli.md">cli.md</a></td><td>Every command, flag, exit code, env var</td></tr>
+<tr><td><a href="https://github.com/MicheleBonus/ambermeta/blob/main/docs/api.md">api.md</a></td><td>Classes, functions, parser fields, examples</td></tr>
+<tr><td><a href="https://github.com/MicheleBonus/ambermeta/blob/main/docs/manifest.md">manifest.md</a></td><td>The full file format across all four formats</td></tr>
+<tr><td><a href="https://github.com/MicheleBonus/ambermeta/blob/main/docs/gui.md">gui.md</a></td><td>The browser app, its API, its security model</td></tr>
+<tr><td><a href="https://github.com/MicheleBonus/ambermeta/blob/main/docs/tutorials.md">tutorials.md</a></td><td>Task-oriented walkthroughs</td></tr>
+<tr><td><a href="https://github.com/MicheleBonus/ambermeta/blob/main/docs/recipes.md">recipes.md</a></td><td>Copy-paste CLI one-liners</td></tr>
+</tbody>
+</table>
+</section>
+
+<footer class="foot">
+<p>AmberMeta v1.0.0 · distributed under the Business Source License 1.1 (BUSL-1.1) · <a href="https://github.com/MicheleBonus/ambermeta">github.com/MicheleBonus/ambermeta</a></p>
+</footer>
+</main>
+</div>
+</body>
+</html>

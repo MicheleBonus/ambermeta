@@ -244,6 +244,8 @@ Global options (`--log-level`, `--log-file`, `-q/--quiet`) and every flag are do
 | [Tutorials](docs/tutorials.md) | Task-oriented, step-by-step walkthroughs |
 | [Recipes](docs/recipes.md) | Copy-paste CLI one-liners for common jobs |
 
+A single-page, fully offline HTML version of these docs lives at [`docs/ambermeta.html`](docs/ambermeta.html) — open it in any browser (no server, no network).
+
 ---
 
 ## 9. Compatibility & limitations
