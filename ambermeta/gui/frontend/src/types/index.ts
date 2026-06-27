@@ -101,6 +101,27 @@ export interface ValidationResult {
   summary: string;
 }
 
+// Document response (B1 API root shape)
+export interface DocumentSettings {
+  global_prmtop: string | null;
+  hmr_prmtop: string | null;
+  initial_coordinates: string | null;
+  auto_link_restarts: boolean;
+  strict_validation: boolean;
+  allow_gaps: boolean;
+  use_relative_paths: boolean;
+}
+
+export interface DocumentResponse {
+  base_directory: string;
+  manifest_path: string | null;
+  dirty: boolean;
+  can_undo: boolean;
+  can_redo: boolean;
+  settings: DocumentSettings;
+  stages: Stage[];
+}
+
 // Sequence types
 export interface SequenceInfo {
   base_name: string;

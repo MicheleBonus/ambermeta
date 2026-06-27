@@ -1,41 +1,30 @@
 /** @type {import('tailwindcss').Config} */
 export default {
-  content: [
-    "./index.html",
-    "./src/**/*.{js,ts,jsx,tsx}",
-  ],
+  content: ["./index.html", "./src/**/*.{ts,tsx}"],
   theme: {
     extend: {
       colors: {
-        primary: {
-          50: '#eff6ff',
-          100: '#dbeafe',
-          200: '#bfdbfe',
-          300: '#93c5fd',
-          400: '#60a5fa',
-          500: '#3b82f6',
-          600: '#2563eb',
-          700: '#1d4ed8',
-          800: '#1e40af',
-          900: '#1e3a8a',
-        },
-        secondary: {
-          50: '#ecfdf5',
-          100: '#d1fae5',
-          200: '#a7f3d0',
-          300: '#6ee7b7',
-          400: '#34d399',
-          500: '#10b981',
-          600: '#059669',
-          700: '#047857',
-          800: '#065f46',
-          900: '#064e3b',
-        },
+        app: "#FAFAF9",
+        surface: "#FFFFFF",
+        hairline: "#E6E6E3",
+        ink: { DEFAULT: "#1C1C1A", secondary: "#6B6B66", muted: "#9A9A95" },
+        accent: { DEFAULT: "#2F66D0", subtle: "#EAF1FC" },
+        valid: "#15803D",
+        warning: "#B45309",
+        error: "#B91C1C",
       },
       fontFamily: {
-        mono: ['JetBrains Mono', 'Fira Code', 'monospace'],
+        sans: ["Inter", "system-ui", "sans-serif"],
+        mono: ["'JetBrains Mono'", "ui-monospace", "monospace"],
+      },
+      fontSize: {
+        xs: ["12px", "16px"],
+        sm: ["13px", "18px"],
+        base: ["14px", "20px"],
+        lg: ["16px", "24px"],
+        xl: ["20px", "28px"],
       },
     },
   },
   plugins: [],
-}
+};
