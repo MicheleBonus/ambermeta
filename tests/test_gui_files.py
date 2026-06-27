@@ -18,11 +18,20 @@ def test_resolve_within_base_rejects_traversal(tmp_path):
         files.resolve_within_base(str(outside), str(tmp_path))
 
 
+def test_resolve_within_base_rejects_sibling_prefix(tmp_path):
+    # base "/a/base" must not admit sibling "/a/base-evil" (prefix-but-not-subdir)
+    sibling = tmp_path.parent / (tmp_path.name + "-evil") / "x.txt"
+    with pytest.raises(ValueError):
+        files.resolve_within_base(str(sibling), str(tmp_path))
+
+
 def test_detect_file_type():
     assert files.detect_file_type("a.prmtop") == FileType.PRMTOP
     assert files.detect_file_type("a.mdin") == FileType.MDIN
     assert files.detect_file_type("a.rst7") == FileType.INPCRD
     assert files.detect_file_type("a.txt") == FileType.OTHER
+    assert files.detect_file_type("a.mdout") == FileType.MDOUT
+    assert files.detect_file_type("a.mdcrd") == FileType.MDCRD
 
 
 def test_build_file_tree_filters_and_include_all(tmp_path):
