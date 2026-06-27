@@ -1,108 +1,22 @@
-// File types
-export type FileType = 'prmtop' | 'mdin' | 'mdout' | 'mdcrd' | 'inpcrd' | 'folder' | 'other';
+export type FileType = "prmtop" | "mdin" | "mdout" | "mdcrd" | "inpcrd" | "folder" | "other";
+export type StageRole = "minimization" | "heating" | "equilibration" | "production" | "";
+export type ExportFormat = "yaml" | "json" | "toml" | "csv";
 
-export interface FileInfo {
-  path: string;
-  name: string;
-  file_type: FileType;
-  is_directory: boolean;
-  size?: number;
-  extension?: string;
-  parent?: string;
-  children?: FileInfo[];
-}
-
-// Stage types
-export type StageRole = 'minimization' | 'heating' | 'equilibration' | 'production' | '';
-
-export interface StageFiles {
-  prmtop?: string;
-  mdin?: string;
-  mdout?: string;
-  mdcrd?: string;
-  inpcrd?: string;
-}
-
-export interface StageValidation {
-  is_valid: boolean;
-  messages: string[];
-  missing_files: string[];
-  warnings: string[];
-}
-
-export interface Stage {
+export interface StageModel {
   id: string;
   name: string;
-  role: StageRole;
-  files: StageFiles;
-  expected_gap_ps?: number;
-  gap_tolerance_ps?: number;
+  role: string;
+  prmtop: string | null;
+  mdin: string | null;
+  mdout: string | null;
+  mdcrd: string | null;
+  inpcrd: string | null;
+  expected_gap_ps: number | null;
+  gap_tolerance_ps: number | null;
   notes: string[];
-  validation: StageValidation;
-  sequence_base?: string;
-  sequence_index?: number;
 }
 
-export interface StageCreate {
-  name: string;
-  role?: StageRole;
-  files?: StageFiles;
-  expected_gap_ps?: number;
-  gap_tolerance_ps?: number;
-  notes?: string[];
-}
-
-export interface StageUpdate {
-  name?: string;
-  role?: StageRole;
-  files?: StageFiles;
-  expected_gap_ps?: number;
-  gap_tolerance_ps?: number;
-  notes?: string[];
-}
-
-// Settings types
 export interface GlobalSettings {
-  global_prmtop?: string;
-  hmr_prmtop?: string;
-  initial_coordinates?: string;
-  auto_link_restarts: boolean;
-  validate_on_export: boolean;
-  use_relative_paths: boolean;
-}
-
-// Protocol types
-export interface ProtocolState {
-  base_directory: string;
-  settings: GlobalSettings;
-  stages: Stage[];
-}
-
-// Export types
-export type ExportFormat = 'yaml' | 'json' | 'toml' | 'csv';
-
-export interface ExportRequest {
-  format: ExportFormat;
-  include_validation?: boolean;
-  use_relative_paths?: boolean;
-}
-
-export interface ExportResponse {
-  content: string;
-  filename: string;
-  format: ExportFormat;
-}
-
-// Validation types
-export interface ValidationResult {
-  is_valid: boolean;
-  stage_validations: Record<string, StageValidation>;
-  cross_stage_issues: string[];
-  summary: string;
-}
-
-// Document response (B1 API root shape)
-export interface DocumentSettings {
   global_prmtop: string | null;
   hmr_prmtop: string | null;
   initial_coordinates: string | null;
@@ -118,47 +32,69 @@ export interface DocumentResponse {
   dirty: boolean;
   can_undo: boolean;
   can_redo: boolean;
-  settings: DocumentSettings;
-  stages: Stage[];
+  settings: GlobalSettings;
+  stages: StageModel[];
 }
 
-// Sequence types
-export interface SequenceInfo {
-  base_name: string;
-  stages: string[];
-  count: number;
+export interface SaveResult { document: DocumentResponse; warnings: string[]; }
+export interface PreviewResponse { content: string; warnings: string[]; format: string; }
+
+export interface MissingFile { kind: string; path: string; }
+export interface StageIssue {
+  name: string; ok: boolean; degraded: boolean;
+  errors: string[]; warnings: string[]; info: string[]; missing_files: MissingFile[];
+}
+export interface ValidationReport {
+  ok: boolean;
+  totals: { steps: number; time_ps: number; stage_count: number };
+  protocol_issues: string[];
+  stage_issues: StageIssue[];
 }
 
-// UI types
-export interface DragItem {
-  type: 'file' | 'stage';
-  data: FileInfo | Stage;
+export interface FileInfo {
+  path: string; name: string; file_type: FileType; is_directory: boolean;
+  size: number | null; extension: string | null; parent: string | null;
+  children: FileInfo[] | null;
+}
+export interface FileMetadata {
+  file_path: string; file_type: FileType;
+  metadata: { details: Record<string, unknown> | null; warnings: string[]; kind: string };
+  warnings: string[];
 }
 
-// File type configuration
-export const FILE_TYPE_CONFIG: Record<FileType, {
-  icon: string;
-  color: string;
-  label: string;
-}> = {
-  prmtop: { icon: 'Dna', color: 'text-green-500', label: 'Topology' },
-  mdin: { icon: 'Settings', color: 'text-yellow-500', label: 'Input' },
-  mdout: { icon: 'BarChart3', color: 'text-cyan-500', label: 'Output' },
-  mdcrd: { icon: 'Film', color: 'text-purple-500', label: 'Trajectory' },
-  inpcrd: { icon: 'RefreshCw', color: 'text-blue-500', label: 'Coordinates' },
-  folder: { icon: 'Folder', color: 'text-gray-500', label: 'Folder' },
-  other: { icon: 'File', color: 'text-gray-400', label: 'Other' },
+export interface StageFilesPatch {
+  prmtop?: string | null; mdin?: string | null; mdout?: string | null;
+  mdcrd?: string | null; inpcrd?: string | null;
+}
+export interface StageCreate {
+  name: string; role?: StageRole; files?: StageFilesPatch;
+  expected_gap_ps?: number | null; gap_tolerance_ps?: number | null; notes?: string[];
+}
+export interface StageUpdate {
+  name?: string; role?: StageRole; files?: StageFilesPatch;
+  expected_gap_ps?: number | null; gap_tolerance_ps?: number | null; notes?: string[];
+}
+export interface SettingsPatch {
+  global_prmtop?: string | null; hmr_prmtop?: string | null; initial_coordinates?: string | null;
+  auto_link_restarts?: boolean; strict_validation?: boolean; allow_gaps?: boolean;
+  use_relative_paths?: boolean;
+}
+
+// Functional display config only (icon name = lucide; color = token name).
+export const FILE_TYPE_CONFIG: Record<FileType, { label: string; icon: string; color: string }> = {
+  prmtop: { label: "Topology",     icon: "Atom",       color: "ink" },
+  mdin:   { label: "Input",        icon: "FileInput",  color: "ink" },
+  mdout:  { label: "Output",       icon: "FileOutput", color: "ink" },
+  mdcrd:  { label: "Trajectory",   icon: "Film",       color: "ink" },
+  inpcrd: { label: "Coordinates",  icon: "Move3d",     color: "ink" },
+  folder: { label: "Folder",       icon: "Folder",     color: "ink-muted" },
+  other:  { label: "File",         icon: "File",       color: "ink-muted" },
 };
 
-// Stage role configuration
-export const STAGE_ROLE_CONFIG: Record<string, {
-  color: string;
-  bgColor: string;
-  label: string;
-}> = {
-  minimization: { color: 'text-blue-600', bgColor: 'bg-blue-100', label: 'Minimization' },
-  heating: { color: 'text-orange-600', bgColor: 'bg-orange-100', label: 'Heating' },
-  equilibration: { color: 'text-green-600', bgColor: 'bg-green-100', label: 'Equilibration' },
-  production: { color: 'text-purple-600', bgColor: 'bg-purple-100', label: 'Production' },
-  '': { color: 'text-gray-500', bgColor: 'bg-gray-100', label: 'Unknown' },
+export const STAGE_ROLE_CONFIG: Record<string, { label: string }> = {
+  minimization:  { label: "Minimization" },
+  heating:       { label: "Heating" },
+  equilibration: { label: "Equilibration" },
+  production:    { label: "Production" },
+  "":            { label: "Unknown" },
 };
