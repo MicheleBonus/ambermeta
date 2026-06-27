@@ -1,167 +1,83 @@
 import type {
-  FileInfo,
-  Stage,
-  StageCreate,
-  StageUpdate,
-  ProtocolState,
-  GlobalSettings,
-  ExportRequest,
-  ExportResponse,
-  ValidationResult,
-  SequenceInfo,
-} from '../types';
+  DocumentResponse, SaveResult, PreviewResponse, ValidationReport,
+  GlobalSettings, FileInfo, FileMetadata, StageCreate, StageUpdate,
+  SettingsPatch, ExportFormat,
+} from "@/types";
 
-const API_BASE = '/api';
-
-async function request<T>(
-  endpoint: string,
-  options: RequestInit = {}
-): Promise<T> {
-  const response = await fetch(`${API_BASE}${endpoint}`, {
-    headers: {
-      'Content-Type': 'application/json',
-      ...options.headers,
-    },
-    ...options,
-  });
-
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({ detail: response.statusText }));
-    throw new Error(error.detail || 'Request failed');
+export class ApiError extends Error {
+  status: number;
+  detail: string;
+  constructor(status: number, detail: string) {
+    super(detail);
+    this.name = "ApiError";
+    this.status = status;
+    this.detail = detail;
   }
-
-  return response.json();
 }
 
-// File endpoints
-export async function listFiles(path?: string, recursive = true): Promise<FileInfo[]> {
-  const params = new URLSearchParams();
-  if (path) params.append('path', path);
-  params.append('recursive', String(recursive));
-  return request<FileInfo[]>(`/files?${params}`);
-}
-
-export async function getFileMetadata(path: string): Promise<{
-  file_path: string;
-  file_type: string;
-  metadata: Record<string, unknown>;
-  warnings: string[];
-}> {
-  const params = new URLSearchParams({ path });
-  return request(`/files/metadata?${params}`);
-}
-
-export async function getRelatedFiles(stem: string): Promise<Record<string, string>> {
-  // Encode the stem properly for the URL path
-  const encodedStem = encodeURIComponent(stem);
-  return request<Record<string, string>>(`/files/related/${encodedStem}`);
-}
-
-// Stage endpoints
-export async function listStages(): Promise<Stage[]> {
-  return request<Stage[]>('/stages');
-}
-
-export async function createStage(stage: StageCreate): Promise<Stage> {
-  return request<Stage>('/stages', {
-    method: 'POST',
-    body: JSON.stringify(stage),
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(`/api${path}`, {
+    headers: { "Content-Type": "application/json" },
+    ...init,
   });
+  if (!res.ok) {
+    let detail = res.statusText;
+    try {
+      const body = await res.json();
+      if (body && typeof body.detail === "string") detail = body.detail;
+    } catch {
+      /* non-JSON error body */
+    }
+    throw new ApiError(res.status, detail);
+  }
+  if (res.status === 204) return undefined as T;
+  return (await res.json()) as T;
 }
 
-export async function getStage(id: string): Promise<Stage> {
-  return request<Stage>(`/stages/${id}`);
-}
+const post = <T>(path: string, body?: unknown) =>
+  request<T>(path, { method: "POST", body: body ? JSON.stringify(body) : undefined });
+const put = <T>(path: string, body: unknown) =>
+  request<T>(path, { method: "PUT", body: JSON.stringify(body) });
 
-export async function updateStage(id: string, update: StageUpdate): Promise<Stage> {
-  return request<Stage>(`/stages/${id}`, {
-    method: 'PUT',
-    body: JSON.stringify(update),
-  });
-}
+export const api = {
+  getDocument: () => request<DocumentResponse>("/document"),
+  openDocument: (path: string) => post<DocumentResponse>("/document/open", { path }),
+  saveDocument: (args: { path?: string; format?: ExportFormat }) =>
+    post<SaveResult>("/document/save", args),
+  previewDocument: (format: ExportFormat) =>
+    post<PreviewResponse>("/document/preview", { format }),
+  discover: (args: { recursive: boolean; pattern?: string }) =>
+    post<DocumentResponse>("/document/discover", args),
 
-export async function deleteStage(id: string): Promise<{ status: string; id: string }> {
-  return request(`/stages/${id}`, {
-    method: 'DELETE',
-  });
-}
+  createStage: (stage: StageCreate) => post<DocumentResponse>("/stages", stage),
+  updateStage: (id: string, update: StageUpdate) =>
+    put<DocumentResponse>(`/stages/${id}`, update),
+  deleteStage: (id: string) =>
+    request<DocumentResponse>(`/stages/${id}`, { method: "DELETE" }),
+  reorderStages: (stage_ids: string[]) =>
+    post<DocumentResponse>("/stages/reorder", { stage_ids }),
+  bulkUpdateStages: (stage_ids: string[], update: StageUpdate) =>
+    put<DocumentResponse>("/stages/bulk", { stage_ids, update }),
 
-export async function reorderStages(stageIds: string[]): Promise<Stage[]> {
-  return request<Stage[]>('/stages/reorder', {
-    method: 'POST',
-    body: JSON.stringify({ stage_ids: stageIds }),
-  });
-}
+  getSettings: () => request<GlobalSettings>("/settings"),
+  updateSettings: (patch: SettingsPatch) => put<DocumentResponse>("/settings", patch),
 
-export async function bulkUpdateStages(
-  stageIds: string[],
-  update: StageUpdate
-): Promise<Stage[]> {
-  return request<Stage[]>('/stages/bulk', {
-    method: 'PUT',
-    body: JSON.stringify({ stage_ids: stageIds, update }),
-  });
-}
+  undo: () => post<DocumentResponse>("/undo"),
+  redo: () => post<DocumentResponse>("/redo"),
 
-// Protocol endpoints
-export async function getProtocol(): Promise<ProtocolState> {
-  return request<ProtocolState>('/protocol');
-}
+  validate: () => post<ValidationReport>("/validate"),
+  linkRestarts: () => post<DocumentResponse>("/link-restarts"),
 
-export async function validateProtocol(): Promise<ValidationResult> {
-  return request<ValidationResult>('/validate', {
-    method: 'POST',
-  });
-}
-
-export async function exportProtocol(exportRequest: ExportRequest): Promise<ExportResponse> {
-  return request<ExportResponse>('/export', {
-    method: 'POST',
-    body: JSON.stringify(exportRequest),
-  });
-}
-
-// Settings endpoints
-export async function getSettings(): Promise<GlobalSettings> {
-  return request<GlobalSettings>('/settings');
-}
-
-export async function updateSettings(settings: GlobalSettings): Promise<GlobalSettings> {
-  return request<GlobalSettings>('/settings', {
-    method: 'PUT',
-    body: JSON.stringify(settings),
-  });
-}
-
-// Session endpoints
-export async function saveSession(filename: string): Promise<{ status: string; path: string }> {
-  return request('/session/save', {
-    method: 'POST',
-    body: JSON.stringify({ filename }),
-  });
-}
-
-export async function loadSession(filename: string): Promise<ProtocolState> {
-  return request<ProtocolState>('/session/load', {
-    method: 'POST',
-    body: JSON.stringify({ filename }),
-  });
-}
-
-// Sequence endpoints
-export async function getSequences(): Promise<Record<string, SequenceInfo>> {
-  return request<Record<string, SequenceInfo>>('/sequences');
-}
-
-// Restart linking endpoints
-export interface LinkRestartsResponse {
-  status: string;
-  message: string;
-  updates: number;
-}
-
-export async function linkRestarts(): Promise<LinkRestartsResponse> {
-  return request<LinkRestartsResponse>('/link-restarts', {
-    method: 'POST',
-  });
-}
+  listFiles: (args: { path?: string; recursive?: boolean; include_all?: boolean }) => {
+    const q = new URLSearchParams();
+    if (args.path) q.set("path", args.path);
+    if (args.recursive !== undefined) q.set("recursive", String(args.recursive));
+    if (args.include_all !== undefined) q.set("include_all", String(args.include_all));
+    return request<FileInfo[]>(`/files?${q.toString()}`);
+  },
+  fileMetadata: (path: string) =>
+    request<FileMetadata>(`/files/metadata?path=${encodeURIComponent(path)}`),
+  relatedFiles: (stem: string) =>
+    request<Record<string, string>>(`/files/related/${encodeURIComponent(stem)}`),
+  sequences: () => request<Record<string, string[]>>("/sequences"),
+};

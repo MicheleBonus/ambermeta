@@ -15,7 +15,7 @@ from typing import Optional
 
 # Check for FastAPI availability
 try:
-    from fastapi import FastAPI
+    from fastapi import FastAPI, HTTPException
     from fastapi.staticfiles import StaticFiles
     from fastapi.middleware.cors import CORSMiddleware
     from fastapi.responses import FileResponse, HTMLResponse
@@ -95,9 +95,14 @@ def create_app(directory: str) -> "FastAPI":
             """Serve the main HTML file."""
             return FileResponse(static_path / "index.html")
 
-        @app.get("/{path:path}")
+        # Accept all methods so unknown /api/* POSTs/PUTs return 404 (not 405).
+        @app.api_route("/{path:path}",
+                        methods=["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"])
         async def serve_spa(path: str):
             """Serve the SPA; never serve files outside the static dir."""
+            # Unmatched /api/* paths must 404 — the SPA must not swallow them.
+            if path == "api" or path.startswith("api/"):
+                raise HTTPException(status_code=404, detail="Not found")
             index = static_path / "index.html"
             if ".." in path or path.startswith(("/", "\\")):
                 return FileResponse(index)
@@ -263,14 +268,6 @@ def _get_placeholder_html() -> str:
             <div class="endpoint">
                 <span><span class="method delete">DELETE</span> /api/stages/{id}</span>
                 <span>Delete a stage</span>
-            </div>
-            <div class="endpoint">
-                <span><span class="method">GET</span> /api/protocol</span>
-                <span>Get full protocol</span>
-            </div>
-            <div class="endpoint">
-                <span><span class="method post">POST</span> /api/export</span>
-                <span>Export manifest</span>
             </div>
             <p style="margin-top: 1rem;">
                 View the full API documentation at:

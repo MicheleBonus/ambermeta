@@ -21,6 +21,7 @@ def test_completion_script_contains_expected_tokens() -> None:
     assert "complete -c ambermeta" in fish_script
 
 
-def test_zsh_completion_has_tui_branch() -> None:
-    zsh_script = cli._completion_script("zsh")
-    assert "tui)" in zsh_script
+def test_completion_scripts_have_no_tui_branch() -> None:
+    # The TUI was removed; completion scripts must not advertise it.
+    for shell in ("bash", "zsh", "fish"):
+        assert "tui" not in cli._completion_script(shell)

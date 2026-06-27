@@ -15,7 +15,6 @@ setup(
     package_data={"ambermeta.gui": ["static/**"]},
     extras_require={
         "netcdf": ["netCDF4>=1.6", "scipy>=1.8", "numpy>=1.23"],
-        "tui": ["textual>=0.40.0"],
         "gui": [
             "fastapi>=0.100.0",
             "uvicorn>=0.23.0",
@@ -31,7 +30,6 @@ setup(
             "netCDF4>=1.6",
             "scipy>=1.8",
             "numpy>=1.23",
-            "textual>=0.40.0",
             "fastapi>=0.100.0",
             "uvicorn>=0.23.0",
             "websockets>=11.0",

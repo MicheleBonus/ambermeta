@@ -35,8 +35,7 @@ python -m pip install -e ".[yaml]"
 # TOML manifest support (mainly for Python < 3.11)
 python -m pip install -e ".[toml]"
 
-# Optional interfaces
-python -m pip install -e ".[tui]"
+# Optional GUI
 python -m pip install -e ".[gui]"
 
 # Test and dev dependencies
@@ -213,40 +212,32 @@ print(len(protocol2.stages), protocol2.totals())
 
 ---
 
-## Optional interfaces (TUI/GUI)
+## Optional GUI
 
-These interfaces are optional wrappers around manifest/protocol workflows.
+The GUI is an optional, browser-based wrapper around the manifest/protocol workflow. The CLI remains the fully headless, scriptable interface (ideal for SSH/cluster use).
 
 ```bash
-# TUI
-ambermeta tui /path/to/simulations
-
-# GUI
 ambermeta gui /path/to/simulations --host 127.0.0.1 --port 8765
 ambermeta gui /path/to/simulations --no-browser
 ```
 
-### Migration note (TUI/GUI ➜ CLI)
+### CLI equivalents (no GUI needed)
 
-If you previously relied on TUI/GUI, equivalent CLI flows are:
+Everything the GUI does maps to a CLI flow:
 
-- **Create/edit manifest interactively**
-  - Old: `ambermeta tui /path/to/simulations`
-  - CLI alternative: `ambermeta plan /path/to/simulations --interactive`
+- **Create/edit a manifest interactively**
+  - `ambermeta plan /path/to/simulations --interactive`
 
 - **Auto-group files from a folder**
-  - Old: GUI/TUI discovery actions
-  - CLI alternative: `ambermeta init /path/to/simulations --auto --output manifest.yaml --force`
+  - `ambermeta init /path/to/simulations --auto --output manifest.yaml --force`
 
 - **Run protocol analysis and export artifacts**
-  - Old: GUI export actions
-  - CLI alternative:
-    ```bash
-    ambermeta plan /path/to/simulations --manifest manifest.yaml \
-      --summary-path summary.json \
-      --methods-summary-path methods-summary.json \
-      --stats-csv stats.csv
-    ```
+  ```bash
+  ambermeta plan /path/to/simulations --manifest manifest.yaml \
+    --summary-path summary.json \
+    --methods-summary-path methods-summary.json \
+    --stats-csv stats.csv
+  ```
 
 ---
 
@@ -300,7 +291,7 @@ A comprehensive audit of the full codebase identified and fixed 40 bugs across a
 
 Current limitations:
 
-- CLI is the most complete and stable interface; TUI/GUI are optional and may lag behind CLI capabilities.
+- CLI is the most complete and stable interface; the GUI is an optional browser-based front end over the same core.
 - Some parsing features depend on optional dependencies (for example NetCDF support).
 - Manifest parsing for YAML requires `pyyaml`.
 

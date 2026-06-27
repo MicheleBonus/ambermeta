@@ -1,6 +1,6 @@
 # CLI Recipes
 
-High-value command-line workflows for users transitioning from TUI/GUI to an automation-friendly CLI flow.
+High-value command-line workflows for users who want an automation-friendly CLI flow instead of the GUI.
 
 ## From raw directory to manifest
 

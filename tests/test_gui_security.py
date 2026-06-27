@@ -53,15 +53,18 @@ def _build_fixed_app(static_path: pathlib.Path):
     from the patched server.py.  The implementation here must match the
     code in ambermeta/gui/server.py exactly.
     """
-    from fastapi import FastAPI
+    from fastapi import FastAPI, HTTPException
     from fastapi.responses import FileResponse
 
     app = FastAPI()
     index = static_path / "index.html"
 
-    @app.get("/{path:path}")
+    @app.api_route("/{path:path}",
+                   methods=["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"])
     async def serve_spa(path: str):
         """Serve the SPA; never serve files outside the static dir."""
+        if path == "api" or path.startswith("api/"):
+            raise HTTPException(status_code=404, detail="Not found")
         if ".." in path or path.startswith(("/", "\\")):
             return FileResponse(index)
         candidate = (static_path / path).resolve()
@@ -192,6 +195,22 @@ def test_fixed_spa_serves_static_asset(tmp_path):
     r = client.get("/assets/app.js")
     assert r.status_code == 200
     assert "hello" in r.text
+
+
+@pytest.mark.filterwarnings("ignore::DeprecationWarning")
+def test_fixed_spa_unknown_api_path_returns_404(tmp_path):
+    """Unknown /api/... paths must return 404, not fall through to the SPA."""
+    from fastapi.testclient import TestClient
+
+    static = tmp_path / "static"
+    (static / "assets").mkdir(parents=True)
+    (static / "index.html").write_text("<html>app</html>")
+
+    app = _build_fixed_app(static)
+    client = TestClient(app, raise_server_exceptions=False)
+
+    r = client.get("/api/nonexistent")
+    assert r.status_code == 404
 
 
 # ---------------------------------------------------------------------------

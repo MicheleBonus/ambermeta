@@ -71,46 +71,55 @@ class StageUpdate(BaseModel):
     notes: Optional[List[str]] = None
 
 
-class StageValidation(BaseModel):
-    """Validation status for a stage."""
-    is_valid: bool = True
-    messages: List[str] = Field(default_factory=list)
-    missing_files: List[str] = Field(default_factory=list)
-    warnings: List[str] = Field(default_factory=list)
+class GlobalSettings(BaseModel):
+    """Global protocol settings (runtime; only prmtop fields are persisted)."""
+    global_prmtop: Optional[str] = None
+    hmr_prmtop: Optional[str] = None
+    initial_coordinates: Optional[str] = None
+    auto_link_restarts: bool = True
+    strict_validation: bool = True
+    allow_gaps: bool = False
+    use_relative_paths: bool = True
 
 
-class StageResponse(BaseModel):
-    """Response model for a stage."""
+class SettingsPatch(BaseModel):
+    """Partial patch for GlobalSettings — all fields Optional."""
+    global_prmtop: Optional[str] = None
+    hmr_prmtop: Optional[str] = None
+    initial_coordinates: Optional[str] = None
+    auto_link_restarts: Optional[bool] = None
+    strict_validation: Optional[bool] = None
+    allow_gaps: Optional[bool] = None
+    use_relative_paths: Optional[bool] = None
+
+
+class StageModel(BaseModel):
+    """A protocol stage as edited in the GUI (flat gap fields)."""
     id: str
     name: str
-    role: StageRole
-    files: StageFiles
+    role: StageRole = StageRole.UNKNOWN
+    prmtop: Optional[str] = None
+    mdin: Optional[str] = None
+    mdout: Optional[str] = None
+    mdcrd: Optional[str] = None
+    inpcrd: Optional[str] = None
     expected_gap_ps: Optional[float] = None
     gap_tolerance_ps: Optional[float] = None
     notes: List[str] = Field(default_factory=list)
-    validation: StageValidation = Field(default_factory=StageValidation)
-    sequence_base: Optional[str] = None
-    sequence_index: Optional[int] = None
 
     class Config:
         use_enum_values = True
 
 
-class GlobalSettings(BaseModel):
-    """Global protocol settings."""
-    global_prmtop: Optional[str] = None
-    hmr_prmtop: Optional[str] = None
-    initial_coordinates: Optional[str] = None
-    auto_link_restarts: bool = True
-    validate_on_export: bool = True
-    use_relative_paths: bool = False
-
-
-class ProtocolState(BaseModel):
-    """Full protocol state."""
+class DocumentResponse(BaseModel):
+    """The whole server-authoritative document in one payload."""
     base_directory: str
+    manifest_path: Optional[str] = None
+    dirty: bool = False
+    can_undo: bool = False
+    can_redo: bool = False
     settings: GlobalSettings = Field(default_factory=GlobalSettings)
-    stages: List[StageResponse] = Field(default_factory=list)
+    stages: List[StageModel] = Field(default_factory=list)
 
 
 class StageReorderRequest(BaseModel):
@@ -124,42 +133,6 @@ class BulkStageUpdate(BaseModel):
     update: StageUpdate
 
 
-class ExportFormat(str, Enum):
-    """Supported export formats."""
-    YAML = "yaml"
-    JSON = "json"
-    TOML = "toml"
-    CSV = "csv"
-
-
-class ExportRequest(BaseModel):
-    """Request model for exporting the protocol."""
-    format: ExportFormat = ExportFormat.YAML
-    include_validation: bool = True
-    use_relative_paths: bool = True
-
-    class Config:
-        use_enum_values = True
-
-
-class ExportResponse(BaseModel):
-    """Response model for export."""
-    content: str
-    filename: str
-    format: ExportFormat
-
-    class Config:
-        use_enum_values = True
-
-
-class ValidationResult(BaseModel):
-    """Result of protocol validation."""
-    is_valid: bool
-    stage_validations: Dict[str, StageValidation] = Field(default_factory=dict)
-    cross_stage_issues: List[str] = Field(default_factory=list)
-    summary: str = ""
-
-
 class FileMetadata(BaseModel):
     """Metadata extracted from a file."""
     file_path: str
@@ -171,27 +144,61 @@ class FileMetadata(BaseModel):
         use_enum_values = True
 
 
-class SequenceInfo(BaseModel):
-    """Information about a detected sequence of stages."""
-    base_name: str
-    stages: List[str]
-    count: int
+class MissingFile(BaseModel):
+    kind: str
+    path: str
 
 
-class SessionSaveRequest(BaseModel):
-    """Request model for saving a session."""
-    filename: str
+class StageIssue(BaseModel):
+    name: str
+    ok: bool
+    degraded: bool = False
+    errors: List[str] = Field(default_factory=list)
+    warnings: List[str] = Field(default_factory=list)
+    info: List[str] = Field(default_factory=list)
+    missing_files: List[MissingFile] = Field(default_factory=list)
 
 
-class SessionLoadRequest(BaseModel):
-    """Request model for loading a session."""
-    filename: str
+class ValidationReport(BaseModel):
+    ok: bool
+    totals: Dict[str, float] = Field(default_factory=dict)
+    protocol_issues: List[str] = Field(default_factory=list)
+    stage_issues: List[StageIssue] = Field(default_factory=list)
 
 
 class ApiError(BaseModel):
     """Standard API error response."""
     detail: str
     code: Optional[str] = None
+
+
+class OpenRequest(BaseModel):
+    path: str
+
+
+class SaveRequest(BaseModel):
+    path: Optional[str] = None
+    format: Optional[str] = None
+
+
+class SaveResult(BaseModel):
+    document: DocumentResponse
+    warnings: List[str] = Field(default_factory=list)
+
+
+class DiscoverRequest(BaseModel):
+    recursive: bool = True
+    pattern: Optional[str] = None
+
+
+class PreviewRequest(BaseModel):
+    format: str = "yaml"
+
+
+class PreviewResponse(BaseModel):
+    content: str
+    warnings: List[str] = Field(default_factory=list)
+    format: str
 
 
 # Forward reference resolution

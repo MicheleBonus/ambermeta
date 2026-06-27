@@ -79,17 +79,17 @@ interface FileIconProps {
 export function FileIcon({ type, className = '', isOpen }: FileIconProps) {
   if (type === 'folder') {
     const Icon = isOpen ? FolderOpen : Folder;
-    return <Icon className={`text-gray-500 ${className}`} />;
+    return <Icon className={`text-ink-muted ${className}`} />;
   }
 
   const Icon = FILE_TYPE_ICONS[type] || File;
   const colorClass = {
-    prmtop: 'text-green-500',
-    mdin: 'text-yellow-500',
-    mdout: 'text-cyan-500',
-    mdcrd: 'text-purple-500',
-    inpcrd: 'text-blue-500',
-    other: 'text-gray-400',
+    prmtop: 'text-ink',
+    mdin: 'text-ink',
+    mdout: 'text-ink',
+    mdcrd: 'text-ink',
+    inpcrd: 'text-ink',
+    other: 'text-ink-muted',
   }[type];
 
   return <Icon className={`${colorClass} ${className}`} />;

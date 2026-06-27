@@ -313,72 +313,37 @@ protocol = (
 
 ---
 
-## Tutorial 3: Using the Terminal UI
+## Tutorial 3: Building manifests interactively (GUI)
 
-**Goal:** Learn how to use the interactive TUI for building protocol manifests.
+**Goal:** Build a protocol manifest interactively in the browser-based GUI.
 
-### Step 1: Launch the TUI
+### Step 1: Launch the GUI
 
 ```bash
-# Launch in a simulation directory
-ambermeta tui tests/data/amber/md_test_files
-
-# With recursive file discovery
-ambermeta tui --recursive tests/data/amber/md_test_files
+ambermeta gui tests/data/amber/md_test_files
 ```
 
-### Step 2: Navigate the File Browser
+This starts a local server and opens your browser. Use `--no-browser` to skip auto-opening, and `--host`/`--port` to change where it listens. The window has three panes: **Files** (left), **Stages** (center), **Properties** (right).
 
-The left panel shows a directory tree of simulation files:
+### Step 2: Discover files
 
-1. **Expand directories** by clicking or pressing Enter
-2. **File icons indicate type:**
-   - `[P]` Green = prmtop (topology)
-   - `[I]` Yellow = mdin (input)
-   - `[O]` Cyan = mdout (output)
-   - `[T]` Magenta = mdcrd (trajectory)
-   - `[R]` Blue = inpcrd/restart
+Click **Discover** in the top bar. AmberMeta scans the directory, groups files into stages (one stage per file group), detects numbered sequences, and auto-classifies the topology (normal vs HMR).
 
-### Step 3: Set Global Topology
+### Step 3: Assign and edit
 
-1. Click on a `.prmtop` file
-2. A modal appears with options:
-   - "Set as Global Prmtop" - applies to all stages
-   - "Set as HMR Prmtop" - for hydrogen mass repartitioning systems
-   - "Add to Stage Editor" - add to current stage being edited
+- Drag a file from the **Files** pane onto a stage's slot, or use **Pick…** in the **Properties** pane.
+- Select a stage to edit its name, role, expected gap/tolerance, and notes (edits commit when you leave the field).
+- Numbered runs (e.g. `prod_001…050`) collapse into one group; you can set the role for the whole sequence at once.
 
-Or use `Ctrl+G` to open Global Settings.
+### Step 4: Validate
 
-### Step 4: Create Stages
+Click **Validate**. The panel reports per-stage issues (missing files, continuity gaps) with jump-to-issue plus a protocol-level summary. A protocol with continuity notes is shown as "valid, with N notes" — never a silent clean pass.
 
-**Manual creation:**
-1. Navigate to files in the file browser
-2. Click files to add them to the stage editor
-3. Set stage name and role
-4. Click "Apply" to create the stage
+### Step 5: Open / Save
 
-**Auto-generate from folder:**
-1. Click on a directory in the file browser, or
-2. Press `Ctrl+A` to open Auto-Generate modal
-3. Select target folder
-4. Stages are created based on file groupings
+**Open** loads an existing manifest (any format) for editing; **Save** writes the canonical manifest — byte-identical to the CLI's output. Undo/redo and an unsaved-changes indicator live in the top bar.
 
-### Step 5: Edit Stage Properties
-
-Select a stage in the center panel to edit:
-- **Name:** Unique identifier
-- **Role:** minimization, heating, equilibration, production
-- **Files:** prmtop, mdin, mdout, mdcrd, inpcrd paths
-- **Expected Gap:** Expected time gap from previous stage (ps)
-- **Tolerance:** Acceptable deviation from expected gap (ps)
-- **Notes:** Documentation for the stage
-
-### Step 6: Export the Manifest
-
-1. Press `Ctrl+E` to open Export modal
-2. Choose format: YAML, JSON, TOML, or CSV
-3. Select path options (absolute vs relative)
-4. Click Export
+See the [GUI Guide](gui.md) for the full reference. Prefer the terminal? `ambermeta plan … --interactive` and `ambermeta init … --auto` cover the same workflow headlessly.
 
 ---
 
@@ -740,13 +705,13 @@ for stage in protocol.stages:
     print(f"{stage.name}: {stage.sequence_index}")
 ```
 
-### Step 4: TUI Sequence Features
+### Step 4: Sequence features in the GUI
 
-In the TUI, sequences are automatically detected and displayed:
+In the GUI, numbered sequences are detected automatically:
 
-1. The "Seq #" column shows position within a sequence
-2. Use `Ctrl+A` to auto-generate stages from a folder with sequences
-3. Stages in the same sequence share a common base pattern
+1. A numbered run (e.g. `prod_001…050`) collapses into a single expandable group
+2. **Discover** auto-creates one stage per file in the sequence
+3. You can set the role for the whole sequence at once from the group header
 
 ---
 
@@ -941,7 +906,7 @@ This tutorial covered the main workflows for using AmberMeta:
 
 1. **Extracting metadata** from individual AMBER files
 2. **Building protocols** from directories or manifests
-3. **Using the TUI** for interactive manifest creation
+3. **Using the GUI** for interactive manifest creation
 4. **Creating manifests** for reproducible documentation
 5. **Validating continuity** between simulation stages
 6. **Exporting data** for publications and reports
@@ -950,6 +915,6 @@ This tutorial covered the main workflows for using AmberMeta:
 
 For more detailed information, see:
 - [CLI Reference](cli.md) - Complete command-line documentation
-- [TUI Guide](tui.md) - Detailed TUI documentation
+- [GUI Guide](gui.md) - Browser-based interactive editor
 - [Manifest Schema](manifest.md) - Full manifest format specification
 - [Python API](api.md) - Complete API reference

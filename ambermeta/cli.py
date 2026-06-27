@@ -624,7 +624,7 @@ _ambermeta_completion() {
     cur="${COMP_WORDS[COMP_CWORD]}"
     prev="${COMP_WORDS[COMP_CWORD-1]}"
 
-    local commands="plan validate info init tui gui completion"
+    local commands="plan validate info init gui completion"
     local global_opts="--help --log-level --log-file --quiet -q"
 
     if [[ ${COMP_CWORD} -eq 1 ]]; then
@@ -644,9 +644,6 @@ _ambermeta_completion() {
             ;;
         init)
             COMPREPLY=( $(compgen -W "--help -o --output --template --auto --format --validate --dry-run --force" -- "$cur") )
-            ;;
-        tui)
-            COMPREPLY=( $(compgen -W "--help" -- "$cur") )
             ;;
         gui)
             COMPREPLY=( $(compgen -W "--help --host --port --no-browser" -- "$cur") )
@@ -672,7 +669,6 @@ _ambermeta() {
     'validate:Validate simulation files'
     'info:Display metadata for a single file'
     'init:Generate example manifest templates'
-    'tui:Launch interactive terminal UI'
     'gui:Launch web-based GUI'
     'completion:Print shell completion script'
   )
@@ -702,9 +698,6 @@ _ambermeta() {
         init)
           _arguments '--output[Manifest output filename]:file:_files' '--template[Template complexity]:template:(minimal standard comprehensive)' '--auto[Auto-generate grouped stages]' '--format[Manifest format]:format:(yaml json toml csv)' '--validate[Validate discovered files after writing manifest]' '--dry-run[Preview discovery without writing]' '--force[Overwrite existing output]' '*:path:_files'
           ;;
-        tui)
-          _arguments '*:path:_files'
-          ;;
         gui)
           _arguments '--host[Host interface]' '--port[Port number]' '--no-browser[Do not open browser after server starts]' '*:path:_files'
           ;;
@@ -725,7 +718,6 @@ complete -c ambermeta -n "__fish_use_subcommand" -a "plan" -d "Build and summari
 complete -c ambermeta -n "__fish_use_subcommand" -a "validate" -d "Validate simulation files"
 complete -c ambermeta -n "__fish_use_subcommand" -a "info" -d "Display metadata for a single file"
 complete -c ambermeta -n "__fish_use_subcommand" -a "init" -d "Generate example manifest templates"
-complete -c ambermeta -n "__fish_use_subcommand" -a "tui" -d "Launch interactive terminal UI"
 complete -c ambermeta -n "__fish_use_subcommand" -a "gui" -d "Launch web-based GUI"
 complete -c ambermeta -n "__fish_use_subcommand" -a "completion" -d "Print shell completion script"
 
@@ -1388,33 +1380,6 @@ def _plan_command(args: argparse.Namespace) -> int:
     return 0
 
 
-def _tui_command(args: argparse.Namespace) -> int:
-    """Launch the TUI for building protocol manifests."""
-    try:
-        from ambermeta.tui import run_tui, TEXTUAL_AVAILABLE
-    except ImportError:
-        print(Colors.error("ERROR: TUI module not available."))
-        print("Install with: pip install ambermeta[tui]")
-        return 1
-
-    if not TEXTUAL_AVAILABLE:
-        print(Colors.error("ERROR: Textual library is required for the TUI."))
-        print("Install with: pip install textual")
-        return 1
-
-    directory = os.path.abspath(args.directory)
-    if not os.path.isdir(directory):
-        print(Colors.error(f"ERROR: Directory not found: {directory}"))
-        return 1
-
-    try:
-        run_tui(directory)
-        return 0
-    except Exception as e:
-        print(Colors.error(f"ERROR: TUI failed: {e}"))
-        return 1
-
-
 def _gui_command(args: argparse.Namespace) -> int:
     """Launch the web-based GUI for building protocol manifests."""
     try:
@@ -1528,7 +1493,6 @@ def build_parser() -> argparse.ArgumentParser:
         epilog="""
 Commands:
   plan      Build a simulation protocol from manifest or auto-discovery
-  tui       Launch interactive terminal UI for building manifests
   validate  Quick validation of simulation files
   info      Display detailed metadata for a single file
   init      Generate example manifest templates
@@ -1539,7 +1503,6 @@ Examples:
   ambermeta plan . --interactive            Prompt for stage definitions
   ambermeta plan -m manifest.yaml \\
     --methods-summary-path methods.json     Export publication-ready summary
-  ambermeta tui /path/to/simulations        Launch interactive TUI
   ambermeta validate system.prmtop *.mdout  Validate multiple files
   ambermeta info --format json system.prmtop  Show metadata as JSON
   ambermeta init --template standard .      Generate manifest template
@@ -1709,23 +1672,6 @@ For documentation, visit: https://github.com/MicheleBonus/ambermeta
         help="Output format (default: text)",
     )
 
-    # TUI subcommand
-    tui_parser = subparsers.add_parser(
-        "tui",
-        help="Launch interactive TUI for building protocol manifests",
-        description=(
-            "Launch a terminal user interface for interactively building "
-            "simulation protocol manifests. Features include file browser, "
-            "stage management, sequence detection, and export to multiple formats."
-        ),
-    )
-    tui_parser.add_argument(
-        "directory",
-        nargs="?",
-        default=".",
-        help="Directory containing simulation files (default: current directory)",
-    )
-
     # UX-009: init subcommand
     init_parser = subparsers.add_parser(
         "init",
@@ -1847,8 +1793,6 @@ def main(argv: List[str] | None = None) -> int:
             return _info_command(args)
         if args.command == "init":
             return _init_command(args)
-        if args.command == "tui":
-            return _tui_command(args)
         if args.command == "gui":
             return _gui_command(args)
         if args.command == "completion":
