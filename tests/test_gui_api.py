@@ -142,3 +142,49 @@ def test_settings_patch_and_undo_redo(client):
     # redo re-applies
     r = c.post("/api/redo")
     assert r.json()["settings"]["global_prmtop"] == "sys.prmtop"
+
+
+def test_validate_flags_missing_file(client):
+    c, base = client
+    c.post("/api/stages", json={"name": "min", "role": "minimization",
+                                "files": {"mdin": "nope.in"}})
+    r = c.post("/api/validate")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["ok"] is False
+    assert body["stage_issues"][0]["name"] == "min"
+    assert any("nope.in" in e for e in body["stage_issues"][0]["errors"])
+
+
+def test_files_list_and_metadata(client):
+    c, base = client
+    (base / "prod.mdin").write_text(
+        "prod\n&cntrl\n  imin=0, nstlim=1000, dt=0.002, ntb=2,\n/\n", encoding="utf-8")
+    r = c.get("/api/files", params={"recursive": False})
+    assert r.status_code == 200
+    assert any(f["name"] == "prod.mdin" for f in r.json())
+    r = c.get("/api/files/metadata", params={"path": str(base / "prod.mdin")})
+    assert r.status_code == 200, r.text
+    assert r.json()["metadata"]["details"] is not None
+
+
+def test_files_metadata_outside_base_403(client):
+    c, base = client
+    r = c.get("/api/files/metadata", params={"path": str(base.parent / "x.prmtop")})
+    assert r.status_code == 403
+
+
+def test_sequences_groups_numbered_runs(client):
+    c, base = client
+    ids = []
+    for i in (1, 2, 3):
+        body = c.post("/api/stages", json={"name": f"prod_{i:03d}"}).json()
+        ids.append(body["stages"][-1]["id"])
+    c.post("/api/stages", json={"name": "minimize"})  # singleton, not a sequence
+    r = c.get("/api/sequences")
+    assert r.status_code == 200, r.text
+    groups = r.json()
+    # exactly one detected sequence, holding the three prod ids in order
+    assert len(groups) == 1
+    only = list(groups.values())[0]
+    assert only == ids

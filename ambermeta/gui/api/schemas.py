@@ -212,6 +212,28 @@ class FileMetadata(BaseModel):
         use_enum_values = True
 
 
+class MissingFile(BaseModel):
+    kind: str
+    path: str
+
+
+class StageIssue(BaseModel):
+    name: str
+    ok: bool
+    degraded: bool = False
+    errors: List[str] = Field(default_factory=list)
+    warnings: List[str] = Field(default_factory=list)
+    info: List[str] = Field(default_factory=list)
+    missing_files: List[MissingFile] = Field(default_factory=list)
+
+
+class ValidationReport(BaseModel):
+    ok: bool
+    totals: Dict[str, float] = Field(default_factory=dict)
+    protocol_issues: List[str] = Field(default_factory=list)
+    stage_issues: List[StageIssue] = Field(default_factory=list)
+
+
 class SequenceInfo(BaseModel):
     """Information about a detected sequence of stages."""
     base_name: str

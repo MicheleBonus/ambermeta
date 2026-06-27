@@ -115,6 +115,17 @@ def test_failed_delete_preserves_redo():
     assert store.can_redo() is True
 
 
+def test_apply_restarts_sets_inpcrd_once():
+    store = _new()
+    store.add_stage({"name": "prod_001"})
+    store.add_stage({"name": "prod_002"})
+    n = store.apply_restarts({"prod_002": "prod_001.rst"})
+    assert n == 1
+    assert store.get().stages[1]["inpcrd"] == "prod_001.rst"
+    n2 = store.apply_restarts({"prod_002": "prod_001.rst"})  # no change
+    assert n2 == 0
+
+
 def test_bulk_update_bad_id_is_atomic():
     store = _new()
     a = store.add_stage({"name": "stage_a", "role": "minimize"})

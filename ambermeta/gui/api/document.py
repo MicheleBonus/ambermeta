@@ -188,6 +188,21 @@ class DocumentStore:
             self._doc.manifest_path = manifest_path
             self._doc.dirty = False
 
+    def apply_restarts(self, mapping_by_name: Dict[str, str]) -> int:
+        with self.lock:
+            self._snapshot()
+            count = 0
+            for s in self._doc.stages:
+                new = mapping_by_name.get(s["name"])
+                if new is not None and s.get("inpcrd") != new:
+                    s["inpcrd"] = new
+                    count += 1
+            if count:
+                self._doc.dirty = True
+            else:
+                self._undo.pop()  # nothing changed; drop the snapshot
+            return count
+
     def undo(self) -> None:
         with self.lock:
             if not self._undo:

@@ -23,6 +23,7 @@ from ambermeta.protocol import (
     _ordered_stems,
     _serialize_metadata,
     auto_discover,
+    detect_numeric_sequences,
     infer_stage_role_from_path,
     smart_group_files,
 )
@@ -393,3 +394,8 @@ def restart_chain(stages: List[Dict[str, Any]], settings: Dict[str, Any],
             if rel:
                 out[s.name] = rel
     return out
+
+
+def detect_sequences(stage_names: List[str]) -> Dict[str, List[str]]:
+    """Numbered-run grouping, delegated to the core (no GUI re-implementation)."""
+    return detect_numeric_sequences(list(stage_names))

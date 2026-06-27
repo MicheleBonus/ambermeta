@@ -1,6 +1,7 @@
 """FastAPI routes for the AmberMeta GUI API (server-authoritative document)."""
 import os
-from typing import Optional
+from pathlib import Path
+from typing import Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException, Query
 
@@ -10,6 +11,7 @@ from .schemas import (
     DocumentResponse, GlobalSettings, OpenRequest, SaveRequest, SaveResult,
     DiscoverRequest, PreviewRequest, PreviewResponse,
     StageCreate, StageUpdate, StageReorderRequest, BulkStageUpdate, SettingsPatch,
+    ValidationReport, FileMetadata, FileInfo,
 )
 
 router = APIRouter()
@@ -229,3 +231,94 @@ def discover_document(req: DiscoverRequest) -> DocumentResponse:
     store.replace(stages=result["stages"], settings=merged,
                   manifest_path=doc.manifest_path, dirty=True, reset_history=False)
     return store.to_response()
+
+
+@router.post("/validate", response_model=ValidationReport)
+def validate_protocol() -> ValidationReport:
+    doc = get_store().get()
+    report = core_bridge.build_validation_report(doc.stages, doc.settings,
+                                                 doc.base_directory)
+    return ValidationReport(**report)
+
+
+@router.get("/files", response_model=List[FileInfo])
+def list_files(path: Optional[str] = Query(None), recursive: bool = Query(True),
+               include_all: bool = Query(False)) -> List[FileInfo]:
+    doc = get_store().get()
+    directory = _within_base(path or doc.base_directory, doc.base_directory)
+    if not os.path.isdir(directory):
+        raise HTTPException(status_code=404, detail=f"Directory not found: {directory}")
+    return files.build_file_tree(directory, recursive=recursive, include_all=include_all)
+
+
+@router.get("/files/metadata", response_model=FileMetadata)
+def get_file_metadata(path: str = Query(...)) -> FileMetadata:
+    doc = get_store().get()
+    resolved = _within_base(path, doc.base_directory)
+    if not os.path.isfile(resolved):
+        raise HTTPException(status_code=404, detail=f"File not found: {path}")
+    meta = core_bridge.file_metadata(resolved)
+    return FileMetadata(file_path=resolved, file_type=files.detect_file_type(resolved),
+                        metadata=meta, warnings=meta["warnings"])
+
+
+@router.get("/files/related/{stem:path}")
+def get_related_files(stem: str) -> Dict[str, str]:
+    doc = get_store().get()
+    base_dir = doc.base_directory
+    stem_path = stem
+    suffixes = {".mdin", ".mdout", ".nc", ".rst", ".rst7", ".prmtop", ".in", ".out",
+                ".crd", ".x", ".ncrst", ".restrt", ".inpcrd", ".mdcrd", ".parm7", ".top"}
+    if Path(stem).suffix.lower() in suffixes:
+        stem_path = str(Path(stem).with_suffix(""))
+    if "/" in stem_path or os.sep in stem_path:
+        stem_dir = Path(base_dir) / Path(stem_path).parent
+        stem_name = Path(stem_path).name
+    else:
+        stem_dir = Path(base_dir)
+        stem_name = stem_path
+    file_type_extensions = {
+        "mdin": {".mdin", ".in"}, "mdout": {".mdout", ".out"},
+        "mdcrd": {".mdcrd", ".nc", ".crd", ".x"},
+        "inpcrd": {".rst", ".rst7", ".ncrst", ".restrt", ".inpcrd"},
+    }
+    _within_base(str(stem_dir), base_dir)
+    related: Dict[str, str] = {}
+    try:
+        if stem_dir.exists():
+            for entry in stem_dir.iterdir():
+                if entry.is_file() and entry.stem == stem_name:
+                    for ftype, exts in file_type_extensions.items():
+                        if entry.suffix.lower() in exts and ftype not in related:
+                            related[ftype] = str(entry)
+                            break
+    except OSError:
+        pass
+    return related
+
+
+@router.post("/link-restarts", response_model=DocumentResponse)
+def link_restarts() -> DocumentResponse:
+    store = get_store()
+    doc = store.get()
+    mapping = core_bridge.restart_chain(doc.stages, doc.settings,
+                                        doc.base_directory, recursive=False)
+    store.apply_restarts(mapping)
+    return store.to_response()
+
+
+@router.get("/sequences")
+def get_sequences() -> Dict[str, List[str]]:
+    doc = get_store().get()
+    names_to_ids: Dict[str, List[str]] = {}
+    for s in doc.stages:
+        names_to_ids.setdefault(s["name"], []).append(s["id"])
+    groups = core_bridge.detect_sequences([s["name"] for s in doc.stages])
+    out: Dict[str, List[str]] = {}
+    for base, names in groups.items():
+        ids: List[str] = []
+        for n in names:
+            ids.extend(names_to_ids.get(n, []))
+        if len(ids) > 1:
+            out[base] = ids
+    return out
