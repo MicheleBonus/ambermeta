@@ -247,9 +247,9 @@ def discover(directory: str, recursive: bool = True,
         stages.append(stage)
 
     settings_patch: Dict[str, Any] = {}
-    if topo["global_prmtop"]:
+    if topo["global_prmtop"] is not None:
         settings_patch["global_prmtop"] = topo["global_prmtop"]
-    if topo["hmr_prmtop"]:
+    if topo["hmr_prmtop"] is not None:
         settings_patch["hmr_prmtop"] = topo["hmr_prmtop"]
     return {"stages": stages, "settings_patch": settings_patch,
             "warnings": topo["warnings"]}

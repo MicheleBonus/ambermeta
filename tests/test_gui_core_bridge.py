@@ -1,7 +1,10 @@
 # tests/test_gui_core_bridge.py
 import os
+import pytest
 from ambermeta.gui.api import core_bridge
 from ambermeta.manifest import write_manifest, load_manifest
+
+cb = core_bridge
 
 
 def _stage(**kw):
@@ -102,7 +105,6 @@ def test_preview_matches_save(tmp_path):
 # ---------------------------------------------------------------------------
 # Task 3: discovery + HMR/normal topology split
 # ---------------------------------------------------------------------------
-from ambermeta.gui.api import core_bridge as cb
 
 
 def _touch(p):
@@ -137,4 +139,23 @@ def test_classify_topologies_warns_on_multiple(tmp_path):
     _touch(tmp_path / "b.prmtop")
     out = cb.classify_topologies(str(tmp_path), ["a.prmtop", "b.prmtop"])
     assert out["global_prmtop"] in ("a.prmtop", "b.prmtop")
+    assert any("topology files found" in w for w in out["warnings"])
+
+
+def test_classify_topologies_splits_hmr_via_monkeypatch(tmp_path, monkeypatch):
+    """HMR split branch: one file is HMR, one is normal; assert correct routing."""
+
+    class _Stub:
+        def __init__(self, hmr_active):
+            self.hmr_active = hmr_active
+
+    def _fake_extract(path):
+        basename = os.path.basename(path)
+        return _Stub(hmr_active=(basename == "hmr.prmtop"))
+
+    monkeypatch.setattr(core_bridge, "extract_prmtop_metadata", _fake_extract)
+
+    out = core_bridge.classify_topologies(str(tmp_path), ["normal.prmtop", "hmr.prmtop"])
+    assert out["hmr_prmtop"] == "hmr.prmtop"
+    assert out["global_prmtop"] == "normal.prmtop"
     assert any("topology files found" in w for w in out["warnings"])
