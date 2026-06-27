@@ -90,6 +90,12 @@ class DocumentStore:
         with self.lock:
             return self._doc
 
+    def snapshot(self):
+        """Deep-copied point-in-time view (stages, settings, manifest_path, base_directory), taken under the lock."""
+        with self.lock:
+            d = self._doc
+            return copy.deepcopy((d.stages, d.settings, d.manifest_path, d.base_directory))
+
     def can_undo(self) -> bool:
         with self.lock:
             return bool(self._undo)
@@ -190,6 +196,13 @@ class DocumentStore:
 
     def apply_restarts(self, mapping_by_name: Dict[str, str]) -> int:
         with self.lock:
+            would_change = any(
+                mapping_by_name.get(s["name"]) is not None
+                and s.get("inpcrd") != mapping_by_name.get(s["name"])
+                for s in self._doc.stages
+            )
+            if not would_change:
+                return 0
             self._snapshot()
             count = 0
             for s in self._doc.stages:
@@ -199,8 +212,6 @@ class DocumentStore:
                     count += 1
             if count:
                 self._doc.dirty = True
-            else:
-                self._undo.pop()  # nothing changed; drop the snapshot
             return count
 
     def undo(self) -> None:

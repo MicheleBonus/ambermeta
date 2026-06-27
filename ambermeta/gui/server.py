@@ -269,14 +269,6 @@ def _get_placeholder_html() -> str:
                 <span><span class="method delete">DELETE</span> /api/stages/{id}</span>
                 <span>Delete a stage</span>
             </div>
-            <div class="endpoint">
-                <span><span class="method">GET</span> /api/protocol</span>
-                <span>Get full protocol</span>
-            </div>
-            <div class="endpoint">
-                <span><span class="method post">POST</span> /api/export</span>
-                <span>Export manifest</span>
-            </div>
             <p style="margin-top: 1rem;">
                 View the full API documentation at:
                 <a href="/docs">/docs</a> or <a href="/redoc">/redoc</a>

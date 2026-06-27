@@ -232,13 +232,43 @@ def test_validate_delegates_to_core_bridge(client, monkeypatch):
     assert r.json()["ok"] is True
 
 
+def test_discover_delegates_to_core_bridge(client, monkeypatch):
+    c, base = client
+    called = {}
+
+    def fake(directory, recursive=True, pattern=None):
+        called["yes"] = directory
+        return {"stages": [], "settings_patch": {}, "warnings": []}
+
+    monkeypatch.setattr(_cb, "discover", fake)
+    r = c.post("/api/document/discover", json={})
+    assert r.status_code == 200, r.text
+    assert "yes" in called
+
+
 def test_routes_have_no_local_engine_code():
-    src = _Path("ambermeta/gui/api/routes.py").read_text(encoding="utf-8")
+    src = (_Path(__file__).resolve().parent.parent / "ambermeta" / "gui" / "api" / "routes.py").read_text(encoding="utf-8")
     assert "import yaml" not in src
     assert "toml.dumps" not in src
     assert "def _validate_stage" not in src
     assert "def _detect_sequences" not in src
     assert "from . import core_bridge" in src or "import core_bridge" in src
+
+
+def test_open_no_settings_leak(client):
+    c, base = client
+    # Manifest A has global_prmtop
+    manifest_a = base / "a.yaml"
+    write_manifest({"global_prmtop": "sys.prmtop", "stages": [{"name": "min"}]},
+                   str(manifest_a), "yaml")
+    r = c.post("/api/document/open", json={"path": str(manifest_a)})
+    assert r.json()["settings"]["global_prmtop"] == "sys.prmtop"
+    # Manifest B has NO global_prmtop
+    manifest_b = base / "b.yaml"
+    write_manifest({"stages": [{"name": "prod"}]}, str(manifest_b), "yaml")
+    r = c.post("/api/document/open", json={"path": str(manifest_b)})
+    assert r.status_code == 200, r.text
+    assert r.json()["settings"]["global_prmtop"] is None, "settings leaked from manifest A"
 
 
 def test_large_protocol_roundtrips(client):

@@ -59,7 +59,7 @@ def open_document(req: OpenRequest) -> DocumentResponse:
         result = core_bridge.open_manifest(resolved, doc.base_directory)
     except (FileNotFoundError, ValueError, TypeError, ImportError) as exc:
         raise HTTPException(status_code=400, detail=f"Could not read manifest: {exc}")
-    merged = dict(doc.settings)
+    merged = GlobalSettings().model_dump()
     merged.update(result["settings_patch"])
     store.replace(stages=result["stages"], settings=merged,
                   manifest_path=resolved, dirty=False, reset_history=True)
@@ -69,18 +69,17 @@ def open_document(req: OpenRequest) -> DocumentResponse:
 @router.post("/document/save", response_model=SaveResult)
 def save_document(req: SaveRequest) -> SaveResult:
     store = get_store()
-    doc = store.get()
+    stages, settings, manifest_path, base_directory = store.snapshot()
     target = req.path
     if target:
-        target = _within_base(target, doc.base_directory)
+        target = _within_base(target, base_directory)
     else:
-        target = doc.manifest_path
+        target = manifest_path
     if not target:
         raise HTTPException(status_code=400, detail="No path to save to (provide 'path').")
     fmt = core_bridge.resolve_format(target, req.format)
     try:
-        warnings = core_bridge.save_document(doc.stages, doc.settings,
-                                             doc.base_directory, target, fmt)
+        warnings = core_bridge.save_document(stages, settings, base_directory, target, fmt)
     except (RuntimeError, ValueError, OSError) as exc:
         raise HTTPException(status_code=400, detail=f"Could not save manifest: {exc}")
     store.mark_saved(target)
@@ -90,10 +89,9 @@ def save_document(req: SaveRequest) -> SaveResult:
 @router.post("/document/preview", response_model=PreviewResponse)
 def preview_document(req: PreviewRequest) -> PreviewResponse:
     store = get_store()
-    doc = store.get()
+    stages, settings, manifest_path, base_directory = store.snapshot()
     try:
-        out = core_bridge.preview_document(doc.stages, doc.settings,
-                                           doc.base_directory, req.format)
+        out = core_bridge.preview_document(stages, settings, base_directory, req.format)
     except (RuntimeError, ValueError, OSError) as exc:
         raise HTTPException(status_code=400, detail=f"Could not render preview: {exc}")
     return PreviewResponse(content=out["content"], warnings=out["warnings"],
@@ -222,22 +220,22 @@ def redo() -> DocumentResponse:
 @router.post("/document/discover", response_model=DocumentResponse)
 def discover_document(req: DiscoverRequest) -> DocumentResponse:
     store = get_store()
-    doc = store.get()
-    _within_base(doc.base_directory, doc.base_directory)
-    result = core_bridge.discover(doc.base_directory, recursive=req.recursive,
+    stages, settings, manifest_path, base_directory = store.snapshot()
+    _within_base(base_directory, base_directory)
+    result = core_bridge.discover(base_directory, recursive=req.recursive,
                                   pattern=req.pattern)
-    merged = dict(doc.settings)
+    merged = dict(settings)
     merged.update(result["settings_patch"])
     store.replace(stages=result["stages"], settings=merged,
-                  manifest_path=doc.manifest_path, dirty=True, reset_history=False)
+                  manifest_path=manifest_path, dirty=True, reset_history=False)
     return store.to_response()
 
 
 @router.post("/validate", response_model=ValidationReport)
 def validate_protocol() -> ValidationReport:
-    doc = get_store().get()
-    report = core_bridge.build_validation_report(doc.stages, doc.settings,
-                                                 doc.base_directory)
+    store = get_store()
+    stages, settings, manifest_path, base_directory = store.snapshot()
+    report = core_bridge.build_validation_report(stages, settings, base_directory)
     return ValidationReport(**report)
 
 
@@ -282,7 +280,7 @@ def get_related_files(stem: str) -> Dict[str, str]:
         "mdcrd": {".mdcrd", ".nc", ".crd", ".x"},
         "inpcrd": {".rst", ".rst7", ".ncrst", ".restrt", ".inpcrd"},
     }
-    _within_base(str(stem_dir), base_dir)
+    stem_dir = Path(_within_base(str(stem_dir), base_dir))
     related: Dict[str, str] = {}
     try:
         if stem_dir.exists():
@@ -300,20 +298,20 @@ def get_related_files(stem: str) -> Dict[str, str]:
 @router.post("/link-restarts", response_model=DocumentResponse)
 def link_restarts() -> DocumentResponse:
     store = get_store()
-    doc = store.get()
-    mapping = core_bridge.restart_chain(doc.stages, doc.settings,
-                                        doc.base_directory, recursive=False)
+    stages, settings, manifest_path, base_directory = store.snapshot()
+    mapping = core_bridge.restart_chain(stages, settings, base_directory, recursive=False)
     store.apply_restarts(mapping)
     return store.to_response()
 
 
 @router.get("/sequences")
 def get_sequences() -> Dict[str, List[str]]:
-    doc = get_store().get()
+    store = get_store()
+    stages, settings, manifest_path, base_directory = store.snapshot()
     names_to_ids: Dict[str, List[str]] = {}
-    for s in doc.stages:
+    for s in stages:
         names_to_ids.setdefault(s["name"], []).append(s["id"])
-    groups = core_bridge.detect_sequences([s["name"] for s in doc.stages])
+    groups = core_bridge.detect_sequences([s["name"] for s in stages])
     out: Dict[str, List[str]] = {}
     for base, names in groups.items():
         ids: List[str] = []

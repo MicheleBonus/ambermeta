@@ -162,8 +162,8 @@ def _gui_stage_from_entry(entry: Dict[str, Any]) -> Dict[str, Any]:
         "mdout": entry.get("mdout"),
         "mdcrd": entry.get("mdcrd"),
         "inpcrd": entry.get("inpcrd"),
-        "expected_gap_ps": gaps.get("expected") if isinstance(gaps, dict) else None,
-        "gap_tolerance_ps": gaps.get("tolerance") if isinstance(gaps, dict) else None,
+        "expected_gap_ps": gaps.get("expected"),
+        "gap_tolerance_ps": gaps.get("tolerance"),
         "notes": list(notes) if notes else [],
     }
 
@@ -287,10 +287,10 @@ def file_metadata(path: str) -> Dict[str, Any]:
         return {"details": None, "warnings": ["Unsupported file type"], "kind": kind}
     try:
         parsed = parser_cls(path).parse()
+        meta = _serialize_metadata(parsed)
     except Exception as exc:  # parser raises a variety of errors; surface, don't crash
         return {"details": None, "warnings": [f"Could not parse file: {exc}"],
                 "kind": kind}
-    meta = _serialize_metadata(parsed)
     return {"details": meta["details"], "warnings": meta["warnings"], "kind": kind}
 
 
