@@ -1369,18 +1369,20 @@ git commit -m "feat(gui): B2 Files panel — tree, drag, search, metadata previe
 
 **Files:**
 - Create/replace: `src/components/StageList/StageList.tsx`, `src/components/StageList/StageCard.tsx`, `src/components/StageList/FileDropZone.tsx`, `src/components/StageList/reorder.ts`, `src/components/StageList/index.ts`, `src/components/StageList/StageList.test.tsx`, `src/components/StageList/reorder.test.ts`
+- Modify: `src/App.tsx` (add the single app-level `DndContext` + `onDragEnd` routing reorder + file-assign)
 
 **Interfaces:**
-- Consumes: `useDocument`, `useReorder`, `useUpdateStage`, `useBulkUpdate`, `useSequences`, `useCreateStage` (Task 3); `useSelection` (Task 4); `FileIcon`, `Badge` (common); `formatPs`, `roleLabel` (Task 1).
+- Consumes (StageList): `useDocument`, `useBulkUpdate`, `useSequences` (Task 3); `useSelection` (Task 4); `FileIcon`, `Badge` (common); `formatPs`, `roleLabel` (Task 1). (Reorder/assign mutations — `useReorder`/`useUpdateStage` — are consumed by **App**, not StageList.)
 - Produces:
-  - `reorder.ts`: `reorderIds(ids: string[], activeId: string, overId: string): string[]` (pure — moves `activeId` to `overId`'s position).
-  - `<StageList/>`, `<StageCard stage isSelected onSelect/>`, `<FileDropZone stageId kind current onDrop/>`.
+  - `reorder.ts`: `reorderIds(ids, activeId, overId): string[]` (pure) and `resolveDrop(activeId, overId|null): DropResult|null` (pure router: `{type:"assign",stageId,kind,path}` | `{type:"reorder",activeId,overId}` | null).
+  - `<StageList/>` (renders a `SortableContext` only — App owns the `DndContext`), `<StageCard stage index isSelected onSelect/>`, `<FileDropZone stageId kind current/>`.
 
 **Design notes:**
 - **Sequence grouping:** `useSequences()` returns `base → ordered ids`. Build a render model: stages belonging to a sequence with ≥2 members render under a collapsible group header (`base · N runs`, with a group-level role selector that bulk-sets the role for the whole sequence); ungrouped stages render flat. Collapsed groups render a single summary row (so 50 prod runs collapse to one line).
 - **Virtualization:** when the number of *rendered rows* exceeds `VIRTUALIZE_THRESHOLD = 50`, window the flat row list with `@tanstack/react-virtual` (`useVirtualizer`, `estimateSize: () => 64`, the pane's scroll element as `getScrollElement`). Below the threshold, render all rows directly (keeps small-protocol tests simple and avoids jsdom measurement issues).
-- **Drag-to-reorder:** wrap rows in a `@dnd-kit` `SortableContext`; `onDragEnd` computes the new order with `reorderIds(...)` and calls `useReorder().mutate(newIds)`. (Reorder *logic* is unit-tested via `reorderIds`; dnd pointer simulation is not attempted in jsdom.)
-- **Drop-to-assign:** each `StageCard` file slot is a `FileDropZone` (`useDroppable` id `slot:${stageId}:${kind}`) that accepts a `file:${path}` draggable from the Files pane and calls `useUpdateStage` to set that kind. (Reuse the dnd ids defined in Task 5.)
+- **Single app-level DndContext (CRITICAL — architecture):** there is exactly ONE `@dnd-kit` `DndContext`, in `App.tsx`, wrapping all three panes. This is required because (a) `FileBrowser`'s `useDraggable` (Task 5) needs a `DndContext` ancestor at all, and (b) a `file:${path}` draggable from the Files pane must reach a `slot:${stageId}:${kind}` droppable in the Stages pane — cross-pane DnD only works inside ONE shared context. Therefore **`StageList` renders only a `SortableContext`, NOT its own `DndContext`** (a nested DndContext would capture events and break cross-pane drag).
+- **App's `onDragEnd` routes both gestures** via the pure `resolveDrop(activeId, overId)` helper (in `StageList/reorder.ts`): a `file:…`→`slot:…` drop ⇒ `useUpdateStage` sets that file kind on the stage; a stage-id→stage-id drop ⇒ `reorderIds(...)` + `useReorder().mutate(newIds)`. Both `reorderIds` and `resolveDrop` are pure and unit-tested; dnd pointer simulation is not attempted in jsdom. App's `PointerSensor` uses `activationConstraint: { distance: 5 }` so a click is not swallowed by a drag.
+- **Drop-to-assign:** each `StageCard` file slot is a `FileDropZone` (`useDroppable` id `slot:${stageId}:${kind}`) that accepts the `file:${path}` draggable (id format from Task 5). The actual assignment happens in App's `onDragEnd` (above), not inside StageList.
 - **Continuity shown quietly:** a stage whose `expected_gap_ps`/`gap_tolerance_ps` is set, or that follows another stage, shows the gap inline as plain text — `+{n} ps gap` in `text-warning` when a positive gap exists, nothing when continuous. (Observed-gap detail comes from validation in Task 9; here show the *configured* expected gap.)
 - Selection: clicking a card calls `select(id)` (additive with ctrl/meta). The selected card gets `bg-accent-subtle`.
 
@@ -1388,7 +1390,7 @@ git commit -m "feat(gui): B2 Files panel — tree, drag, search, metadata previe
 
 ```ts
 import { describe, it, expect } from "vitest";
-import { reorderIds } from "./reorder";
+import { reorderIds, resolveDrop } from "./reorder";
 
 describe("reorderIds", () => {
   it("moves active before/after over preserving the rest", () => {
@@ -1397,6 +1399,27 @@ describe("reorderIds", () => {
   });
   it("is a no-op when active === over", () => {
     expect(reorderIds(["a", "b"], "a", "a")).toEqual(["a", "b"]);
+  });
+});
+
+describe("resolveDrop", () => {
+  it("routes a file→slot drop to an assign", () => {
+    expect(resolveDrop("file:/work/min.in", "slot:s1:mdin")).toEqual({
+      type: "assign", stageId: "s1", kind: "mdin", path: "/work/min.in",
+    });
+  });
+  it("routes a file path containing colons correctly (only the prefix is split)", () => {
+    expect(resolveDrop("file:C:/work/min.in", "slot:s1:prmtop")).toEqual({
+      type: "assign", stageId: "s1", kind: "prmtop", path: "C:/work/min.in",
+    });
+  });
+  it("routes a stage→stage drop to a reorder", () => {
+    expect(resolveDrop("s1", "s2")).toEqual({ type: "reorder", activeId: "s1", overId: "s2" });
+  });
+  it("returns null for unhandled combinations", () => {
+    expect(resolveDrop("file:/x", "s2")).toBeNull();
+    expect(resolveDrop("file:/x", null)).toBeNull();
+    expect(resolveDrop("s1", null)).toBeNull();
   });
 });
 ```
@@ -1418,6 +1441,28 @@ export function reorderIds(ids: string[], activeId: string, overId: string): str
   next.splice(from, 1);
   next.splice(to, 0, activeId);
   return next;
+}
+
+// Pure router for the single app-level DndContext onDragEnd. Draggable ids are
+// `file:<path>` (path may contain ':'); droppable slot ids are `slot:<stageId>:<kind>`;
+// stage rows are sortable by their plain stage id.
+export type DropResult =
+  | { type: "assign"; stageId: string; kind: string; path: string }
+  | { type: "reorder"; activeId: string; overId: string };
+
+export function resolveDrop(activeId: string, overId: string | null): DropResult | null {
+  if (!overId) return null;
+  if (activeId.startsWith("file:") && overId.startsWith("slot:")) {
+    const path = activeId.slice("file:".length);
+    const rest = overId.slice("slot:".length);
+    const sep = rest.indexOf(":");
+    if (sep === -1) return null;
+    return { type: "assign", stageId: rest.slice(0, sep), kind: rest.slice(sep + 1), path };
+  }
+  if (!activeId.startsWith("file:") && !overId.startsWith("slot:") && activeId !== overId) {
+    return { type: "reorder", activeId, overId };
+  }
+  return null;
 }
 ```
 
@@ -1570,16 +1615,16 @@ Expected: FAIL — Task-4 placeholder renders only "Stages".
 
 ```tsx
 import { useMemo, useRef, useState } from "react";
-import {
-  DndContext, useSensor, useSensors, PointerSensor, type DragEndEvent,
-} from "@dnd-kit/core";
 import { SortableContext, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { ChevronRight, ChevronDown } from "lucide-react";
-import { useDocument, useReorder, useSequences, useBulkUpdate } from "@/api/hooks";
+import { useDocument, useSequences, useBulkUpdate } from "@/api/hooks";
 import { useSelection } from "@/state/selection";
 import { StageCard } from "./StageCard";
-import { reorderIds } from "./reorder";
 import type { StageModel } from "@/types";
+
+// NOTE: the DndContext + onDragEnd (reorder + file-assign) live in App.tsx — see
+// Task 6 "Wire the app-level DndContext" step. StageList only provides the
+// SortableContext for the stage rows; it does NOT own a DndContext.
 
 const VIRTUALIZE_THRESHOLD = 50;
 
@@ -1588,7 +1633,6 @@ interface Group { base: string; ids: string[]; }
 export function StageList() {
   const { data: doc } = useDocument();
   const { data: sequences = {} } = useSequences();
-  const reorder = useReorder();
   const bulk = useBulkUpdate();
   const { selectedIds, select } = useSelection();
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
@@ -1608,13 +1652,6 @@ export function StageList() {
     () => new Set(groups.flatMap((g) => g.ids)),
     [groups]
   );
-
-  const sensors = useSensors(useSensor(PointerSensor));
-  const onDragEnd = (e: DragEndEvent) => {
-    if (!e.over || e.active.id === e.over.id) return;
-    const next = reorderIds(stages.map((s) => s.id), String(e.active.id), String(e.over.id));
-    reorder.mutate(next);
-  };
 
   // Flatten the render order: each stage in document order, but a collapsed group
   // renders a single summary row at its first member's position.
@@ -1639,9 +1676,8 @@ export function StageList() {
   const toggle = (base: string) => setCollapsed((c) => ({ ...c, [base]: !c[base] }));
 
   return (
-    <DndContext sensors={sensors} onDragEnd={onDragEnd}>
-      <SortableContext items={stages.map((s) => s.id)} strategy={verticalListSortingStrategy}>
-        <div ref={parentRef} className="h-full overflow-auto">
+    <SortableContext items={stages.map((s) => s.id)} strategy={verticalListSortingStrategy}>
+      <div ref={parentRef} className="h-full overflow-auto">
           {rows.length === 0 && (
             <p className="p-4 text-sm text-ink-muted">No stages. Use Discover or drag files in.</p>
           )}
@@ -1673,10 +1709,10 @@ export function StageList() {
                 onSelect={(e) => select(row.stage.id, { additive: e.ctrlKey || e.metaKey })} />
             )
           )}
-        </div>
-      </SortableContext>
-    </DndContext>
+      </div>
+    </SortableContext>
   );
+  // (Inner JSX above is indented for the removed DndContext wrapper — re-indent on save.)
   // NOTE: when rows.length > VIRTUALIZE_THRESHOLD, wrap the row map in a
   // @tanstack/react-virtual useVirtualizer over `rows` (estimateSize 64,
   // getScrollElement: () => parentRef.current) and render only virtual items.
@@ -1693,11 +1729,51 @@ NOTE for the implementer: implement the virtualization branch (the NOTE comment)
 Run: `cd ambermeta/gui/frontend && npx vitest run src/components/StageList/StageList.test.tsx`
 Expected: PASS (2 tests).
 
-- [ ] **Step 11: Commit**
+- [ ] **Step 11: Wire the single app-level DndContext into `App.tsx`**
+
+`FileBrowser` (draggables) and `StageList` (sortable rows + drop slots) must share ONE `DndContext`, and `useDraggable` needs a `DndContext` ancestor at all — so add it to `App.tsx`. Add these imports and the drag handler, and wrap the panes:
+
+```tsx
+// add to the imports
+import { DndContext, PointerSensor, useSensor, useSensors, type DragEndEvent } from "@dnd-kit/core";
+import { useDocument, useReorder, useUpdateStage } from "@/api/hooks";
+import { reorderIds, resolveDrop } from "@/components/StageList/reorder";
+
+// inside App(), with the other hooks:
+  const { data: doc } = useDocument();
+  const reorder = useReorder();
+  const updateStage = useUpdateStage();
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
+  const handleDragEnd = (e: DragEndEvent) => {
+    const drop = resolveDrop(String(e.active.id), e.over ? String(e.over.id) : null);
+    if (!drop) return;
+    if (drop.type === "assign") {
+      updateStage.mutate({ id: drop.stageId, update: { files: { [drop.kind]: drop.path } } });
+    } else {
+      reorder.mutate(reorderIds((doc?.stages ?? []).map((s) => s.id), drop.activeId, drop.overId));
+    }
+  };
+```
+
+Then wrap the panes container in the DndContext (just inside `<SelectionProvider>`):
+
+```tsx
+    <SelectionProvider>
+      <DndContext sensors={sensors} onDragEnd={handleDragEnd}>
+        <div className="flex flex-col h-full">
+          {/* …TopBar + the three panes, unchanged… */}
+        </div>
+      </DndContext>
+    </SelectionProvider>
+```
+
+Run `npx tsc --noEmit` (clean) and `npx vitest run src/App.test.tsx` (still 2/2 — the shell test doesn't simulate drag, but App must still render under the new DndContext). **Task 10 rewrites `App.tsx` and MUST preserve this DndContext + `handleDragEnd`.**
+
+- [ ] **Step 12: Commit**
 
 ```bash
-git add ambermeta/gui/frontend/src/components/StageList
-git commit -m "feat(gui): B2 Stages panel — sequence grouping, sortable, drop zones, gap display (Task 6)"
+git add ambermeta/gui/frontend/src/components/StageList ambermeta/gui/frontend/src/App.tsx
+git commit -m "feat(gui): B2 Stages panel + app-level DnD (grouping, sortable, drop-to-assign) (Task 6)"
 ```
 
 ---
@@ -2551,7 +2627,11 @@ import { StageList } from "@/components/StageList/StageList";
 import { PropertiesPanel } from "@/components/PropertiesPanel/PropertiesPanel";
 import { FilePicker } from "@/components/FilePicker/FilePicker";
 import { ValidationPanel } from "@/components/ValidationPanel/ValidationPanel";
-import { useDocument, useOpen, useSave, useDiscover, useLinkRestarts } from "@/api/hooks";
+import { DndContext, PointerSensor, useSensor, useSensors, type DragEndEvent } from "@dnd-kit/core";
+import { reorderIds, resolveDrop } from "@/components/StageList/reorder";
+import {
+  useDocument, useOpen, useSave, useDiscover, useLinkRestarts, useReorder, useUpdateStage,
+} from "@/api/hooks";
 
 export default function App() {
   const [filesW, setFilesW] = usePersistentSize("files-w", 280);
@@ -2559,6 +2639,17 @@ export default function App() {
   const { data: doc } = useDocument();
   const open = useOpen(); const save = useSave(); const discover = useDiscover();
   const relink = useLinkRestarts();
+  const reorder = useReorder(); const updateStage = useUpdateStage();
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
+  const handleDragEnd = (e: DragEndEvent) => {
+    const drop = resolveDrop(String(e.active.id), e.over ? String(e.over.id) : null);
+    if (!drop) return;
+    if (drop.type === "assign") {
+      updateStage.mutate({ id: drop.stageId, update: { files: { [drop.kind]: drop.path } } });
+    } else {
+      reorder.mutate(reorderIds((doc?.stages ?? []).map((s) => s.id), drop.activeId, drop.overId));
+    }
+  };
   const [picker, setPicker] = useState<"open" | "save" | null>(null);
   const [discoverOpen, setDiscoverOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
@@ -2576,6 +2667,7 @@ export default function App() {
 
   return (
     <SelectionProvider>
+      <DndContext sensors={sensors} onDragEnd={handleDragEnd}>
       <div className="flex flex-col h-full">
         <TopBar onOpen={onOpen} onSave={onSave} onDiscover={onDiscover}
           onRelink={() => relink.mutate()}
@@ -2583,9 +2675,9 @@ export default function App() {
         <div className="flex flex-1 min-h-0">
           <div data-testid="pane-files" style={{ width: filesW }}
             className="shrink-0 border-r border-hairline overflow-auto bg-surface"><FileBrowser /></div>
-          <ResizeHandle direction="left" currentWidth={filesW} onResize={setFilesW} min={200} max={480} />
+          <ResizeHandle direction="left" currentWidth={filesW} onResize={setFilesW} minWidth={200} maxWidth={480} />
           <div data-testid="pane-stages" className="flex-1 min-w-0 overflow-hidden"><StageList /></div>
-          <ResizeHandle direction="right" currentWidth={propsW} onResize={setPropsW} min={260} max={520} />
+          <ResizeHandle direction="right" currentWidth={propsW} onResize={setPropsW} minWidth={260} maxWidth={520} />
           <div data-testid="pane-properties" style={{ width: propsW }}
             className="shrink-0 border-l border-hairline overflow-auto bg-surface"><PropertiesPanel /></div>
         </div>
@@ -2601,10 +2693,12 @@ export default function App() {
         onRun={(a) => discover.mutate(a)} />
       <ExportModal open={exportOpen} onClose={() => setExportOpen(false)} />
       <ValidationPanel open={validateOpen} onClose={() => setValidateOpen(false)} />
+      </DndContext>
     </SelectionProvider>
   );
 }
 ```
+(The inner JSX keeps its prior indentation under the added `<DndContext>` — re-indent on save. The DndContext + `handleDragEnd` are carried over from Task 6 and MUST remain.)
 
 - [ ] **Step 6: Simplify the Discover workflow test**
 
