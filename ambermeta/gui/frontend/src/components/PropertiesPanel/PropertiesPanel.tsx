@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useDocument, useUpdateStage, useBulkUpdate } from "@/api/hooks";
 import { useSelection } from "@/state/selection";
 import { SettingsPanel } from "./SettingsPanel";
+import { FilePicker } from "@/components/FilePicker";
 import type { StageModel, StageRole, StageUpdate } from "@/types";
 
 const ROLES = ["", "minimization", "heating", "equilibration", "production"];
@@ -33,11 +34,30 @@ export function PropertiesPanel() {
 
   const stage = selectedId ? doc.stages.find((s) => s.id === selectedId) ?? null : null;
   if (!stage) return <SettingsPanel settings={doc.settings} />;
-  return <StageForm key={stage.id} stage={stage} onCommit={(patch) => update.mutate({ id: stage.id, update: patch })} />;
+  return <StageEditor key={stage.id} stage={stage}
+    onCommit={(patch) => update.mutate({ id: stage.id, update: patch })} />;
 }
 
 const FILE_KINDS = ["prmtop", "mdin", "mdout", "mdcrd", "inpcrd"] as const;
 type FileKind = (typeof FILE_KINDS)[number];
+
+function StageEditor(
+  { stage, onCommit }:
+  { stage: StageModel; onCommit: (p: StageUpdate) => void }
+) {
+  const [pickSlot, setPickSlot] = useState<FileKind | null>(null);
+  return (
+    <>
+      <StageForm stage={stage} onCommit={onCommit} onPickFile={(slot) => setPickSlot(slot)} />
+      <FilePicker open={pickSlot !== null} mode="open" title={`Pick ${pickSlot ?? ""} file`}
+        onClose={() => setPickSlot(null)}
+        onPick={({ path }) => {
+          if (pickSlot) onCommit({ files: { [pickSlot]: path } });
+          setPickSlot(null);
+        }} />
+    </>
+  );
+}
 
 function StageForm(
   { stage, onCommit, onPickFile }:

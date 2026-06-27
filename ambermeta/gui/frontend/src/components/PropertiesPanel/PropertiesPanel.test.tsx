@@ -70,4 +70,21 @@ describe("PropertiesPanel", () => {
     await userEvent.click(strict);
     await waitFor(() => expect(calls.length).toBe(1));
   });
+
+  it("Pick… assigns a file to a stage slot", async () => {
+    const calls: unknown[] = [];
+    server.use(
+      http.get("/api/files", () => HttpResponse.json([
+        { path: "/work/min.in", name: "min.in", file_type: "mdin", is_directory: false,
+          size: 1, extension: ".mdin", parent: "/work", children: null },
+      ])),
+      http.put("/api/stages/1", async ({ request }) => { calls.push(await request.json()); return HttpResponse.json(emptyDocument); }),
+    );
+    renderPanel("1", [mkStage({ id: "1", name: "min" })]);
+    // open the picker for the mdin slot
+    const pickButtons = await screen.findAllByRole("button", { name: "Pick…" });
+    await userEvent.click(pickButtons[1]); // prmtop, mdin, mdout, mdcrd, inpcrd order -> [1] = mdin
+    await userEvent.click(await screen.findByText("/work/min.in"));
+    await waitFor(() => expect(calls).toEqual([{ files: { mdin: "/work/min.in" } }]));
+  });
 });
