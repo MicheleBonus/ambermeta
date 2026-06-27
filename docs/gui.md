@@ -562,23 +562,6 @@ ambermeta gui --port 3001
 
 ---
 
-## Comparison with TUI
-
-| Feature | GUI | TUI |
-|---------|-----|-----|
-| **Interface** | Web browser | Terminal |
-| **Drag and Drop** | Yes | No |
-| **File Browser** | Visual tree | Text-based tree |
-| **Auto-Discovery** | Modal with checkboxes | Modal with checkboxes |
-| **Session Save/Load** | Built-in UI | Keyboard shortcuts |
-| **Mobile Support** | Yes (responsive) | No |
-| **Requirements** | Modern browser | Terminal with Unicode support |
-| **Network Access** | Optional (can expose port) | Local only |
-
-Both interfaces export the same manifest formats and produce identical output.
-
----
-
 ## API Endpoints
 
 The GUI backend provides a REST API that can be used programmatically:

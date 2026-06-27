@@ -432,21 +432,19 @@ protocol = (
 
 ---
 
-## Creating Manifests with the TUI
+## Creating Manifests interactively
 
-The easiest way to create a manifest is using the Terminal User Interface:
+You can build a manifest interactively instead of writing it by hand:
 
 ```bash
-ambermeta tui /path/to/simulations
+# Browser-based GUI
+ambermeta gui /path/to/simulations
+
+# Or auto-generate a manifest from a folder, then edit it
+ambermeta init /path/to/simulations --auto --output manifest.yaml --force
 ```
 
-The TUI provides:
-- Visual file browser with color-coded file types
-- Automatic file grouping and sequence detection
-- Stage creation with role inference
-- Export to YAML, JSON, TOML, or CSV
-
-See [TUI Guide](tui.md) for detailed documentation.
+Both discover files, group them into stages, infer roles, and export to YAML, JSON, TOML, or CSV. See the [GUI Guide](gui.md) for the visual editor.
 
 ---
 

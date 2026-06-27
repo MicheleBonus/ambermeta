@@ -17,7 +17,6 @@ This document provides a comprehensive reference for the AmberMeta Python API.
   - [InpcrdParser](#inpcrdparser)
 - [Discovery Functions](#discovery-functions)
 - [Utility Functions](#utility-functions)
-- [TUI Components](#tui-components)
 - [Examples](#examples)
 
 ---
@@ -50,14 +49,6 @@ from ambermeta import (
     smart_group_files,
     auto_detect_restart_chain,
     infer_stage_role_from_content,
-)
-
-# TUI (optional)
-from ambermeta import (
-    run_tui,
-    ProtocolState,
-    Stage,
-    TEXTUAL_AVAILABLE,
 )
 ```
 
@@ -598,91 +589,6 @@ from ambermeta import infer_stage_role_from_content
 # From mdin file
 role = infer_stage_role_from_content(mdin_metadata)
 # Returns: "minimization", "heating", "equilibration", "production", or None
-```
-
----
-
-## TUI Components
-
-### `run_tui()`
-
-Launch the terminal user interface.
-
-```python
-from ambermeta import run_tui, TEXTUAL_AVAILABLE
-
-if TEXTUAL_AVAILABLE:
-    run_tui(
-        directory="/path/to/simulations",
-        recursive=True,
-    )
-else:
-    print("TUI not available. Install with: pip install ambermeta[tui]")
-```
-
-### `ProtocolState`
-
-State management for TUI protocol building.
-
-```python
-from ambermeta import ProtocolState, Stage
-
-# Create state
-state = ProtocolState("/path/to/simulations")
-
-# Discover files
-state.discover_files(recursive=True)
-
-# Get discovered data
-files = state.get_discovered_files()
-sequences = state.get_sequences()
-
-# Add stages
-stage = Stage(
-    name="production",
-    role="production",
-    files={"mdin": "prod.in", "mdout": "prod.out"},
-)
-state.add_stage(stage)
-
-# Set global prmtop
-state.set_global_prmtop("/path/to/system.prmtop")
-
-# Undo/redo
-state.undo()
-state.redo()
-
-# Export
-state.export_yaml("manifest.yaml", use_absolute_paths=True)
-state.export_json("manifest.json")
-state.export_toml("manifest.toml")
-state.export_csv("manifest.csv")
-
-# Session management
-state.save_session("session.json")
-loaded = ProtocolState.load_session("session.json")
-```
-
-### `Stage`
-
-Data class for stage information.
-
-```python
-from ambermeta import Stage
-
-stage = Stage(
-    name="production",
-    role="production",
-    files={"mdin": "prod.in", "mdout": "prod.out"},
-    expected_gap_ps=0.0,
-    gap_tolerance_ps=0.1,
-    notes=["Main production run"],
-    sequence_base="prod",
-    sequence_index=0,
-)
-
-# Convert to manifest format
-data = stage.to_dict()
 ```
 
 ---

@@ -11,7 +11,6 @@ AmberMeta provides a comprehensive command-line interface for parsing, validatin
   - [init](#init-command)
   - [validate](#validate-command)
   - [info](#info-command)
-  - [tui](#tui-command)
   - [gui](#gui-command)
   - [completion](#completion-command)
 - [Shell completion setup](#shell-completion-setup)
@@ -57,7 +56,7 @@ CLI help below is generated directly from `ambermeta/cli.py::build_parser()`.
 ```text
 usage: ambermeta [-h] [--log-level {DEBUG,INFO,WARNING,ERROR}]
                  [--log-file LOG_FILE] [-q]
-                 {plan,validate,info,tui,init,gui,completion} ...
+                 {plan,validate,info,init,gui,completion} ...
 
 AmberMeta - Simulation provenance engine for AMBER molecular dynamics.
 
@@ -65,14 +64,13 @@ Extract, organize, and validate metadata from AMBER simulation files.
 Supports prmtop, mdin, mdout, mdcrd (NetCDF), and restart files.
 
 positional arguments:
-  {plan,validate,info,tui,init,gui,completion}
+  {plan,validate,info,init,gui,completion}
     plan                Build and summarize a SimulationProtocol from
                         manifest, recursive discovery, or explicit interactive
                         mode
     validate            Validate simulation files without building full
                         protocol
     info                Display detailed metadata for a single file
-    tui                 Launch interactive TUI for building protocol manifests
     init                Generate an example manifest file
     gui                 Launch web-based GUI for building protocol manifests
     completion          Print shell completion script for bash, zsh, or fish
@@ -86,7 +84,6 @@ options:
 
 Commands:
   plan      Build a simulation protocol from manifest or auto-discovery
-  tui       Launch interactive terminal UI for building manifests
   validate  Quick validation of simulation files
   info      Display detailed metadata for a single file
   init      Generate example manifest templates
@@ -97,7 +94,6 @@ Examples:
   ambermeta plan . --interactive            Prompt for stage definitions
   ambermeta plan -m manifest.yaml \
     --methods-summary-path methods.json     Export publication-ready summary
-  ambermeta tui /path/to/simulations        Launch interactive TUI
   ambermeta validate system.prmtop *.mdout  Validate multiple files
   ambermeta info --format json system.prmtop  Show metadata as JSON
   ambermeta init --template standard .      Generate manifest template
@@ -130,7 +126,7 @@ ambermeta --quiet plan --recursive . --summary-path output.json
 
 ## Commands
 
-> **Note:** TUI (`ambermeta tui`) and GUI (`ambermeta gui`) are optional extras. The core AmberMeta workflow is fully supported by the CLI commands below.
+> **Note:** the GUI (`ambermeta gui`) is an optional extra. The core AmberMeta workflow is fully supported by the CLI commands below.
 
 ### Plan Command
 
@@ -392,45 +388,6 @@ options:
 
 ---
 
-### TUI Command
-
-Launch the interactive Terminal User Interface for building protocol manifests.
-
-```bash
-ambermeta tui [directory]
-```
-
-<!-- BEGIN_CLI_HELP:tui -->
-```text
-usage: ambermeta tui [-h] [directory]
-
-Launch a terminal user interface for interactively building simulation
-protocol manifests. Features include file browser, stage management, sequence
-detection, and export to multiple formats.
-
-positional arguments:
-  directory   Directory containing simulation files (default: current
-              directory)
-
-options:
-  -h, --help  show this help message and exit
-```
-<!-- END_CLI_HELP:tui -->
-
-#### Features
-
-The TUI provides:
-- **File Browser**: Navigate directory tree with color-coded file types
-- **Stage Management**: Create, edit, delete, and reorder stages
-- **Sequence Detection**: Automatic detection of numbered file sequences
-- **Global Settings**: Set global topology and HMR files
-- **Export**: Save manifest in YAML, JSON, TOML, or CSV format
-- **Undo/Redo**: Full undo/redo support
-
-See [TUI Guide](tui.md) for detailed documentation.
-
----
-
 ### GUI Command
 
 Launch the web-based Graphical User Interface for building protocol manifests.
@@ -609,6 +566,5 @@ ambermeta plan -m manifest.yaml --no-expand-env
 
 - [README](../README.md) - Project overview and quick start
 - [API Documentation](api.md) - Python API reference
-- [TUI Guide](tui.md) - Interactive terminal interface
 - [GUI Guide](gui.md) - Web-based graphical interface
 - [Tutorials](tutorials.md) - Step-by-step usage examples
