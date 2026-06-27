@@ -719,15 +719,20 @@ describe("react-query hooks", () => {
     };
     server.use(http.post("/api/stages", () => HttpResponse.json(withStage)));
 
-    const doc = renderHook(() => useDocument(), { wrapper });
-    await waitFor(() => expect(doc.result.current.isSuccess).toBe(true));
-    const create = renderHook(() => useCreateStage(), { wrapper });
-    await act(async () => { await create.result.current.mutateAsync({ name: "min" }); });
+    // Render BOTH hooks in ONE tree so the mutation and the query share the same
+    // React reconciliation — the cache update propagates within act(). (Two separate
+    // renderHook trees race the cross-tree cache notification and waitFor flakes.)
+    const { result } = renderHook(
+      () => ({ doc: useDocument(), create: useCreateStage() }),
+      { wrapper }
+    );
+    await waitFor(() => expect(result.current.doc.isSuccess).toBe(true));
+    await act(async () => { await result.current.create.mutateAsync({ name: "min" }); });
 
     await waitFor(() =>
-      expect(doc.result.current.data?.stages.map((s) => s.name)).toEqual(["min"])
+      expect(result.current.doc.data?.stages.map((s) => s.name)).toEqual(["min"])
     );
-    expect(doc.result.current.data?.dirty).toBe(true);
+    expect(result.current.doc.data?.dirty).toBe(true);
   });
 });
 
