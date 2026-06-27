@@ -1,6 +1,6 @@
 """AmberMeta - Simulation provenance extraction for AMBER molecular dynamics."""
 
-__version__ = "0.2.0"
+__version__ = "1.0.0"
 
 from ambermeta.protocol import (
     SimulationProtocol,
