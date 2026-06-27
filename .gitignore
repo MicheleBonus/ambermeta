@@ -16,6 +16,8 @@ eggs/
 .eggs/
 lib/
 lib64/
+# The Python lib/ ignore above otherwise swallows the GUI frontend source dir:
+!ambermeta/gui/frontend/src/lib/
 parts/
 sdist/
 var/
