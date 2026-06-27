@@ -1,6 +1,7 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { api } from "./client";
 import { DOCUMENT_KEY, queryClient, setDocument } from "./queryClient";
+import { pushToast } from "@/lib/toast";
 import type {
   DocumentResponse, SaveResult, StageCreate, StageUpdate, SettingsPatch,
   ExportFormat,
@@ -33,7 +34,10 @@ export const useLinkRestarts = () => docMutation((_: void) => api.linkRestarts()
 export const useSave = () =>
   useMutation({
     mutationFn: (a: { path?: string; format?: ExportFormat }) => api.saveDocument(a),
-    onSuccess: (res: SaveResult) => setDocument(res.document),
+    onSuccess: (res: SaveResult) => {
+      setDocument(res.document);
+      res.warnings.forEach((w) => pushToast(w, "warning"));
+    },
   });
 
 export const useValidate = () => useMutation({ mutationFn: () => api.validate() });

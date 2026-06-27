@@ -1,16 +1,19 @@
-import { describe, it, expect } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { describe, it, expect, beforeEach } from "vitest";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { http, HttpResponse } from "msw";
 import { server, emptyDocument } from "@/test/server";
 import { queryClient } from "@/api/queryClient";
+import { _resetToasts } from "@/lib/toast";
 import App from "./App";
 
 function renderApp() {
   queryClient.clear();
   return render(<QueryClientProvider client={queryClient}><App /></QueryClientProvider>);
 }
+
+beforeEach(() => { _resetToasts(); });
 
 describe("top-bar workflows", () => {
   it("Discover calls the discover endpoint and updates the document", async () => {
@@ -61,5 +64,22 @@ describe("top-bar workflows", () => {
     renderApp();
     await userEvent.click(await screen.findByRole("button", { name: "Re-link restarts" }));
     await waitFor(() => expect(linked).toBe(true));
+  });
+
+  it("failed open shows error toast with detail from 400 response", async () => {
+    server.use(
+      http.get("/api/files", () => HttpResponse.json([
+        { path: "/work/bad.yaml", name: "bad.yaml", file_type: "other",
+          is_directory: false, size: 1, extension: ".yaml", parent: "/work", children: null },
+      ])),
+      http.post("/api/document/open", () =>
+        HttpResponse.json({ detail: "File not found or invalid manifest" }, { status: 400 })
+      )
+    );
+    renderApp();
+    await userEvent.click(await screen.findByRole("button", { name: "Open" }));
+    const dialog = await screen.findByRole("dialog", { name: "Open manifest" });
+    await userEvent.click(within(dialog).getByText("bad.yaml"));
+    await screen.findByText(/File not found or invalid manifest/, { selector: "[role=status] span" });
   });
 });

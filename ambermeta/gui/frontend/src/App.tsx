@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { SelectionProvider } from "@/state/selection";
-import { ResizeHandle } from "@/components/common";
+import { ResizeHandle, Toaster } from "@/components/common";
 import { usePersistentSize } from "@/lib/usePersistentSize";
 import { useUnsavedGuard } from "@/lib/useUnsavedGuard";
 import { TopBar } from "@/components/TopBar/TopBar";
@@ -77,6 +77,7 @@ export default function App() {
         onRun={(a) => discover.mutate(a)} />
       <ExportModal open={exportOpen} onClose={() => setExportOpen(false)} />
       <ValidationPanel open={validateOpen} onClose={() => setValidateOpen(false)} />
+      <Toaster />
       </DndContext>
     </SelectionProvider>
   );

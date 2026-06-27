@@ -106,6 +106,9 @@ export function StageList() {
           <p className="p-4 text-sm text-ink-muted">No stages. Use Discover or drag files in.</p>
         )}
         {useVirt ? (
+          // >50 flat rows: @tanstack/react-virtual absolute positioning + dnd-kit transforms don't compose,
+          // so drag-reorder is unreliable in the virtualized path; mitigated by collapsed sequence grouping;
+          // proper fix is a DragOverlay (follow-up).
           <div style={{ height: virtualizer.getTotalSize(), position: "relative" }}>
             {virtualizer.getVirtualItems().map((vItem) => (
               <div key={vItem.key}

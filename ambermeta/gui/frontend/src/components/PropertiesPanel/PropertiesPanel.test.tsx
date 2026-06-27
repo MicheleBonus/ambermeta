@@ -87,4 +87,17 @@ describe("PropertiesPanel", () => {
     await userEvent.click(await screen.findByText("/work/min.in"));
     await waitFor(() => expect(calls).toEqual([{ files: { mdin: "/work/min.in" } }]));
   });
+
+  it("Delete stage button calls DELETE /api/stages/{id}", async () => {
+    let deleted = false;
+    server.use(
+      http.delete("/api/stages/1", () => {
+        deleted = true;
+        return HttpResponse.json(emptyDocument);
+      })
+    );
+    renderPanel("1", [mkStage({ id: "1", name: "min" })]);
+    await userEvent.click(await screen.findByRole("button", { name: "Delete stage" }));
+    await waitFor(() => expect(deleted).toBe(true));
+  });
 });

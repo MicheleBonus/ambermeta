@@ -44,7 +44,7 @@ export function ValidationPanel({ open, onClose }: { open: boolean; onClose: () 
       <section className="space-y-2">
         {report?.stage_issues.map((s) => (
           <div key={s.name} className="border border-hairline rounded p-2">
-            <button onClick={() => jump(s.name)}
+            <button type="button" onClick={() => jump(s.name)}
               className="flex items-center gap-2 font-medium text-left">
               <Badge tone={s.ok ? "valid" : "error"}>{s.ok ? "ok" : "error"}</Badge>
               <span>{s.name}</span>

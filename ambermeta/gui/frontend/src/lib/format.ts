@@ -1,10 +1,10 @@
 export function formatPs(v: number | null): string {
-  if (v === null || v === undefined) return "—";
+  if (v === null) return "—";
   return `${v} ps`;
 }
 
 export function formatCount(n: number | null): string {
-  if (n === null || n === undefined) return "—";
+  if (n === null) return "—";
   return n.toLocaleString("en-US");
 }
 

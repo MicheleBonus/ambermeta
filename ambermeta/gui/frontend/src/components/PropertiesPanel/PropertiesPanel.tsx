@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
-import { useDocument, useUpdateStage, useBulkUpdate } from "@/api/hooks";
+import { useDocument, useUpdateStage, useBulkUpdate, useDeleteStage } from "@/api/hooks";
 import { useSelection } from "@/state/selection";
+import { Button } from "@/components/common";
 import { SettingsPanel } from "./SettingsPanel";
 import { FilePicker } from "@/components/FilePicker";
 import type { StageModel, StageRole, StageUpdate } from "@/types";
@@ -46,9 +47,16 @@ function StageEditor(
   { stage: StageModel; onCommit: (p: StageUpdate) => void }
 ) {
   const [pickSlot, setPickSlot] = useState<FileKind | null>(null);
+  const deleteStage = useDeleteStage();
+  const { clear } = useSelection();
   return (
     <>
       <StageForm stage={stage} onCommit={onCommit} onPickFile={(slot) => setPickSlot(slot)} />
+      <div className="px-3 pb-3">
+        <Button variant="danger" onClick={() => { deleteStage.mutate(stage.id); clear(); }}>
+          Delete stage
+        </Button>
+      </div>
       <FilePicker open={pickSlot !== null} mode="open" title={`Pick ${pickSlot ?? ""} file`}
         onClose={() => setPickSlot(null)}
         onPick={({ path }) => {
@@ -116,20 +124,23 @@ function StageForm(
         <label className="block">
           <span className="text-ink-secondary">Expected gap (ps)</span>
           <input aria-label="Expected gap" value={gap} onChange={(e) => setGap(e.target.value)}
-            onBlur={() => onCommit({ expected_gap_ps: num(gap) })}
+            onBlur={() => { const v = num(gap); if (v !== stage.expected_gap_ps) onCommit({ expected_gap_ps: v }); }}
             className="w-full mt-1 px-2 py-1 border border-hairline rounded font-mono bg-app" />
         </label>
         <label className="block">
           <span className="text-ink-secondary">Tolerance (ps)</span>
           <input aria-label="Gap tolerance" value={tol} onChange={(e) => setTol(e.target.value)}
-            onBlur={() => onCommit({ gap_tolerance_ps: num(tol) })}
+            onBlur={() => { const v = num(tol); if (v !== stage.gap_tolerance_ps) onCommit({ gap_tolerance_ps: v }); }}
             className="w-full mt-1 px-2 py-1 border border-hairline rounded font-mono bg-app" />
         </label>
       </div>
       <label className="block">
         <span className="text-ink-secondary">Notes</span>
         <textarea aria-label="Notes" value={notes} onChange={(e) => setNotes(e.target.value)}
-          onBlur={() => onCommit({ notes: notes.split("\n").filter(Boolean) })}
+          onBlur={() => {
+            const newNotes = notes.split("\n").filter(Boolean);
+            if (JSON.stringify(newNotes) !== JSON.stringify(stage.notes)) onCommit({ notes: newNotes });
+          }}
           rows={3}
           className="w-full mt-1 px-2 py-1 border border-hairline rounded bg-app" />
       </label>
