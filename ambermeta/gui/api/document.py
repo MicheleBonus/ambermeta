@@ -127,8 +127,8 @@ class DocumentStore:
 
     def update_stage(self, stage_id: str, patch: Dict[str, Any]) -> None:
         with self.lock:
+            stage = self._find(stage_id)   # validate first; raises before any state change
             self._snapshot()
-            stage = self._find(stage_id)
             for k, v in patch.items():
                 if k in stage and k != "id":
                     stage[k] = v
@@ -136,8 +136,8 @@ class DocumentStore:
 
     def delete_stage(self, stage_id: str) -> None:
         with self.lock:
+            stage = self._find(stage_id)   # validate first; raises before any state change
             self._snapshot()
-            stage = self._find(stage_id)
             self._doc.stages.remove(stage)
             self._doc.dirty = True
 
@@ -153,9 +153,9 @@ class DocumentStore:
 
     def bulk_update(self, stage_ids: List[str], patch: Dict[str, Any]) -> None:
         with self.lock:
+            stages = [self._find(sid) for sid in stage_ids]   # validate all ids first
             self._snapshot()
-            for sid in stage_ids:
-                stage = self._find(sid)
+            for stage in stages:
                 for k, v in patch.items():
                     if k in stage and k != "id":
                         stage[k] = v
