@@ -188,3 +188,69 @@ def test_sequences_groups_numbered_runs(client):
     assert len(groups) == 1
     only = list(groups.values())[0]
     assert only == ids
+
+
+# ---------------------------------------------------------------------------
+# Task 9: delegation tests, removed-endpoint assertions, large-protocol smoke
+# ---------------------------------------------------------------------------
+from pathlib import Path as _Path
+import ambermeta.gui.api.core_bridge as _cb
+
+
+def test_removed_endpoints_are_gone(client):
+    c, base = client
+    assert c.get("/api/protocol").status_code == 404
+    assert c.post("/api/export", json={"format": "yaml"}).status_code == 404
+    assert c.post("/api/session/save", json={"filename": "x"}).status_code == 404
+    # /api/sequences is NOT removed — it is re-backed by the core (Task 8).
+    assert c.get("/api/sequences").status_code == 200
+
+
+def test_save_delegates_to_core_bridge(client, monkeypatch):
+    c, base = client
+    called = {}
+
+    def fake_save(stages, settings, base_directory, path, fmt):
+        called["yes"] = (path, fmt)
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write("stages: []\n")
+        return []
+
+    monkeypatch.setattr(_cb, "save_document", fake_save)
+    out = base / "p.yaml"
+    r = c.post("/api/document/save", json={"path": str(out), "format": "yaml"})
+    assert r.status_code == 200
+    assert called["yes"][1] == "yaml"
+
+
+def test_validate_delegates_to_core_bridge(client, monkeypatch):
+    c, base = client
+    sentinel = {"ok": True, "totals": {"steps": 0.0, "time_ps": 0.0, "stage_count": 0},
+                "protocol_issues": [], "stage_issues": []}
+    monkeypatch.setattr(_cb, "build_validation_report", lambda *a, **k: sentinel)
+    r = c.post("/api/validate")
+    assert r.json()["ok"] is True
+
+
+def test_routes_have_no_local_engine_code():
+    src = _Path("ambermeta/gui/api/routes.py").read_text(encoding="utf-8")
+    assert "import yaml" not in src
+    assert "toml.dumps" not in src
+    assert "def _validate_stage" not in src
+    assert "def _detect_sequences" not in src
+    assert "from . import core_bridge" in src or "import core_bridge" in src
+
+
+def test_large_protocol_roundtrips(client):
+    # Acceptance criterion 6 (backend level): a large protocol round-trips
+    # through create -> save -> open without error. (UI virtualization is B2.)
+    c, base = client
+    for i in range(150):
+        r = c.post("/api/stages", json={"name": f"prod_{i:03d}", "role": "production"})
+        assert r.status_code == 200
+    assert len(c.get("/api/document").json()["stages"]) == 150
+    out = base / "big.yaml"
+    assert c.post("/api/document/save", json={"path": str(out), "format": "yaml"}).status_code == 200
+    reopened = c.post("/api/document/open", json={"path": str(out)})
+    assert reopened.status_code == 200
+    assert len(reopened.json()["stages"]) == 150

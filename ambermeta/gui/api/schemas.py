@@ -71,31 +71,6 @@ class StageUpdate(BaseModel):
     notes: Optional[List[str]] = None
 
 
-class StageValidation(BaseModel):
-    """Validation status for a stage."""
-    is_valid: bool = True
-    messages: List[str] = Field(default_factory=list)
-    missing_files: List[str] = Field(default_factory=list)
-    warnings: List[str] = Field(default_factory=list)
-
-
-class StageResponse(BaseModel):
-    """Response model for a stage."""
-    id: str
-    name: str
-    role: StageRole
-    files: StageFiles
-    expected_gap_ps: Optional[float] = None
-    gap_tolerance_ps: Optional[float] = None
-    notes: List[str] = Field(default_factory=list)
-    validation: StageValidation = Field(default_factory=StageValidation)
-    sequence_base: Optional[str] = None
-    sequence_index: Optional[int] = None
-
-    class Config:
-        use_enum_values = True
-
-
 class GlobalSettings(BaseModel):
     """Global protocol settings (runtime; only prmtop fields are persisted)."""
     global_prmtop: Optional[str] = None
@@ -136,13 +111,6 @@ class StageModel(BaseModel):
         use_enum_values = True
 
 
-class ProtocolState(BaseModel):
-    """Full protocol state."""
-    base_directory: str
-    settings: GlobalSettings = Field(default_factory=GlobalSettings)
-    stages: List[StageResponse] = Field(default_factory=list)
-
-
 class DocumentResponse(BaseModel):
     """The whole server-authoritative document in one payload."""
     base_directory: str
@@ -163,42 +131,6 @@ class BulkStageUpdate(BaseModel):
     """Request model for bulk-updating multiple stages at once."""
     stage_ids: List[str]
     update: StageUpdate
-
-
-class ExportFormat(str, Enum):
-    """Supported export formats."""
-    YAML = "yaml"
-    JSON = "json"
-    TOML = "toml"
-    CSV = "csv"
-
-
-class ExportRequest(BaseModel):
-    """Request model for exporting the protocol."""
-    format: ExportFormat = ExportFormat.YAML
-    include_validation: bool = True
-    use_relative_paths: bool = True
-
-    class Config:
-        use_enum_values = True
-
-
-class ExportResponse(BaseModel):
-    """Response model for export."""
-    content: str
-    filename: str
-    format: ExportFormat
-
-    class Config:
-        use_enum_values = True
-
-
-class ValidationResult(BaseModel):
-    """Result of protocol validation."""
-    is_valid: bool
-    stage_validations: Dict[str, StageValidation] = Field(default_factory=dict)
-    cross_stage_issues: List[str] = Field(default_factory=list)
-    summary: str = ""
 
 
 class FileMetadata(BaseModel):
@@ -232,23 +164,6 @@ class ValidationReport(BaseModel):
     totals: Dict[str, float] = Field(default_factory=dict)
     protocol_issues: List[str] = Field(default_factory=list)
     stage_issues: List[StageIssue] = Field(default_factory=list)
-
-
-class SequenceInfo(BaseModel):
-    """Information about a detected sequence of stages."""
-    base_name: str
-    stages: List[str]
-    count: int
-
-
-class SessionSaveRequest(BaseModel):
-    """Request model for saving a session."""
-    filename: str
-
-
-class SessionLoadRequest(BaseModel):
-    """Request model for loading a session."""
-    filename: str
 
 
 class ApiError(BaseModel):
