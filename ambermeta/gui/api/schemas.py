@@ -224,5 +224,34 @@ class ApiError(BaseModel):
     code: Optional[str] = None
 
 
+class OpenRequest(BaseModel):
+    path: str
+
+
+class SaveRequest(BaseModel):
+    path: Optional[str] = None
+    format: Optional[str] = None
+
+
+class SaveResult(BaseModel):
+    document: DocumentResponse
+    warnings: List[str] = Field(default_factory=list)
+
+
+class DiscoverRequest(BaseModel):
+    recursive: bool = True
+    pattern: Optional[str] = None
+
+
+class PreviewRequest(BaseModel):
+    format: str = "yaml"
+
+
+class PreviewResponse(BaseModel):
+    content: str
+    warnings: List[str] = Field(default_factory=list)
+    format: str
+
+
 # Forward reference resolution
 FileInfo.model_rebuild()

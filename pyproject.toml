@@ -61,6 +61,7 @@ toml = [
 tests = [
     "pytest>=7",
     "pytest-cov>=4.0",
+    "httpx>=0.24",
 ]
 dev = [
     "black>=23.0",
