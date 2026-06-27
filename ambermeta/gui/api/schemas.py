@@ -107,6 +107,17 @@ class GlobalSettings(BaseModel):
     use_relative_paths: bool = True
 
 
+class SettingsPatch(BaseModel):
+    """Partial patch for GlobalSettings — all fields Optional."""
+    global_prmtop: Optional[str] = None
+    hmr_prmtop: Optional[str] = None
+    initial_coordinates: Optional[str] = None
+    auto_link_restarts: Optional[bool] = None
+    strict_validation: Optional[bool] = None
+    allow_gaps: Optional[bool] = None
+    use_relative_paths: Optional[bool] = None
+
+
 class StageModel(BaseModel):
     """A protocol stage as edited in the GUI (flat gap fields)."""
     id: str

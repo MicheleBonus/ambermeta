@@ -94,3 +94,51 @@ def test_preview_matches_core_writer(client):
     ref = base / "ref.json"
     write_manifest(payload, str(ref), "json")
     assert r.json()["content"] == ref.read_text(encoding="utf-8")
+
+
+def test_stage_crud_and_dirty(client):
+    c, base = client
+    r = c.post("/api/stages", json={"name": "min", "role": "minimization"})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["dirty"] is True
+    sid = body["stages"][0]["id"]
+
+    r = c.put(f"/api/stages/{sid}", json={"files": {"mdin": "min.in"}})
+    assert r.json()["stages"][0]["mdin"] == "min.in"
+
+    r = c.put(f"/api/stages/{sid}", json={"files": {"mdin": ""}})  # clear
+    assert r.json()["stages"][0]["mdin"] is None
+
+    r = c.delete(f"/api/stages/{sid}")
+    assert r.json()["stages"] == []
+
+    r = c.delete(f"/api/stages/{sid}")  # already gone
+    assert r.status_code == 404
+
+
+def test_reorder_and_bulk(client):
+    c, base = client
+    a = c.post("/api/stages", json={"name": "a"}).json()["stages"][0]["id"]
+    b = c.post("/api/stages", json={"name": "b"}).json()["stages"][-1]["id"]
+    r = c.post("/api/stages/reorder", json={"stage_ids": [b, a]})
+    assert [s["name"] for s in r.json()["stages"]] == ["b", "a"]
+    r = c.put("/api/stages/bulk", json={"stage_ids": [a, b],
+                                        "update": {"role": "production"}})
+    assert all(s["role"] == "production" for s in r.json()["stages"])
+
+
+def test_settings_patch_and_undo_redo(client):
+    c, base = client
+    c.post("/api/stages", json={"name": "a"})
+    r = c.put("/api/settings", json={"global_prmtop": "sys.prmtop"})
+    assert r.json()["settings"]["global_prmtop"] == "sys.prmtop"
+    # GET settings reflects it
+    assert c.get("/api/settings").json()["global_prmtop"] == "sys.prmtop"
+    # undo reverts the settings patch, keeps the stage
+    r = c.post("/api/undo")
+    assert r.json()["settings"]["global_prmtop"] is None
+    assert len(r.json()["stages"]) == 1
+    # redo re-applies
+    r = c.post("/api/redo")
+    assert r.json()["settings"]["global_prmtop"] == "sys.prmtop"
