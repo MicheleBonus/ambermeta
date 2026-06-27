@@ -159,3 +159,43 @@ def test_classify_topologies_splits_hmr_via_monkeypatch(tmp_path, monkeypatch):
     assert out["hmr_prmtop"] == "hmr.prmtop"
     assert out["global_prmtop"] == "normal.prmtop"
     assert any("topology files found" in w for w in out["warnings"])
+
+
+# ---------------------------------------------------------------------------
+# Task 4: validation report, file metadata, restart chain
+# ---------------------------------------------------------------------------
+
+_MDIN = "prod\n&cntrl\n  imin=0, nstlim=1000, dt=0.002, ntb=2,\n/\n"
+
+
+def test_file_metadata_returns_real_details(tmp_path):
+    # mdin is plain text and always parseable — no binary sample file needed.
+    mdin = tmp_path / "prod.mdin"
+    mdin.write_text(_MDIN, encoding="utf-8")
+    out = cb.file_metadata(str(mdin))
+    assert out["kind"] == "mdin"
+    assert isinstance(out["details"], dict)
+    assert "dt" in out["details"]  # real parsed field, not a dataclass-as-dict crash
+
+
+def test_build_validation_report_flags_missing_file(tmp_path):
+    stages = [{"id": "a1", "name": "min", "role": "minimization",
+               "prmtop": None, "mdin": "does_not_exist.in", "mdout": None,
+               "mdcrd": None, "inpcrd": None, "expected_gap_ps": None,
+               "gap_tolerance_ps": None, "notes": []}]
+    settings = _settings(strict_validation=True)
+    report = cb.build_validation_report(stages, settings, str(tmp_path))
+    assert report["ok"] is False
+    issue = report["stage_issues"][0]
+    assert issue["name"] == "min"
+    assert any("does_not_exist.in" in e for e in issue["errors"])
+    assert report["totals"]["stage_count"] == 1
+
+
+def test_build_validation_report_ok_when_no_files(tmp_path):
+    # An empty stage with no referenced files has no missing-file errors.
+    stages = [{"id": "a1", "name": "s", "role": "", "prmtop": None, "mdin": None,
+               "mdout": None, "mdcrd": None, "inpcrd": None, "expected_gap_ps": None,
+               "gap_tolerance_ps": None, "notes": []}]
+    report = cb.build_validation_report(stages, _settings(), str(tmp_path))
+    assert report["stage_issues"][0]["ok"] is True

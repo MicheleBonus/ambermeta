@@ -21,8 +21,13 @@ from ambermeta.manifest import (
 )
 from ambermeta.protocol import (
     _ordered_stems,
+    _serialize_metadata,
+    auto_discover,
     infer_stage_role_from_path,
     smart_group_files,
+)
+from ambermeta.parsers import (
+    PrmtopParser, MdinParser, MdoutParser, MdcrdParser, InpcrdParser,
 )
 
 _EXT_FORMAT = {"yml": "yaml", "yaml": "yaml", "json": "json", "toml": "toml", "csv": "csv"}
@@ -253,3 +258,138 @@ def discover(directory: str, recursive: bool = True,
         settings_patch["hmr_prmtop"] = topo["hmr_prmtop"]
     return {"stages": stages, "settings_patch": settings_patch,
             "warnings": topo["warnings"]}
+
+
+# ---------------------------------------------------------------------------
+# Task 4: validation report, file metadata, restart chain
+# ---------------------------------------------------------------------------
+
+_EXT_KIND = {
+    ".prmtop": "prmtop", ".top": "prmtop", ".parm7": "prmtop",
+    ".mdin": "mdin", ".in": "mdin",
+    ".mdout": "mdout", ".out": "mdout",
+    ".mdcrd": "mdcrd", ".nc": "mdcrd", ".crd": "mdcrd", ".x": "mdcrd",
+    ".inpcrd": "inpcrd", ".rst": "inpcrd", ".rst7": "inpcrd",
+    ".ncrst": "inpcrd", ".restrt": "inpcrd",
+}
+_KIND_PARSER = {
+    "prmtop": PrmtopParser, "mdin": MdinParser, "mdout": MdoutParser,
+    "mdcrd": MdcrdParser, "inpcrd": InpcrdParser,
+}
+
+
+def file_metadata(path: str) -> Dict[str, Any]:
+    ext = os.path.splitext(path)[1].lower()
+    kind = _EXT_KIND.get(ext, "other")
+    parser_cls = _KIND_PARSER.get(kind)
+    if parser_cls is None:
+        return {"details": None, "warnings": ["Unsupported file type"], "kind": kind}
+    try:
+        parsed = parser_cls(path).parse()
+    except Exception as exc:  # parser raises a variety of errors; surface, don't crash
+        return {"details": None, "warnings": [f"Could not parse file: {exc}"],
+                "kind": kind}
+    meta = _serialize_metadata(parsed)
+    return {"details": meta["details"], "warnings": meta["warnings"], "kind": kind}
+
+
+def _resolve(path: Optional[str], base_directory: str) -> Optional[str]:
+    if not path:
+        return None
+    return path if os.path.isabs(path) else os.path.normpath(
+        os.path.join(base_directory, path))
+
+
+def build_validation_report(stages: List[Dict[str, Any]], settings: Dict[str, Any],
+                            base_directory: str) -> Dict[str, Any]:
+    payload = document_to_payload(stages, settings, base_directory)
+    protocol = auto_discover(
+        base_directory,
+        manifest=payload["stages"],
+        global_prmtop=payload.get("global_prmtop"),
+        hmr_prmtop=payload.get("hmr_prmtop"),
+        skip_cross_stage_validation=not settings.get("strict_validation", True),
+        allow_unexpected_gaps=settings.get("allow_gaps", False),
+        strict=False,
+    )
+
+    # Per-document missing-file pass (resolved against base_directory).
+    missing_by_name: Dict[str, List[Dict[str, str]]] = {}
+    global_prmtop = settings.get("global_prmtop")
+    for s in stages:
+        miss: List[Dict[str, str]] = []
+        own_prmtop = s.get("prmtop")
+        effective_prmtop = own_prmtop or global_prmtop
+        checks = []
+        if effective_prmtop:
+            checks.append(("prmtop", effective_prmtop))
+        for kind in ("mdin", "mdout", "mdcrd", "inpcrd"):
+            if s.get(kind):
+                checks.append((kind, s[kind]))
+        for kind, rel in checks:
+            full = _resolve(rel, base_directory)
+            if full and not os.path.exists(full):
+                miss.append({"kind": kind, "path": rel})
+        if miss:
+            missing_by_name[s.get("name", "")] = miss
+
+    stage_issues: List[Dict[str, Any]] = []
+    protocol_issues: List[str] = []
+    seen_protocol: set = set()
+    for stage in protocol.stages:
+        sd = stage.to_dict()
+        info = [m for m in sd["validation"] if str(m).startswith("INFO:")]
+        warns = [m for m in sd["validation"] if not str(m).startswith("INFO:")]
+        errors: List[str] = []
+        for le in sd.get("load_errors", []):
+            if isinstance(le, dict):
+                errors.append(le.get("message") or le.get("kind") or str(le))
+            else:
+                errors.append(str(le))
+        miss = missing_by_name.get(sd["name"], [])
+        for m in miss:
+            errors.append("missing {kind}: {path}".format(**m))
+        for note in sd.get("continuity", []):
+            if not str(note).startswith("INFO:") and note not in seen_protocol:
+                seen_protocol.add(note)
+                protocol_issues.append(note)
+        stage_issues.append({
+            "name": sd["name"],
+            "ok": not errors,
+            "degraded": bool(sd.get("degraded")),
+            "errors": errors,
+            "warnings": warns,
+            "info": info,
+            "missing_files": miss,
+        })
+
+    totals = protocol.totals()
+    totals["stage_count"] = len(protocol.stages)
+    return {
+        "ok": all(s["ok"] for s in stage_issues),
+        "totals": totals,
+        "protocol_issues": protocol_issues,
+        "stage_issues": stage_issues,
+    }
+
+
+def restart_chain(stages: List[Dict[str, Any]], settings: Dict[str, Any],
+                  base_directory: str, recursive: bool = False) -> Dict[str, str]:
+    payload = document_to_payload(stages, settings, base_directory)
+    protocol = auto_discover(
+        base_directory,
+        manifest=payload["stages"],
+        global_prmtop=payload.get("global_prmtop"),
+        hmr_prmtop=payload.get("hmr_prmtop"),
+        auto_detect_restarts=True,
+        recursive=recursive,
+        skip_cross_stage_validation=True,
+        strict=False,
+    )
+    out: Dict[str, str] = {}
+    for s in protocol.stages:
+        if s.restart_path:
+            rel = _relativize(s.restart_path, base_directory)
+            if rel:
+                out[s.name] = rel
+    return out
