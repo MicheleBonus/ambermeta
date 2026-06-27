@@ -97,13 +97,32 @@ class StageResponse(BaseModel):
 
 
 class GlobalSettings(BaseModel):
-    """Global protocol settings."""
+    """Global protocol settings (runtime; only prmtop fields are persisted)."""
     global_prmtop: Optional[str] = None
     hmr_prmtop: Optional[str] = None
     initial_coordinates: Optional[str] = None
     auto_link_restarts: bool = True
-    validate_on_export: bool = True
-    use_relative_paths: bool = False
+    strict_validation: bool = True
+    allow_gaps: bool = False
+    use_relative_paths: bool = True
+
+
+class StageModel(BaseModel):
+    """A protocol stage as edited in the GUI (flat gap fields)."""
+    id: str
+    name: str
+    role: StageRole = StageRole.UNKNOWN
+    prmtop: Optional[str] = None
+    mdin: Optional[str] = None
+    mdout: Optional[str] = None
+    mdcrd: Optional[str] = None
+    inpcrd: Optional[str] = None
+    expected_gap_ps: Optional[float] = None
+    gap_tolerance_ps: Optional[float] = None
+    notes: List[str] = Field(default_factory=list)
+
+    class Config:
+        use_enum_values = True
 
 
 class ProtocolState(BaseModel):
@@ -111,6 +130,17 @@ class ProtocolState(BaseModel):
     base_directory: str
     settings: GlobalSettings = Field(default_factory=GlobalSettings)
     stages: List[StageResponse] = Field(default_factory=list)
+
+
+class DocumentResponse(BaseModel):
+    """The whole server-authoritative document in one payload."""
+    base_directory: str
+    manifest_path: Optional[str] = None
+    dirty: bool = False
+    can_undo: bool = False
+    can_redo: bool = False
+    settings: GlobalSettings = Field(default_factory=GlobalSettings)
+    stages: List[StageModel] = Field(default_factory=list)
 
 
 class StageReorderRequest(BaseModel):
