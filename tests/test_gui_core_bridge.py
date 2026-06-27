@@ -97,3 +97,44 @@ def test_preview_matches_save(tmp_path):
     saved = tmp_path / "p.json"
     core_bridge.save_document(stages, settings, str(tmp_path), str(saved), "json")
     assert preview["content"] == saved.read_text(encoding="utf-8")
+
+
+# ---------------------------------------------------------------------------
+# Task 3: discovery + HMR/normal topology split
+# ---------------------------------------------------------------------------
+from ambermeta.gui.api import core_bridge as cb
+
+
+def _touch(p):
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text("x", encoding="utf-8")
+
+
+def test_discover_one_stage_per_numbered_file(tmp_path):
+    # Bug-1 parity: numbered production runs must NOT collapse to the last file.
+    for i in (1, 2, 3):
+        _touch(tmp_path / f"prod_{i:03d}.mdin")
+        _touch(tmp_path / f"prod_{i:03d}.mdout")
+    result = cb.discover(str(tmp_path), recursive=False)
+    names = sorted(s["name"] for s in result["stages"])
+    assert names == ["prod_001", "prod_002", "prod_003"]
+    for s in result["stages"]:
+        assert s["mdin"] is not None and s["mdout"] is not None
+        assert len(s["id"]) == 8
+
+
+def test_discover_skips_prmtop_only_groups(tmp_path):
+    _touch(tmp_path / "system.prmtop")
+    _touch(tmp_path / "min.mdin")
+    result = cb.discover(str(tmp_path), recursive=False)
+    names = [s["name"] for s in result["stages"]]
+    assert names == ["min"]  # system.prmtop alone is not a stage
+    assert all(s["prmtop"] is None for s in result["stages"])  # topology is global
+
+
+def test_classify_topologies_warns_on_multiple(tmp_path):
+    _touch(tmp_path / "a.prmtop")
+    _touch(tmp_path / "b.prmtop")
+    out = cb.classify_topologies(str(tmp_path), ["a.prmtop", "b.prmtop"])
+    assert out["global_prmtop"] in ("a.prmtop", "b.prmtop")
+    assert any("topology files found" in w for w in out["warnings"])

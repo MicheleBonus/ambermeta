@@ -13,10 +13,16 @@ import tempfile
 import uuid
 from typing import Any, Dict, List, Optional
 
+from ambermeta.legacy_extractors.prmtop import extract_prmtop_metadata
 from ambermeta.manifest import (
     STAGE_FILE_KINDS,
     load_manifest,
     write_manifest,
+)
+from ambermeta.protocol import (
+    _ordered_stems,
+    infer_stage_role_from_path,
+    smart_group_files,
 )
 
 _EXT_FORMAT = {"yml": "yaml", "yaml": "yaml", "json": "json", "toml": "toml", "csv": "csv"}
@@ -175,3 +181,75 @@ def open_manifest(path: str, base_directory: str) -> Dict[str, Any]:
                 settings_patch["allow_gaps"] = bool(block["allow_gaps"])
     stages = [_gui_stage_from_entry(e) for e in _stages_list_from_raw(raw)]
     return {"stages": stages, "settings_patch": settings_patch}
+
+
+# ---------------------------------------------------------------------------
+# Task 3: discovery + HMR/normal topology split
+# ---------------------------------------------------------------------------
+
+_NON_TOPOLOGY_KINDS = ("mdin", "mdout", "mdcrd", "inpcrd")
+
+
+def classify_topologies(directory: str, prmtops: List[str]) -> Dict[str, Any]:
+    ordered = sorted(prmtops)
+    normal: List[str] = []
+    hmr: List[str] = []
+    for rel in ordered:
+        try:
+            md = extract_prmtop_metadata(os.path.join(directory, rel))
+            (hmr if md.hmr_active else normal).append(rel)
+        except (IOError, OSError, ValueError, LookupError):
+            normal.append(rel)
+    warnings: List[str] = []
+    if len(ordered) > 1:
+        warnings.append(
+            f"{len(ordered)} topology files found; "
+            f"normal={normal or '-'}, HMR={hmr or '-'}."
+        )
+    global_prmtop = normal[0] if normal else (ordered[0] if ordered else None)
+    hmr_prmtop = hmr[0] if hmr else None
+    return {"global_prmtop": global_prmtop, "hmr_prmtop": hmr_prmtop,
+            "warnings": warnings}
+
+
+def discover(directory: str, recursive: bool = True,
+             pattern: Optional[str] = None) -> Dict[str, Any]:
+    grouped = smart_group_files(directory, pattern=pattern, recursive=recursive)
+
+    prmtop_rel = sorted({
+        _relativize(v, directory)
+        for g in grouped.values()
+        for k, v in g.items()
+        if k == "prmtop"
+    })
+    topo = classify_topologies(directory, [p for p in prmtop_rel if p])
+
+    stages: List[Dict[str, Any]] = []
+    for stem in _ordered_stems(grouped):
+        kinds = grouped[stem]
+        files = {k: _relativize(v, directory)
+                 for k, v in kinds.items() if k in _NON_TOPOLOGY_KINDS}
+        if not files:
+            continue  # prmtop-only / metadata-only group is not a stage
+        stage = {
+            "id": uuid.uuid4().hex[:8],
+            "name": stem,
+            "role": infer_stage_role_from_path(stem) or "",
+            "prmtop": None,
+            "mdin": files.get("mdin"),
+            "mdout": files.get("mdout"),
+            "mdcrd": files.get("mdcrd"),
+            "inpcrd": files.get("inpcrd"),
+            "expected_gap_ps": None,
+            "gap_tolerance_ps": None,
+            "notes": [],
+        }
+        stages.append(stage)
+
+    settings_patch: Dict[str, Any] = {}
+    if topo["global_prmtop"]:
+        settings_patch["global_prmtop"] = topo["global_prmtop"]
+    if topo["hmr_prmtop"]:
+        settings_patch["hmr_prmtop"] = topo["hmr_prmtop"]
+    return {"stages": stages, "settings_patch": settings_patch,
+            "warnings": topo["warnings"]}
