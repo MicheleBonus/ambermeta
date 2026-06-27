@@ -290,11 +290,15 @@ def _parse_value(val_str: str) -> Any:
         return val_str
 
 def _extract_key_values(line: str) -> Dict[str, Any]:
-    # Matches "Key = Value" or "Key=Value"
-    # Keys can contain (), -, .
+    result: Dict[str, Any] = {}
+    # AMBER's spaced energy keys first so they win over the generic matcher.
+    for m in re.finditer(r"(1-4\s+(?:NB|EEL))\s*=\s*([-\d\.\*eE\+]+)", line):
+        key = re.sub(r"\s+", " ", m.group(1)).strip()
+        result[key] = _parse_value(m.group(2))
     pattern = re.compile(r"([A-Za-z0-9_\-\(\)\./]+)\s*=\s*([-\d\.\*eE\+]+)")
-    matches = pattern.findall(line)
-    return {k.strip(): _parse_value(v) for k, v in matches}
+    for k, v in pattern.findall(line):
+        result.setdefault(k.strip(), _parse_value(v))
+    return result
 
 def _calc_stats(data_list: List[float]) -> Tuple[Optional[float], Optional[float]]:
     if not data_list: return None, None

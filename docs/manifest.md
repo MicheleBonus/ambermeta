@@ -333,7 +333,8 @@ production,production,system.prmtop,prod.in,prod.out,prod.nc,equil.rst7,0,0.1,"M
 ```
 
 **CSV Notes:**
-- First row must be headers
+- First row must be headers; canonical header is `name,stage_role,prmtop,mdin,mdout,mdcrd,inpcrd,expected_gap_ps,gap_tolerance_ps,notes`
+- The reader accepts legacy column names: `stage` as an alias for `name`, `role` as an alias for `stage_role`, and flat `expected_gap_ps`/`gap_tolerance_ps` columns
 - Empty cells are treated as missing values
 - Notes field supports semicolon-separated values for multiple notes
 - Order of columns is flexible (determined by headers)

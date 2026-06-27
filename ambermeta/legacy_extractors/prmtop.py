@@ -257,6 +257,10 @@ class PrmtopMetadata:
     hmr_active: Optional[bool] = None
     hmr_hydrogen_mass_range: Optional[Tuple[float, float]] = None
     hmr_hydrogen_mass_summary: Optional[str] = None
+    hmr_detection_method: Optional[str] = None
+
+    # Parser warnings (e.g. incomplete CHARGE/MASS data)
+    warnings: List[str] = field(default_factory=list)
 
 
 def _classify_simulation(md: PrmtopMetadata):
@@ -368,14 +372,21 @@ def extract_prmtop_metadata(filepath: str) -> PrmtopMetadata:
     # 2. Pointers
     pointers = prmtop.get("POINTERS")
     if pointers:
-        md.natom = pointers[0]
-        md.nres = pointers[11]
-        md.nbond = pointers[12]
+        md.natom = pointers[0] if len(pointers) > 0 else None
+        md.nres = pointers[11] if len(pointers) > 11 else None
+        if len(pointers) > 12:
+            nbonh = pointers[2]
+            md.nbond = (nbonh or 0) + (pointers[12] or 0)
 
     # 3. Chemistry
     charges = prmtop.get("CHARGE")
     if charges:
         valid_charges = [c for c in charges if c is not None]
+        if md.natom and len(valid_charges) != md.natom:
+            md.warnings.append(
+                f"CHARGE has {len(valid_charges)} valid of {md.natom} atoms; "
+                "neutrality verdict is uncertain."
+            )
         if valid_charges:
             raw_sum = sum(valid_charges)
             md.total_charge = raw_sum / 18.2223
@@ -385,30 +396,39 @@ def extract_prmtop_metadata(filepath: str) -> PrmtopMetadata:
     masses = prmtop.get("MASS")
     if masses:
         valid_masses = [m for m in masses if m is not None]
+        if md.natom and len(valid_masses) != md.natom:
+            md.warnings.append(
+                f"MASS has {len(valid_masses)} valid of {md.natom} atoms; "
+                "total mass is uncertain."
+            )
         md.total_mass = sum(valid_masses)
 
     atomic_numbers = prmtop.get("ATOMIC_NUMBER")
+    atom_names = prmtop.get("ATOM_NAME")
+    hydrogen_masses: List[float] = []
     if masses and atomic_numbers:
-        hydrogen_masses = []
-        count = min(len(masses), len(atomic_numbers))
-        for mass, atomic_number in zip(masses[:count], atomic_numbers[:count]):
-            if atomic_number == 1 and mass is not None:
-                hydrogen_masses.append(mass)
-
+        n = min(len(masses), len(atomic_numbers))
+        hydrogen_masses = [masses[i] for i in range(n)
+                           if atomic_numbers[i] == 1 and masses[i] is not None]
+        md.hmr_detection_method = "atomic_number"
+    elif masses and atom_names:
+        n = min(len(masses), len(atom_names))
+        hydrogen_masses = [masses[i] for i in range(n)
+                           if masses[i] is not None
+                           and str(atom_names[i]).strip().upper().startswith("H")
+                           and masses[i] < 5.0]
         if hydrogen_masses:
-            min_mass = min(hydrogen_masses)
-            max_mass = max(hydrogen_masses)
-            md.hmr_hydrogen_mass_range = (min_mass, max_mass)
-            md.hmr_hydrogen_mass_summary = (
-                f"{min_mass:.3f}-{max_mass:.3f} amu across {len(hydrogen_masses)} H"
-            )
-            has_elevated = max_mass >= 1.5
-            has_normal = min_mass <= 1.1
-            hmr_by_threshold = max_mass >= 2.0
-            redistributed = has_elevated and has_normal
-            md.hmr_active = hmr_by_threshold or redistributed
-        else:
-            md.hmr_active = False
+            md.hmr_detection_method = "atom_name"
+
+    if hydrogen_masses:
+        min_mass, max_mass = min(hydrogen_masses), max(hydrogen_masses)
+        md.hmr_hydrogen_mass_range = (min_mass, max_mass)
+        md.hmr_hydrogen_mass_summary = (
+            f"{min_mass:.3f}-{max_mass:.3f} amu across {len(hydrogen_masses)} H"
+        )
+        md.hmr_active = (max_mass >= 2.0) or (max_mass >= 1.5 and min_mass <= 1.1)
+    elif atomic_numbers or atom_names:
+        md.hmr_active = False
 
     # 4. Box & Density
     box_data = prmtop.get("BOX_DIMENSIONS")
@@ -416,18 +436,16 @@ def extract_prmtop_metadata(filepath: str) -> PrmtopMetadata:
         beta = box_data[0]
         dims = box_data[1:4]
         md.box_dimensions = dims
-        md.box_angles = [90.0, beta, 90.0]
-        alpha_rad = math.radians(90.0)
-        beta_rad = math.radians(beta)
-        gamma_rad = math.radians(90.0)
+        md.box_angles = [beta, beta, beta]
+        ang = math.radians(beta)
+        cos_a = math.cos(ang)
         md.box_volume = dims[0] * dims[1] * dims[2] * math.sqrt(
-            1 - math.cos(alpha_rad)**2 - math.cos(beta_rad)**2 - math.cos(gamma_rad)**2
-            + 2 * math.cos(alpha_rad) * math.cos(beta_rad) * math.cos(gamma_rad)
+            max(0.0, 1 - 3 * cos_a ** 2 + 2 * cos_a ** 3)
         )
-        
+
         if md.box_volume > 0:
             md.density = (md.total_mass / md.box_volume) * 1.66054
-        
+
         if abs(beta - 90.0) > 0.01:
             md.force_field_features.append("Truncated Octahedron/Triclinic")
         else:

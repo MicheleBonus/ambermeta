@@ -19,3 +19,8 @@ def test_completion_script_contains_expected_tokens() -> None:
     assert "complete -F _ambermeta_completion ambermeta" in bash_script
     assert "#compdef ambermeta" in zsh_script
     assert "complete -c ambermeta" in fish_script
+
+
+def test_zsh_completion_has_tui_branch() -> None:
+    zsh_script = cli._completion_script("zsh")
+    assert "tui)" in zsh_script

@@ -122,7 +122,7 @@ ambermeta --log-level DEBUG plan --recursive .
 # Write logs to file
 ambermeta --log-file debug.log plan --manifest protocol.yaml
 
-# Quiet mode (errors only)
+# Quiet mode — suppresses all stdout output; errors/usage still go to stderr
 ambermeta --quiet plan --recursive . --summary-path output.json
 ```
 
@@ -167,6 +167,7 @@ options:
                         file paths
   --skip-cross-stage-validation
                         Skip continuity checks between consecutive stages
+                        (overrides the manifest's settings.strict_validation)
   --strict              Abort on the first unreadable/malformed input file
                         instead of skipping it. Default is to skip the file
                         and continue.
@@ -213,13 +214,18 @@ You must select one mode explicitly using `--manifest`, `--recursive`, or `--int
 ```bash
 ambermeta plan -m protocol.yaml /path/to/simulations
 ```
-Loads stages from the manifest file and parses referenced files.
+Loads stages from the manifest file and parses referenced files. If the manifest
+contains `settings.strict_validation: false`, cross-stage continuity checks are
+skipped. Pass `--skip-cross-stage-validation` to override and skip them
+unconditionally, regardless of the manifest setting.
 
 **2. Recursive Discovery Mode** (with `--recursive`):
 ```bash
 ambermeta plan --recursive /path/to/simulations
 ```
-Automatically discovers and groups simulation files. Stage roles are inferred from filenames.
+Automatically discovers and groups simulation files. Stage roles are inferred from
+filenames. Use `--pattern` to filter discovered files by regex; `--pattern` only
+applies in this mode and emits a warning to stderr if used without `--recursive`.
 
 **3. Interactive Mode** (with `--interactive`):
 ```bash
@@ -307,6 +313,22 @@ options:
                         (required for non-interactive --auto mode)
 ```
 <!-- END_CLI_HELP:init -->
+
+#### `--auto` mode
+
+When `--auto` is passed, `init` recursively discovers simulation files and
+generates **one stage per file-group stem**. Numbered sequences (e.g. `prod_01`,
+`prod_02`) are each emitted as a separate stage rather than being collapsed.
+
+Topology files are classified automatically:
+
+- If a prmtop carries HMR-scaled masses it is written as top-level `hmr_prmtop`.
+- All other topology files are written as top-level `global_prmtop`.
+
+HMR detection checks the `ATOMIC_NUMBER` section first and falls back to atom
+name patterns when that section is absent from the prmtop.
+
+Use `--dry-run` to preview discovered stage grouping without writing any files.
 
 ---
 

@@ -15,22 +15,20 @@ from ambermeta.parsers.mdout import MdoutData, MdoutParser
 from ambermeta.parsers.prmtop import PrmtopData, PrmtopParser
 from ambermeta.legacy_extractors.prmtop import ION_RESNAMES, WATER_RESNAMES
 from ambermeta.errors import AmberMetaError, FileLoadError, classify_exception
+from ambermeta.logging_config import get_logger
+from ambermeta.manifest import (
+    load_manifest,
+    validate_manifest,
+    _expand_env_vars,
+    _normalize_manifest,
+    normalize_stage_keys,
+    STAGE_FILE_KINDS,
+)
 
-try:  # pragma: no cover - optional dependency
-    import yaml
-except ImportError:  # pragma: no cover - optional dependency
-    yaml = None
+logger = get_logger(__name__)
 
-try:  # pragma: no cover - optional dependency
-    import tomllib  # Python 3.11+
-except ImportError:  # pragma: no cover - optional dependency
-    try:
-        import tomli as tomllib  # Fallback for older Python
-    except ImportError:
-        tomllib = None
-
-import csv
-from io import StringIO
+# Timestep threshold (ps) at or above which HMR is assumed to be active.
+HMR_TIMESTEP_THRESHOLD_PS = 0.003  # >= 3 fs indicates HMR
 
 
 def _serialize_value(value: Any, _visited: Optional[set] = None) -> Any:
@@ -684,14 +682,14 @@ class SimulationProtocol:
                 )
 
             # Infer HMR from timestep if not already detected from prmtop
-            # Timestep >= 0.003 ps (3 fs) is a definitive indicator of HMR
+            # Timestep >= HMR_TIMESTEP_THRESHOLD_PS is a definitive indicator of HMR
             dt = None
             if stage.mdin and stage.mdin.details:
                 dt = getattr(stage.mdin.details, "dt", None)
             if dt is None and stage.mdout and stage.mdout.details:
                 dt = getattr(stage.mdout.details, "dt", None)
             if dt is not None and isinstance(dt, (int, float)):
-                if dt >= 0.003:
+                if dt >= HMR_TIMESTEP_THRESHOLD_PS:
                     # Large timestep indicates HMR is active
                     if composition.get("hmr_active") is None or composition.get("hmr_active") is False:
                         composition["hmr_active"] = True
@@ -819,59 +817,52 @@ class SimulationProtocol:
         return _prune_methods_value(payload)
 
 
-def _normalize_manifest(manifest: Dict[str, Dict[str, str]] | List[Dict[str, str]]):
-    if isinstance(manifest, dict):
-        for name, entry in manifest.items():
-            if not isinstance(entry, dict):
-                raise TypeError("Manifest entries must be dictionaries")
-            normalized = dict(entry)
-            normalized.setdefault("name", name)
-            yield normalized
-    elif isinstance(manifest, list):
-        for entry in manifest:
-            if not isinstance(entry, dict):
-                raise TypeError("Manifest entries must be dictionaries")
-            yield dict(entry)
-    else:
-        raise TypeError("Manifest must be a list or dictionary")
+def _resolve(directory: Optional[str], path: str) -> str:
+    return path if os.path.isabs(path) else os.path.join(directory or ".", path)
 
 
-def validate_manifest(
-    manifest: Dict[str, Dict[str, str]] | List[Dict[str, str]],
-    directory: Optional[str] = None,
-    strict: bool = True,
-) -> None:
-    kinds = {"prmtop", "inpcrd", "mdin", "mdout", "mdcrd"}
-    missing: List[str] = []
-    for entry in _normalize_manifest(manifest):
-        name = entry.get("name")
-        if not name:
-            raise ValueError("Each manifest entry must include a 'name'.")
+def _apply_global_and_hmr_prmtop(stages, directory, *, global_prmtop,
+                                 hmr_prmtop, strict) -> None:
+    """Apply global and/or HMR prmtop to stages.
 
-        files = entry.get("files", {})
-        paths = {k: v for k, v in entry.items() if k in kinds}
-        if isinstance(files, dict):
-            for kind, path in files.items():
-                if kind in kinds and path is not None:
-                    paths.setdefault(kind, path)
+    - global_prmtop: applied to every stage that has no prmtop yet.
+    - hmr_prmtop: applied to stages whose timestep (dt) meets or exceeds
+      HMR_TIMESTEP_THRESHOLD_PS; overrides any previously set prmtop.
+    - Missing files: warn (or raise under strict).
+    """
+    def _load_topology(path, label):
+        full = _resolve(directory, path)
+        if not os.path.exists(full):
+            msg = f"Requested {label} prmtop not found: {full}"
+            if strict:
+                raise AmberMetaError(msg)
+            logger.warning(msg)
+            for st in stages:
+                st.validation.append(f"WARNING: {msg}")
+            return None
+        return _safe_parse(PrmtopParser, full, "prmtop", None, strict=strict)
 
-        resolved = {}
-        for kind, path in paths.items():
-            if path is None:
-                continue
-            if directory and not os.path.isabs(path):
-                resolved[kind] = os.path.normpath(os.path.join(directory, path))
-            else:
-                resolved[kind] = os.path.normpath(path)
+    if global_prmtop:
+        data = _load_topology(global_prmtop, "global")
+        if data is not None:
+            for st in stages:
+                if not st.prmtop:
+                    st.prmtop = data
+                    st.validation.append(f"INFO: using global prmtop: {global_prmtop}")
 
-        for kind, path in resolved.items():
-            if not os.path.exists(path):
-                missing.append(f"stage '{name}', {kind}: {path}")
-
-    if missing and strict:
-        message = "Manifest references missing files:\n" + "\n".join(missing)
-        raise AmberMetaError(message)
-    # In graceful mode, missing files are recorded per-file by _safe_parse.
+    if hmr_prmtop:
+        data = _load_topology(hmr_prmtop, "HMR")
+        if data is not None:
+            for st in stages:
+                dt = None
+                if st.mdin and st.mdin.details:
+                    dt = getattr(st.mdin.details, "dt", None)
+                if dt is None and st.mdout and st.mdout.details:
+                    dt = getattr(st.mdout.details, "dt", None)
+                if isinstance(dt, (int, float)) and dt >= HMR_TIMESTEP_THRESHOLD_PS:
+                    st.prmtop = data
+                    st.validation.append(
+                        f"INFO: using HMR prmtop (dt={dt} ps): {hmr_prmtop}")
 
 
 def _safe_parse(parser_cls, path, kind, stage, *, strict):
@@ -889,7 +880,7 @@ def _safe_parse(parser_cls, path, kind, stage, *, strict):
     try:
         return parser_cls(path).parse()
     except (FileNotFoundError, PermissionError, OSError,
-            UnicodeDecodeError, ValueError) as exc:
+            UnicodeDecodeError, ValueError, LookupError) as exc:
         if strict:
             raise AmberMetaError(f"Failed to parse {kind} '{path}': {exc}") from exc
         if stage is not None:
@@ -1045,6 +1036,14 @@ def _manifest_to_stages(
     return stages
 
 
+def _ordered_stems(grouped: Dict[str, Any]) -> List[str]:
+    """Return stems in natural (numeric-aware) order so prod_2 precedes prod_10."""
+    def key(stem: str):
+        return [int(tok) if tok.isdigit() else tok.lower()
+                for tok in re.split(r'(\d+)', stem)]
+    return sorted(grouped.keys(), key=key)
+
+
 def detect_numeric_sequences(filenames: List[str]) -> Dict[str, List[str]]:
     """Detect numeric sequences in filenames for automatic grouping.
 
@@ -1064,10 +1063,13 @@ def detect_numeric_sequences(filenames: List[str]) -> Dict[str, List[str]]:
     import re
 
     # Pattern to detect numeric suffixes: name_001, name.001, name001, name-001
-    suffix_pattern = re.compile(r'^(.+?)[-_.]?(\d{2,})$')
+    # \d+ (not \d{2,}) so single-digit sequences (prod_1, prod_2, prod_3) are detected.
+    # The base group (.+?) ensures a stem that is *only* a number never matches here.
+    suffix_pattern = re.compile(r'^(.+?)[-_.]?(\d+)$')
 
     # Pattern to detect numeric prefixes: 01_name, 01.name, 01-name
-    prefix_pattern = re.compile(r'^(\d{2,})[-_.]?(.+)$')
+    # The trailing group (.+) ensures a stem that is *only* a number never matches here.
+    prefix_pattern = re.compile(r'^(\d+)[-_.]?(.+)$')
 
     groups: Dict[str, List[tuple[int, str]]] = {}
 
@@ -1078,6 +1080,8 @@ def detect_numeric_sequences(filenames: List[str]) -> Dict[str, List[str]]:
         match = suffix_pattern.match(stem)
         if match:
             base = match.group(1)
+            if base.isdigit():
+                continue  # skip pure-numeric bases (e.g. "0001", "0002")
             num = int(match.group(2))
             groups.setdefault(f"suffix:{base}", []).append((num, filename))
             continue
@@ -1200,6 +1204,7 @@ def infer_stage_role_from_content(
 def auto_detect_restart_chain(
     stages: List[SimulationStage],
     directory: str,
+    recursive: bool = False,
 ) -> Dict[str, str]:
     """Automatically detect restart file chains between stages.
 
@@ -1214,6 +1219,8 @@ def auto_detect_restart_chain(
         List of simulation stages to analyze.
     directory:
         Base directory for finding restart files.
+    recursive:
+        When True, scan subdirectories recursively (mirrors ``smart_group_files``).
 
     Returns
     -------
@@ -1225,15 +1232,19 @@ def auto_detect_restart_chain(
     ext_map = {".rst", ".rst7", ".ncrst", ".restrt", ".inpcrd"}
 
     # Scan for restart files
-    try:
-        restart_entries = os.listdir(directory)
-    except (PermissionError, OSError):
-        restart_entries = []
-    for fname in restart_entries:
-        full_path = os.path.join(directory, fname)
+    entries: List[str] = []
+    if recursive:
+        for root, _, files in os.walk(directory, onerror=lambda e: None):
+            entries.extend(os.path.join(root, fn) for fn in files)
+    else:
+        try:
+            entries = [os.path.join(directory, fn) for fn in os.listdir(directory)]
+        except (PermissionError, OSError):
+            entries = []
+    for full_path in entries:
         if not os.path.isfile(full_path):
             continue
-        _, ext = os.path.splitext(fname)
+        _, ext = os.path.splitext(full_path)
         if ext.lower() not in ext_map:
             continue
         try:
@@ -1436,7 +1447,7 @@ def auto_discover(
         )
         # Apply auto restart detection if requested
         if auto_detect_restarts:
-            auto_restarts = auto_detect_restart_chain(stages, directory)
+            auto_restarts = auto_detect_restart_chain(stages, directory, recursive=recursive)
             for stage in stages:
                 if stage.name in auto_restarts and not stage.restart_path:
                     rst_path = auto_restarts[stage.name]
@@ -1445,32 +1456,10 @@ def auto_discover(
                         stage.restart_path = rst_path
                         stage.validation.append(f"INFO: restart file auto-detected: {rst_path}")
 
-        # Apply global prmtop to stages that don't have one
-        if global_prmtop:
-            global_prmtop_path = os.path.join(directory, global_prmtop) if not os.path.isabs(global_prmtop) else global_prmtop
-            if os.path.exists(global_prmtop_path):
-                global_prmtop_data = _safe_parse(PrmtopParser, global_prmtop_path, "prmtop", None, strict=strict)
-                for stage in stages:
-                    if not stage.prmtop and global_prmtop_data is not None:
-                        stage.prmtop = global_prmtop_data
-                        stage.validation.append(f"INFO: using global prmtop: {global_prmtop}")
-
-        # Apply HMR prmtop to stages with large timesteps (dt >= 0.004 ps)
-        if hmr_prmtop:
-            hmr_prmtop_path = os.path.join(directory, hmr_prmtop) if not os.path.isabs(hmr_prmtop) else hmr_prmtop
-            if os.path.exists(hmr_prmtop_path):
-                hmr_prmtop_data = _safe_parse(PrmtopParser, hmr_prmtop_path, "prmtop", None, strict=strict)
-                for stage in stages:
-                    # Check if stage uses large timestep (HMR typically requires dt >= 0.004 ps)
-                    dt = None
-                    if stage.mdin and stage.mdin.details and hasattr(stage.mdin.details, 'dt'):
-                        dt = stage.mdin.details.dt
-                    elif stage.mdout and stage.mdout.details and hasattr(stage.mdout.details, 'dt'):
-                        dt = stage.mdout.details.dt
-
-                    if dt is not None and dt >= 0.004 and hmr_prmtop_data is not None:
-                        stage.prmtop = hmr_prmtop_data
-                        stage.validation.append(f"INFO: using HMR prmtop (dt={dt} ps): {hmr_prmtop}")
+        _apply_global_and_hmr_prmtop(stages, directory,
+                                     global_prmtop=global_prmtop,
+                                     hmr_prmtop=hmr_prmtop,
+                                     strict=strict)
 
         protocol = SimulationProtocol(stages=stages)
         protocol.validate(
@@ -1491,7 +1480,8 @@ def auto_discover(
                 compiled_rules.append((re.compile(re.escape(pattern)), role))
 
     stages: List[SimulationStage] = []
-    for stem, kinds in sorted(grouped.items()):
+    for stem in _ordered_stems(grouped):
+        kinds = grouped[stem]
         # Skip internal metadata keys
         file_kinds = {k: v for k, v in kinds.items() if not k.startswith("_")}
 
@@ -1568,7 +1558,7 @@ def auto_discover(
 
     # Apply auto restart detection if requested
     if auto_detect_restarts:
-        auto_restarts = auto_detect_restart_chain(stages, directory)
+        auto_restarts = auto_detect_restart_chain(stages, directory, recursive=recursive)
         for stage in stages:
             if stage.name in auto_restarts and not stage.restart_path:
                 rst_path = auto_restarts[stage.name]
@@ -1577,15 +1567,10 @@ def auto_discover(
                     stage.restart_path = rst_path
                     stage.validation.append(f"INFO: restart file auto-detected: {rst_path}")
 
-    # Apply global prmtop to stages that don't have one
-    if global_prmtop:
-        global_prmtop_path = os.path.join(directory, global_prmtop) if not os.path.isabs(global_prmtop) else global_prmtop
-        if os.path.exists(global_prmtop_path):
-            global_prmtop_data = _safe_parse(PrmtopParser, global_prmtop_path, "prmtop", None, strict=strict)
-            for stage in stages:
-                if not stage.prmtop and global_prmtop_data is not None:
-                    stage.prmtop = global_prmtop_data
-                    stage.validation.append(f"INFO: using global prmtop: {global_prmtop}")
+    _apply_global_and_hmr_prmtop(stages, directory,
+                                 global_prmtop=global_prmtop,
+                                 hmr_prmtop=hmr_prmtop,
+                                 strict=strict)
 
     protocol = SimulationProtocol(stages=stages)
     protocol.validate(
@@ -1593,154 +1578,6 @@ def auto_discover(
         allow_unexpected_gaps=allow_unexpected_gaps,
     )
     return protocol
-
-
-def _expand_env_vars(value: Any) -> Any:
-    """Recursively expand environment variables in string values.
-
-    Supports ${VAR} and $VAR syntax. Undefined variables are left unchanged.
-    """
-    if isinstance(value, str):
-        # Collect all replacements from the original value first to avoid double-expansion
-        replacements = []
-        import re
-        # Expand ${VAR} syntax
-        for match in re.finditer(r'\$\{([^}]+)\}', value):
-            var_name = match.group(1)
-            env_value = os.environ.get(var_name)
-            if env_value is not None:
-                replacements.append((match.group(0), env_value))
-        # Expand $VAR syntax (only if not followed by {)
-        for match in re.finditer(r'\$([A-Za-z_][A-Za-z0-9_]*)(?!\{)', value):
-            var_name = match.group(1)
-            # Skip if this was already matched as ${VAR}
-            if f'${{{var_name}}}' in value:
-                continue
-            env_value = os.environ.get(var_name)
-            if env_value is not None:
-                replacements.append((match.group(0), env_value))
-        # Apply all replacements to the original value
-        result = value
-        for old, new in replacements:
-            result = result.replace(old, new)
-        return result
-    elif isinstance(value, dict):
-        return {k: _expand_env_vars(v) for k, v in value.items()}
-    elif isinstance(value, list):
-        return [_expand_env_vars(item) for item in value]
-    return value
-
-
-def _parse_csv_manifest(text: str) -> List[Dict[str, Any]]:
-    """Parse a CSV manifest file into a list of stage dictionaries.
-
-    Expected CSV format:
-    name,stage_role,prmtop,mdin,mdout,mdcrd,inpcrd,notes
-
-    First row must be headers.
-    """
-    reader = csv.DictReader(StringIO(text))
-    stages: List[Dict[str, Any]] = []
-
-    for row in reader:
-        stage: Dict[str, Any] = {}
-        for key, value in row.items():
-            if key is None or value is None:
-                continue
-            key = key.strip()
-            value = value.strip()
-            if not value:
-                continue
-            # Handle special fields
-            if key in ("expected_gap_ps", "gap_tolerance_ps"):
-                try:
-                    stage[key] = float(value)
-                except ValueError:
-                    stage[key] = value
-            elif key == "notes":
-                # Support semicolon-separated notes
-                stage[key] = [n.strip() for n in value.split(";") if n.strip()]
-            else:
-                stage[key] = value
-        if stage.get("name"):
-            stages.append(stage)
-
-    return stages
-
-
-def _parse_toml_manifest(text: str) -> Dict[str, Any] | List[Dict[str, Any]]:
-    """Parse a TOML manifest file.
-
-    TOML manifests can have two formats:
-    1. Array of tables: [[stages]]
-    2. Table per stage: [stage.name]
-    """
-    if tomllib is None:
-        raise ImportError(
-            "tomllib/tomli is required to read TOML manifests. "
-            "Install with `pip install tomli` (Python < 3.11) or use Python 3.11+."
-        )
-
-    data = tomllib.loads(text)
-
-    # If there's a 'stages' key with a list, return that
-    if "stages" in data and isinstance(data["stages"], list):
-        return data["stages"]
-
-    # If the data is a dict with stage names as keys
-    return data
-
-
-def load_manifest(
-    manifest_path: str | os.PathLike[str],
-    expand_env: bool = True,
-) -> Dict[str, Any] | List[Dict[str, Any]]:
-    """Load a manifest from YAML, JSON, TOML, or CSV.
-
-    Parameters
-    ----------
-    manifest_path:
-        Path to a manifest describing simulation stages.
-        Supported formats: .yaml, .yml, .json, .toml, .csv
-    expand_env:
-        If True, expand environment variables in file paths using ${VAR} or $VAR syntax.
-        Default is True.
-
-    Returns
-    -------
-    Manifest data as a list of stage dictionaries or a mapping.
-    """
-
-    path = Path(manifest_path)
-    if not path.exists():
-        raise FileNotFoundError(f"Manifest not found: {manifest_path}")
-
-    text = path.read_text(encoding="utf-8")
-    suffix = path.suffix.lower()
-
-    if suffix in {".yaml", ".yml"}:
-        if yaml is None:
-            raise ImportError("PyYAML is required to read YAML manifests. Install with `pip install pyyaml`.")
-        manifest = yaml.safe_load(text)
-    elif suffix == ".toml":
-        manifest = _parse_toml_manifest(text)
-    elif suffix == ".csv":
-        manifest = _parse_csv_manifest(text)
-    else:
-        # Default to JSON
-        manifest = json.loads(text)
-
-    if manifest is None:
-        return {}
-
-    if not isinstance(manifest, (dict, list)):
-        raise TypeError("Manifest must be a mapping or list of stage entries.")
-
-    # Expand environment variables if requested
-    if expand_env:
-        manifest = _expand_env_vars(manifest)
-
-    return manifest
 
 
 def load_protocol_from_manifest(
@@ -2156,4 +1993,5 @@ __all__ = [
     "smart_group_files",
     "load_manifest",
     "load_protocol_from_manifest",
+    "HMR_TIMESTEP_THRESHOLD_PS",
 ]

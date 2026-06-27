@@ -4,7 +4,7 @@ import sys
 
 import pytest
 
-from ambermeta.cli import _toml_escape
+from ambermeta.manifest import _toml_escape, write_manifest
 
 
 # --- 7a: TOML export must escape backslashes (Windows paths) ---
@@ -20,11 +20,10 @@ def test_toml_export_roundtrips_windows_path(tmp_path):
     tomllib = pytest.importorskip(
         "tomllib" if sys.version_info >= (3, 11) else "tomli"
     )
-    from ambermeta.cli import _write_manifest_payload
 
     payload = {"stages": [{"name": "prod", "prmtop": r"C:\runs\sys.prmtop"}]}
     out = tmp_path / "m.toml"
-    _write_manifest_payload(str(out), payload, "toml")
+    write_manifest(payload, str(out), "toml")
     with open(out, "rb") as fh:
         parsed = tomllib.load(fh)
     assert parsed["stages"][0]["prmtop"] == r"C:\runs\sys.prmtop"

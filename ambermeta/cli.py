@@ -24,6 +24,15 @@ except ImportError:  # pragma: no cover - optional dependency
 # Module logger
 logger = get_logger(__name__)
 
+# Quiet-mode flag — set to True by main() when -q/--quiet is passed.
+_QUIET = False
+
+
+def _out(*args, **kwargs) -> None:
+    """Print to stdout only when quiet mode is not active."""
+    if not _QUIET:
+        print(*args, **kwargs)
+
 
 def _prompt(prompt: str, default: str = "") -> str:
     """Enhanced prompt with default value support."""
@@ -65,12 +74,12 @@ class ProgressIndicator:
 # UX-006: Enhanced interactive manifest creation
 def _interactive_manifest(directory: str) -> List[Dict[str, Any]]:
     """Interactive mode for creating simulation manifests with guided prompts."""
-    print("\n" + "=" * 60)
-    print("  AmberMeta Interactive Protocol Builder")
-    print("=" * 60)
-    print("\nDefine your simulation stages in order.")
-    print("Press Enter without a name to finish, or 'q' to quit.\n")
-    print("Common stage roles: minimization, heating, equilibration, production\n")
+    _out("\n" + "=" * 60)
+    _out("  AmberMeta Interactive Protocol Builder")
+    _out("=" * 60)
+    _out("\nDefine your simulation stages in order.")
+    _out("Press Enter without a name to finish, or 'q' to quit.\n")
+    _out("Common stage roles: minimization, heating, equilibration, production\n")
 
     manifest: List[Dict[str, Any]] = []
     kinds = ("prmtop", "mdin", "mdout", "mdcrd")
@@ -80,7 +89,7 @@ def _interactive_manifest(directory: str) -> List[Dict[str, Any]]:
     available_files = _scan_directory_files(directory)
 
     while True:
-        print(f"\n--- Stage {stage_num} ---")
+        _out(f"\n--- Stage {stage_num} ---")
         name = _prompt("Stage name (blank to finish, 'q' to quit): ").strip()
         if not name:
             break
@@ -101,16 +110,16 @@ def _interactive_manifest(directory: str) -> List[Dict[str, Any]]:
         if role:
             stage_entry["stage_role"] = role
 
-        print(f"\n  Enter file paths relative to: {directory}")
+        _out(f"\n  Enter file paths relative to: {directory}")
         if available_files:
-            print(f"  (Found {sum(len(v) for v in available_files.values())} simulation files)")
+            _out(f"  (Found {sum(len(v) for v in available_files.values())} simulation files)")
 
         for kind in kinds:
             # Show suggestions if available
             suggestions = available_files.get(kind, [])
             if suggestions:
-                print(f"    Available {kind} files: {', '.join(suggestions[:3])}" +
-                      (f" (+{len(suggestions)-3} more)" if len(suggestions) > 3 else ""))
+                _out(f"    Available {kind} files: {', '.join(suggestions[:3])}" +
+                     (f" (+{len(suggestions)-3} more)" if len(suggestions) > 3 else ""))
             value = _prompt(f"    {kind} file path (optional): ").strip()
             if value:
                 stage_entry[kind] = value
@@ -128,13 +137,13 @@ def _interactive_manifest(directory: str) -> List[Dict[str, Any]]:
                 try:
                     gaps["expected"] = float(expected_gap)
                 except ValueError:
-                    print("    Invalid number; skipping.")
+                    _out("    Invalid number; skipping.")
             tolerance = _prompt("    Gap tolerance (ps): ", default="0.1").strip()
             if tolerance:
                 try:
                     gaps["tolerance"] = float(tolerance)
                 except ValueError:
-                    print("    Invalid number; using default 0.1.")
+                    _out("    Invalid number; using default 0.1.")
                     gaps["tolerance"] = 0.1
             if gaps:
                 stage_entry["gaps"] = gaps
@@ -147,14 +156,14 @@ def _interactive_manifest(directory: str) -> List[Dict[str, Any]]:
         stage_num += 1
 
         # Summary of added stage
-        print(f"\n  Added stage: {name}" + (f" ({role})" if role else ""))
+        _out(f"\n  Added stage: {name}" + (f" ({role})" if role else ""))
 
         cont = _prompt("Add another stage? [Y/n]: ").strip().lower()
         if cont.startswith("n"):
             break
 
     if manifest:
-        print(f"\n{len(manifest)} stage(s) defined.")
+        _out(f"\n{len(manifest)} stage(s) defined.")
 
     return manifest
 
@@ -174,9 +183,7 @@ def _scan_directory_files(directory: str) -> Dict[str, List[str]]:
             ext = os.path.splitext(f)[1].lower()
             fl = f.lower()
 
-            if ext in (".prmtop", ".parm7", ".top") or "prmtop" in fl:
-                files["prmtop"].append(f)
-            elif ext in (".in", ".mdin") or "mdin" in fl:
+            if ext in (".in", ".mdin") or "mdin" in fl:
                 files["mdin"].append(f)
             elif ext in (".out", ".mdout") or "mdout" in fl:
                 files["mdout"].append(f)
@@ -184,6 +191,8 @@ def _scan_directory_files(directory: str) -> Dict[str, List[str]]:
                 files["mdcrd"].append(f)
             elif ext in (".rst", ".rst7", ".ncrst", ".inpcrd"):
                 files["inpcrd"].append(f)
+            elif ext in (".prmtop", ".parm7", ".top") or "prmtop" in fl:
+                files["prmtop"].append(f)
     except OSError:
         pass
 
@@ -209,17 +218,17 @@ def _suggest_stage_role(name: str) -> str:
 
 def _print_protocol(protocol: SimulationProtocol, verbose: bool = False) -> None:
     totals = protocol.totals()
-    print("\nProtocol summary")
-    print("================")
-    print(f"Stages: {len(protocol.stages)}")
-    print(f"Total steps: {totals['steps']:.0f}")
-    print(f"Total simulated time (ps): {totals['time_ps']:.3f}")
+    _out("\nProtocol summary")
+    _out("================")
+    _out(f"Stages: {len(protocol.stages)}")
+    _out(f"Total steps: {totals['steps']:.0f}")
+    _out(f"Total simulated time (ps): {totals['time_ps']:.3f}")
 
     for stage in protocol.stages:
         summary = stage.summary()
-        print(f"\n- {stage.name}")
-        print(f"  intent: {summary['intent']}")
-        print(f"  result: {summary['result']}")
+        _out(f"\n- {stage.name}")
+        _out(f"  intent: {summary['intent']}")
+        _out(f"  result: {summary['result']}")
         metadata_lines = []
         if stage.prmtop and stage.prmtop.details:
             prmtop_details = stage.prmtop.details
@@ -341,18 +350,18 @@ def _print_protocol(protocol: SimulationProtocol, verbose: bool = False) -> None
                 metadata_lines.append(f"  inpcrd: {', '.join(inpcrd_bits)}")
         if metadata_lines:
             for line in metadata_lines:
-                print(line)
+                _out(line)
         if stats_line:
-            print(stats_line)
+            _out(stats_line)
         if stage.restart_path:
-            print(f"  restart: {stage.restart_path}")
+            _out(f"  restart: {stage.restart_path}")
         if summary.get("evidence"):
-            print(f"  evidence: {summary['evidence']}")
+            _out(f"  evidence: {summary['evidence']}")
         if stage.validation:
             for note in stage.validation:
-                print(f"  note: {note}")
+                _out(f"  note: {note}")
         if verbose:
-            print("  details:")
+            _out("  details:")
             stage_payload = stage.to_dict()
             for key in ("files", "validation", "continuity"):
                 if key not in stage_payload:
@@ -362,21 +371,21 @@ def _print_protocol(protocol: SimulationProtocol, verbose: bool = False) -> None
                     for file_kind, metadata in block.items():
                         if metadata is None:
                             continue
-                        print(f"    {file_kind}:")
-                        print(f"      file: {metadata.get('filename')}")
+                        _out(f"    {file_kind}:")
+                        _out(f"      file: {metadata.get('filename')}")
                         warnings = metadata.get("warnings") or []
                         for warn in warnings:
-                            print(f"      warning: {warn}")
+                            _out(f"      warning: {warn}")
                         details = metadata.get("details")
                         if details:
                             for line in json.dumps(details, indent=6).splitlines():
-                                print(f"      detail: {line}")
+                                _out(f"      detail: {line}")
                 else:
                     if not block:
                         continue
                     label = "validation" if key == "validation" else "continuity"
                     for item in block:
-                        print(f"    {label}: {item}")
+                        _out(f"    {label}: {item}")
 
 
 # UX-004: Color codes for terminal output
@@ -517,32 +526,32 @@ def _validate_command(args: argparse.Namespace) -> int:
             return 1
         print(yaml.safe_dump(result, sort_keys=False))
     else:
-        print(Colors.header("\nValidation Results"))
-        print("=" * 50)
+        _out(Colors.header("\nValidation Results"))
+        _out("=" * 50)
 
         for file_result in result["files"]:
             filepath = file_result["file"]
             status = file_result["status"]
             if status == "error":
-                print(f"\n{Colors.error('ERROR')}: {filepath}")
+                _out(f"\n{Colors.error('ERROR')}: {filepath}")
                 for err in file_result["errors"]:
-                    print(f"  - {err}")
+                    _out(f"  - {err}")
             elif status == "warning":
-                print(f"\n{Colors.warning('WARN')}: {filepath}")
+                _out(f"\n{Colors.warning('WARN')}: {filepath}")
                 for warn in file_result["warnings"]:
-                    print(f"  - {warn}")
+                    _out(f"  - {warn}")
             else:
-                print(f"\n{Colors.success('OK')}: {filepath}")
+                _out(f"\n{Colors.success('OK')}: {filepath}")
 
-        print("\n" + "=" * 50)
+        _out("\n" + "=" * 50)
         if has_errors:
-            print(Colors.error("Validation FAILED with errors"))
+            _out(Colors.error("Validation FAILED with errors"))
         elif has_warnings and args.strict:
-            print(Colors.warning("Validation FAILED (strict mode, warnings present)"))
+            _out(Colors.warning("Validation FAILED (strict mode, warnings present)"))
         elif has_warnings:
-            print(Colors.warning("Validation PASSED with warnings"))
+            _out(Colors.warning("Validation PASSED with warnings"))
         else:
-            print(Colors.success("Validation PASSED"))
+            _out(Colors.success("Validation PASSED"))
 
     if has_errors:
         return 1
@@ -556,12 +565,12 @@ def _info_command(args: argparse.Namespace) -> int:
     filepath = args.file
 
     if not os.path.exists(filepath):
-        print(Colors.error(f"ERROR: File not found: {filepath}"))
+        print(Colors.error(f"ERROR: File not found: {filepath}"), file=sys.stderr)
         return 1
 
     parser = _get_parser_for_file(filepath)
     if parser is None:
-        print(Colors.error(f"ERROR: Unknown file type: {filepath}"))
+        print(Colors.error(f"ERROR: Unknown file type: {filepath}"), file=sys.stderr)
         return 1
 
     try:
@@ -581,8 +590,8 @@ def _info_command(args: argparse.Namespace) -> int:
             print(yaml.safe_dump(payload, sort_keys=False))
         else:
             # Text format
-            print(Colors.header(f"\nFile Information: {os.path.basename(filepath)}"))
-            print("=" * 60)
+            _out(Colors.header(f"\nFile Information: {os.path.basename(filepath)}"))
+            _out("=" * 60)
 
             if details:
                 for key, value in vars(details).items():
@@ -590,18 +599,18 @@ def _info_command(args: argparse.Namespace) -> int:
                         continue
                     if isinstance(value, (list, dict)) and not value:
                         continue
-                    print(f"  {key}: {value}")
+                    _out(f"  {key}: {value}")
 
             warnings = getattr(result, "warnings", []) or []
             if warnings:
-                print(f"\n{Colors.warning('Warnings:')}")
+                _out(f"\n{Colors.warning('Warnings:')}")
                 for warn in warnings:
-                    print(f"  - {warn}")
+                    _out(f"  - {warn}")
 
         return 0
 
     except (IOError, OSError, ValueError) as e:
-        print(Colors.error(f"ERROR: Failed to parse file: {e}"))
+        print(Colors.error(f"ERROR: Failed to parse file: {e}"), file=sys.stderr)
         return 1
 
 
@@ -693,6 +702,9 @@ _ambermeta() {
         init)
           _arguments '--output[Manifest output filename]:file:_files' '--template[Template complexity]:template:(minimal standard comprehensive)' '--auto[Auto-generate grouped stages]' '--format[Manifest format]:format:(yaml json toml csv)' '--validate[Validate discovered files after writing manifest]' '--dry-run[Preview discovery without writing]' '--force[Overwrite existing output]' '*:path:_files'
           ;;
+        tui)
+          _arguments '*:path:_files'
+          ;;
         gui)
           _arguments '--host[Host interface]' '--port[Port number]' '--no-browser[Do not open browser after server starts]' '*:path:_files'
           ;;
@@ -774,13 +786,13 @@ def _init_command(args: argparse.Namespace) -> int:
         if getattr(args, "force", False):
             pass
         elif auto_mode:
-            print(Colors.error(f"ERROR: {args.output} already exists. Use --force to overwrite."))
+            _out(Colors.error(f"ERROR: {args.output} already exists. Use --force to overwrite."))
             return 1
         else:
-            print(Colors.warning(f"WARNING: {args.output} already exists"))
+            _out(Colors.warning(f"WARNING: {args.output} already exists"))
             response = input("Overwrite? [y/N]: ").strip().lower()
             if response != "y":
-                print("Aborted.")
+                _out("Aborted.")
                 return 1
 
     # Scan directory for common file patterns
@@ -799,9 +811,7 @@ def _init_command(args: argparse.Namespace) -> int:
             ext = os.path.splitext(f)[1].lower()
             fl = f.lower()
 
-            if ext in (".prmtop", ".parm7", ".top") or "prmtop" in fl:
-                discovered_files["prmtop"].append(rel_path)
-            elif ext in (".in", ".mdin") or "mdin" in fl:
+            if ext in (".in", ".mdin") or "mdin" in fl:
                 discovered_files["mdin"].append(rel_path)
             elif ext in (".out", ".mdout") or "mdout" in fl:
                 discovered_files["mdout"].append(rel_path)
@@ -809,26 +819,44 @@ def _init_command(args: argparse.Namespace) -> int:
                 discovered_files["mdcrd"].append(rel_path)
             elif ext in (".rst", ".rst7", ".ncrst", ".inpcrd"):
                 discovered_files["inpcrd"].append(rel_path)
+            elif ext in (".prmtop", ".parm7", ".top") or "prmtop" in fl:
+                discovered_files["prmtop"].append(rel_path)
 
-    stage_candidates = _build_stage_candidates(discovered_files)
+    stage_candidates = _build_stage_candidates(directory)
 
     if auto_mode:
-        manifest_payload = _build_auto_manifest_payload(discovered_files, stage_candidates)
+        if not stage_candidates:
+            print(Colors.warning(
+                "WARNING: no mdin/mdout/mdcrd/inpcrd files found; "
+                "no stages generated."), file=sys.stderr)
+            return 1
+
+        manifest_payload = _build_auto_manifest_payload(directory, discovered_files, stage_candidates)
         if getattr(args, "dry_run", False):
-            _print_auto_stage_preview(stage_candidates, discovered_files)
-            print("\nDry run complete; no files were written.")
+            _print_auto_stage_preview(stage_candidates, manifest_payload)
+            _out("\nDry run complete; no files were written.")
             return 0
 
         manifest_format = _resolve_manifest_format(args)
-        _write_manifest_payload(output_path, manifest_payload, manifest_format)
-        print(Colors.success(f"Created {args.output} ({manifest_format})"))
-        _print_auto_stage_preview(stage_candidates, discovered_files)
+        if manifest_format == "csv" and manifest_payload.get("hmr_prmtop"):
+            print(
+                Colors.warning(
+                    "WARNING: CSV format cannot represent a separate HMR topology; "
+                    "only the standard topology is written. "
+                    "Use yaml/json/toml to preserve HMR."
+                ),
+                file=sys.stderr,
+            )
+        from ambermeta import manifest as manifest_io
+        manifest_io.write_manifest(manifest_payload, output_path, manifest_format)
+        _out(Colors.success(f"Created {args.output} ({manifest_format})"))
+        _print_auto_stage_preview(stage_candidates, manifest_payload)
         if getattr(args, "validate", False):
-            _run_init_validation_summary(directory, stage_candidates, discovered_files)
+            _run_init_validation_summary(directory, stage_candidates, manifest_payload)
         return 0
 
     if hasattr(args, 'format') and args.format and args.format != "yaml" and not args.auto:
-        print(Colors.warning("WARNING: --format is only applied in --auto mode. Output will be YAML."))
+        _out(Colors.warning("WARNING: --format is only applied in --auto mode. Output will be YAML."))
 
     # Generate manifest content
     if args.template == "minimal":
@@ -841,62 +869,80 @@ def _init_command(args: argparse.Namespace) -> int:
     with open(output_path, "w", encoding="utf-8") as fh:
         fh.write(manifest_content)
 
-    print(Colors.success(f"Created {args.output}"))
-    print(f"\nDiscovered files:")
+    _out(Colors.success(f"Created {args.output}"))
+    _out(f"\nDiscovered files:")
     for kind, files in discovered_files.items():
         if files:
-            print(f"  {kind}: {len(files)} file(s)")
+            _out(f"  {kind}: {len(files)} file(s)")
 
-    print(f"\nEdit {args.output} to customize your protocol stages.")
+    _out(f"\nEdit {args.output} to customize your protocol stages.")
     return 0
 
 
-def _normalize_stage_stem(path: str) -> str:
-    """Normalize a file path stem into a stage grouping key."""
-    stem = os.path.splitext(os.path.basename(path))[0]
-    match = re.match(r"^(.*?)(?:[._-]?\d+)$", stem)
-    if match and match.group(1):
-        return match.group(1).rstrip("._-") or stem
-    return stem
+def _build_stage_candidates(directory: str) -> List[Dict[str, Any]]:
+    """Build ordered stage candidates using the engine's discovery (one stage
+    per discovered file group, identical for every role)."""
+    from ambermeta.protocol import smart_group_files, _ordered_stems
+
+    grouped = smart_group_files(directory, recursive=True)
+    candidates: List[Dict[str, Any]] = []
+    for stem in _ordered_stems(grouped):
+        kinds = grouped[stem]
+        files = {k: os.path.relpath(v, directory)
+                 for k, v in kinds.items()
+                 if k in ("mdin", "mdout", "mdcrd", "inpcrd")}
+        if not files:
+            continue  # prmtop-only groups are not stages
+        candidates.append({
+            "name": stem,
+            "stage_role": _suggest_stage_role(stem),
+            "files": files,
+        })
+    return candidates
 
 
-def _build_stage_candidates(discovered_files: Dict[str, List[str]]) -> List[Dict[str, Any]]:
-    """Build ordered stage candidates from discovered file groupings."""
-    grouped: Dict[str, Dict[str, Any]] = {}
-
-    for kind in ("mdin", "mdout", "mdcrd", "inpcrd"):
-        for path in sorted(discovered_files.get(kind, [])):
-            key = _normalize_stage_stem(path)
-            entry = grouped.setdefault(
-                key,
-                {
-                    "name": key,
-                    "stage_role": _suggest_stage_role(key),
-                    "files": {},
-                },
-            )
-            entry["files"][kind] = path
-
-    return [grouped[key] for key in sorted(grouped)]
+def _classify_topologies(directory: str, prmtops: List[str]):
+    """Return (global_prmtop, hmr_prmtop) chosen deterministically from the
+    discovered topology files using HMR detection. Warns on ambiguity."""
+    from ambermeta.legacy_extractors.prmtop import extract_prmtop_metadata
+    prmtops = sorted(prmtops)
+    normal, hmr = [], []
+    for rel in prmtops:
+        try:
+            md = extract_prmtop_metadata(os.path.join(directory, rel))
+            (hmr if md.hmr_active else normal).append(rel)
+        except (IOError, OSError, ValueError, LookupError):
+            normal.append(rel)
+    if len(prmtops) > 1:
+        _out(Colors.warning(
+            f"WARNING: {len(prmtops)} topology files found; "
+            f"normal={normal or '-'}, HMR={hmr or '-'}."))
+    global_prmtop = normal[0] if normal else (prmtops[0] if prmtops else None)
+    hmr_prmtop = hmr[0] if hmr else None
+    return global_prmtop, hmr_prmtop
 
 
 def _build_auto_manifest_payload(
-    discovered: Dict[str, List[str]], stage_candidates: List[Dict[str, Any]]
+    directory: str, discovered: Dict[str, List[str]], stage_candidates: List[Dict[str, Any]]
 ) -> Dict[str, Any]:
-    prmtop = discovered["prmtop"][0] if discovered["prmtop"] else None
+    global_prmtop, hmr_prmtop = _classify_topologies(
+        directory, sorted(discovered.get("prmtop", [])))
+    payload: Dict[str, Any] = {}
+    if global_prmtop:
+        payload["global_prmtop"] = global_prmtop
+    if hmr_prmtop:
+        payload["hmr_prmtop"] = hmr_prmtop
     stages: List[Dict[str, Any]] = []
-    for candidate in stage_candidates:
-        stage: Dict[str, Any] = {"name": candidate["name"]}
-        if candidate.get("stage_role"):
-            stage["stage_role"] = candidate["stage_role"]
-        if prmtop:
-            stage["prmtop"] = prmtop
-        for key in ("mdin", "mdout", "mdcrd", "inpcrd"):
-            value = candidate.get("files", {}).get(key)
-            if value:
-                stage[key] = value
+    for c in stage_candidates:
+        stage: Dict[str, Any] = {"name": c["name"]}
+        if c.get("stage_role"):
+            stage["stage_role"] = c["stage_role"]
+        for k in ("mdin", "mdout", "mdcrd", "inpcrd"):
+            if c.get("files", {}).get(k):
+                stage[k] = c["files"][k]
         stages.append(stage)
-    return {"stages": stages}
+    payload["stages"] = stages
+    return payload
 
 
 def _resolve_manifest_format(args: argparse.Namespace) -> str:
@@ -909,89 +955,38 @@ def _resolve_manifest_format(args: argparse.Namespace) -> str:
     return ext_map.get(ext, "yaml")
 
 
-def _print_auto_stage_preview(stage_candidates: List[Dict[str, Any]], discovered: Dict[str, List[str]]) -> None:
-    print("\nAuto-grouped stages:")
+def _print_auto_stage_preview(stage_candidates: List[Dict[str, Any]], payload: Dict[str, Any]) -> None:
+    _out("\nAuto-grouped stages:")
     if not stage_candidates:
-        print("  (no stages discovered)")
+        _out("  (no stages discovered)")
         return
 
-    prmtop = discovered["prmtop"][0] if discovered["prmtop"] else None
+    global_prmtop = payload.get("global_prmtop")
+    hmr_prmtop = payload.get("hmr_prmtop")
+    if global_prmtop:
+        _out(f"  global_prmtop: {global_prmtop}")
+    if hmr_prmtop:
+        _out(f"  hmr_prmtop: {hmr_prmtop}")
     for idx, candidate in enumerate(stage_candidates, start=1):
         role = candidate.get("stage_role") or "unclassified"
-        print(f"  {idx}. {candidate['name']} [{role}]")
-        if prmtop:
-            print(f"     prmtop: {prmtop}")
+        _out(f"  {idx}. {candidate['name']} [{role}]")
         for kind in ("mdin", "mdout", "mdcrd", "inpcrd"):
             value = candidate.get("files", {}).get(kind)
             if value:
-                print(f"     {kind}: {value}")
+                _out(f"     {kind}: {value}")
 
-
-def _toml_escape(value: Any) -> str:
-    """Escape a value for a TOML basic string.
-
-    Backslashes must be escaped *before* quotes so a Windows path such as
-    ``C:\\data\\file.prmtop`` produces valid, re-parseable TOML.
-    """
-    s = str(value)
-    s = s.replace("\\", "\\\\")
-    s = s.replace('"', '\\"')
-    return s
-
-
-def _write_manifest_payload(output_path: str, payload: Dict[str, Any], manifest_format: str) -> None:
-    if manifest_format == "json":
-        with open(output_path, "w", encoding="utf-8") as fh:
-            json.dump(payload, fh, indent=2)
-        return
-
-    if manifest_format == "yaml":
-        if yaml is None:
-            raise RuntimeError("PyYAML is required for YAML output")
-        with open(output_path, "w", encoding="utf-8") as fh:
-            yaml.safe_dump(payload, fh, sort_keys=False)
-        return
-
-    if manifest_format == "toml":
-        lines = []
-        for stage in payload.get("stages", []):
-            lines.append("[[stages]]")
-            for key, value in stage.items():
-                lines.append(f'{key} = "{_toml_escape(value)}"')
-            lines.append("")
-        with open(output_path, "w", encoding="utf-8") as fh:
-            fh.write("\n".join(lines).rstrip() + "\n")
-        return
-
-    if manifest_format == "csv":
-        headers = ["stage", "stage_role", "prmtop", "mdin", "mdout", "mdcrd", "inpcrd"]
-        with open(output_path, "w", newline="", encoding="utf-8") as fh:
-            writer = csv.DictWriter(fh, fieldnames=headers)
-            writer.writeheader()
-            for stage in payload.get("stages", []):
-                writer.writerow(
-                    {
-                        "stage": stage.get("name", ""),
-                        "stage_role": stage.get("stage_role", ""),
-                        "prmtop": stage.get("prmtop", ""),
-                        "mdin": stage.get("mdin", ""),
-                        "mdout": stage.get("mdout", ""),
-                        "mdcrd": stage.get("mdcrd", ""),
-                        "inpcrd": stage.get("inpcrd", ""),
-                    }
-                )
-        return
-
-    raise ValueError(f"Unsupported manifest format: {manifest_format}")
 
 
 def _run_init_validation_summary(
-    directory: str, stage_candidates: List[Dict[str, Any]], discovered: Dict[str, List[str]]
+    directory: str, stage_candidates: List[Dict[str, Any]], payload: Dict[str, Any]
 ) -> None:
     checked = 0
     warnings = 0
     errors = 0
-    unique_files = set(discovered.get("prmtop", []))
+    unique_files = set()
+    for key in ("global_prmtop", "hmr_prmtop"):
+        if payload.get(key):
+            unique_files.add(payload[key])
     for candidate in stage_candidates:
         for path in candidate.get("files", {}).values():
             unique_files.add(path)
@@ -1010,7 +1005,7 @@ def _run_init_validation_summary(
             errors += 1
 
     status = "OK" if errors == 0 else "FAILED"
-    print(f"\nValidation summary: {status} (files={checked}, warnings={warnings}, errors={errors})")
+    _out(f"\nValidation summary: {status} (files={checked}, warnings={warnings}, errors={errors})")
 
 
 def _render_candidate_stages(
@@ -1019,7 +1014,7 @@ def _render_candidate_stages(
     include_role: bool = True,
 ) -> List[str]:
     """Render candidate stages as YAML lines."""
-    prmtop = discovered["prmtop"][0] if discovered["prmtop"] else "system.prmtop"
+    prmtop = sorted(discovered["prmtop"])[0] if discovered["prmtop"] else "system.prmtop"
     lines: List[str] = []
 
     for candidate in stage_candidates:
@@ -1080,7 +1075,7 @@ def _generate_standard_manifest(discovered: Dict[str, List[str]], stage_candidat
             f"{body}\n"
         )
 
-    prmtop = discovered["prmtop"][0] if discovered["prmtop"] else "system.prmtop"
+    prmtop = sorted(discovered["prmtop"])[0] if discovered["prmtop"] else "system.prmtop"
 
     return f"""# AmberMeta Manifest - Standard Template
 # Edit this file to define your simulation protocol stages
@@ -1152,7 +1147,7 @@ def _generate_comprehensive_manifest(discovered: Dict[str, List[str]], stage_can
             f"{body}\n"
         )
 
-    prmtop = discovered["prmtop"][0] if discovered["prmtop"] else "system.prmtop"
+    prmtop = sorted(discovered["prmtop"])[0] if discovered["prmtop"] else "system.prmtop"
 
     return f"""# AmberMeta Manifest - Comprehensive Template
 # This template shows all available options for protocol definition
@@ -1254,14 +1249,20 @@ def _plan_command(args: argparse.Namespace) -> int:
     strict = getattr(args, "strict", False)
 
     if not any((args.manifest, args.recursive, interactive)):
-        print("ERROR: Select a planning mode.")
-        print("Use one of: --manifest, --recursive, or --interactive.")
-        print("Examples:")
-        print("  ambermeta plan --manifest manifest.yaml /path/to/simulations")
-        print("  ambermeta plan --recursive /path/to/simulations")
-        print("  ambermeta plan --interactive /path/to/simulations")
-        print("Run 'ambermeta plan --help' for full usage.")
+        print("ERROR: Select a planning mode.", file=sys.stderr)
+        print("Use one of: --manifest, --recursive, or --interactive.", file=sys.stderr)
+        print("Examples:", file=sys.stderr)
+        print("  ambermeta plan --manifest manifest.yaml /path/to/simulations", file=sys.stderr)
+        print("  ambermeta plan --recursive /path/to/simulations", file=sys.stderr)
+        print("  ambermeta plan --interactive /path/to/simulations", file=sys.stderr)
+        print("Run 'ambermeta plan --help' for full usage.", file=sys.stderr)
         return 2
+
+    # Warn if --pattern is used without --recursive
+    if pattern_filter and not args.recursive:
+        print(Colors.warning(
+            "WARNING: --pattern only applies to --recursive discovery; ignored."),
+            file=sys.stderr)
 
     # Progress callback for reporting
     def progress_reporter(stage_name: str, current: int, total: int) -> None:
@@ -1274,7 +1275,7 @@ def _plan_command(args: argparse.Namespace) -> int:
                 sys.stdout.write("\n")
 
     if args.manifest:
-        print(f"Loading manifest: {args.manifest}")
+        _out(f"Loading manifest: {args.manifest}")
         protocol = load_protocol_from_manifest(
             args.manifest,
             directory=directory,
@@ -1289,7 +1290,7 @@ def _plan_command(args: argparse.Namespace) -> int:
         if auto_detect_restarts:
             from ambermeta.protocol import auto_detect_restart_chain, _safe_parse
             from ambermeta.parsers.inpcrd import InpcrdParser
-            auto_restarts = auto_detect_restart_chain(protocol.stages, directory)
+            auto_restarts = auto_detect_restart_chain(protocol.stages, directory, recursive=args.recursive)
             for stage in protocol.stages:
                 if stage.name in auto_restarts and not stage.restart_path:
                     rst_path = auto_restarts[stage.name]
@@ -1299,11 +1300,11 @@ def _plan_command(args: argparse.Namespace) -> int:
                         stage.validation.append(f"INFO: restart file auto-detected: {rst_path}")
     elif args.recursive:
         # Recursive mode: auto-discover files without interactive prompts
-        print(f"\nScanning {directory} recursively for simulation files...")
+        _out(f"\nScanning {directory} recursively for simulation files...")
         protocol = auto_discover(
             directory,
             manifest=None,
-            skip_cross_stage_validation=args.skip_cross_stage_validation,
+            skip_cross_stage_validation=bool(args.skip_cross_stage_validation),
             recursive=True,
             auto_detect_restarts=auto_detect_restarts,
             pattern_filter=pattern_filter,
@@ -1311,25 +1312,25 @@ def _plan_command(args: argparse.Namespace) -> int:
             strict=strict,
         )
         if not protocol.stages:
-            print("No simulation files discovered; exiting.")
-            print("\nHint: Check that your directory contains files with recognized extensions:")
-            print("  prmtop: .prmtop, .parm7, .top")
-            print("  mdin:   .mdin, .in")
-            print("  mdout:  .mdout, .out")
-            print("  mdcrd:  .nc, .mdcrd, .crd, .x")
-            print("  inpcrd: .inpcrd, .rst, .rst7, .ncrst, .restrt")
+            _out("No simulation files discovered; exiting.")
+            _out("\nHint: Check that your directory contains files with recognized extensions:")
+            _out("  prmtop: .prmtop, .parm7, .top")
+            _out("  mdin:   .mdin, .in")
+            _out("  mdout:  .mdout, .out")
+            _out("  mdcrd:  .nc, .mdcrd, .crd, .x")
+            _out("  inpcrd: .inpcrd, .rst, .rst7, .ncrst, .restrt")
             return 1
-        print(f"Discovered {len(protocol.stages)} stage(s).\n")
+        _out(f"Discovered {len(protocol.stages)} stage(s).\n")
     else:
         manifest = _interactive_manifest(directory)
         if not manifest:
-            print("No stages defined; exiting.")
+            _out("No stages defined; exiting.")
             return 1
 
         protocol = auto_discover(
             directory,
             manifest=manifest,
-            skip_cross_stage_validation=args.skip_cross_stage_validation,
+            skip_cross_stage_validation=bool(args.skip_cross_stage_validation),
             recursive=False,
             auto_detect_restarts=auto_detect_restarts,
             pattern_filter=pattern_filter,
@@ -1337,16 +1338,22 @@ def _plan_command(args: argparse.Namespace) -> int:
             strict=strict,
         )
 
+    if not protocol.stages:
+        print(Colors.warning(
+            "WARNING: manifest produced 0 stages; check format/column names."),
+            file=sys.stderr)
+        return 1
+
     degraded = [s for s in protocol.stages if s.degraded]
     if degraded:
         total_errors = sum(len(s.load_errors) for s in degraded)
-        print(
+        _out(
             f"\n{Colors.warning('WARNING')}: {len(degraded)} stage(s) had "
             f"{total_errors} unreadable file(s):"
         )
         for stage in degraded:
             for err in stage.load_errors:
-                print(f"  - {stage.name}: {err.kind} ({err.error_type}) {err.path}")
+                _out(f"  - {stage.name}: {err.kind} ({err.error_type}) {err.path}")
 
     _print_protocol(protocol, verbose=args.verbose)
 
@@ -1506,7 +1513,7 @@ def _export_stats_csv(protocol: SimulationProtocol, filepath: str) -> None:
             # Fill missing columns with empty strings
             writer.writerow({k: row.get(k, "") for k in headers})
 
-    print(f"Statistics exported to: {filepath}")
+    _out(f"Statistics exported to: {filepath}")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -1589,8 +1596,9 @@ For documentation, visit: https://github.com/MicheleBonus/ambermeta
     )
     plan_parser.add_argument(
         "--skip-cross-stage-validation",
-        action="store_true",
-        help="Skip continuity checks between consecutive stages",
+        action="store_const", const=True, default=None,
+        help="Skip continuity checks between consecutive stages "
+             "(overrides the manifest's settings.strict_validation)",
     )
     plan_parser.add_argument(
         "--strict",
@@ -1818,6 +1826,9 @@ For documentation, visit: https://github.com/MicheleBonus/ambermeta
 def main(argv: List[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+
+    global _QUIET
+    _QUIET = bool(args.quiet)
 
     # Configure logging based on CLI options
     log_level = "ERROR" if args.quiet else args.log_level

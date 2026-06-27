@@ -97,12 +97,16 @@ def create_app(directory: str) -> "FastAPI":
 
         @app.get("/{path:path}")
         async def serve_spa(path: str):
-            """Serve the SPA for any unmatched routes."""
-            file_path = static_path / path
-            if file_path.exists() and file_path.is_file():
-                return FileResponse(file_path)
-            # Fallback to index.html for SPA routing
-            return FileResponse(static_path / "index.html")
+            """Serve the SPA; never serve files outside the static dir."""
+            index = static_path / "index.html"
+            if ".." in path or path.startswith(("/", "\\")):
+                return FileResponse(index)
+            candidate = (static_path / path).resolve()
+            root = static_path.resolve()
+            if candidate == root or root in candidate.parents:
+                if candidate.is_file():
+                    return FileResponse(candidate)
+            return FileResponse(index)
     else:
         # Serve a development placeholder
         @app.get("/")
