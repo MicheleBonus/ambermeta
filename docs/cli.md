@@ -1,56 +1,59 @@
-# Command Line Interface Reference
+# CLI reference
 
-AmberMeta provides a comprehensive command-line interface for parsing, validating, and analyzing AMBER molecular dynamics simulation files.
+**The `ambermeta` command line is the complete, headless interface to the engine** — everything AmberMeta does is reachable here, no GUI required. It is the right surface for scripting, CI gates, and cluster/SSH work.
 
-## Table of Contents
+Six commands sit under one entry point:
 
-- [Installation](#installation)
-- [Global Options](#global-options)
-- [Commands](#commands)
-  - [plan](#plan-command)
-  - [init](#init-command)
-  - [validate](#validate-command)
-  - [info](#info-command)
-  - [gui](#gui-command)
-  - [completion](#completion-command)
-- [Shell completion setup](#shell-completion-setup)
-- [Examples](#examples)
-- [Exit Codes](#exit-codes)
-- [Environment Variables](#environment-variables)
+| Command | Purpose |
+|---|---|
+| [`plan`](#plan) | Build and summarize a protocol; export reproducibility artifacts |
+| [`init`](#init) | Generate a manifest (template, or `--auto` from a directory) |
+| [`validate`](#validate) | Validate files without building a full protocol |
+| [`info`](#info) | Print parsed metadata for a single file |
+| [`gui`](#gui) | Launch the browser GUI |
+| [`completion`](#completion) | Emit a shell-completion script |
+
+> The help blocks below are generated directly from `ambermeta/cli.py::build_parser()` and kept in sync by CI (`scripts/export_cli_help.py --check`). They are the authoritative flag list.
 
 ---
 
-## Installation
-
-After installing AmberMeta, the `ambermeta` command is available:
+## Install & completion
 
 ```bash
-pip install -e .
+python -m pip install -e .
 ambermeta --help
 ```
 
-### Enable shell completion
-
-You can generate completion scripts directly from the CLI:
+Generate a completion script for your shell:
 
 ```bash
-# Bash
+# bash
+mkdir -p ~/.local/share/bash-completion/completions
 ambermeta completion bash > ~/.local/share/bash-completion/completions/ambermeta
+source ~/.bashrc
 
-# Zsh
+# zsh
+mkdir -p ~/.zfunc
 ambermeta completion zsh > ~/.zfunc/_ambermeta
+echo 'fpath=(~/.zfunc $fpath)' >> ~/.zshrc
+autoload -Uz compinit && compinit
 
-# Fish
+# fish
+mkdir -p ~/.config/fish/completions
 ambermeta completion fish > ~/.config/fish/completions/ambermeta.fish
 ```
 
-Then reload your shell (`source ~/.bashrc`, `exec zsh`, or restart fish).
-
 ---
 
-## Global Options
+## Global options
 
-CLI help below is generated directly from `ambermeta/cli.py::build_parser()`.
+These apply before the subcommand:
+
+| Option | Effect |
+|---|---|
+| `--log-level {DEBUG,INFO,WARNING,ERROR}` | Logging verbosity (default `INFO`) |
+| `--log-file PATH` | Also write logs to a file |
+| `-q`, `--quiet` | Suppress stdout; errors/usage still go to stderr |
 
 <!-- BEGIN_CLI_HELP:root -->
 ```text
@@ -109,28 +112,16 @@ For documentation, visit: https://github.com/MicheleBonus/ambermeta
 ```
 <!-- END_CLI_HELP:root -->
 
-### Examples
-
 ```bash
-# Debug logging
-ambermeta --log-level DEBUG plan --recursive .
-
-# Write logs to file
-ambermeta --log-file debug.log plan --manifest protocol.yaml
-
-# Quiet mode — suppresses all stdout output; errors/usage still go to stderr
-ambermeta --quiet plan --recursive . --summary-path output.json
+ambermeta --log-level DEBUG plan . --recursive
+ambermeta --quiet plan . --recursive --summary-path out.json
 ```
 
 ---
 
-## Commands
+## `plan`
 
-> **Note:** the GUI (`ambermeta gui`) is an optional extra. The core AmberMeta workflow is fully supported by the CLI commands below.
-
-### Plan Command
-
-Build and summarize a SimulationProtocol from a manifest, recursive discovery, or explicit interactive mode.
+Build and summarize a `SimulationProtocol` from a manifest, recursive discovery, or interactive prompts — and export artifacts. **Pick exactly one mode:** `--manifest`, `--recursive`, or `--interactive`.
 
 ```bash
 ambermeta plan [directory] [options]
@@ -202,78 +193,61 @@ options:
 ```
 <!-- END_CLI_HELP:plan -->
 
-#### Modes of Operation
+### Modes
 
-You must select one mode explicitly using `--manifest`, `--recursive`, or `--interactive`.
+| Mode | Flag | Behavior |
+|---|---|---|
+| Manifest | `-m/--manifest FILE` | Load stages from the manifest; honors `settings.strict_validation` |
+| Discovery | `--recursive` | Group files by stem and infer roles; `--pattern REGEX` filters (this mode only) |
+| Interactive | `--interactive` | Prompt for each stage's files, role, restart, and gap/tolerance |
 
-**1. Manifest Mode** (with `-m/--manifest`):
-```bash
-ambermeta plan -m protocol.yaml /path/to/simulations
-```
-Loads stages from the manifest file and parses referenced files. If the manifest
-contains `settings.strict_validation: false`, cross-stage continuity checks are
-skipped. Pass `--skip-cross-stage-validation` to override and skip them
-unconditionally, regardless of the manifest setting.
+### Exports
 
-**2. Recursive Discovery Mode** (with `--recursive`):
-```bash
-ambermeta plan --recursive /path/to/simulations
-```
-Automatically discovers and groups simulation files. Stage roles are inferred from
-filenames. Use `--pattern` to filter discovered files by regex; `--pattern` only
-applies in this mode and emits a warning to stderr if used without `--recursive`.
+| Flag | Output |
+|---|---|
+| `--summary-path FILE` | Full protocol summary (JSON/YAML; `--summary-format` forces the format) |
+| `--methods-summary-path FILE` | Materials-&-Methods JSON: software, MD engine settings, system composition, restraints |
+| `--stats-csv FILE` | Per-stage statistics (one row per stage) |
 
-**3. Interactive Mode** (with `--interactive`):
-```bash
-ambermeta plan --interactive /path/to/simulations
-```
-Prompts for stage definitions interactively.
+The CSV header is exactly:
 
-#### Output Options
-
-**Protocol Summary** (`--summary-path`):
-```bash
-ambermeta plan -m protocol.yaml --summary-path protocol.json
+```text
+stage_name,stage_role,time_start_ps,time_end_ps,duration_ns,frame_count,temp_avg,temp_std,pressure_avg,pressure_std,density_avg,density_std,etot_avg,etot_std
 ```
 
-Generates a JSON/YAML file containing:
-- All stages with metadata
-- Parsed file information
-- Validation notes
-- Totals (steps, time)
+### Behavior
 
-**Methods Summary** (`--methods-summary-path`):
-```bash
-ambermeta plan -m protocol.yaml --methods-summary-path methods.json
+- **Fault-tolerant by default.** A missing/malformed/unreadable file is skipped, the error is recorded against its stage, a skip summary is printed, and the run exits `0`. `--strict` makes the first bad file a hard error (clean message, exit `1`, no traceback). A stage keeps every file that *did* parse.
+- **Cross-stage validation** runs unless `settings.strict_validation: false`; `--skip-cross-stage-validation` overrides the manifest and skips it unconditionally.
+
+```text
+$ ambermeta plan tests/data/amber/md_test_files --recursive
+
+Scanning .../md_test_files recursively for simulation files...
+Discovered 7 stage(s).
+
+Protocol summary
+================
+Stages: 7
+Total steps: 25000000
+Total simulated time (ps): 100000.000
+
+- ntp_prod_0001
+  intent: Production [NPT (isotropic)]
+  result: Completed
+  mdout: status=complete, steps=5000000, dt=0.004 ps, thermostat=Langevin @ 300 K, barostat=Berendsen
+  stats: frames=200, time=1020–20920 ps, temp=300.43 ± 1.25 K, density=1.0370 ± 0.0012 g/cc
+  evidence: INFO: Part of sequence 'ntp_prod' (item 2 of 6); INFO: stage_role inferred from mdin file
 ```
-
-Generates a publication-ready summary with:
-- Software information
-- MD engine settings (ensemble, thermostat, barostat)
-- System composition
-- Restraint information
-
-**Statistics CSV** (`--stats-csv`):
-```bash
-ambermeta plan -m protocol.yaml --stats-csv stats.csv
-```
-
-Exports per-stage statistics:
-- Stage name and role
-- Time range and duration
-- Temperature (mean ± std)
-- Pressure (mean ± std)
-- Density (mean ± std)
-- Total energy (mean ± std)
 
 ---
 
-### Init Command
+## `init`
 
-Generate an example manifest file.
+Generate a manifest — a template, or `--auto` to bootstrap one from a directory.
 
 ```bash
-ambermeta init [options] [directory]
+ambermeta init [directory] [options]
 ```
 
 <!-- BEGIN_CLI_HELP:init -->
@@ -310,27 +284,33 @@ options:
 ```
 <!-- END_CLI_HELP:init -->
 
-#### `--auto` mode
+`--auto` discovers files recursively and writes **one stage per file-group stem** — numbered sequences (`prod_0001`, `prod_0002`, …) stay separate, not collapsed. Topology is classified automatically: an HMR-scaled prmtop becomes top-level `hmr_prmtop`, others `global_prmtop` (HMR detection checks the `ATOMIC_NUMBER` section, falling back to atom-name patterns). Use `--dry-run` to preview without writing.
 
-When `--auto` is passed, `init` recursively discovers simulation files and
-generates **one stage per file-group stem**. Numbered sequences (e.g. `prod_01`,
-`prod_02`) are each emitted as a separate stage rather than being collapsed.
+```text
+$ ambermeta init tests/data/amber/md_test_files --auto --dry-run
 
-Topology files are classified automatically:
+Auto-grouped stages:
+  global_prmtop: CH3L1_HUMAN_6NAG.top
+  1. CH3L1_HUMAN_6NAG [unclassified]
+     mdcrd: CH3L1_HUMAN_6NAG.crd
+  2. ntp_prod_0000 [production]
+     inpcrd: ntp_prod_0000.rst
+  3. ntp_prod_0001 [production]
+     mdin: ntp_prod_0001.mdin
+     mdout: ntp_prod_0001.mdout
+     inpcrd: ntp_prod_0001.rst
+  ...
 
-- If a prmtop carries HMR-scaled masses it is written as top-level `hmr_prmtop`.
-- All other topology files are written as top-level `global_prmtop`.
+Dry run complete; no files were written.
+```
 
-HMR detection checks the `ATOMIC_NUMBER` section first and falls back to atom
-name patterns when that section is absent from the prmtop.
-
-Use `--dry-run` to preview discovered stage grouping without writing any files.
+> ⚠️ `--auto` is non-interactive and needs `--force` to overwrite an existing output file. `--format` only applies in `--auto` mode (it warns otherwise).
 
 ---
 
-### Validate Command
+## `validate`
 
-Quick validation of simulation files with colored output.
+Validate one or more files without building a full protocol. Exit `0` on pass, `1` on failure — designed for CI.
 
 ```bash
 ambermeta validate [options] files...
@@ -354,17 +334,36 @@ options:
 ```
 <!-- END_CLI_HELP:validate -->
 
-#### Output
+Status per file: **OK** (parsed, no warnings), **WARN** (parsed, has warnings), **ERROR** (unreadable/missing). `--strict` turns warnings into a non-zero exit.
 
-- **OK** (green): File parsed successfully without warnings
-- **WARN** (yellow): File parsed but has warnings
-- **ERROR** (red): File could not be parsed or is missing
+```text
+$ ambermeta validate tests/data/amber/md_test_files/ntp_prod_0001.{mdin,mdout}
+
+Validation Results
+==================================================
+OK: ntp_prod_0001.mdin
+OK: ntp_prod_0001.mdout
+==================================================
+Validation PASSED
+```
+
+```text
+$ ambermeta validate --format json tests/data/amber/md_test_files/ntp_prod_0001.mdout
+{
+  "status": "ok",
+  "files": [
+    { "file": ".../ntp_prod_0001.mdout", "status": "ok", "warnings": [], "errors": [] }
+  ],
+  "warnings": [],
+  "errors": []
+}
+```
 
 ---
 
-### Info Command
+## `info`
 
-Display detailed metadata for a single simulation file.
+Print parsed metadata for a single file.
 
 ```bash
 ambermeta info [options] file
@@ -386,11 +385,28 @@ options:
 ```
 <!-- END_CLI_HELP:info -->
 
+The field names printed here are the parser metadata fields documented in the [API reference §6](api.md#6-parser-metadata-fields). Use `--format json` to feed the metadata into other tools.
+
+```text
+$ ambermeta info tests/data/amber/md_test_files/ntp_prod_0001.mdin
+File Information: ntp_prod_0001.mdin
+============================================================
+  length_steps: 5000000
+  dt: 0.004
+  ensemble: NPT (isotropic)
+  stage_role: Production [NPT (isotropic)]
+  cutoff: 9.0
+  temp_control: Langevin Dynamics
+  target_temp: 300.0
+  press_control: Berendsen (Isotropic)
+  constraints: H-bonds
+```
+
 ---
 
-### GUI Command
+## `gui`
 
-Launch the web-based Graphical User Interface for building protocol manifests.
+Launch the browser-based manifest editor (requires the `gui` extra). See the [GUI guide](gui.md).
 
 ```bash
 ambermeta gui [directory] [options]
@@ -418,26 +434,16 @@ options:
 ```
 <!-- END_CLI_HELP:gui -->
 
-#### Features
-
-The GUI provides:
-- **Visual File Browser**: Navigate directory tree with drag-and-drop
-- **Stage Builder**: Create, edit, delete, and reorder stages visually
-- **Auto-Discovery**: One-click batch stage creation from file groups
-- **Properties Panel**: Edit stage properties and global settings
-- **Drag-and-Drop**: Assign files to stages by dragging
-- **Session Management**: Save and load sessions
-- **Export**: Save manifest in YAML, JSON, TOML, or CSV format
-- **Undo/Redo**: Full undo/redo support
-- **Keyboard Shortcuts**: Ctrl+S (save), Ctrl+O (load), Ctrl+A (auto-discover), Ctrl+E (export)
-
-See [GUI Guide](gui.md) for detailed documentation.
+```bash
+ambermeta gui runs/                       # opens http://127.0.0.1:8765
+ambermeta gui runs/ --port 9000 --no-browser
+```
 
 ---
 
-### Completion Command
+## `completion`
 
-Print shell completion script for bash, zsh, or fish.
+Print a shell-completion script.
 
 ```bash
 ambermeta completion {bash|zsh|fish}
@@ -457,97 +463,23 @@ options:
 ```
 <!-- END_CLI_HELP:completion -->
 
-## Shell completion setup
-
-Use these one-time commands to install completion for your shell:
-
-```bash
-# bash
-mkdir -p ~/.local/share/bash-completion/completions
-ambermeta completion bash > ~/.local/share/bash-completion/completions/ambermeta
-source ~/.bashrc
-
-# zsh
-mkdir -p ~/.zfunc
-ambermeta completion zsh > ~/.zfunc/_ambermeta
-echo 'fpath=(~/.zfunc $fpath)' >> ~/.zshrc
-autoload -Uz compinit && compinit
-
-# fish
-mkdir -p ~/.config/fish/completions
-ambermeta completion fish > ~/.config/fish/completions/ambermeta.fish
-```
-
+See [Install & completion](#install--completion) for one-time setup per shell.
 
 ---
 
-## Examples
-
-### Complete Workflow
-
-```bash
-# 1. Initialize manifest template
-ambermeta init --template standard /path/to/project
-
-# 2. Edit manifest.yaml to match your files
-
-# 3. Build and validate protocol
-ambermeta plan -m manifest.yaml /path/to/project --verbose
-
-# 4. Export structured summary
-ambermeta plan -m manifest.yaml /path/to/project --summary-path protocol.json
-
-# 5. Generate publication methods summary
-ambermeta plan -m manifest.yaml /path/to/project --methods-summary-path methods.json
-
-# 6. Export statistics
-ambermeta plan -m manifest.yaml /path/to/project --stats-csv stats.csv
-
-# 7. Validate individual files as needed
-ambermeta validate /path/to/project/*.mdout
-```
-
-### Auto-Discovery Workflow
-
-```bash
-# Discover and process all files recursively
-ambermeta plan --recursive /path/to/simulation_data
-
-# With filtering and outputs
-ambermeta plan --recursive --pattern "prod_.*" /path/to/data \
-    --summary-path prod_summary.json \
-    --stats-csv prod_stats.csv
-```
-
-### Quick Inspection Workflow
-
-```bash
-# Check file metadata
-ambermeta info system.prmtop
-
-# Validate critical files
-ambermeta validate --strict system.prmtop production.mdout
-
-# Generate quick template
-ambermeta init --template minimal .
-```
-
----
-
-## Exit Codes
+## Exit codes
 
 | Code | Meaning |
-|------|---------|
-| `0` | Success |
-| `1` | Error (invalid input, parse failure, validation failure, etc.) |
+|---|---|
+| `0` | Success (including a fault-tolerant `plan` that skipped bad files) |
+| `1` | Error — invalid input, parse failure, validation failure, or a `--strict` hard stop |
 
 ---
 
-## Environment Variables
+## Environment variables
 
-AmberMeta supports environment variable expansion in manifest files by default.
+Manifest paths support `${VAR}`/`$VAR` expansion by default:
 
-Example manifest snippet:
 ```yaml
 stages:
   - name: production
@@ -555,16 +487,12 @@ stages:
     mdout: ${PROJECT_DIR}/output/prod.mdout
 ```
 
-Disable expansion with:
-```bash
-ambermeta plan -m manifest.yaml --no-expand-env
-```
+Disable with `--no-expand-env`. Full rules in the [manifest reference §6](manifest.md#6-environment-variable-expansion).
 
 ---
 
-## See Also
+## See also
 
-- [README](../README.md) - Project overview and quick start
-- [API Documentation](api.md) - Python API reference
-- [GUI Guide](gui.md) - Web-based graphical interface
-- [Tutorials](tutorials.md) - Step-by-step usage examples
+- [README](../README.md) — overview and quickstart
+- [Tutorials](tutorials.md) — task-oriented walkthroughs · [Recipes](recipes.md) — copy-paste one-liners
+- [Manifest schema](manifest.md) · [Python API](api.md) · [GUI guide](gui.md)

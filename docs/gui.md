@@ -1,601 +1,291 @@
-# Web-Based GUI Guide
+# GUI guide
 
-AmberMeta includes a modern web-based Graphical User Interface (GUI) for building protocol manifests. The GUI provides an intuitive, drag-and-drop interface for browsing simulation files, creating stages, and exporting manifests.
+**The AmberMeta GUI is a browser-based manifest editor over the same engine the CLI uses.** It runs a small local web server, opens a three-pane app in your browser, and lets you assemble, audit, and save a protocol manifest by clicking and dragging instead of hand-editing YAML. It is single-user, **localhost-only**, and works fully offline.
 
-## Table of Contents
-
-- [Installation](#installation)
-- [Launching the GUI](#launching-the-gui)
-- [Interface Overview](#interface-overview)
-- [File Browser](#file-browser)
-- [Stage Builder](#stage-builder)
-- [Properties Panel](#properties-panel)
-- [Auto-Discovery](#auto-discovery)
-- [Drag and Drop](#drag-and-drop)
-- [Keyboard Shortcuts](#keyboard-shortcuts)
-- [Session Management](#session-management)
-- [Export Options](#export-options)
-- [Tips and Best Practices](#tips-and-best-practices)
-- [Troubleshooting](#troubleshooting)
+> When to use it: interactively building or sanity-checking a manifest, especially for a directory you're seeing for the first time. For scripting, CI, and cluster/SSH use, the [CLI](cli.md) is the complete headless equivalent — the GUI's **Save** writes the *same canonical manifest* `ambermeta init --auto` would.
 
 ---
 
-## Installation
+## 1. Install & launch
 
-The GUI requires additional dependencies. Install with the GUI extra:
-
-```bash
-pip install -e ".[gui]"
-```
-
-Or install dependencies directly:
+The GUI needs the `gui` extra (FastAPI + Uvicorn); the frontend itself is pre-built and bundled, so there is no Node.js or build step.
 
 ```bash
-pip install fastapi uvicorn aiofiles
+python -m pip install -e ".[gui]"
 ```
 
-The GUI frontend is pre-built and bundled with AmberMeta. No additional Node.js installation is required.
+```bash
+ambermeta gui [directory] [--host HOST] [--port PORT] [--no-browser]
+```
+
+| Option | Default | Meaning |
+|---|---|---|
+| `directory` | `.` | The directory the server may read files from (its containment root) |
+| `--host` | `127.0.0.1` | Bind address — localhost only by default |
+| `--port` | `8765` | Server port |
+| `--no-browser` | _(off)_ | Don't auto-open the browser |
+
+```bash
+ambermeta gui tests/data/amber/md_test_files       # opens http://127.0.0.1:8765
+ambermeta gui runs/ --port 9000 --no-browser       # then browse there yourself
+```
+
+The server (FastAPI + Uvicorn) binds the host/port, sets the launch directory as its containment root, and — unless `--no-browser` — opens `http://<host>:<port>` after a short delay.
+
+> ⚠️ **The launch directory is a hard boundary.** The server will only read files inside `directory` (resolved through symlinks). Launch it at the top of the project you want to work with.
 
 ---
 
-## Launching the GUI
-
-### Basic Launch
-
-```bash
-# Launch in the current directory
-ambermeta gui
-
-# Launch in a specific directory
-ambermeta gui /path/to/simulations
-```
-
-### Options
-
-```bash
-ambermeta gui [directory] [options]
-
-Options:
-  --port PORT     Port to run the server on (default: 8000)
-  --host HOST     Host to bind to (default: 127.0.0.1)
-  --no-browser    Don't automatically open browser
-```
-
-### Examples
-
-```bash
-# Launch on a different port
-ambermeta gui --port 3000 /path/to/project
-
-# Allow network access (use with caution)
-ambermeta gui --host 0.0.0.0 /path/to/project
-
-# Don't auto-open browser
-ambermeta gui --no-browser /path/to/project
-```
-
-Once launched, the GUI opens automatically in your default web browser at `http://localhost:8000`.
-
----
-
-## Interface Overview
-
-The GUI is divided into three main panels:
+## 2. The window
 
 ```
 ┌────────────────────────────────────────────────────────────────────────────┐
-│                       AmberMeta Protocol Builder                           │
-│  [Undo] [Redo]   [Save] [Load]   [Auto-Discover]   [Export]               │
-├──────────────────┬────────────────────────────────┬────────────────────────┤
-│                  │                                │                        │
-│   File Browser   │        Stage Builder           │    Properties Panel    │
-│                  │                                │                        │
-│  📁 simulations/ │  ┌────────────────────────┐   │   Global Settings      │
-│    📄 system.top │  │ min        Minimization │   │   ──────────────────   │
-│    📄 min.mdin   │  │ 3/5 files  ✓           │   │   Global Prmtop:       │
-│    📄 heat.mdin  │  └────────────────────────┘   │   [____________]       │
-│  📁 production/  │         │                     │                        │
-│    📄 prod_001   │         ▼                     │   HMR Prmtop:          │
-│    📄 prod_002   │  ┌────────────────────────┐   │   [____________]       │
-│                  │  │ heat       Heating     │   │                        │
-│ [Search...]      │  │ 4/5 files  ✓           │   │   ☑ Auto-link restarts │
-│                  │  └────────────────────────┘   │   ☑ Validate on export │
-│                  │         │                     │   ☐ Use relative paths │
-│                  │    [+ Add Stage]              │                        │
-├──────────────────┴────────────────────────────────┴────────────────────────┤
-│                           3 files found                                     │
-└────────────────────────────────────────────────────────────────────────────┘
+│ AmberMeta   [Open] [Save]   [Discover] [Link Restarts]   [Export] [Validate] │
+├──────────────────┬───────────────────────────────┬───────────────────────────┤
+│                  │                               │                           │
+│   FILES          │   STAGES                      │   PROPERTIES              │
+│                  │                               │                           │
+│   runs/          │   ┌─────────────────────────┐ │   Stage: ntp_prod_0001   │
+│     system.top   │   │ ⠿ ntp_prod_0001   prod  │ │   ───────────────────    │
+│     prod_0001.in │   │   4/5 files        ok   │ │   Name   [____________]  │
+│     prod_0001.out│   └─────────────────────────┘ │   Role   [Production ▾]  │
+│     prod_0002.in │   ┌─────────────────────────┐ │   prmtop (using global)  │
+│     ...          │   │ ⠿ ntp_prod_0002   prod  │ │   mdin   prod_0001.in    │
+│                  │   │   4/5 files        ok   │ │   mdout  prod_0001.out   │
+│   [search…]      │   └─────────────────────────┘ │   Gap (ps) [__] ±[__]    │
+│                  │            [+ Add stage]      │   Notes  [____________]  │
+└──────────────────┴───────────────────────────────┴───────────────────────────┘
 ```
 
----
+| Pane / control | Role |
+|---|---|
+| **Files** (left) | The directory tree, file-type-tagged, searchable. Drag files onto stage slots. |
+| **Stages** (center) | Ordered stage cards. Drag the handle to reorder; click a card to select it. |
+| **Properties** (right) | Edits for the selected stage, or global settings when none is selected. |
+| **Open / Save** | Load an existing manifest / write the current one to disk. |
+| **Discover** | Auto-group the directory into stages (one stage per file group). |
+| **Link Restarts** | Auto-detect and assign the restart chain across stages. |
+| **Export** | Preview the manifest in any format and save it. |
+| **Validate** | Run full validation and show the report. |
 
-## File Browser
-
-The left panel shows a directory tree of simulation files.
-
-### File Type Icons
-
-Files are displayed with color-coded icons indicating their type:
-
-| Icon Color | File Type | Description |
-|------------|-----------|-------------|
-| Green | prmtop | Topology/parameter files (.prmtop, .parm7, .top) |
-| Yellow | mdin | Input control files (.mdin, .in) |
-| Cyan | mdout | Output log files (.mdout, .out) |
-| Purple | mdcrd | Trajectory files (.nc, .mdcrd, .crd, .trj) |
-| Blue | inpcrd | Restart/coordinate files (.rst, .rst7, .ncrst, .inpcrd) |
-
-### Navigation
-
-- **Click** on a directory to expand/collapse it
-- **Click** on a file to drag it to a stage
-- Use the **Search** box to filter files by name
-
-### Context Menu (Right-Click)
-
-Right-clicking on a file opens a context menu with options:
-
-| Option | Description | Availability |
-|--------|-------------|--------------|
-| **Set as Global Prmtop** | Set this topology as the global default | prmtop files only |
-| **Set as Global HMR Prmtop** | Set as Hydrogen Mass Repartitioning topology | prmtop files only |
-| **Create Stage from This File** | Create a new stage with this file | Non-prmtop files only |
-| **Auto-Discover Stages...** | Open auto-discovery for this folder | Folders only |
-
-**Note:** Topology files (prmtop) cannot be used to create stages directly. They should be assigned as global topology or HMR topology, or assigned per-stage in the Properties Panel.
+The design is deliberately restrained: an off-white surface, a neutral sans-serif UI face with a monospace face for file paths and data, and color/icons used only where they carry meaning (file-type tags, validation state).
 
 ---
 
-## Stage Builder
+## 3. A typical session
 
-The center panel displays all configured stages in a vertical list.
+1. **Discover.** Click **Discover** (optionally recursive, with a filename regex). The server scans the directory, groups files by stem into stages, detects numbered sequences, and classifies the topology (normal vs. HMR). One file group → one stage; numbered runs are kept separate, not collapsed.
+2. **Assign & adjust.** Drag a file from **Files** onto a stage's slot, or open the file picker from **Properties**. Existing slots are preserved — a drop only fills the slot you target.
+3. **Edit.** Select a stage and set its name, role, expected gap/tolerance, and notes. Set a shared topology once under global settings instead of per stage.
+4. **Link restarts.** Click **Link Restarts** to chain `inpcrd` files across consecutive stages automatically.
+5. **Validate.** Click **Validate**. The panel lists per-stage issues (missing files, continuity gaps) and a protocol-level summary, and lets you jump to each one. A protocol with continuity notes shows as *valid, with N notes* — never a silent clean pass.
+6. **Save / Export.** **Save** writes the canonical manifest to disk; **Export** lets you preview and choose the format first.
 
-### Header Controls
-
-The Stage Builder header includes:
-
-| Control | Description |
-|---------|-------------|
-| **Expand All / Collapse All** | Toggle button to expand or collapse all stage cards at once |
-| **Add Stage** | Button to create a new empty stage |
-
-### Stage Cards
-
-Each stage is displayed as a card showing:
-
-| Element | Description |
-|---------|-------------|
-| **Drag Handle** | Grip icon on the left for reordering |
-| **Name** | Stage identifier |
-| **Role Badge** | Color-coded role (Minimization, Heating, etc.) |
-| **File Count** | Number of assigned files (e.g., "3/5 files") |
-| **Validation Status** | ✓ (valid), ✗ (error), or ⚠ (warning) |
-| **Expand Button** | Click to show file drop zones |
-| **Delete Button** | Remove the stage |
-
-### Expanded View
-
-Click the expand button (▶) on a stage card to reveal file drop zones:
-
-```
-┌────────────────────────────────────────────────┐
-│  prod_001                    Production   ✓    │
-│  5/5 files                              ▼  🗑  │
-├────────────────────────────────────────────────┤
-│  ┌───────┐ ┌───────┐ ┌───────┐ ┌───────┐ ┌───────┐  │
-│  │prmtop │ │ mdin  │ │ mdout │ │ mdcrd │ │inpcrd │  │
-│  │system │ │prod.. │ │prod.. │ │prod.. │ │       │  │
-│  └───────┘ └───────┘ └───────┘ └───────┘ └───────┘  │
-└────────────────────────────────────────────────┘
-```
-
-Drag files from the File Browser directly onto these drop zones.
-
-### Creating Stages
-
-**Method 1: Add Stage Button**
-1. Click the "+ Add Stage" button
-2. Enter a name in the dialog
-3. Click "Add"
-
-**Method 2: Drag File to Stage Builder**
-1. Drag a file from the File Browser
-2. Drop it in the Stage Builder area
-3. A new stage is created with the filename as the stage name
-4. **Auto-Grouping**: Related files with the same stem (e.g., `prod_001.mdin`, `prod_001.mdout`, `prod_001.nc`) are automatically included in the stage
-
-**Method 3: Context Menu**
-1. Right-click a file in the File Browser
-2. Select "Create Stage from This File"
-
-**Method 4: Auto-Discovery**
-1. Click the "Auto-Discover" button in the toolbar
-2. Select file groups to create as stages
-3. Click "Create Stages"
-
-### Reordering Stages
-
-Drag stages by their grip handle (⋮⋮) to reorder them:
-1. Click and hold the grip icon
-2. Drag the stage to its new position
-3. Release to drop
+Undo/redo and a dirty-state indicator live in the top bar; history is kept on the server.
 
 ---
 
-## Properties Panel
+## 4. Files pane
 
-The right panel shows properties for the selected stage or global settings.
+Files are tagged by type, detected from extension (and basename):
 
-### Global Settings (No Stage Selected)
+| Type | Extensions |
+|---|---|
+| `prmtop` | `.prmtop`, `.parm7`, `.top` |
+| `mdin` | `.mdin`, `.in` |
+| `mdout` | `.mdout`, `.out` |
+| `mdcrd` | `.mdcrd`, `.nc`, `.crd`, `.x` |
+| `inpcrd` | `.inpcrd`, `.rst`, `.rst7`, `.restrt`, `.ncrst` |
 
-When no stage is selected, the Properties Panel shows global settings:
-
-| Setting | Description |
-|---------|-------------|
-| **Global Prmtop** | Default topology for stages without their own |
-| **HMR Prmtop** | Hydrogen Mass Repartitioning topology (optional) |
-| **Auto-link Restarts** | Automatically link restart files between consecutive stages |
-| **Validate on Export** | Run validation before exporting |
-| **Use Relative Paths** | Export with relative paths instead of absolute |
-
-### Stage Properties (Single Stage Selected)
-
-When a stage is selected, edit its properties:
-
-| Field | Description |
-|-------|-------------|
-| **Name** | Unique identifier (required) |
-| **Role** | Dropdown: Unknown, Minimization, Heating, Equilibration, Production |
-| **Topology Selection** | Choose between Normal and HMR topology (when both are set) |
-| **Files** | File paths for each type (shows "(using global)" if inheriting) |
-| **Expected Gap (ps)** | Expected time gap from previous stage |
-| **Tolerance (ps)** | Acceptable deviation from expected gap |
-| **Notes** | Documentation notes (one per line) |
-
-### Bulk Edit (Multiple Stages Selected)
-
-When `selectedStageIds.length > 1`, the Properties Panel switches to a multi-selection mode.
-
-#### Selecting Multiple Stages
-
-You can multi-select stages from the Stage Builder using:
-
-- **Ctrl+Click** (Windows/Linux) or **Cmd+Click** (macOS) to toggle individual stage selection
-- **Shift+Click** to select a range of stages
-- Stage card **checkbox toggles** for explicit include/exclude selection
-
-#### Bulk Edit Behavior
-
-- The panel title changes to **Bulk Edit** and shows the number of selected stages.
-- Bulk-editable fields are:
-  - **Role**
-  - **Topology choice** (global/default vs available topology options)
-  - **Gap settings**: **Expected (ps)** and **Tolerance (ps)**
-- Bulk edits apply **immediately** (there is no separate Apply button), matching `BulkEditPanel` behavior.
-
-#### Troubleshooting
-
-If only one stage is selected, the panel returns to single-stage properties and you will not see **Bulk Edit**.
-
-### Topology Selection
-
-When both a global prmtop and an HMR prmtop are set, stages show a topology selection option:
-
-| Option | Description |
-|--------|-------------|
-| **Normal (Global)** | Use the standard global topology file |
-| **HMR** | Use the Hydrogen Mass Repartitioning topology |
-
-**Tip:** Use HMR topology for stages with timestep (dt) ≥ 0.004 ps. The GUI will show a warning if a large timestep is detected but the HMR topology is not being used.
-
-### File Fields
-
-Each file field shows:
-- The current file path (editable)
-- A clear button (✗) to remove the file
-- "(using global)" indicator if using the global prmtop
-
-### Apply/Reset (Single-Stage Mode)
-
-- **Apply**: Save changes to the stage
-- **Reset**: Discard changes and revert to saved values
-
-Changes are highlighted until applied.
+The tree descends up to five levels and skips noise (`.`-prefixed dirs, `__pycache__`, `node_modules`, `.git`). Use the search box to filter by name. Drag a file onto a stage slot to assign it.
 
 ---
 
-## Auto-Discovery
+## 5. Stages pane
 
-The Auto-Discovery feature scans the file tree and groups files by their base name (filename without extension).
+Each stage is a card showing its name, role tag, file count (e.g. `4/5 files`), and validation state. Drag the handle to reorder; the order is the protocol order. **+ Add stage** creates an empty stage. Each stage exposes the five file slots (`prmtop`, `mdin`, `mdout`, `mdcrd`, `inpcrd`) as drop targets.
 
-### Using Auto-Discovery
+---
 
-1. Click the **"Auto-Discover"** button in the toolbar (or press `Ctrl+A`)
-2. The modal shows all discovered file groups
-3. Check/uncheck groups to include
-4. Click **"Create Stages"** to generate stages
+## 6. Properties pane
 
-### File Groups
+**With a stage selected**, you edit:
 
-Files are grouped by stem (base name). For example:
-- `prod_001.mdin`, `prod_001.mdout`, `prod_001.nc` → **prod_001** group
+| Field | Notes |
+|---|---|
+| Name | Unique stage identifier |
+| Role | `minimization` / `heating` / `equilibration` / `production` / _(unset)_ |
+| File slots | Each of the five kinds; shows "(using global)" when inheriting the global topology |
+| Expected gap / tolerance (ps) | Drives continuity validation |
+| Notes | Free-text, one per line |
 
-Each group shows which file types are present:
+**With no stage selected**, the pane shows global settings:
 
-```
-☑ prod_001          [mdin] [mdout] [mdcrd]
-☑ prod_002          [mdin] [mdout] [mdcrd]
-☐ test_run          [mdin]
+| Setting | Default | Meaning |
+|---|---|---|
+| `global_prmtop` | _(none)_ | Shared topology for stages without their own |
+| `hmr_prmtop` | _(none)_ | HMR topology (used when a stage's timestep warrants it) |
+| `initial_coordinates` | _(none)_ | Starting coordinates for the first stage |
+| `auto_link_restarts` | `true` | Link restarts on discover |
+| `strict_validation` | `true` | Run cross-stage continuity checks |
+| `allow_gaps` | `false` | Treat unconfigured positive gaps as info, not warnings |
+| `use_relative_paths` | `true` | Write relative paths on save |
+
+---
+
+## 7. Validation
+
+**Validate** builds a report against the same engine the CLI uses. Its shape:
+
+```jsonc
+{
+  "ok": false,
+  "totals": { "steps": 25000000, "time_ps": 100000.0, "stage_count": 7 },
+  "protocol_issues": ["..."],
+  "stage_issues": [
+    {
+      "name": "ntp_prod_0001",
+      "ok": true,
+      "degraded": false,
+      "errors": [],
+      "warnings": [],
+      "info": ["INFO: Part of sequence 'ntp_prod' (item 2 of 6)"],
+      "missing_files": [{ "kind": "mdcrd", "path": "" }]
+    }
+  ]
+}
 ```
 
-### Select All/None
-
-Use the checkbox at the top to select or deselect all groups at once.
+A non-empty `protocol_issues` means the protocol is *not* fully clean even when individual stages are `ok` — the panel reflects that rather than reporting a false all-clear.
 
 ---
 
-## Drag and Drop
+## 8. Open, Save, Export
 
-The GUI supports intuitive drag-and-drop interactions.
+- **Open** loads any supported manifest (YAML / JSON / TOML / CSV) for editing and resets undo history.
+- **Save** writes the current document as a **canonical manifest** — byte-identical to the CLI's output for the same protocol.
+- **Export** previews the manifest in a chosen format before writing, so you can copy it or pick a format.
 
-### Dragging Files
-
-1. Click and hold any file in the File Browser
-2. A visual indicator shows what you're dragging
-3. Drag to a drop target:
-   - **Stage Builder area**: Creates a new stage with auto-grouping of related files
-   - **File Drop Zone**: Assigns file to that slot
-
-**Note:** Topology files (prmtop) cannot be dragged to create new stages. Use the context menu to set them as global or HMR topology.
-
-### Auto-Grouping
-
-When you drag a file to create a new stage, the GUI automatically discovers and includes related files:
-
-- Files with the same stem (basename without extension) are grouped together
-- For example, dragging `01_min.mdin` will also include `01_min.mdout`, `01_min.rst`, `01_min.nc` if they exist
-- Topology files (prmtop) are excluded from auto-grouping (use global settings instead)
-- You can remove unwanted files from the stage after creation
-
-### File Type Matching
-
-When you drag a file to a stage's drop zone:
-- The file is assigned to the matching type slot (prmtop, mdin, etc.)
-- Existing files in other slots are **preserved** (not overwritten)
-- Only the specific slot you drop on is updated
-
-### Visual Feedback
-
-- **Blue highlight**: Valid drop target
-- **Semi-transparent dragged item**: Shows what's being dragged
-- **Drag overlay**: Shows filename during drag
-
----
-
-## Keyboard Shortcuts
-
-### Global Shortcuts
-
-| Key | Action |
-|-----|--------|
-| `Ctrl+Z` | Undo last action |
-| `Ctrl+Y` | Redo last undone action |
-| `Ctrl+Shift+Z` | Redo (alternative) |
-| `Ctrl+S` | Open Save Session dialog |
-| `Ctrl+O` | Open Load Session dialog |
-| `Ctrl+A` | Open Auto-Discovery modal (when not in input field) |
-| `Ctrl+E` | Open Export modal |
-
-### Modal Shortcuts
-
-| Key | Action |
-|-----|--------|
-| `Escape` | Close modal/cancel |
-| `Enter` | Confirm/submit (in input fields) |
-
----
-
-## Session Management
-
-### Save Session
-
-1. Click the **"Save"** button or press `Ctrl+S`
-2. Enter a filename (without extension)
-3. Click **"Save"**
-
-Sessions are saved as JSON files in the base directory.
-
-### Load Session
-
-1. Click the **"Load"** button or press `Ctrl+O`
-2. Enter the session filename (including `.json` extension)
-3. Click **"Load"**
-
-### What's Saved
-
-Sessions preserve:
-- All configured stages with their files
-- Global settings (prmtop, HMR prmtop, options)
-- The base directory
-
-### Undo/Redo
-
-The GUI maintains an undo history:
-- `Ctrl+Z`: Undo last action
-- `Ctrl+Y`: Redo last undone action
-
-Actions tracked:
-- Adding stages
-- Deleting stages
-- Updating stage properties
-- Reordering stages
-
----
-
-## Export Options
-
-### Supported Formats
-
-| Format | Extension | Description |
-|--------|-----------|-------------|
-| YAML | `.yaml` | Human-readable, recommended |
-| JSON | `.json` | Machine-readable, widely supported |
-| TOML | `.toml` | Configuration-friendly format |
-| CSV | `.csv` | Spreadsheet-compatible |
-
-### Export Process
-
-1. Click the **"Export"** button or press `Ctrl+E`
-2. Select a format from the list
-3. The file downloads automatically as `protocol.[format]`
-
-Exported manifests include top-level global topology keys using:
-- `global_prmtop` for the shared topology
-- `hmr_prmtop` for the HMR topology (when configured)
-
-Example YAML export:
+The on-disk manifest the GUI writes:
 
 ```yaml
-global_prmtop: systems/complex.prmtop
-hmr_prmtop: systems/complex_hmr.prmtop
+global_prmtop: systems/complex.prmtop      # omitted if unset
+hmr_prmtop: systems/complex_hmr.prmtop     # omitted if unset
 stages:
-  - name: prod_001
-    stage_role: production
-    mdin: production/prod_001.mdin
+  - name: prod_0001
+    stage_role: production                  # omitted if unset
+    mdin: production/prod_0001.in
+    mdout: production/prod_0001.out
+    inpcrd: restarts/equil.rst7
+    gaps: { expected: 0.0, tolerance: 0.1 } # omitted if unset
+    notes: [ "..." ]                        # omitted if empty
 ```
 
-### Path Options
-
-Configure "Use relative paths" in Global Settings to export with:
-- **Relative paths**: `production/prod_001.mdin`
-- **Absolute paths**: `/home/user/simulations/production/prod_001.mdin`
+Toggle `use_relative_paths` in global settings to choose relative vs. absolute paths. Save/export warnings (for example, CSV cannot represent a separate HMR topology) are surfaced as toasts — they are never dropped silently.
 
 ---
 
-## Tips and Best Practices
+## 9. Security model
 
-### Efficient Workflow
+The GUI is built to be safe to run on a workstation; it is not a multi-user service.
 
-1. **Start with Global Settings**: Set the global prmtop first if using the same topology
-2. **Use Auto-Discovery**: For large projects, auto-discover stages instead of creating manually
-3. **Drag and Drop**: Faster than typing paths - drag files directly to stages
-4. **Expand Stages**: Use the expand button to see all file slots at once
-5. **Save Sessions**: Save your work frequently with `Ctrl+S`
+| Control | Mechanism |
+|---|---|
+| **Localhost only** | Binds `127.0.0.1` by default; CORS is pinned to `http://localhost:8765` / `http://127.0.0.1:8765`. |
+| **No path escape** | Every requested path is resolved with `realpath` and rejected (`403`) if it falls outside the launch directory — including sibling-prefix tricks. |
+| **API can't be spoofed by the SPA** | The catch-all route returns `404` for unknown `/api/*` paths and refuses `..`/absolute paths before serving the app shell. |
+| **Server-authoritative state** | One in-memory document on the server is the source of truth; the browser is a view. Undo/redo and validation run server-side. |
 
-### Handling Large Projects
-
-- Use Auto-Discovery to create many stages at once
-- Filter files using the search box
-- Collapse directories you're not using
-- Use relative paths for portability
-
-### Common Patterns
-
-**Single System, Multiple Production Runs:**
-1. Set global prmtop
-2. Click Auto-Discover
-3. Select all production file groups
-4. Create stages
-
-**Manually Assigning Files:**
-1. Create a new stage
-2. Expand the stage card
-3. Drag files from File Browser to each slot
-4. Select the stage and set the role in Properties Panel
-
-**Fixing Validation Issues:**
-1. Look for ✗ or ⚠ icons on stages
-2. Select the stage to see validation messages
-3. Assign missing files or fix issues
-4. Click Apply to save changes
+> ⚠️ Binding `--host 0.0.0.0` exposes the file browser of the launch directory to your network. Only do so on a trusted network, and prefer an SSH tunnel for remote access.
 
 ---
 
-## Troubleshooting
+## 10. HTTP API
 
-### GUI Won't Start
+The frontend talks to a small REST API under `/api`. You can drive it directly for scripting or testing. All paths are constrained to the launch directory; responses that mutate state return the full updated document.
 
-```
-ImportError: fastapi not found
-```
+### Document
 
-Install the GUI dependencies:
+| Method | Path | Body | Returns |
+|---|---|---|---|
+| `GET` | `/api/document` | — | Current document |
+| `POST` | `/api/document/open` | `{ path }` | Document (history reset) |
+| `POST` | `/api/document/save` | `{ path?, format? }` | `{ document, warnings[] }` |
+| `POST` | `/api/document/preview` | `{ format }` | `{ content, warnings[], format }` |
+| `POST` | `/api/document/discover` | `{ recursive, pattern? }` | Document |
+
+### Stages
+
+| Method | Path | Body | Returns |
+|---|---|---|---|
+| `POST` | `/api/stages` | `{ name, role?, files?, expected_gap_ps?, gap_tolerance_ps?, notes? }` | Document |
+| `PUT` | `/api/stages/{id}` | partial stage | Document (`404` if unknown) |
+| `DELETE` | `/api/stages/{id}` | — | Document (`404` if unknown) |
+| `POST` | `/api/stages/reorder` | `{ stage_ids[] }` | Document (`400` unless all IDs present) |
+| `PUT` | `/api/stages/bulk` | `{ stage_ids[], update }` | Document |
+
+### Settings, history, validation, restarts
+
+| Method | Path | Body | Returns |
+|---|---|---|---|
+| `GET` / `PUT` | `/api/settings` | _(GET)_ / partial settings | Settings / Document |
+| `POST` | `/api/undo` · `/api/redo` | — | Document |
+| `POST` | `/api/validate` | — | Validation report |
+| `POST` | `/api/link-restarts` | — | Document |
+| `GET` | `/api/sequences` | — | `{ sequence_base: [stage_id, ...] }` |
+
+### Files
+
+| Method | Path | Query | Returns |
+|---|---|---|---|
+| `GET` | `/api/files` | `path?`, `recursive?`, `include_all?` | File tree (`FileInfo[]`) |
+| `GET` | `/api/files/metadata` | `path` | `{ file_path, file_type, metadata, warnings[] }` |
+| `GET` | `/api/files/related/{stem}` | — | `{ kind: path, ... }` for same-stem files |
+
 ```bash
-pip install ambermeta[gui]
+curl http://127.0.0.1:8765/api/document
+curl -X POST http://127.0.0.1:8765/api/document/discover \
+  -H 'Content-Type: application/json' -d '{"recursive": true}'
+curl -X POST http://127.0.0.1:8765/api/validate
 ```
 
-### Browser Doesn't Open
+### Data models
 
-Use the `--no-browser` flag and manually navigate to `http://localhost:8000`:
-```bash
-ambermeta gui --no-browser
+The server's document and its persisted manifest:
+
+```jsonc
+// GET /api/document
+{
+  "base_directory": "...", "manifest_path": null,
+  "dirty": false, "can_undo": false, "can_redo": false,
+  "settings": { "global_prmtop": null, "hmr_prmtop": null, "initial_coordinates": null,
+                "auto_link_restarts": true, "strict_validation": true,
+                "allow_gaps": false, "use_relative_paths": true },
+  "stages": [
+    { "id": "a1b2c3d4", "name": "prod_0001", "role": "production",
+      "prmtop": null, "mdin": "prod_0001.in", "mdout": "prod_0001.out",
+      "mdcrd": null, "inpcrd": "equil.rst7",
+      "expected_gap_ps": 0.0, "gap_tolerance_ps": 0.1, "notes": [] }
+  ]
+}
 ```
-
-### Port Already in Use
-
-```
-Address already in use
-```
-
-Use a different port:
-```bash
-ambermeta gui --port 3001
-```
-
-### Files Not Appearing
-
-- Check that files have supported extensions (.prmtop, .mdin, .mdout, .nc, .rst7, etc.)
-- Ensure file permissions allow reading
-- Hidden files (starting with `.`) are not shown
-
-### Changes Not Persisting
-
-- Click "Apply" in the Properties Panel to save changes
-- Use `Ctrl+S` to save the session
-- Export the manifest before closing
-
-### Drag and Drop Not Working
-
-- Ensure you're dragging from a file (not a folder)
-- Make sure the target stage is expanded to show drop zones
-- Check that you're dropping on a valid target
 
 ---
 
-## API Endpoints
+## 11. Troubleshooting
 
-The GUI backend provides a REST API that can be used programmatically:
+| Symptom | Fix |
+|---|---|
+| `ImportError: fastapi` on launch | Install the GUI extra: `pip install -e ".[gui]"` |
+| Browser didn't open | Use `--no-browser` and visit `http://127.0.0.1:8765` yourself |
+| `Address already in use` | Pick another port: `--port 9000` |
+| A file is missing from the tree | Check the extension is recognized (§4), the file is readable, and it's under the launch directory (hidden `.`-files are excluded) |
+| A path is rejected (`403`) | The path is outside the launch directory; restart the GUI rooted higher up |
 
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/api/files` | GET | List discovered files |
-| `/api/files/metadata` | GET | Get file metadata |
-| `/api/files/related/{stem}` | GET | Get related files by stem (for auto-grouping) |
-| `/api/stages` | GET | List all stages |
-| `/api/stages` | POST | Create a new stage |
-| `/api/stages/{id}` | PUT | Update a stage |
-| `/api/stages/{id}` | DELETE | Delete a stage |
-| `/api/stages/reorder` | POST | Reorder stages |
-| `/api/settings` | GET/PUT | Get/update global settings |
-| `/api/export` | POST | Export protocol |
-| `/api/validate` | POST | Validate protocol |
-| `/api/session/save` | POST | Save session |
-| `/api/session/load` | POST | Load session |
-| `/api/sequences` | GET | Get detected sequences |
+---
 
-Example using curl:
+## See also
 
-```bash
-# List stages
-curl http://localhost:8000/api/stages
-
-# Create a stage
-curl -X POST http://localhost:8000/api/stages \
-  -H "Content-Type: application/json" \
-  -d '{"name": "prod_001", "role": "production"}'
-
-# Export as YAML
-curl -X POST http://localhost:8000/api/export \
-  -H "Content-Type: application/json" \
-  -d '{"format": "yaml"}'
-```
+- [Architecture §9](architecture.md#9-the-gui-bridge--one-engine-enforced) — how the GUI maps onto the core
+- [CLI reference](cli.md) — the headless equivalent of every GUI action
+- [Manifest schema](manifest.md) — the format Open/Save read and write

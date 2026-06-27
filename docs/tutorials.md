@@ -1,264 +1,116 @@
-# AmberMeta Tutorials
+# Tutorials
 
-This guide provides step-by-step tutorials for using AmberMeta to extract (meta)-data from AMBER molecular dynamics simulation files.
+Task-oriented walkthroughs for getting real work done with AmberMeta. Each uses the sample data in `tests/data/amber/md_test_files/` — a 64,528-atom glycoprotein system with a six-member NPT production sequence — so every command and output below is reproducible.
 
-## Table of Contents
+## Contents
 
-1. [Getting Started](#getting-started)
-2. [Tutorial 1: Extracting Metadata from Individual Files](#tutorial-1-extracting-metadata-from-individual-files)
-3. [Tutorial 2: Building a Protocol from Scratch](#tutorial-2-building-a-protocol-from-scratch)
-4. [Tutorial 3: Using the Terminal UI](#tutorial-3-using-the-terminal-ui)
-5. [Tutorial 4: Creating Manifests for Reproducibility](#tutorial-4-creating-manifests-for-reproducibility)
-6. [Tutorial 5: Validating Simulation Continuity](#tutorial-5-validating-simulation-continuity)
-7. [Tutorial 6: Exporting Data for Publications](#tutorial-6-exporting-data-for-publications)
-8. [Tutorial 7: Working with Production Run Sequences](#tutorial-7-working-with-production-run-sequences)
-9. [Tutorial 8: Automating Metadata Collection](#tutorial-8-automating-metadata-collection)
+1. [Inspect individual files](#1-inspect-individual-files)
+2. [Build a protocol](#2-build-a-protocol)
+3. [Build a manifest interactively (GUI)](#3-build-a-manifest-interactively-gui)
+4. [Write manifests for reproducibility](#4-write-manifests-for-reproducibility)
+5. [Validate continuity](#5-validate-continuity)
+6. [Export for publications](#6-export-for-publications)
+7. [Work with production sequences](#7-work-with-production-sequences)
+8. [Automate metadata collection](#8-automate-metadata-collection)
 
----
+> **Prerequisite.** `pip install -e ".[all]"` (the NetCDF extra is needed to parse the `.nc`/`.ncrst` files some projects use; the sample restarts are NetCDF).
 
-## Getting Started
-
-### Prerequisites
-
-Install AmberMeta with all optional dependencies:
-
-```bash
-# Basic installation
-pip install -e .
-
-# With all extras (recommended for tutorials)
-pip install -e ".[all]"
-```
-
-### Sample Data
-
-The tutorials use sample data in `tests/data/amber/md_test_files/`. This includes:
-- Topology files (`.top`)
-- Input files (`.mdin`)
-- Output logs (`.mdout`)
-- Restart files (`.rst`)
-- Trajectory files (`.crd`)
+> ⚠️ **Python usage — read this first.** A parser's `parse()` returns a wrapper; the metadata is on `.details`. Every Python example below uses `Parser(path).parse().details`. See [API reference](api.md#6-parser-metadata-fields) for the full field list.
 
 ---
 
-## Tutorial 1: Extracting Metadata from Individual Files
+## 1. Inspect individual files
 
-**Goal:** Learn how to extract specific metadata from each AMBER file type.
+**Goal:** pull the metadata out of each AMBER file type.
 
-### Step 1: Inspect a Topology File
+### Topology (`prmtop`)
 
-Topology files contain the molecular system definition.
-
-**Command Line:**
 ```bash
-ambermeta info tests/data/amber/md_test_files/CH3L1.top
+ambermeta info tests/data/amber/md_test_files/CH3L1_HUMAN_6NAG.top
 ```
 
-**Python:**
 ```python
 from ambermeta.parsers import PrmtopParser
 
-# Parse the topology file
-parser = PrmtopParser("tests/data/amber/md_test_files/CH3L1.top")
-meta = parser.parse()
-
-# System composition
-print("=== System Composition ===")
-print(f"Total atoms: {meta.natom}")
-print(f"Total residues: {meta.nres}")
-print(f"Residue breakdown: {meta.residue_counts}")
-
-# Box information
-print("\n=== Box Information ===")
-print(f"Box dimensions: {meta.box_dimensions}")
-print(f"Box angles: {meta.box_angles}")
-
-# Solvent and ions
-print("\n=== Solvent Analysis ===")
-print(f"Solvent type: {meta.solvent_type}")
-print(f"Ion counts: {meta.ions}")
-
-# Physical properties
-print("\n=== Physical Properties ===")
-print(f"Density: {meta.density:.4f} g/cc" if meta.density else "Density: N/A")
-print(f"Total charge: {meta.total_charge}")
-print(f"HMR detected: {meta.is_hmr}")
+meta = PrmtopParser("tests/data/amber/md_test_files/CH3L1_HUMAN_6NAG.top").parse().details
+print(meta.natom, meta.nres)                 # 64528 15102
+print(meta.solvent_type, meta.density)       # Explicit Solvent 0.8434
+print(meta.residue_composition["WAT"])       # 14659
+print(meta.hmr_active, meta.hmr_detection_method)   # False atomic_number
 ```
 
-**Key metadata extracted:**
-- Atom and residue counts
-- Box dimensions and type
-- Solvent model (TIP3P, TIP4P, etc.)
-- Ion composition
-- Hydrogen mass repartitioning status
-- System density
+You get atom/residue counts, box geometry, density, solvent model, system composition (`residue_composition`, including ions and water), and HMR status (`hmr_active` + how it was detected).
 
-### Step 2: Inspect an Input Control File
+### Input (`mdin`)
 
-Input files define simulation parameters and settings.
-
-**Command Line:**
-```bash
-ambermeta info tests/data/amber/md_test_files/ntp_prod_0000.mdin
-```
-
-**Python:**
 ```python
 from ambermeta.parsers import MdinParser
 
-parser = MdinParser("tests/data/amber/md_test_files/ntp_prod_0000.mdin")
-meta = parser.parse()
-
-# Run parameters
-print("=== Run Parameters ===")
-print(f"Total steps: {meta.length_steps}")
-print(f"Timestep: {meta.dt} ps")
-print(f"Total time: {meta.length_steps * meta.dt if meta.dt else 'N/A'} ps")
-
-# Temperature control
-print("\n=== Temperature Control ===")
-print(f"Method: {meta.temperature_control}")
-print(f"Target temperature: {meta.target_temp} K" if meta.target_temp else "")
-
-# Pressure control
-print("\n=== Pressure Control ===")
-print(f"Method: {meta.pressure_control}")
-
-# Constraints and restraints
-print("\n=== Constraints ===")
-print(f"Constraint method: {meta.constraints}")
-
-# Automatic role inference
-print("\n=== Inferred Stage Role ===")
-print(f"Stage type: {meta.inferred_stage_role}")
+meta = MdinParser("tests/data/amber/md_test_files/ntp_prod_0001.mdin").parse().details
+print(meta.length_steps, meta.dt)            # 5000000 0.004
+print(meta.ensemble, meta.stage_role)        # NPT (isotropic)  Production [NPT (isotropic)]
+print(meta.temp_control, meta.target_temp)   # Langevin Dynamics 300.0
+print(meta.press_control, meta.constraints)  # Berendsen (Isotropic)  H-bonds
+print(meta.cntrl_parameters["nstlim"])       # 5000000
 ```
 
-**Key metadata extracted:**
-- Simulation length (steps and time)
-- Temperature control (Langevin, Berendsen, etc.)
-- Pressure control settings
-- Constraint algorithms (SHAKE)
-- Restraint masks and force constants
-- Automatic stage role inference
+Run length, timestep, ensemble, temperature/pressure control, constraints, and the raw `&cntrl` namelist in `cntrl_parameters` — plus a heuristic `stage_role`.
 
-### Step 3: Inspect an Output Log File
+### Output (`mdout`)
 
-Output files contain simulation results and statistics.
-
-**Command Line:**
-```bash
-ambermeta info tests/data/amber/md_test_files/ntp_prod_0000.mdout
-```
-
-**Python:**
 ```python
 from ambermeta.parsers import MdoutParser
 
-parser = MdoutParser("tests/data/amber/md_test_files/ntp_prod_0000.mdout")
-meta = parser.parse()
-
-# Completion status
-print("=== Simulation Status ===")
-print(f"Finished properly: {meta.finished_properly}")
-
-# Settings from output
-print("\n=== Simulation Settings ===")
-print(f"Steps: {meta.nstlim}")
-print(f"Timestep: {meta.dt} ps")
-print(f"Thermostat: {meta.thermostat}")
-print(f"Barostat: {meta.barostat}")
-print(f"Box type: {meta.box_type}")
-
-# Thermodynamic statistics
-print("\n=== Thermodynamic Statistics ===")
-if meta.stats:
-    print(f"Data points: {meta.stats.count}")
-    print(f"Time range: {meta.stats.time_start} - {meta.stats.time_end} ps")
-    print(f"Temperature: {meta.stats.temp_mean:.2f} ± {meta.stats.temp_std:.2f} K")
-    print(f"Pressure: {meta.stats.press_mean:.2f} ± {meta.stats.press_std:.2f} bar")
-    print(f"Density: {meta.stats.density_mean:.4f} ± {meta.stats.density_std:.4f} g/cc")
+meta = MdoutParser("tests/data/amber/md_test_files/ntp_prod_0001.mdout").parse().details
+print(meta.program, meta.version)            # PMEMD 22
+print(meta.finished_properly)                # True
+print(meta.thermostat, meta.barostat)        # Langevin Berendsen
+s = meta.stats
+print(s.count, s.time_start, s.time_end)     # 200 1020.0 20920.0
+print(s.temp_stats.mean, s.temp_stats.stdev) # 300.43200000000013 1.2504190252445306
+print(s.density_stats.mean)                  # 1.0369550000000003
 ```
 
-**Key metadata extracted:**
-- Completion status
-- Thermostat and barostat settings
-- PME parameters
-- Running statistics (temperature, pressure, density, energy)
-- Timing information
+Completion status, engine settings, performance (`wall_time_seconds`, `ns_per_day`), and streaming thermodynamics. Per-quantity stats live on `stats.<q>_stats` (`temp_stats`, `pressure_stats`, `density_stats`, `etot_stats`, `volume_stats`), each exposing `.mean` and `.stdev`.
 
-### Step 4: Inspect a Restart File
+### Restart (`inpcrd`)
 
-Restart files link simulation stages together.
-
-**Command Line:**
-```bash
-ambermeta info tests/data/amber/md_test_files/ntp_prod_0000.rst
-```
-
-**Python:**
 ```python
 from ambermeta.parsers import InpcrdParser
 
-parser = InpcrdParser("tests/data/amber/md_test_files/ntp_prod_0000.rst")
-meta = parser.parse()
-
-print("=== Restart File Information ===")
-print(f"Atom count: {meta.natoms}")
-print(f"Has velocities: {meta.has_velocities}")
-print(f"Has box: {meta.has_box}")
-print(f"Simulation time: {meta.time} ps" if meta.time else "Time: N/A")
-print(f"Box dimensions: {meta.box_dimensions}")
+meta = InpcrdParser("tests/data/amber/md_test_files/ntp_prod_0001.rst").parse().details
+print(meta.natoms, meta.time)                # 64528 20920.00000242704
+print(meta.has_velocities, meta.has_box)     # True True
 ```
 
-**Key metadata extracted:**
-- Atom count (for validation)
-- Velocity presence
-- Box dimensions
-- Simulation time (for continuity checking)
+Atom count and `time` are what continuity checking uses to chain stages.
 
 ---
 
-## Tutorial 2: Building a Protocol from Scratch
+## 2. Build a protocol
 
-**Goal:** Learn how to assemble multiple simulation files into a coherent protocol.
+**Goal:** assemble loose files into an ordered `SimulationProtocol`.
 
-### Step 1: Auto-Discover Files in a Directory
-
-```python
-from ambermeta import auto_discover
-
-# Simple discovery
-protocol = auto_discover("tests/data/amber/md_test_files")
-
-print(f"Discovered {len(protocol.stages)} stages:")
-for stage in protocol.stages:
-    print(f"  - {stage.name}")
-```
-
-### Step 2: Configure Discovery with Grouping Rules
+### From a directory
 
 ```python
 from ambermeta import auto_discover
 
-protocol = auto_discover(
-    "tests/data/amber/md_test_files",
-    recursive=True,
-    grouping_rules={
-        "ntp_prod": "production",
-        "equil": "equilibration",
-        "heat": "heating",
-        "min": "minimization",
-    },
-)
-
+protocol = auto_discover("tests/data/amber/md_test_files", recursive=True)
+print(len(protocol.stages))                  # 7
 for stage in protocol.stages:
-    summary = stage.summary()
-    print(f"\n{stage.name}:")
-    print(f"  Role: {summary['intent']}")
-    print(f"  Result: {summary['result']}")
+    print(stage.name, "->", stage.summary()["intent"])
 ```
 
-### Step 3: Use the Builder API for Full Control
+### From a manifest
+
+```python
+from ambermeta import load_protocol_from_manifest
+
+protocol = load_protocol_from_manifest("protocol.yaml", directory="runs/")
+```
+
+### With the builder (full control)
 
 ```python
 from ambermeta import ProtocolBuilder
@@ -266,655 +118,222 @@ from ambermeta import ProtocolBuilder
 protocol = (
     ProtocolBuilder()
     .from_directory("tests/data/amber/md_test_files", recursive=True)
-    .with_grouping_rules({
-        r"ntp_prod.*": "production",
-        r"CH3L1.*": "equilibration",
-    })
-    .with_pattern_filter(r"ntp_prod_\d+")  # Only production runs
+    .with_grouping_rules({r"ntp_prod.*": "production"})
+    .with_pattern_filter(r"ntp_prod_\d+")
     .auto_detect_restarts()
     .build()
 )
-
-# Examine the protocol
-print(f"Protocol contains {len(protocol.stages)} stages")
-totals = protocol.totals()
-print(f"Total simulation time: {totals['time_ps']:.2f} ps")
-print(f"Total steps: {totals['steps']:.0f}")
+print(protocol.totals())   # {'steps': 25000000.0, 'time_ps': 100000.0}
 ```
 
-### Step 4: Manually Build a Protocol
-
-```python
-from ambermeta import ProtocolBuilder
-
-protocol = (
-    ProtocolBuilder()
-    .from_directory("tests/data/amber/md_test_files")
-    .add_stage(
-        name="equilibration",
-        stage_role="equilibration",
-        prmtop="CH3L1.top",
-        mdin="CH3L1.mdin",
-        mdout="CH3L1.mdout",
-    )
-    .add_stage(
-        name="production_001",
-        stage_role="production",
-        prmtop="CH3L1.top",
-        mdin="ntp_prod_0000.mdin",
-        mdout="ntp_prod_0000.mdout",
-        mdcrd="ntp_prod_0000.crd",
-        inpcrd="ntp_prod_0000.rst",
-        expected_gap_ps=0.0,
-    )
-    .build()
-)
-```
+`ProtocolBuilder` chains the same primitives `auto_discover` uses; see [API §1](api.md#1-discovery--assembly).
 
 ---
 
-## Tutorial 3: Building manifests interactively (GUI)
+## 3. Build a manifest interactively (GUI)
 
-**Goal:** Build a protocol manifest interactively in the browser-based GUI.
-
-### Step 1: Launch the GUI
+**Goal:** assemble a manifest in the browser.
 
 ```bash
 ambermeta gui tests/data/amber/md_test_files
 ```
 
-This starts a local server and opens your browser. Use `--no-browser` to skip auto-opening, and `--host`/`--port` to change where it listens. The window has three panes: **Files** (left), **Stages** (center), **Properties** (right).
+This starts a localhost server and opens a three-pane window — **Files** · **Stages** · **Properties**.
 
-### Step 2: Discover files
+1. **Discover** auto-groups the directory into stages (one per file group), detects the numbered sequence, and classifies the topology.
+2. Drag a file from **Files** onto a stage slot, or use the picker in **Properties**.
+3. Select a stage to edit its name, role, gap/tolerance, and notes.
+4. **Validate** reports issues with jump-to-issue; **Save** writes the canonical manifest — byte-identical to the CLI's.
 
-Click **Discover** in the top bar. AmberMeta scans the directory, groups files into stages (one stage per file group), detects numbered sequences, and auto-classifies the topology (normal vs HMR).
-
-### Step 3: Assign and edit
-
-- Drag a file from the **Files** pane onto a stage's slot, or use **Pick…** in the **Properties** pane.
-- Select a stage to edit its name, role, expected gap/tolerance, and notes (edits commit when you leave the field).
-- Numbered runs (e.g. `prod_001…050`) collapse into one group; you can set the role for the whole sequence at once.
-
-### Step 4: Validate
-
-Click **Validate**. The panel reports per-stage issues (missing files, continuity gaps) with jump-to-issue plus a protocol-level summary. A protocol with continuity notes is shown as "valid, with N notes" — never a silent clean pass.
-
-### Step 5: Open / Save
-
-**Open** loads an existing manifest (any format) for editing; **Save** writes the canonical manifest — byte-identical to the CLI's output. Undo/redo and an unsaved-changes indicator live in the top bar.
-
-See the [GUI Guide](gui.md) for the full reference. Prefer the terminal? `ambermeta plan … --interactive` and `ambermeta init … --auto` cover the same workflow headlessly.
+Full walkthrough: [GUI guide](gui.md). Prefer the terminal? `ambermeta plan … --interactive` and `ambermeta init … --auto` cover the same ground headlessly.
 
 ---
 
-## Tutorial 4: Creating Manifests for Reproducibility
+## 4. Write manifests for reproducibility
 
-**Goal:** Learn how to create and use manifest files for reproducible protocols.
+**Goal:** capture a protocol as a durable, reviewable file.
 
-### Step 1: Generate a Template
+Bootstrap one from a directory, then edit:
 
 ```bash
-# Generate standard template
-ambermeta init my_project
-
-# Generate comprehensive template with all options
-ambermeta init --template comprehensive my_project
-
-# Custom output filename
-ambermeta init -o my_protocol.yaml my_project
+ambermeta init runs/ --auto --output manifest.yaml --validate --force
 ```
 
-### Step 2: Edit the Manifest
-
-Create `protocol.yaml`:
+Or write it by hand:
 
 ```yaml
-# Simulation Protocol Manifest
-# Project: My MD Simulation
+# protocol.yaml
+global_prmtop: systems/complex.prmtop
+stages:
+  - name: minimize
+    stage_role: minimization
+    mdin: inputs/min.in
+    mdout: outputs/min.out
+    notes: ["Steepest descent, 5000 steps"]
 
-# Stage 1: Energy Minimization
-- name: minimize
-  stage_role: minimization
-  prmtop: systems/complex.prmtop
-  mdin: inputs/min.in
-  mdout: outputs/min.out
-  notes:
-    - "Steepest descent for 5000 steps"
-    - "Hydrogen-only constraints"
+  - name: equilibrate
+    stage_role: equilibration
+    mdin: inputs/equil.in
+    mdout: outputs/equil.out
+    mdcrd: traj/equil.nc
+    inpcrd: restarts/heat.rst7
+    gaps: { expected: 0.0, tolerance: 0.1 }
 
-# Stage 2: Heating
-- name: heat
-  stage_role: heating
-  prmtop: systems/complex.prmtop
-  mdin: inputs/heat.in
-  mdout: outputs/heat.out
-  inpcrd: restarts/min.rst7
-  gaps:
-    expected: 0.0
-    tolerance: 0.1
-  notes:
-    - "Heat from 0K to 300K over 100ps"
-    - "NVT ensemble with position restraints"
-
-# Stage 3: Equilibration
-- name: equilibrate
-  stage_role: equilibration
-  prmtop: systems/complex.prmtop
-  mdin: inputs/equil.in
-  mdout: outputs/equil.out
-  mdcrd: trajectories/equil.nc
-  inpcrd: restarts/heat.rst7
-  notes:
-    - "NPT equilibration at 300K, 1 bar"
-    - "2 ns with decreasing restraints"
-
-# Stage 4: Production
-- name: production
-  stage_role: production
-  prmtop: systems/complex.prmtop
-  mdin: inputs/prod.in
-  mdout: outputs/prod.out
-  mdcrd: trajectories/prod.nc
-  inpcrd: restarts/equil.rst7
-  gaps:
-    expected: 0.0
-    tolerance: 0.1
+  - name: production
+    stage_role: production
+    mdin: inputs/prod.in
+    mdout: outputs/prod.out
+    mdcrd: traj/prod.nc
+    inpcrd: restarts/equil.rst7
 ```
 
-### Step 3: Use Environment Variables
-
-For portable manifests across systems:
+Make it portable with environment variables, then load it:
 
 ```yaml
-# protocol.yaml with environment variables
 - name: production
   prmtop: ${PROJECT_ROOT}/systems/complex.prmtop
-  mdin: ${PROJECT_ROOT}/inputs/prod.in
   mdout: ${OUTPUT_DIR}/prod.out
-  mdcrd: ${OUTPUT_DIR}/prod.nc
 ```
-
-Set environment variables before running:
-```bash
-export PROJECT_ROOT=/home/user/simulations
-export OUTPUT_DIR=/scratch/output
-ambermeta plan --manifest protocol.yaml
-```
-
-### Step 4: Load and Validate
 
 ```bash
-# Validate the manifest
-ambermeta plan --manifest protocol.yaml -v
-
-# Export validated protocol
-ambermeta plan --manifest protocol.yaml --summary-path validated_protocol.json
+export PROJECT_ROOT=/home/user/sim OUTPUT_DIR=/scratch/out
+ambermeta plan ./runs --manifest protocol.yaml -v
 ```
 
-```python
-from ambermeta import load_protocol_from_manifest
-
-protocol = load_protocol_from_manifest("protocol.yaml")
-
-# Check for validation issues
-for stage in protocol.stages:
-    if stage.validation:
-        print(f"\n{stage.name} validation notes:")
-        for note in stage.validation:
-            print(f"  - {note}")
-```
+Full schema: [manifest reference](manifest.md).
 
 ---
 
-## Tutorial 5: Validating Simulation Continuity
+## 5. Validate continuity
 
-**Goal:** Learn how to validate that simulation stages are properly connected.
-
-### Step 1: Enable Cross-Stage Validation
+**Goal:** confirm stages actually connect.
 
 ```python
 from ambermeta import auto_discover
 
-protocol = auto_discover(
-    "path/to/simulations",
-    recursive=True,
-    auto_detect_restarts=True,  # Automatically link restart files
-)
-
-# Validation is performed automatically
+protocol = auto_discover("runs/", recursive=True, auto_detect_restarts=True)
 for stage in protocol.stages:
-    print(f"\n{stage.name}:")
-    for note in stage.validation:
-        print(f"  {note}")
+    for note in stage.validation + stage.continuity:
+        print(f"{stage.name}: {note}")
 ```
 
-### Step 2: Understand Validation Notes
+Notes are tagged `INFO` (role inferred, gap confirmed, check skipped for missing data) or `WARNING` (atom-count mismatch, timing inconsistency, box change, unexpected gap).
 
-AmberMeta generates several types of validation notes:
+Configure expected gaps where a discontinuity is intentional:
 
-**Informational (INFO):**
-- Stage role inferred from file content
-- Expected gaps confirmed within tolerance
-- Cross-stage checks skipped (when data unavailable)
-
-**Warnings:**
-- Atom count mismatches between files
-- Timing inconsistencies
-- Box dimension changes
-- Unexpected gaps between stages
-
-### Step 3: Configure Gap Tolerances
-
-```python
-from ambermeta import ProtocolBuilder
-
-protocol = (
-    ProtocolBuilder()
-    .from_directory("path/to/simulations")
-    .auto_detect_restarts()
-    # Stage-specific tolerances
-    .with_stage_tolerance("prod_001", expected_gap_ps=0.0, tolerance_ps=0.1)
-    .with_stage_tolerance("prod_002", expected_gap_ps=2.0, tolerance_ps=0.5)  # Expected gap
-    .build()
-)
-```
-
-Or in a manifest:
 ```yaml
 - name: prod_002
   stage_role: production
-  prmtop: system.prmtop
   mdin: prod_002.in
   mdout: prod_002.out
   inpcrd: prod_001.rst7
   gaps:
-    expected: 2.0  # Expected 2 ps gap (e.g., restart from backup)
+    expected: 2.0      # expected 2 ps jump (e.g. restart from a checkpoint)
     tolerance: 0.5
-    notes:
-      - "Gap due to job failure and restart from checkpoint"
+    notes: ["Gap due to job failure and restart"]
 ```
 
-### Step 4: Skip Validation When Needed
-
-For non-contiguous protocols (e.g., independent replicas):
+For non-contiguous protocols (independent replicas), skip the cross-stage checks:
 
 ```bash
 ambermeta plan --manifest protocol.yaml --skip-cross-stage-validation
 ```
 
-```python
-protocol = auto_discover(
-    "path/to/simulations",
-    skip_cross_stage_validation=True,
-)
+---
+
+## 6. Export for publications
+
+**Goal:** produce methods-section-ready artifacts.
+
+```bash
+ambermeta plan --manifest protocol.yaml \
+  --methods-summary-path methods.json \
+  --stats-csv stats.csv \
+  --summary-path protocol.json
 ```
+
+```python
+import json
+from ambermeta import auto_discover
+
+protocol = auto_discover("runs/", recursive=True)
+json.dump(protocol.to_methods_dict(), open("methods.json", "w"), indent=2)
+```
+
+The methods summary is `{stage_sequence, stages[]}`, where each stage carries `software`, `md_engine` (ensemble / thermostat / barostat / cutoff / constraints / timestep / run length), `restraints`, and `system` (atom counts, box, composition) — energies and bulk arrays are dropped. The exact shape is in [API §7](api.md#7-export-structures). The stats CSV has one row per stage with temperature/pressure/density/energy as mean ± σ.
 
 ---
 
-## Tutorial 6: Exporting Data for Publications
+## 7. Work with production sequences
 
-**Goal:** Learn how to export protocol data for methods sections and supplementary materials.
-
-### Step 1: Export Methods-Ready Summary
-
-```bash
-# Generate publication-ready JSON
-ambermeta plan --manifest protocol.yaml --methods-summary-path methods.json
-```
+**Goal:** handle numbered runs (`ntp_prod_0001`, `…0002`, …).
 
 ```python
-from ambermeta import auto_discover
-import json
+from ambermeta import detect_numeric_sequences, smart_group_files
 
-protocol = auto_discover("path/to/simulations", recursive=True)
+detect_numeric_sequences(["ntp_prod_0001.mdout", "ntp_prod_0002.mdout", "equil.mdout"])
+# {'ntp_prod_': ['ntp_prod_0001.mdout', 'ntp_prod_0002.mdout']}
 
-# Get methods-ready dictionary
-methods = protocol.to_methods_dict()
-
-# Save to file
-with open("methods.json", "w") as f:
-    json.dump(methods, f, indent=2)
+groups = smart_group_files("tests/data/amber/md_test_files", pattern=r"ntp_prod_\d+", recursive=True)
+for stem, files in groups.items():
+    print(stem, {k: v for k, v in files.items() if not k.startswith("_")})
 ```
 
-### Step 2: Understand the Methods Summary
-
-The methods summary includes:
-
-```python
-{
-    "stages": [
-        {
-            "name": "production",
-            "role": "production",
-            "software": "AMBER",
-            "engine_settings": {
-                "ensemble": "NPT",
-                "thermostat": "Langevin",
-                "barostat": "Monte Carlo",
-                "cutoff_angstrom": 10.0,
-                "constraints": "SHAKE on hydrogen"
-            },
-            "system": {
-                "atoms": 45231,
-                "residues": 12543,
-                "box_type": "truncated octahedron",
-                "solvent": "TIP3P"
-            }
-        }
-    ],
-    "totals": {
-        "stages": 4,
-        "total_time_ps": 100000.0,
-        "total_steps": 50000000
-    }
-}
-```
-
-### Step 3: Export Statistics to CSV
-
-```bash
-# Export per-stage statistics
-ambermeta plan --manifest protocol.yaml --stats-csv statistics.csv
-```
-
-The CSV includes:
-- Stage name and role
-- Temperature (mean ± std)
-- Pressure (mean ± std)
-- Density (mean ± std)
-- Total energy statistics
-- Completion status
-
-### Step 4: Generate Full Protocol JSON
-
-```python
-from ambermeta import auto_discover
-import json
-
-protocol = auto_discover("path/to/simulations", recursive=True)
-
-# Full protocol with all metadata
-full_data = protocol.to_dict()
-
-with open("protocol_full.json", "w") as f:
-    json.dump(full_data, f, indent=2)
-```
-
----
-
-## Tutorial 7: Working with Production Run Sequences
-
-**Goal:** Learn how to handle numbered production run sequences (prod_001, prod_002, etc.).
-
-### Step 1: Detect Numeric Sequences
-
-```python
-from ambermeta import detect_numeric_sequences
-
-files = [
-    "prod_001.mdout",
-    "prod_002.mdout",
-    "prod_003.mdout",
-    "equil.mdout",
-]
-
-sequences = detect_numeric_sequences(files)
-print(sequences)
-# Output: {'prod_': ['prod_001.mdout', 'prod_002.mdout', 'prod_003.mdout']}
-```
-
-### Step 2: Smart File Grouping
-
-```python
-from ambermeta import smart_group_files
-
-# Group files by stem with sequence detection
-grouped = smart_group_files(
-    "path/to/production_runs",
-    recursive=True,
-    pattern=r"prod_\d+",  # Only production files
-)
-
-for stem, files in grouped.items():
-    print(f"\n{stem}:")
-    for file_type, path in files.items():
-        if not file_type.startswith("_"):
-            print(f"  {file_type}: {path}")
-
-    # Sequence metadata
-    if "_sequence_base" in files:
-        print(f"  Sequence: {files['_sequence_base']} #{files['_sequence_index']}")
-```
-
-### Step 3: Build Protocol from Sequences
+Each numbered run becomes its own stage (sequences are **not** collapsed), ordered by index, each carrying a "item *n* of *m*" note. In the GUI, the sequence collapses into one expandable group whose role you can set in one action.
 
 ```python
 from ambermeta import ProtocolBuilder
 
 protocol = (
     ProtocolBuilder()
-    .from_directory("path/to/production_runs", recursive=True)
-    .with_pattern_filter(r"prod_\d+")
-    .with_grouping_rules({r"prod.*": "production"})
-    .auto_detect_restarts()  # Links prod_002 to prod_001.rst, etc.
+    .from_directory("tests/data/amber/md_test_files", recursive=True)
+    .with_pattern_filter(r"ntp_prod_\d+")
+    .with_grouping_rules({r"ntp_prod.*": "production"})
+    .auto_detect_restarts()      # chains 0002←0001, 0003←0002, ...
     .build()
 )
-
-# Stages are ordered by sequence number
-for stage in protocol.stages:
-    print(f"{stage.name}: {stage.sequence_index}")
 ```
-
-### Step 4: Sequence features in the GUI
-
-In the GUI, numbered sequences are detected automatically:
-
-1. A numbered run (e.g. `prod_001…050`) collapses into a single expandable group
-2. **Discover** auto-creates one stage per file in the sequence
-3. You can set the role for the whole sequence at once from the group header
 
 ---
 
-## Tutorial 8: Automating Metadata Collection
+## 8. Automate metadata collection
 
-**Goal:** Learn how to automate metadata collection for large-scale simulations.
-
-### Step 1: Batch Processing Script
+**Goal:** process many simulation directories unattended.
 
 ```python
 #!/usr/bin/env python3
-"""Batch process multiple simulation directories."""
-
+"""Summarize every simulation directory under a root."""
 import json
 from pathlib import Path
-from ambermeta import auto_discover
+from ambermeta import auto_discover, AmberMetaError
 
-def process_simulation(sim_dir: Path, output_dir: Path):
-    """Process a single simulation directory."""
+def process(sim_dir: Path, out_dir: Path) -> bool:
     try:
-        protocol = auto_discover(
-            str(sim_dir),
-            recursive=True,
-            auto_detect_restarts=True,
-        )
-
-        # Save protocol summary
-        output_file = output_dir / f"{sim_dir.name}_protocol.json"
-        with open(output_file, "w") as f:
-            json.dump(protocol.to_dict(), f, indent=2)
-
-        # Save methods summary
-        methods_file = output_dir / f"{sim_dir.name}_methods.json"
-        with open(methods_file, "w") as f:
-            json.dump(protocol.to_methods_dict(), f, indent=2)
-
-        print(f"Processed: {sim_dir.name}")
-        return True
-
-    except Exception as e:
-        print(f"Error processing {sim_dir.name}: {e}")
+        protocol = auto_discover(str(sim_dir), recursive=True, auto_detect_restarts=True)
+    except AmberMetaError as e:
+        print(f"{sim_dir.name}: {e}")
         return False
-
+    (out_dir / f"{sim_dir.name}_protocol.json").write_text(
+        json.dumps(protocol.to_dict(), indent=2))
+    (out_dir / f"{sim_dir.name}_methods.json").write_text(
+        json.dumps(protocol.to_methods_dict(), indent=2))
+    return True
 
 def main():
-    base_dir = Path("/path/to/simulations")
-    output_dir = Path("/path/to/output")
-    output_dir.mkdir(exist_ok=True)
-
-    # Find all simulation directories
-    sim_dirs = [d for d in base_dir.iterdir() if d.is_dir()]
-
-    results = []
-    for sim_dir in sim_dirs:
-        success = process_simulation(sim_dir, output_dir)
-        results.append((sim_dir.name, success))
-
-    # Summary
-    print(f"\nProcessed {sum(1 for _, s in results if s)}/{len(results)} successfully")
-
+    root, out = Path("/path/to/simulations"), Path("/path/to/output")
+    out.mkdir(exist_ok=True)
+    ok = sum(process(d, out) for d in root.iterdir() if d.is_dir())
+    print(f"Processed {ok} directories")
 
 if __name__ == "__main__":
     main()
 ```
 
-### Step 2: Generate Consolidated Report
-
-```python
-#!/usr/bin/env python3
-"""Generate consolidated report from multiple protocols."""
-
-import json
-import csv
-from pathlib import Path
-from ambermeta import load_protocol_from_manifest
-
-def load_protocols(manifest_dir: Path):
-    """Load all manifests from a directory."""
-    protocols = []
-    for manifest in manifest_dir.glob("*.yaml"):
-        try:
-            protocol = load_protocol_from_manifest(str(manifest))
-            protocols.append((manifest.stem, protocol))
-        except Exception as e:
-            print(f"Error loading {manifest}: {e}")
-    return protocols
-
-
-def generate_report(protocols, output_file: Path):
-    """Generate CSV report of all protocols."""
-    with open(output_file, "w", newline="") as f:
-        writer = csv.writer(f)
-        writer.writerow([
-            "System", "Stages", "Total Time (ns)",
-            "Avg Temperature (K)", "Avg Pressure (bar)",
-            "Completed"
-        ])
-
-        for name, protocol in protocols:
-            totals = protocol.totals()
-            time_ns = totals["time_ps"] / 1000
-
-            # Aggregate statistics from production stages
-            temps, pressures = [], []
-            completed = True
-
-            for stage in protocol.stages:
-                if stage.mdout and stage.mdout.details:
-                    stats = getattr(stage.mdout.details, "stats", None)
-                    if stats:
-                        if hasattr(stats, "temp_mean"):
-                            temps.append(stats.temp_mean)
-                        if hasattr(stats, "press_mean"):
-                            pressures.append(stats.press_mean)
-
-                    if not getattr(stage.mdout.details, "finished_properly", True):
-                        completed = False
-
-            avg_temp = sum(temps) / len(temps) if temps else None
-            avg_press = sum(pressures) / len(pressures) if pressures else None
-
-            writer.writerow([
-                name,
-                len(protocol.stages),
-                f"{time_ns:.2f}",
-                f"{avg_temp:.1f}" if avg_temp else "N/A",
-                f"{avg_press:.1f}" if avg_press else "N/A",
-                "Yes" if completed else "No"
-            ])
-
-
-def main():
-    manifest_dir = Path("/path/to/manifests")
-    protocols = load_protocols(manifest_dir)
-    generate_report(protocols, Path("simulation_report.csv"))
-
-
-if __name__ == "__main__":
-    main()
-```
-
-### Step 3: Monitor Running Simulations
-
-```python
-#!/usr/bin/env python3
-"""Monitor progress of running simulations."""
-
-import time
-from pathlib import Path
-from ambermeta.parsers import MdoutParser
-
-def check_progress(mdout_path: Path):
-    """Check simulation progress from output file."""
-    parser = MdoutParser(str(mdout_path))
-    meta = parser.parse()
-
-    if meta.stats:
-        current_time = meta.stats.time_end
-        print(f"  Current time: {current_time:.2f} ps")
-        print(f"  Frames collected: {meta.stats.count}")
-        print(f"  Avg temperature: {meta.stats.temp_mean:.2f} K")
-
-    print(f"  Status: {'Running' if not meta.finished_properly else 'Complete'}")
-
-
-def monitor_simulations(sim_dir: Path, interval: int = 60):
-    """Monitor all simulations in a directory."""
-    while True:
-        print(f"\n{'='*60}")
-        print(f"Checking simulations at {time.strftime('%H:%M:%S')}")
-        print("="*60)
-
-        for mdout in sim_dir.rglob("*.mdout"):
-            print(f"\n{mdout.name}:")
-            try:
-                check_progress(mdout)
-            except Exception as e:
-                print(f"  Error: {e}")
-
-        time.sleep(interval)
-
-
-if __name__ == "__main__":
-    monitor_simulations(Path("/path/to/running_sims"))
-```
+`auto_discover` is fault-tolerant by default — a bad file in one directory is recorded as a `FileLoadError` on its stage rather than aborting the batch. To audit completion across runs, read `stage.mdout.details.finished_properly` (see [API §9](api.md#9-worked-examples)).
 
 ---
 
-## Summary
+## See also
 
-This tutorial covered the main workflows for using AmberMeta:
-
-1. **Extracting metadata** from individual AMBER files
-2. **Building protocols** from directories or manifests
-3. **Using the GUI** for interactive manifest creation
-4. **Creating manifests** for reproducible documentation
-5. **Validating continuity** between simulation stages
-6. **Exporting data** for publications and reports
-7. **Working with sequences** of production runs
-8. **Automating collection** for large-scale projects
-
-For more detailed information, see:
-- [CLI Reference](cli.md) - Complete command-line documentation
-- [GUI Guide](gui.md) - Browser-based interactive editor
-- [Manifest Schema](manifest.md) - Full manifest format specification
-- [Python API](api.md) - Complete API reference
+- [Recipes](recipes.md) — short copy-paste one-liners
+- [CLI reference](cli.md) · [Python API](api.md) · [Manifest schema](manifest.md) · [GUI guide](gui.md)
