@@ -34,6 +34,25 @@ function renderPanel(stageId: string, stages: StageModel[]) {
   );
 }
 
+function SelectTwo() {
+  const { select } = useSelection();
+  useEffect(() => { select("1", { additive: true }); select("2", { additive: true }); }, []); // eslint-disable-line
+  return null;
+}
+
+function renderBulk() {
+  queryClient.clear();
+  server.use(http.get("/api/document", () => HttpResponse.json(emptyDocument)));
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <SelectionProvider>
+        <SelectTwo />
+        <PropertiesPanel />
+      </SelectionProvider>
+    </QueryClientProvider>
+  );
+}
+
 describe("PropertiesPanel", () => {
   it("commits a name edit on blur via updateStage", async () => {
     const calls: unknown[] = [];
@@ -125,5 +144,16 @@ describe("PropertiesPanel", () => {
     renderPanel("1", [mkStage({ id: "1", name: "min", mdin: "/work/equil/01_min.mdin" })]);
     expect(await screen.findByText("01_min.mdin")).toBeInTheDocument();
     expect(screen.getByText("equil/")).toBeInTheDocument();
+  });
+
+  it("bulk role select is controlled and Title-cased, and re-applies", async () => {
+    let calls = 0;
+    server.use(http.put("/api/stages/bulk", () => { calls++; return HttpResponse.json(emptyDocument); }));
+    renderBulk();
+    const sel = await screen.findByLabelText(/set role for all/i) as HTMLSelectElement;
+    expect(screen.getByRole("option", { name: "Production" })).toBeInTheDocument();
+    await userEvent.selectOptions(sel, "production");
+    await userEvent.selectOptions(sel, "equilibration");
+    await waitFor(() => expect(calls).toBe(2));
   });
 });

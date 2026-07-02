@@ -4,7 +4,7 @@ import { useSelection } from "@/state/selection";
 import { Button, FileLabel } from "@/components/common";
 import { SettingsPanel } from "./SettingsPanel";
 import { FilePicker } from "@/components/FilePicker";
-import { relativizePath } from "@/lib/format";
+import { relativizePath, roleLabel } from "@/lib/format";
 import type { StageModel, StageRole, StageUpdate } from "@/types";
 
 const ROLES = ["", "minimization", "heating", "equilibration", "production"];
@@ -24,10 +24,14 @@ export function PropertiesPanel() {
         <label className="block">
           <span className="text-ink-secondary">Set role for all</span>
           <select className="w-full mt-1 px-2 py-1 border border-hairline rounded bg-app"
-            defaultValue=""
-            onChange={(e) =>
-              bulk.mutate({ ids: selectedIds, update: { role: e.target.value as StageRole } })}>
-            {ROLES.map((r) => <option key={r} value={r}>{r || "Unknown"}</option>)}
+            aria-label="Set role for all"
+            value=""
+            onChange={(e) => {
+              const v = e.target.value;
+              if (v) bulk.mutate({ ids: selectedIds, update: { role: v as StageRole } });
+            }}>
+            <option value="">set role…</option>
+            {ROLES.filter(Boolean).map((r) => <option key={r} value={r}>{roleLabel(r)}</option>)}
           </select>
         </label>
       </div>
