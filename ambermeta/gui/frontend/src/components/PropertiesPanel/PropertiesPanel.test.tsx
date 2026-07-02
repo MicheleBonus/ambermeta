@@ -100,4 +100,10 @@ describe("PropertiesPanel", () => {
     await userEvent.click(await screen.findByRole("button", { name: "Delete stage" }));
     await waitFor(() => expect(deleted).toBe(true));
   });
+
+  it("renders assigned file paths folder-qualified with extension", async () => {
+    renderPanel("1", [mkStage({ id: "1", name: "min", mdin: "/work/equil/01_min.mdin" })]);
+    expect(await screen.findByText("01_min.mdin")).toBeInTheDocument();
+    expect(screen.getByText("equil/")).toBeInTheDocument();
+  });
 });

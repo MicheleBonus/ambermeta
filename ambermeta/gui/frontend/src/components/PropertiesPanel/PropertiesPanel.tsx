@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useDocument, useUpdateStage, useBulkUpdate, useDeleteStage } from "@/api/hooks";
 import { useSelection } from "@/state/selection";
-import { Button } from "@/components/common";
+import { Button, FileLabel } from "@/components/common";
 import { SettingsPanel } from "./SettingsPanel";
 import { FilePicker } from "@/components/FilePicker";
 import type { StageModel, StageRole, StageUpdate } from "@/types";
@@ -71,6 +71,7 @@ function StageForm(
   { stage, onCommit, onPickFile }:
   { stage: StageModel; onCommit: (p: StageUpdate) => void; onPickFile?: (slot: FileKind) => void }
 ) {
+  const { data: doc } = useDocument();
   const [name, setName] = useState(stage.name);
   const [role, setRole] = useState<StageRole>(stage.role as StageRole);
   const [gap, setGap] = useState(stage.expected_gap_ps?.toString() ?? "");
@@ -109,7 +110,9 @@ function StageForm(
         {FILE_KINDS.map((k) => (
           <div key={k} className="flex items-center gap-2">
             <span className="w-14 text-ink-muted text-xs">{k}</span>
-            <span className="flex-1 truncate font-mono text-xs">{stage[k] ?? "—"}</span>
+            <span className="flex-1 min-w-0 truncate font-mono text-xs">
+              <FileLabel path={stage[k]} base={doc?.base_directory ?? null} />
+            </span>
             {onPickFile && (
               <button type="button" className="text-accent text-xs" onClick={() => onPickFile(k)}>Pick…</button>
             )}
