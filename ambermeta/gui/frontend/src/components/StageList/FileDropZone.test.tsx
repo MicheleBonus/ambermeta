@@ -35,7 +35,7 @@ describe("FileDropZone", () => {
     expect(await screen.findByText("—")).toBeInTheDocument();
   });
 
-  it("clicking a chip opens a picker and assigns; × clears", async () => {
+  it("clicking a chip opens a picker and assigns", async () => {
     let sent: unknown;
     queryClient.clear();
     server.use(
@@ -57,5 +57,18 @@ describe("FileDropZone", () => {
     await userEvent.click(await screen.findByRole("button", { name: /assign mdin/i }));
     await userEvent.click(await screen.findByText("03_npt.mdin"));
     await waitFor(() => expect(sent).toBe("equil/03_npt.mdin"));
+  });
+
+  it("clicking × clears the assigned file", async () => {
+    let body: { files?: { mdin?: string } } | undefined;
+    server.use(
+      http.put("/api/stages/:id", async ({ request }) => {
+        body = (await request.json()) as { files?: { mdin?: string } };
+        return HttpResponse.json({ ...emptyDocument });
+      }),
+    );
+    renderZone("/work/equil/01_min.mdin");
+    await userEvent.click(await screen.findByRole("button", { name: /clear mdin/i }));
+    await waitFor(() => expect(body?.files?.mdin).toBe(""));
   });
 });
