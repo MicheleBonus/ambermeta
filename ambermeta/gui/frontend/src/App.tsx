@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { SelectionProvider } from "@/state/selection";
-import { ResizeHandle, Toaster } from "@/components/common";
+import { DragChip, ResizeHandle, Toaster } from "@/components/common";
 import { usePersistentSize } from "@/lib/usePersistentSize";
 import { useUnsavedGuard } from "@/lib/useUnsavedGuard";
 import { TopBar } from "@/components/TopBar/TopBar";
@@ -11,7 +11,10 @@ import { StageList } from "@/components/StageList/StageList";
 import { PropertiesPanel } from "@/components/PropertiesPanel/PropertiesPanel";
 import { FilePicker } from "@/components/FilePicker/FilePicker";
 import { ValidationPanel } from "@/components/ValidationPanel/ValidationPanel";
-import { DndContext, PointerSensor, useSensor, useSensors, type DragEndEvent } from "@dnd-kit/core";
+import {
+  DndContext, DragOverlay, PointerSensor, useSensor, useSensors,
+  type DragEndEvent, type DragStartEvent,
+} from "@dnd-kit/core";
 import { reorderIds, resolveDrop } from "@/components/StageList/reorder";
 import {
   useDocument, useOpen, useSave, useDiscover, useLinkRestarts, useReorder, useUpdateStage,
@@ -25,7 +28,9 @@ export default function App() {
   const relink = useLinkRestarts();
   const reorder = useReorder(); const updateStage = useUpdateStage();
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
+  const [activeId, setActiveId] = useState<string | null>(null);
   const handleDragEnd = (e: DragEndEvent) => {
+    setActiveId(null);
     const drop = resolveDrop(String(e.active.id), e.over ? String(e.over.id) : null);
     if (!drop) return;
     if (drop.type === "assign") {
@@ -51,7 +56,8 @@ export default function App() {
 
   return (
     <SelectionProvider>
-      <DndContext sensors={sensors} onDragEnd={handleDragEnd}>
+      <DndContext sensors={sensors} onDragEnd={handleDragEnd}
+        onDragStart={(e: DragStartEvent) => setActiveId(String(e.active.id))}>
       <div className="flex flex-col h-full">
         <TopBar onOpen={onOpen} onSave={onSave} onDiscover={onDiscover}
           onRelink={() => relink.mutate()}
@@ -78,6 +84,7 @@ export default function App() {
       <ExportModal open={exportOpen} onClose={() => setExportOpen(false)} />
       <ValidationPanel open={validateOpen} onClose={() => setValidateOpen(false)} />
       <Toaster />
+      <DragOverlay><DragChip activeId={activeId} base={doc?.base_directory ?? null} /></DragOverlay>
       </DndContext>
     </SelectionProvider>
   );
