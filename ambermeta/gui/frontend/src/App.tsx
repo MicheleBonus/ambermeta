@@ -23,8 +23,8 @@ import {
 } from "@/api/hooks";
 
 export default function App() {
-  const [filesW, setFilesW] = usePersistentSize("files-w", 280);
-  const [propsW, setPropsW] = usePersistentSize("props-w", 340);
+  const [filesW, setFilesW] = usePersistentSize("files-w", 280, { min: 200, max: 480 });
+  const [propsW, setPropsW] = usePersistentSize("props-w", 340, { min: 260, max: 520 });
   const { data: doc } = useDocument();
   const open = useOpen(); const save = useSave(); const discover = useDiscover();
   const relink = useLinkRestarts();
