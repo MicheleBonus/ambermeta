@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { SortableContext, verticalListSortingStrategy } from "@dnd-kit/sortable";
+import { useDroppable } from "@dnd-kit/core";
 import { ChevronRight, ChevronDown } from "lucide-react";
 import { useDocument, useSequences, useBulkUpdate } from "@/api/hooks";
 import { useSelection } from "@/state/selection";
@@ -21,6 +22,7 @@ export function StageList() {
   const bulk = useBulkUpdate();
   const { selectedIds, select } = useSelection();
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const { setNodeRef: emptyRef } = useDroppable({ id: "new-stage" });
 
   const stages = doc?.stages ?? [];
 
@@ -86,7 +88,9 @@ export function StageList() {
     <SortableContext items={stages.map((s) => s.id)} strategy={verticalListSortingStrategy}>
       <div className="h-full overflow-auto">
         {rows.length === 0 && (
-          <p className="p-4 text-sm text-ink-muted">No stages. Use Discover or drag files in.</p>
+          <p ref={emptyRef} className="p-4 text-sm text-ink-muted border-2 border-dashed border-hairline m-2 rounded">
+            No stages. Use Discover or drag a file here to create one.
+          </p>
         )}
         {rows.map((row) => renderRow(row))}
       </div>

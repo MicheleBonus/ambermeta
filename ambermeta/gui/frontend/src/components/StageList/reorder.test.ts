@@ -30,4 +30,8 @@ describe("resolveDrop", () => {
     expect(resolveDrop("file:/x", null)).toBeNull();
     expect(resolveDrop("s1", null)).toBeNull();
   });
+  it("resolves a file dropped on the empty canvas to a create", () => {
+    expect(resolveDrop("file:/work/equil/01_min.mdin", "new-stage"))
+      .toEqual({ type: "create", path: "/work/equil/01_min.mdin" });
+  });
 });

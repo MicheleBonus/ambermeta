@@ -16,8 +16,10 @@ import {
   type DragEndEvent, type DragStartEvent,
 } from "@dnd-kit/core";
 import { reorderIds, resolveDrop } from "@/components/StageList/reorder";
+import { relativizePath, fileLabel } from "@/lib/format";
 import {
   useDocument, useOpen, useSave, useDiscover, useLinkRestarts, useReorder, useUpdateStage,
+  useCreateStage,
 } from "@/api/hooks";
 
 export default function App() {
@@ -27,6 +29,7 @@ export default function App() {
   const open = useOpen(); const save = useSave(); const discover = useDiscover();
   const relink = useLinkRestarts();
   const reorder = useReorder(); const updateStage = useUpdateStage();
+  const createStage = useCreateStage();
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
   const [activeId, setActiveId] = useState<string | null>(null);
   const handleDragEnd = (e: DragEndEvent) => {
@@ -34,7 +37,10 @@ export default function App() {
     const drop = resolveDrop(String(e.active.id), e.over ? String(e.over.id) : null);
     if (!drop) return;
     if (drop.type === "assign") {
-      updateStage.mutate({ id: drop.stageId, update: { files: { [drop.kind]: drop.path } } });
+      updateStage.mutate({ id: drop.stageId, update: { files: { [drop.kind]: relativizePath(drop.path, doc?.base_directory ?? null) } } });
+    } else if (drop.type === "create") {
+      const { name } = fileLabel(drop.path, doc?.base_directory ?? null);
+      createStage.mutate({ name: name.replace(/\.[^.]+$/, "") });
     } else {
       reorder.mutate(reorderIds((doc?.stages ?? []).map((s) => s.id), drop.activeId, drop.overId));
     }
