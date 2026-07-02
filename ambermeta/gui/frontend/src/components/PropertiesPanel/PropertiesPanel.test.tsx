@@ -85,7 +85,27 @@ describe("PropertiesPanel", () => {
     const pickButtons = await screen.findAllByRole("button", { name: "Pick…" });
     await userEvent.click(pickButtons[1]); // prmtop, mdin, mdout, mdcrd, inpcrd order -> [1] = mdin
     await userEvent.click(await screen.findByText("/work/min.in"));
-    await waitFor(() => expect(calls).toEqual([{ files: { mdin: "/work/min.in" } }]));
+    await waitFor(() => expect(calls).toEqual([{ files: { mdin: "min.in" } }]));
+  });
+
+  it("commits a base-relative path when a file is picked", async () => {
+    let sentPath: unknown;
+    server.use(
+      http.get("/api/files", () => HttpResponse.json([
+        { path: "/work/equil/02_nvt.mdin", name: "02_nvt.mdin", file_type: "mdin",
+          is_directory: false, size: 1, extension: ".mdin", parent: "/work/equil", children: null },
+      ])),
+      http.put("/api/stages/1", async ({ request }) => {
+        const body = await request.json() as { files?: { mdin?: string } };
+        sentPath = body.files?.mdin;
+        return HttpResponse.json({ ...emptyDocument, base_directory: "/work" });
+      }),
+    );
+    renderPanel("1", [mkStage({ id: "1", name: "min" })]);
+    const pickButtons = await screen.findAllByRole("button", { name: "Pick…" });
+    await userEvent.click(pickButtons[1]); // prmtop, mdin, mdout, mdcrd, inpcrd order -> [1] = mdin
+    await userEvent.click(await screen.findByText("02_nvt.mdin"));
+    await waitFor(() => expect(sentPath).toBe("equil/02_nvt.mdin"));
   });
 
   it("Delete stage button calls DELETE /api/stages/{id}", async () => {

@@ -4,6 +4,7 @@ import { useSelection } from "@/state/selection";
 import { Button, FileLabel } from "@/components/common";
 import { SettingsPanel } from "./SettingsPanel";
 import { FilePicker } from "@/components/FilePicker";
+import { relativizePath } from "@/lib/format";
 import type { StageModel, StageRole, StageUpdate } from "@/types";
 
 const ROLES = ["", "minimization", "heating", "equilibration", "production"];
@@ -49,6 +50,7 @@ function StageEditor(
   const [pickSlot, setPickSlot] = useState<FileKind | null>(null);
   const deleteStage = useDeleteStage();
   const { clear } = useSelection();
+  const { data: doc } = useDocument();
   return (
     <>
       <StageForm stage={stage} onCommit={onCommit} onPickFile={(slot) => setPickSlot(slot)} />
@@ -60,7 +62,7 @@ function StageEditor(
       <FilePicker open={pickSlot !== null} mode="open" title={`Pick ${pickSlot ?? ""} file`}
         onClose={() => setPickSlot(null)}
         onPick={({ path }) => {
-          if (pickSlot) onCommit({ files: { [pickSlot]: path } });
+          if (pickSlot) onCommit({ files: { [pickSlot]: relativizePath(path, doc?.base_directory ?? null) } });
           setPickSlot(null);
         }} />
     </>
