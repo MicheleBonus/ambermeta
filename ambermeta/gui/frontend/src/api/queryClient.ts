@@ -14,4 +14,5 @@ export const DOCUMENT_KEY = ["document"] as const;
 
 export function setDocument(doc: DocumentResponse): void {
   queryClient.setQueryData(DOCUMENT_KEY, doc);
+  queryClient.invalidateQueries({ queryKey: ["sequences"] });
 }

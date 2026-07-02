@@ -1,2 +1,13 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+
+# GUI build output must stay LF so a Windows build is byte-identical to the
+# CI (Linux) build. Vite passes the template's line endings through into
+# static/index.html; without this a CRLF (Windows) checkout of the template
+# produces a CRLF bundle that fails the gui-static-check.
+ambermeta/gui/frontend/index.html eol=lf
+ambermeta/gui/static/index.html eol=lf
+ambermeta/gui/static/assets/*.js eol=lf
+ambermeta/gui/static/assets/*.css eol=lf
+ambermeta/gui/static/assets/*.woff binary
+ambermeta/gui/static/assets/*.woff2 binary

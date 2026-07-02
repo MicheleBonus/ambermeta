@@ -34,6 +34,25 @@ function renderPanel(stageId: string, stages: StageModel[]) {
   );
 }
 
+function SelectTwo() {
+  const { select } = useSelection();
+  useEffect(() => { select("1", { additive: true }); select("2", { additive: true }); }, []); // eslint-disable-line
+  return null;
+}
+
+function renderBulk() {
+  queryClient.clear();
+  server.use(http.get("/api/document", () => HttpResponse.json(emptyDocument)));
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <SelectionProvider>
+        <SelectTwo />
+        <PropertiesPanel />
+      </SelectionProvider>
+    </QueryClientProvider>
+  );
+}
+
 describe("PropertiesPanel", () => {
   it("commits a name edit on blur via updateStage", async () => {
     const calls: unknown[] = [];
@@ -85,7 +104,27 @@ describe("PropertiesPanel", () => {
     const pickButtons = await screen.findAllByRole("button", { name: "Pick…" });
     await userEvent.click(pickButtons[1]); // prmtop, mdin, mdout, mdcrd, inpcrd order -> [1] = mdin
     await userEvent.click(await screen.findByText("/work/min.in"));
-    await waitFor(() => expect(calls).toEqual([{ files: { mdin: "/work/min.in" } }]));
+    await waitFor(() => expect(calls).toEqual([{ files: { mdin: "min.in" } }]));
+  });
+
+  it("commits a base-relative path when a file is picked", async () => {
+    let sentPath: unknown;
+    server.use(
+      http.get("/api/files", () => HttpResponse.json([
+        { path: "/work/equil/02_nvt.mdin", name: "02_nvt.mdin", file_type: "mdin",
+          is_directory: false, size: 1, extension: ".mdin", parent: "/work/equil", children: null },
+      ])),
+      http.put("/api/stages/1", async ({ request }) => {
+        const body = await request.json() as { files?: { mdin?: string } };
+        sentPath = body.files?.mdin;
+        return HttpResponse.json({ ...emptyDocument, base_directory: "/work" });
+      }),
+    );
+    renderPanel("1", [mkStage({ id: "1", name: "min" })]);
+    const pickButtons = await screen.findAllByRole("button", { name: "Pick…" });
+    await userEvent.click(pickButtons[1]); // prmtop, mdin, mdout, mdcrd, inpcrd order -> [1] = mdin
+    await userEvent.click(await screen.findByText("02_nvt.mdin"));
+    await waitFor(() => expect(sentPath).toBe("equil/02_nvt.mdin"));
   });
 
   it("Delete stage button calls DELETE /api/stages/{id}", async () => {
@@ -99,5 +138,28 @@ describe("PropertiesPanel", () => {
     renderPanel("1", [mkStage({ id: "1", name: "min" })]);
     await userEvent.click(await screen.findByRole("button", { name: "Delete stage" }));
     await waitFor(() => expect(deleted).toBe(true));
+  });
+
+  it("renders assigned file paths folder-qualified with extension", async () => {
+    renderPanel("1", [mkStage({ id: "1", name: "min", mdin: "/work/equil/01_min.mdin" })]);
+    expect(await screen.findByText("01_min.mdin")).toBeInTheDocument();
+    expect(screen.getByText("equil/")).toBeInTheDocument();
+  });
+
+  it("single-stage role select shows Title-cased options", async () => {
+    renderPanel("1", [mkStage({ id: "1", name: "min", role: "minimization" })]);
+    await screen.findByLabelText("Role");
+    expect(screen.getByRole("option", { name: "Production" })).toBeInTheDocument();
+  });
+
+  it("bulk role select is controlled and Title-cased, and re-applies", async () => {
+    let calls = 0;
+    server.use(http.put("/api/stages/bulk", () => { calls++; return HttpResponse.json(emptyDocument); }));
+    renderBulk();
+    const sel = await screen.findByLabelText(/set role for all/i) as HTMLSelectElement;
+    expect(screen.getByRole("option", { name: "Production" })).toBeInTheDocument();
+    await userEvent.selectOptions(sel, "production");
+    await userEvent.selectOptions(sel, "equilibration");
+    await waitFor(() => expect(calls).toBe(2));
   });
 });

@@ -54,4 +54,17 @@ describe("StageList", () => {
     await userEvent.click(screen.getByText(/prod_ · 3 runs/));
     await waitFor(() => expect(screen.getByText("prod_001")).toBeInTheDocument());
   });
+
+  it("renders every row past the old virtualization threshold (no windowing)", async () => {
+    const stages = Array.from({ length: 60 }, (_, i) =>
+      mkStage({ id: String(i), name: `s${i}`, role: "" }));
+    server.use(
+      http.get("/api/document", () => HttpResponse.json({ ...emptyDocument, stages })),
+      http.get("/api/sequences", () => HttpResponse.json({})),
+    );
+    renderList();
+    await waitFor(() => expect(screen.getByText("s0")).toBeInTheDocument());
+    // Row #58 would be outside a virtualized window (0-height jsdom scroller); require it present.
+    expect(screen.getByText("s58")).toBeInTheDocument();
+  });
 });

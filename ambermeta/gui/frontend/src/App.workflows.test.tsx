@@ -18,17 +18,24 @@ beforeEach(() => { _resetToasts(); });
 describe("top-bar workflows", () => {
   it("Discover calls the discover endpoint and updates the document", async () => {
     let discovered = false;
+    const discoveredDocument = {
+      ...emptyDocument, dirty: true,
+      stages: [{
+        id: "1", name: "prod_001", role: "production", prmtop: null, mdin: "prod_001.in",
+        mdout: null, mdcrd: null, inpcrd: null, expected_gap_ps: null, gap_tolerance_ps: null, notes: [],
+      }],
+    };
     server.use(
       http.post("/api/document/discover", () => {
         discovered = true;
-        return HttpResponse.json({
-          ...emptyDocument, dirty: true,
-          stages: [{
-            id: "1", name: "prod_001", role: "production", prmtop: null, mdin: "prod_001.in",
-            mdout: null, mdcrd: null, inpcrd: null, expected_gap_ps: null, gap_tolerance_ps: null, notes: [],
-          }],
-        });
-      })
+        return HttpResponse.json(discoveredDocument);
+      }),
+      // Mirror real backend behavior: once discover has run, a background
+      // refetch of the document (e.g. from newly-mounted stage-row file
+      // chips reading base_directory) should see the post-discover state,
+      // not revert it to the pre-discover empty document.
+      http.get("/api/document", () =>
+        HttpResponse.json(discovered ? discoveredDocument : emptyDocument))
     );
     renderApp();
     await userEvent.click(await screen.findByRole("button", { name: "Discover" }));

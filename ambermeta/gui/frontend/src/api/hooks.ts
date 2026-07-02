@@ -15,9 +15,22 @@ function docMutation<V>(fn: (v: V) => Promise<DocumentResponse>) {
   return useMutation({ mutationFn: fn, onSuccess: (doc) => setDocument(doc) });
 }
 
-export const useOpen = () => docMutation((path: string) => api.openDocument(path));
+export const useOpen = () =>
+  useMutation({
+    mutationFn: (path: string) => api.openDocument(path),
+    onSuccess: (doc) => {
+      setDocument(doc);
+      queryClient.invalidateQueries({ queryKey: ["files"] });
+    },
+  });
 export const useDiscover = () =>
-  docMutation((a: { recursive: boolean; pattern?: string }) => api.discover(a));
+  useMutation({
+    mutationFn: (a: { recursive: boolean; pattern?: string }) => api.discover(a),
+    onSuccess: (doc) => {
+      setDocument(doc);
+      queryClient.invalidateQueries({ queryKey: ["files"] });
+    },
+  });
 export const useCreateStage = () => docMutation((s: StageCreate) => api.createStage(s));
 export const useUpdateStage = () =>
   docMutation((a: { id: string; update: StageUpdate }) => api.updateStage(a.id, a.update));
