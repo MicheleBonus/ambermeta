@@ -39,13 +39,13 @@ function FileRow({ file, base, depth }: { file: FileInfo; base: string | null; d
 
 function TreeNode({ node, base, depth, expanded, toggle, forceOpen }: {
   node: FileInfo; base: string | null; depth: number;
-  expanded: Record<string, boolean>; toggle: (p: string) => void; forceOpen: boolean;
+  expanded: Record<string, boolean>; toggle: (p: string, open: boolean) => void; forceOpen: boolean;
 }) {
   if (!node.is_directory) return <FileRow file={node} base={base} depth={depth} />;
   const isOpen = forceOpen || expanded[node.path] || (expanded[node.path] === undefined && depth < 2);
   return (
     <div>
-      <div onClick={() => toggle(node.path)} style={{ paddingLeft: depth * 12 }}
+      <div onClick={() => toggle(node.path, isOpen)} style={{ paddingLeft: depth * 12 }}
         className="flex items-center gap-1 py-1 text-sm cursor-pointer hover:bg-app rounded">
         {isOpen ? <ChevronDown size={14} className="text-ink-muted" />
                 : <ChevronRight size={14} className="text-ink-muted" />}
@@ -71,8 +71,8 @@ export function FileBrowser() {
 
   const query = q.toLowerCase();
   const shown = useMemo(() => filterTree(tree, query), [tree, query]);
-  const toggle = (p: string) =>
-    setExpanded((e) => ({ ...e, [p]: !(e[p] ?? true) })); // first click on a default-open folder collapses it
+  const toggle = (p: string, open: boolean) =>
+    setExpanded((e) => ({ ...e, [p]: !open })); // invert what's actually displayed, at any depth
 
   return (
     <div className="flex flex-col h-full">

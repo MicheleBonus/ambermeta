@@ -53,6 +53,30 @@ describe("FileBrowser tree", () => {
     expect(screen.queryByText("01_min.mdin")).not.toBeInTheDocument();
   });
 
+  it("expands a depth-2 (default-collapsed) folder on a single click", async () => {
+    const deepTree = [
+      { path: "/work/run1", name: "run1", file_type: "folder", is_directory: true,
+        size: null, extension: null, parent: "/work", children: [
+          { path: "/work/run1/equil", name: "equil", file_type: "folder", is_directory: true,
+            size: null, extension: null, parent: "/work/run1", children: [
+              { path: "/work/run1/equil/stage3", name: "stage3", file_type: "folder", is_directory: true,
+                size: null, extension: null, parent: "/work/run1/equil", children: [
+                  { path: "/work/run1/equil/stage3/x.mdin", name: "x.mdin", file_type: "mdin",
+                    is_directory: false, size: 10, extension: ".mdin",
+                    parent: "/work/run1/equil/stage3", children: null },
+                ] },
+            ] },
+        ] },
+    ];
+    server.use(http.get("/api/files", () => HttpResponse.json(deepTree)));
+    renderFB();
+    // Depth 0 (run1) and depth 1 (equil) are auto-open; depth 2 (stage3) is collapsed by default.
+    await waitFor(() => expect(screen.getByText("stage3")).toBeInTheDocument());
+    expect(screen.queryByText("x.mdin")).not.toBeInTheDocument();
+    await userEvent.click(screen.getByText("stage3")); // single click should reveal the child
+    expect(screen.getByText("x.mdin")).toBeInTheDocument();
+  });
+
   it("search prunes to matches and reveals their folder", async () => {
     server.use(http.get("/api/files", () => HttpResponse.json(tree)));
     renderFB();

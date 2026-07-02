@@ -146,6 +146,12 @@ describe("PropertiesPanel", () => {
     expect(screen.getByText("equil/")).toBeInTheDocument();
   });
 
+  it("single-stage role select shows Title-cased options", async () => {
+    renderPanel("1", [mkStage({ id: "1", name: "min", role: "minimization" })]);
+    await screen.findByLabelText("Role");
+    expect(screen.getByRole("option", { name: "Production" })).toBeInTheDocument();
+  });
+
   it("bulk role select is controlled and Title-cased, and re-applies", async () => {
     let calls = 0;
     server.use(http.put("/api/stages/bulk", () => { calls++; return HttpResponse.json(emptyDocument); }));

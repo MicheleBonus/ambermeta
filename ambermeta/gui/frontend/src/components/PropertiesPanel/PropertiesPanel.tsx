@@ -108,7 +108,7 @@ function StageForm(
         <select aria-label="Role" value={role}
           onChange={(e) => { setRole(e.target.value as StageRole); onCommit({ role: e.target.value as StageRole }); }}
           className="w-full mt-1 px-2 py-1 border border-hairline rounded bg-app">
-          {ROLES.map((r) => <option key={r} value={r}>{r || "Unknown"}</option>)}
+          {ROLES.map((r) => <option key={r} value={r}>{roleLabel(r)}</option>)}
         </select>
       </label>
       <div className="space-y-1">
