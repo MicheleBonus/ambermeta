@@ -74,12 +74,13 @@ interface FileIconProps {
   type: FileType;
   className?: string;
   isOpen?: boolean;
+  size?: number;
 }
 
-export function FileIcon({ type, className = '', isOpen }: FileIconProps) {
+export function FileIcon({ type, className = '', isOpen, size = 16 }: FileIconProps) {
   if (type === 'folder') {
     const Icon = isOpen ? FolderOpen : Folder;
-    return <Icon className={`text-ink-muted ${className}`} />;
+    return <Icon size={size} className={`text-ink-muted ${className}`} />;
   }
 
   const Icon = FILE_TYPE_ICONS[type] || File;
@@ -92,5 +93,5 @@ export function FileIcon({ type, className = '', isOpen }: FileIconProps) {
     other: 'text-ink-muted',
   }[type];
 
-  return <Icon className={`${colorClass} ${className}`} />;
+  return <Icon size={size} className={`${colorClass} ${className}`} />;
 }
