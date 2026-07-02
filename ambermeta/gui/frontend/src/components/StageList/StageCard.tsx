@@ -5,6 +5,7 @@ import { FileDropZone } from "./FileDropZone";
 import { roleLabel, formatPs } from "@/lib/format";
 import { useUpdateStage } from "@/api/hooks";
 import { STAGE_ROLE_CONFIG } from "@/types";
+import { GripVertical } from "@/components/common";
 import type { StageModel, StageRole } from "@/types";
 
 const KINDS = ["prmtop", "mdin", "mdout", "mdcrd", "inpcrd"] as const;
@@ -27,11 +28,14 @@ export function StageCard(
   };
 
   return (
-    <div ref={setNodeRef} style={style} {...attributes} {...listeners}
+    <div ref={setNodeRef} style={style}
       onClick={onSelect}
       className={`border-b border-hairline px-3 py-2 cursor-pointer
         ${isSelected ? "bg-accent-subtle" : "hover:bg-app"}`}>
       <div className="flex items-center gap-2">
+        <button aria-label="drag to reorder" {...attributes} {...listeners}
+          onClick={(e) => e.stopPropagation()}
+          className="cursor-grab text-ink-muted shrink-0"><GripVertical size={14} /></button>
         <span className="text-xs text-ink-muted w-6 tabular-nums">{index + 1}</span>
         {editing ? (
           <input autoFocus aria-label="Rename stage" value={name}

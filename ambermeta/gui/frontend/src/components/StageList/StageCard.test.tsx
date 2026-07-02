@@ -58,4 +58,19 @@ describe("StageCard inline edit", () => {
     await userEvent.selectOptions(screen.getByLabelText(/stage role/i), "production");
     await waitFor(() => expect(sentRole).toBe("production"));
   });
+  it("exposes a dedicated drag handle and keeps card click for select", async () => {
+    let selected = false;
+    queryClient.clear();
+    server.use(http.get("/api/document", () => HttpResponse.json({ ...emptyDocument })));
+    render(
+      <QueryClientProvider client={queryClient}>
+        <SelectionProvider><DndContext>
+          <StageCard stage={stage} index={0} isSelected={false} onSelect={() => { selected = true; }} />
+        </DndContext></SelectionProvider>
+      </QueryClientProvider>
+    );
+    expect(screen.getByLabelText(/drag to reorder/i)).toBeInTheDocument();
+    await userEvent.click(screen.getByText("min"));
+    expect(selected).toBe(true);
+  });
 });
