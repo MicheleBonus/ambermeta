@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { DndContext } from "@dnd-kit/core";
 import { http, HttpResponse } from "msw";
@@ -32,5 +33,29 @@ describe("FileDropZone", () => {
   it("shows a dash when empty", async () => {
     renderZone(null);
     expect(await screen.findByText("—")).toBeInTheDocument();
+  });
+
+  it("clicking a chip opens a picker and assigns; × clears", async () => {
+    let sent: unknown;
+    queryClient.clear();
+    server.use(
+      http.get("/api/document", () => HttpResponse.json({ ...emptyDocument, base_directory: "/work" })),
+      http.get("/api/files", () => HttpResponse.json([
+        { path: "/work/equil/03_npt.mdin", name: "03_npt.mdin", file_type: "mdin",
+          is_directory: false, size: 1, extension: ".mdin", parent: "/work/equil", children: null },
+      ])),
+      http.put("/api/stages/:id", async ({ request }) => {
+        sent = ((await request.json()) as { files?: { mdin?: string } }).files?.mdin;
+        return HttpResponse.json({ ...emptyDocument });
+      }),
+    );
+    render(
+      <QueryClientProvider client={queryClient}>
+        <DndContext><FileDropZone stageId="1" kind="mdin" current={null} /></DndContext>
+      </QueryClientProvider>
+    );
+    await userEvent.click(await screen.findByRole("button", { name: /assign mdin/i }));
+    await userEvent.click(await screen.findByText("03_npt.mdin"));
+    await waitFor(() => expect(sent).toBe("equil/03_npt.mdin"));
   });
 });

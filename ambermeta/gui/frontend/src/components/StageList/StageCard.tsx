@@ -27,7 +27,7 @@ export function StageCard(
           <span className="text-warning text-xs">+{formatPs(stage.expected_gap_ps)} gap</span>
         )}
       </div>
-      <div className="flex flex-wrap gap-1 mt-1 pl-8">
+      <div className="flex flex-wrap gap-1 mt-1 pl-8" onClick={(e) => e.stopPropagation()}>
         {KINDS.map((k) => (
           <FileDropZone key={k} stageId={stage.id} kind={k} current={stage[k]} />
         ))}
