@@ -30,3 +30,19 @@ def test_classify_real_topology(sample_md_data_dir):
     assert t.path == "CH3L1_HUMAN_6NAG.top"
     assert t.kind in ("normal", "hmr")
     assert t.n_atoms and t.n_atoms > 0
+
+
+def test_hmr_swap_uses_0002_boundary(monkeypatch):
+    import ambermeta.protocol as proto
+
+    class _MdinDetails:
+        def __init__(self, dt): self.dt = dt
+    class _Mdin:
+        def __init__(self, dt): self.details = _MdinDetails(dt)
+
+    stages = [proto.SimulationStage(name="prod", mdin=_Mdin(0.0025))]
+    monkeypatch.setattr(proto, "_safe_parse", lambda *a, **k: "HMR_TOPO")
+    monkeypatch.setattr(proto.os.path, "exists", lambda p: True)
+    proto._apply_global_and_hmr_prmtop(
+        stages, ".", global_prmtop=None, hmr_prmtop="wt_hmr.prmtop", strict=False)
+    assert stages[0].prmtop == "HMR_TOPO"   # 2.5 fs now triggers HMR

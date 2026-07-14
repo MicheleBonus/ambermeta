@@ -14,6 +14,7 @@ from ambermeta.parsers.mdin import MdinData, MdinParser
 from ambermeta.parsers.mdout import MdoutData, MdoutParser
 from ambermeta.parsers.prmtop import PrmtopData, PrmtopParser
 from ambermeta.legacy_extractors.prmtop import ION_RESNAMES, WATER_RESNAMES
+from ambermeta.topology_pool import implies_hmr
 from ambermeta.errors import AmberMetaError, FileLoadError, classify_exception
 from ambermeta.logging_config import get_logger
 from ambermeta.roles import classify_role
@@ -860,7 +861,7 @@ def _apply_global_and_hmr_prmtop(stages, directory, *, global_prmtop,
                     dt = getattr(st.mdin.details, "dt", None)
                 if dt is None and st.mdout and st.mdout.details:
                     dt = getattr(st.mdout.details, "dt", None)
-                if isinstance(dt, (int, float)) and dt >= HMR_TIMESTEP_THRESHOLD_PS:
+                if implies_hmr(dt):
                     st.prmtop = data
                     st.validation.append(
                         f"INFO: using HMR prmtop (dt={dt} ps): {hmr_prmtop}")
