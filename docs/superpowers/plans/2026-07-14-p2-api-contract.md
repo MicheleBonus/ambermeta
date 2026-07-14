@@ -44,7 +44,10 @@
 
 **Files:**
 - Rewrite: `ambermeta/gui/api/schemas.py`
+- Delete: `tests/test_gui_api.py` (see note)
 - Test: `tests/test_gui_schemas_sim.py`
+
+**Why delete `test_gui_api.py` here:** it asserts the OLD `DocumentResponse` shape (a `stages` list) and drives the old `/stages` endpoints — both removed by THIS task's schema rewrite (which replaces `stages` with `simulation`). Empirically, applying A1's `schemas.py` breaks exactly the 14 endpoint tests in `test_gui_api.py` and nothing else. Its coverage returns as `tests/test_gui_api_sim.py` in Group D. The 5 transitional classes (below) keep `routes.py` importable so `test_gui_core_bridge.py` / `test_gui_files.py` still collect and pass.
 
 **Interfaces:**
 - Produces: `FileType`, `StageRole`, `TopologyKind` enums; `TopologyModel`, `InputCoordsModel`, `StepModel`, `PhaseModel`, `SimulationModel`, `RuntimeSettings`, `SettingsPatch`, `DocumentResponse`; request models `AddTopology`, `UpdateTopology`, `SetStartingStructure`, `PhaseCreate`, `PhaseUpdate`, `PhaseReorder`, `StepCreate`, `StepUpdate`, `StepMove`, `StepReorder`, `AssignRequest`, `StageFiles`; `Suggestion`, `MissingFile`, `StageIssue`, `ValidationReport` (with `suggestions`), `DiscoverResult`, `FileInfo`, `FileMetadata`, `RawFile`, `OpenRequest`, `SaveRequest`, `SaveResult`, `DiscoverRequest`, `PreviewRequest`, `PreviewResponse`, `ApiError`.
@@ -426,12 +429,13 @@ FileInfo.model_rebuild()
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `pytest tests/test_gui_schemas_sim.py -q` → PASS (3 passed). Then run the FULL suite `pytest -q` → it must be all green: the transitional classes keep the not-yet-rewritten `routes.py` importable, so `test_gui_api.py` / `test_gui_core_bridge.py` / `test_gui_files.py` still collect and pass.
+Run: `pytest tests/test_gui_schemas_sim.py -q` → PASS (3 passed). Then `git rm tests/test_gui_api.py` and run the FULL suite `pytest -q` → all green: the transitional classes keep `routes.py` importable so `test_gui_core_bridge.py` / `test_gui_files.py` still collect and pass.
 Expected: PASS
 
 - [ ] **Step 5: Commit**
 
 ```bash
+git rm tests/test_gui_api.py
 git add ambermeta/gui/api/schemas.py tests/test_gui_schemas_sim.py
 git commit -m "feat(gui): rewrite API schemas for the Simulation->Phase->Step model"
 ```
@@ -445,9 +449,8 @@ git commit -m "feat(gui): rewrite API schemas for the Simulation->Phase->Step mo
 **Files:**
 - Rewrite: `ambermeta/gui/api/document.py`
 - Rewrite: `tests/test_gui_document.py` (the old flat-stage tests are replaced)
-- Delete: `tests/test_gui_api.py` (see note)
 
-**Why delete `test_gui_api.py` here:** rewriting the store removes the old flat mutators (`add_stage`/`update_stage`/…) that the not-yet-rewritten `routes.py` handlers call, so the old `/stages`-surface tests in `tests/test_gui_api.py` can no longer pass. Delete it in THIS task; its coverage is replaced by `tests/test_gui_api_sim.py` in Group D. `routes.py` itself stays importable (A1's transitional schema classes) and its now-dormant handlers are removed when `routes.py` is rewritten in D1.
+**Note:** `tests/test_gui_api.py` was already deleted in Task A1 (its old `DocumentResponse`/`/stages` contract died with the schema rewrite). The old `routes.py` stays importable via A1's transitional classes and its now-dormant handlers are removed when `routes.py` is rewritten in D1.
 
 **Interfaces:**
 - Consumes: `ambermeta.simulation.{Simulation, Phase, Step, Topology, InputCoords}`; `schemas` (lazily, in `to_response`).
@@ -692,13 +695,12 @@ class DocumentStore:
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `pytest tests/test_gui_document.py -q` → PASS (3 passed). Then the FULL suite `pytest -q` → all green (after `git rm tests/test_gui_api.py`).
+Run: `pytest tests/test_gui_document.py -q` → PASS (3 passed). Then the FULL suite `pytest -q` → all green.
 Expected: PASS
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git rm tests/test_gui_api.py
 git add ambermeta/gui/api/document.py tests/test_gui_document.py
 git commit -m "feat(gui): DocumentStore holds a Simulation; state/undo/redo/to_response"
 ```
