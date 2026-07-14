@@ -3,6 +3,7 @@ import { useFileMetadata } from "@/api/hooks";
 import { FilePeek } from "./FilePeek";
 import { FileDetails } from "./FileDetails";
 import { AssignActions } from "./AssignActions";
+import { SuggestionsTray } from "@/components/Suggestions/SuggestionsTray";
 
 function FileInspector({ path }: { path: string }) {
   const { data } = useFileMetadata(path);
@@ -33,9 +34,10 @@ export function Inspector() {
   }
 
   if (sel.kind === "sim") {
-    // Filled in by the sim-settings task; a stub keeps the pane usable meanwhile.
-    return <div className="p-3 text-sm text-ink-muted">Simulation settings.</div>;
+    // Sim-settings editing is filled in by a later task; the suggestions tray
+    // (draft-first Needs you / Applied) is the sim-level content meanwhile.
+    return <SuggestionsTray />;
   }
 
-  return <div className="p-3 text-sm text-ink-muted">Pick a file to inspect it.</div>;
+  return <SuggestionsTray />;
 }
