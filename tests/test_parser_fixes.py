@@ -69,3 +69,9 @@ def test_protein_ligand_complex_names_ligand():
     md = _md({"ALA": 20, "LIG": 1, "WAT": 500})
     _classify_simulation(md)
     assert "Protein" in md.simulation_category and "Ligand" in md.simulation_category
+
+
+def test_signless_ions_not_ligands():
+    md = _md({"ALA": 20, "NA": 8, "CL": 8, "WAT": 500})
+    _classify_simulation(md)
+    assert "Ligand" not in md.simulation_category  # NA/CL are ions, not a ligand

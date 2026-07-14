@@ -72,7 +72,10 @@ ION_RESNAMES = {
     "Mg+", "Mg2+", "Ca2+", "Zn2+",     # Divalent
     "Ba2+", "Sr2+", "Fe2+", "Mn2+",
     "Co2+", "Ni2+", "Cu2+", "Cd2+",
-    "Fe3+", "Cr3+", "Al3+"             # Trivalent
+    "Fe3+", "Cr3+", "Al3+",            # Trivalent
+    # Sign-less aliases (older / converted topologies)
+    "NA", "CL", "K", "RB", "CS", "LI", "F", "BR", "I",
+    "MG", "CA", "ZN", "MN", "FE", "CO", "NI", "CU", "CD", "BA", "SR", "IB",
 }
 
 # -------------------------------
