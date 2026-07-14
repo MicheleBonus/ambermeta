@@ -435,3 +435,37 @@ def preview_simulation(sim, base_directory, fmt):
         except OSError:
             pass
     return {"content": content, "warnings": []}
+
+
+def build_suggestions(sim, base_directory):
+    from ambermeta.protocol import detect_sequence_gaps
+    out = []
+
+    def _sug(kind, severity, title, evidence, actions):
+        return {"id": f"sug_{len(out) + 1}", "kind": kind, "severity": severity,
+                "title": title, "evidence": evidence, "actions": actions}
+
+    step_names = [s.name for p in sim.phases for s in p.steps]
+    for base, missing in detect_sequence_gaps(step_names).items():
+        idxs = ", ".join(str(i) for i in missing)
+        out.append(_sug("missing_run", "needs_you",
+                        f"{base} sequence is missing member(s) {idxs}",
+                        f"present members of '{base}' skip index(es) {idxs}",
+                        ["Mark as expected gap", "Locate file", "Ignore"]))
+
+    hmr = [t for t in sim.topologies if t.kind == "hmr"]
+    if hmr and len(sim.topologies) > 1:
+        out.append(_sug("topology_confirm", "needs_you", "Confirm the HMR topology",
+                        f"{hmr[0].path} detected as HMR (repartitioned hydrogen mass)",
+                        ["Confirm", "Reassign"]))
+
+    if sim.starting_structure:
+        out.append(_sug("starting_structure", "applied",
+                        f"{sim.starting_structure} set as the starting structure",
+                        "single-frame coordinates; feeds the first run", ["Undo"]))
+
+    role_pairs = [f"{p.name}->{p.role}" for p in sim.phases if p.role]
+    if role_pairs:
+        out.append(_sug("role_guess", "applied", "Phase roles inferred from file content/names",
+                        "; ".join(role_pairs), ["Undo"]))
+    return out

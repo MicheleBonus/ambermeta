@@ -33,3 +33,25 @@ def test_save_then_preview_round_trip(tmp_path):
     assert reloaded == sim
     out = core_bridge.preview_simulation(sim, str(tmp_path), "yaml")
     assert "phases" in out["content"] and out["warnings"] == []
+
+
+# append to tests/test_gui_core_bridge_sim.py
+from ambermeta.simulation import InputCoords
+
+
+def test_build_suggestions_flags_missing_run_and_hmr():
+    sim = Simulation(
+        topologies=[Topology(id="t0", path="wt.prmtop", kind="normal"),
+                    Topology(id="t1", path="wt_hmr.prmtop", kind="hmr")],
+        starting_structure="wt.inpcrd",
+        phases=[Phase(id="p0", name="Production", role="production", steps=[
+            Step(id="a", name="prod_0001", topology="t1"),
+            Step(id="b", name="prod_0003", topology="t1")])],
+    )
+    sug = core_bridge.build_suggestions(sim, "/base")
+    kinds = {s["kind"] for s in sug}
+    assert "missing_run" in kinds        # prod_0002 absent
+    assert "topology_confirm" in kinds   # two topologies, one HMR
+    assert "starting_structure" in kinds and "role_guess" in kinds
+    miss = next(s for s in sug if s["kind"] == "missing_run")
+    assert "2" in miss["evidence"]
