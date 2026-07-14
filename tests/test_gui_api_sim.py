@@ -128,3 +128,24 @@ def test_assign_and_file_routes(tmp_path):
     assert r.status_code == 200 and "imin=1" in r.json()["content"]
 
     assert c.post("/api/assign", json={"path": "x", "target_type": "bogus"}).status_code == 400
+
+
+def test_mutation_routes_reject_path_traversal(tmp_path):
+    c = _client(tmp_path)
+    evil = "../../secret.prmtop"
+    # topology pool
+    assert c.post("/api/topologies", json={"path": evil, "kind": "normal"}).status_code == 403
+    # unified assign
+    assert c.post("/api/assign", json={"path": evil, "target_type": "pool", "kind": "normal"}).status_code == 403
+    # starting structure
+    assert c.put("/api/simulation/starting-structure", json={"path": evil}).status_code == 403
+    # a valid topology first (inside base), then a traversal update
+    tid = c.post("/api/topologies", json={"path": "ok.prmtop", "kind": "normal"}).json()["simulation"]["topologies"][0]["id"]
+    assert c.put(f"/api/topologies/{tid}", json={"path": evil}).status_code == 403
+    # step create + update slot
+    p = c.post("/api/phases", json={"name": "P", "role": "production"}).json()["simulation"]["phases"][0]["id"]
+    assert c.post(f"/api/phases/{p}/steps", json={"name": "s", "mdin": evil}).status_code == 403
+    sid = c.post(f"/api/phases/{p}/steps", json={"name": "s2"}).json()["simulation"]["phases"][0]["steps"][-1]["id"]
+    assert c.put(f"/api/steps/{sid}", json={"files": {"mdin": evil}}).status_code == 403
+    # a legitimate relative path inside base must still WORK (not over-blocked)
+    assert c.post("/api/topologies", json={"path": "sys.prmtop", "kind": "normal"}).status_code == 200

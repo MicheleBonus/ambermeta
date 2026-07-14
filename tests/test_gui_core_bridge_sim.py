@@ -35,10 +35,6 @@ def test_save_then_preview_round_trip(tmp_path):
     assert "phases" in out["content"] and out["warnings"] == []
 
 
-# append to tests/test_gui_core_bridge_sim.py
-from ambermeta.simulation import InputCoords
-
-
 def test_build_suggestions_flags_missing_run_and_hmr():
     sim = Simulation(
         topologies=[Topology(id="t0", path="wt.prmtop", kind="normal"),
