@@ -37,3 +37,24 @@ def test_migrate_infers_role_when_absent():
     v1 = [{"name": "prod/run", "mdin": "run.in"}]   # audit divergence stem
     sim = migrate_v1_manifest(v1)
     assert sim.phases[0].role == "production"
+
+
+# append to tests/test_migration.py
+import json
+from ambermeta.simulation import load_simulation
+
+
+def test_open_a_v1_json_file_yields_a_migrated_simulation(tmp_path):
+    v1 = {
+        "global_prmtop": "wt.prmtop",
+        "stages": [
+            {"name": "min", "stage_role": "minimization", "mdin": "min.in"},
+            {"name": "prod_001", "stage_role": "production", "mdin": "prod_001.in"},
+        ],
+    }
+    path = tmp_path / "legacy.json"
+    path.write_text(json.dumps(v1))
+    sim = load_simulation(str(path))
+    assert sim.version == 2
+    assert [p.role for p in sim.phases] == ["minimization", "production"]
+    assert sim.topologies[0].path == "wt.prmtop"
