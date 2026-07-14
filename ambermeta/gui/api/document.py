@@ -327,6 +327,44 @@ class DocumentStore:
             p.steps = [by_id[i] for i in ordered_ids]
             self._doc.dirty = True
 
+    # -- unified assignment -------------------------------------------------
+    def _assign_step_topology(self, step_id: str, path: str, kind: Optional[str]) -> None:
+        with self.lock:
+            _, s = self._find_step(step_id)   # validate before mutating
+            self._snapshot()
+            s.topology = self._topology_id_for_path(path, kind)
+            self._doc.dirty = True
+
+    def _assign_phase_topology(self, phase_id: str, path: str, kind: Optional[str]) -> None:
+        with self.lock:
+            p = self._find_phase(phase_id)    # validate before mutating
+            self._snapshot()
+            tid = self._topology_id_for_path(path, kind)
+            for s in p.steps:
+                s.topology = tid
+            self._doc.dirty = True
+
+    def assign_file(self, path: str, target_type: str, target_id: Optional[str] = None,
+                    kind: Optional[str] = None, slot: Optional[str] = None) -> None:
+        if target_type == "pool":
+            self.add_topology(path, kind or "normal")
+        elif target_type == "starting_structure":
+            self.set_starting_structure(path)
+        elif target_type == "phase_topology":
+            if not target_id:
+                raise ValueError("phase_topology requires target_id (phase id)")
+            self._assign_phase_topology(target_id, path, kind)
+        elif target_type == "step_topology":
+            if not target_id:
+                raise ValueError("step_topology requires target_id (step id)")
+            self._assign_step_topology(target_id, path, kind)
+        elif target_type == "step_slot":
+            if not target_id or slot not in _STEP_SLOTS:
+                raise ValueError("step_slot requires target_id (step id) and a slot in mdin/mdout/mdcrd")
+            self.update_step(target_id, {slot: path})
+        else:
+            raise ValueError(f"unknown target_type: {target_type}")
+
     def undo(self) -> None:
         with self.lock:
             if not self._undo:

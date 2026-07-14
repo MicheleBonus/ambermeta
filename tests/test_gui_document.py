@@ -131,3 +131,35 @@ def test_delete_phase_reassigns_steps_to_neighbour():
     st.delete_phase(p_min, reassign_to=p_prod)
     assert [p.id for p in st.get().simulation.phases] == [p_prod]
     assert [s.name for s in st._find_phase(p_prod).steps] == ["prod_001", "min"]
+
+
+def test_assign_file_all_targets():
+    st = _store()
+    pid = st.add_phase("Prod", "production")
+    s1 = st.add_step(pid, {"name": "prod_001"})
+    s2 = st.add_step(pid, {"name": "prod_002"})
+
+    st.assign_file("wt.prmtop", "pool", kind="normal")
+    assert st.get().simulation.topologies[0].path == "wt.prmtop"
+
+    st.assign_file("wt.inpcrd", "starting_structure")
+    assert st.get().simulation.starting_structure == "wt.inpcrd"
+
+    st.assign_file("wt_hmr.prmtop", "phase_topology", target_id=pid, kind="hmr")
+    tid = st._find_step(s1)[1].topology
+    assert tid is not None and st._find_step(s2)[1].topology == tid   # cascaded to all steps
+
+    st.assign_file("wt.prmtop", "step_topology", target_id=s2)
+    assert st._find_step(s2)[1].topology == st.get().simulation.topologies[0].id
+
+    st.assign_file("prod_001.in", "step_slot", target_id=s1, slot="mdin")
+    assert st._find_step(s1)[1].mdin == "prod_001.in"
+
+
+def test_assign_file_bad_target_raises():
+    st = _store()
+    import pytest
+    with pytest.raises(ValueError):
+        st.assign_file("x", "bogus")
+    with pytest.raises(ValueError):
+        st.assign_file("x", "step_slot", target_id=None, slot="mdin")
