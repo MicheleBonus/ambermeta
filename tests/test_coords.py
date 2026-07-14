@@ -19,3 +19,9 @@ def test_inpcrd_header_with_time(tmp_path):
     rst = tmp_path / "x.crd"
     rst.write_text("default_name\n     6  0.0010000E+03\n" + "  1.0  2.0  3.0  4.0  5.0  6.0\n" * 3)
     assert sniff_coordinate_kind(str(rst)) == "inpcrd"
+
+
+def test_netcdf_magic_defaults_to_trajectory(tmp_path):
+    f = tmp_path / "traj.crd"
+    f.write_bytes(b"CDF\x01 binary netcdf header bytes")
+    assert sniff_coordinate_kind(str(f)) == "mdcrd"

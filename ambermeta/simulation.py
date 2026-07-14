@@ -1,9 +1,17 @@
 # ambermeta/simulation.py
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
-from typing import List, Optional
-from typing import Any, Dict   # add to the existing typing import at the top
+from typing import Any, Dict, List, Optional
+
+from ambermeta.manifest import _read_raw_manifest, _normalize_container, _normalize_manifest
+from ambermeta.roles import classify_role
+
+try:  # optional dependency, mirrors manifest.py
+    import yaml
+except ImportError:  # pragma: no cover
+    yaml = None
 
 
 @dataclass
@@ -115,16 +123,6 @@ def payload_to_simulation(payload: Dict[str, Any]) -> Simulation:
     return sim
 
 
-import json
-
-from ambermeta.manifest import _read_raw_manifest, _normalize_container
-
-try:  # optional dependency, mirrors manifest.py
-    import yaml
-except ImportError:  # pragma: no cover
-    yaml = None
-
-
 def _is_v2(raw: Any) -> bool:
     return isinstance(raw, dict) and (raw.get("version") == 2 or "phases" in raw or "simulation" in raw)
 
@@ -152,10 +150,6 @@ def load_simulation(path: str) -> Simulation:
     if _is_v2(raw):
         return payload_to_simulation(raw)
     return migrate_v1_manifest(_normalize_container(raw))
-
-
-from ambermeta.manifest import _normalize_manifest
-from ambermeta.roles import classify_role
 
 
 def _v1_globals(container: Any) -> Dict[str, Any]:

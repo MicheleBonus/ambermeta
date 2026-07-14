@@ -4,7 +4,6 @@ import argparse
 import csv
 import json
 import os
-import re
 import sys
 from typing import Any, Dict, List, Optional
 

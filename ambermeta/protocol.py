@@ -689,7 +689,7 @@ class SimulationProtocol:
             if dt is None and stage.mdout and stage.mdout.details:
                 dt = getattr(stage.mdout.details, "dt", None)
             if dt is not None and isinstance(dt, (int, float)):
-                if dt >= HMR_TIMESTEP_THRESHOLD_PS:
+                if implies_hmr(dt):
                     # Large timestep indicates HMR is active
                     if composition.get("hmr_active") is None or composition.get("hmr_active") is False:
                         composition["hmr_active"] = True
@@ -826,8 +826,8 @@ def _apply_global_and_hmr_prmtop(stages, directory, *, global_prmtop,
     """Apply global and/or HMR prmtop to stages.
 
     - global_prmtop: applied to every stage that has no prmtop yet.
-    - hmr_prmtop: applied to stages whose timestep (dt) meets or exceeds
-      HMR_TIMESTEP_THRESHOLD_PS; overrides any previously set prmtop.
+    - hmr_prmtop: applied to stages whose timestep implies HMR (dt > 0.002,
+      via implies_hmr); overrides any previously set prmtop.
     - Missing files: warn (or raise under strict).
     """
     def _load_topology(path, label):
@@ -1471,7 +1471,7 @@ def auto_discover(
         if "mdin" in file_kinds:
             stage.mdin = _safe_parse(MdinParser, file_kinds["mdin"], "mdin", stage, strict=strict)
             # Try mdin-based inference first
-            inferred_role = getattr(getattr(stage.mdin, "details", None), "stage_role", None) if stage.mdin else None
+            inferred_role = classify_role(mdin_details=getattr(stage.mdin, "details", None)) if stage.mdin else ""
             if not stage.stage_role and inferred_role:
                 stage.stage_role = inferred_role
                 stage.validation.append(f"INFO: stage_role '{inferred_role}' inferred from mdin file")

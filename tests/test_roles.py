@@ -52,3 +52,15 @@ def test_gui_and_cli_agree_on_the_same_stems():
         gui = infer_stage_role_from_path(stem) or ""
         cli = _suggest_stage_role(stem)
         assert gui == cli, f"divergence on {stem!r}: gui={gui!r} cli={cli!r}"
+
+
+def test_full_canonical_words_self_classify():
+    assert classify_role("minimization") == "minimization"
+    assert classify_role("minimize") == "minimization"
+    assert classify_role("equilibration") == "equilibration"
+    assert classify_role("equilibrate") == "equilibration"
+    assert classify_role("production") == "production"
+    assert classify_role("heating") == "heating"
+    # no new false positives
+    assert classify_role("minor_tweak") == ""
+    assert classify_role("product_notes") == ""

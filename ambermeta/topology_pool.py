@@ -51,6 +51,7 @@ def classify_topology_pool(directory: str, prmtop_rels: List[str]) -> TopologyPo
     two-bucket classify_topologies collapsed them into one global prmtop.
     """
     pool = TopologyPool()
+    used: set = set()
     for idx, rel in enumerate(sorted(prmtop_rels)):
         kind, n_atoms = "normal", None
         try:
@@ -59,5 +60,9 @@ def classify_topology_pool(directory: str, prmtop_rels: List[str]) -> TopologyPo
             n_atoms = getattr(md, "n_atoms", None) or getattr(md, "natom", None)
         except (IOError, OSError, ValueError, LookupError):
             pass
-        pool.topologies.append(Topology(id=_slug(rel, idx), path=rel, kind=kind, n_atoms=n_atoms))
+        tid = _slug(rel, idx)
+        if tid in used:
+            tid = f"{tid}_{idx}"
+        used.add(tid)
+        pool.topologies.append(Topology(id=tid, path=rel, kind=kind, n_atoms=n_atoms))
     return pool

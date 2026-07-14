@@ -10,10 +10,10 @@ CANONICAL_ROLES = ("minimization", "heating", "equilibration", "production")
 # of a component and any of _ . - . Bare ambiguous tokens (md, run) are excluded
 # on purpose; content heuristics catch those when the parameters are available.
 _NAME_CUES = [
-    (re.compile(r"(?:^|[_.\-])(?:min|minim|em)(?:[_.\-]|$)"), "minimization"),
+    (re.compile(r"(?:^|[_.\-])(?:minimi[sz]ation|minimi[sz]e|minim|min|em)(?:[_.\-]|$)"), "minimization"),
     (re.compile(r"(?:^|[_.\-])(?:heat|warm|therm|anneal)(?:[_.\-]|$|ing\b)"), "heating"),
-    (re.compile(r"(?:^|[_.\-])(?:equil|eq|nvt|npt)(?:[_.\-]|$)"), "equilibration"),
-    (re.compile(r"(?:^|[_.\-])(?:prod|production)(?:[_.\-]|$)"), "production"),
+    (re.compile(r"(?:^|[_.\-])(?:equilibration|equilibrate|equil|eq|nvt|npt)(?:[_.\-]|$)"), "equilibration"),
+    (re.compile(r"(?:^|[_.\-])(?:production|prod)(?:[_.\-]|$)"), "production"),
 ]
 
 
