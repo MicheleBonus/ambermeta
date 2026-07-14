@@ -1,5 +1,5 @@
 // src/types/types.test.ts
-import { describe, it, expect } from "vitest";
+import { it, expect } from "vitest";
 import type { DocumentResponse, SimulationModel, AssignRequest } from "@/types";
 
 it("document response nests a simulation", () => {

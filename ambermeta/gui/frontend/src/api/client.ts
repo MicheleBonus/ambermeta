@@ -1,11 +1,12 @@
 import type {
-  DocumentResponse, SaveResult, PreviewResponse, ValidationReport, DiscoverResult,
-  RuntimeSettings, SettingsPatch, FileInfo, FileMetadata, RawFile, ExportFormat,
+  DocumentResponse, ValidationReport, DiscoverResult,
+  RuntimeSettings, FileInfo, FileMetadata, RawFile, ExportFormat,
   AddTopology, UpdateTopology, PhaseCreate, PhaseUpdate,
   StepCreatePayload, StepUpdatePayload, StepMovePayload, AssignRequest,
 } from "@/types";
-// (SaveResult / SettingsPatch below)
+// (SaveResult / PreviewResponse / SettingsPatch are client-response shapes, not part of @/types)
 export interface SaveResult { document: DocumentResponse; warnings: string[]; }
+export interface PreviewResponse { content: string; warnings: string[]; }
 export interface SettingsPatch { auto_link_restarts?: boolean; strict_validation?: boolean; allow_gaps?: boolean; use_relative_paths?: boolean; }
 
 export class ApiError extends Error {
