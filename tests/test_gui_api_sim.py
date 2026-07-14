@@ -76,3 +76,32 @@ def test_phase_routes(tmp_path):
     r = c.delete(f"/api/phases/{pa}")
     assert [p["id"] for p in r.json()["simulation"]["phases"]] == [pb]
     assert c.put("/api/phases/bogus", json={"name": "x"}).status_code == 404
+
+
+def test_step_routes_and_topology_clear(tmp_path):
+    c = _client(tmp_path)
+    p = c.post("/api/phases", json={"name": "Prod", "role": "production"}).json()["simulation"]["phases"][0]["id"]
+    r = c.post(f"/api/phases/{p}/steps", json={"name": "prod_001", "mdin": "prod_001.in"})
+    sid = r.json()["simulation"]["phases"][0]["steps"][0]["id"]
+
+    # set then clear topology (explicit null must clear)
+    c.put(f"/api/steps/{sid}", json={"topology": "t0"})
+    assert _step(c, sid)["topology"] == "t0"
+    c.put(f"/api/steps/{sid}", json={"topology": None})
+    assert _step(c, sid)["topology"] is None
+    # absent topology must NOT clear
+    c.put(f"/api/steps/{sid}", json={"topology": "t9"})
+    c.put(f"/api/steps/{sid}", json={"name": "prod_001b"})
+    assert _step(c, sid)["topology"] == "t9" and _step(c, sid)["name"] == "prod_001b"
+
+    r = c.request("DELETE", f"/api/steps/{sid}")
+    assert r.json()["simulation"]["phases"][0]["steps"] == []
+
+
+def _step(c, sid):
+    doc = c.get("/api/document").json()
+    for ph in doc["simulation"]["phases"]:
+        for s in ph["steps"]:
+            if s["id"] == sid:
+                return s
+    raise AssertionError("step not found")

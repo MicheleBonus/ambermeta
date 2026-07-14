@@ -215,3 +215,80 @@ def delete_phase(phase_id: str, reassign_to: Optional[str] = Query(None)) -> Doc
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=f"Phase not found: {exc}")
     return store.to_response()
+
+
+@router.post("/phases/{phase_id}/steps", response_model=DocumentResponse)
+def create_step(phase_id: str, req: StepCreate) -> DocumentResponse:
+    store = get_store()
+    fields = {
+        "name": req.name, "topology": req.topology,
+        "input_coords": req.input_coords.model_dump() if req.input_coords else None,
+        "mdin": req.mdin, "mdout": req.mdout, "mdcrd": req.mdcrd,
+        "expected_gap_ps": req.expected_gap_ps, "gap_tolerance_ps": req.gap_tolerance_ps,
+        "notes": list(req.notes),
+    }
+    try:
+        store.add_step(phase_id, fields)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Phase not found: {phase_id}")
+    return store.to_response()
+
+
+@router.post("/phases/{phase_id}/steps/reorder", response_model=DocumentResponse)
+def reorder_steps(phase_id: str, req: StepReorder) -> DocumentResponse:
+    store = get_store()
+    try:
+        store.reorder_steps(phase_id, req.step_ids)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Phase not found: {phase_id}")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return store.to_response()
+
+
+@router.put("/steps/{step_id}", response_model=DocumentResponse)
+def update_step(step_id: str, req: StepUpdate) -> DocumentResponse:
+    store = get_store()
+    patch = {}
+    if req.name is not None:
+        patch["name"] = req.name
+    if "topology" in req.model_fields_set:      # present (incl. null) => set/clear
+        patch["topology"] = req.topology
+    if req.input_coords is not None:
+        patch["input_coords"] = req.input_coords.model_dump()
+    if req.files is not None:
+        for slot in ("mdin", "mdout", "mdcrd"):
+            val = getattr(req.files, slot, None)
+            if val is not None:
+                patch[slot] = val
+    if req.expected_gap_ps is not None:
+        patch["expected_gap_ps"] = req.expected_gap_ps
+    if req.gap_tolerance_ps is not None:
+        patch["gap_tolerance_ps"] = req.gap_tolerance_ps
+    if req.notes is not None:
+        patch["notes"] = list(req.notes)
+    try:
+        store.update_step(step_id, patch)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Step not found: {step_id}")
+    return store.to_response()
+
+
+@router.delete("/steps/{step_id}", response_model=DocumentResponse)
+def delete_step(step_id: str) -> DocumentResponse:
+    store = get_store()
+    try:
+        store.delete_step(step_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Step not found: {step_id}")
+    return store.to_response()
+
+
+@router.post("/steps/{step_id}/move", response_model=DocumentResponse)
+def move_step(step_id: str, req: StepMove) -> DocumentResponse:
+    store = get_store()
+    try:
+        store.move_step(step_id, req.phase_id, req.index)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=f"Not found: {exc}")
+    return store.to_response()
