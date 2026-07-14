@@ -161,3 +161,32 @@ def test_minimization_run_type(tmp_path):
     _mdout(p, "     imin    =       1, maxcyc  =    5000, ntb     =       1,")
     md = parse_mdout(str(p))
     assert md.run_type == "Minimization"
+
+
+from ambermeta.legacy_extractors.mdcrd import _detect_format as _mdcrd_detect
+from ambermeta.legacy_extractors import mdcrd as _mdcrd
+
+
+def test_mdcrd_detect_format_magic(tmp_path):
+    hdf5 = tmp_path / "t.nc"; hdf5.write_bytes(b"\x89HDF\r\n")
+    ascii_cdf = tmp_path / "t.mdcrd"; ascii_cdf.write_text("CDF trajectory title\n")
+    assert _mdcrd_detect(str(hdf5)) == "NetCDF"
+    assert _mdcrd_detect(str(ascii_cdf)) == "ASCII"
+
+
+@pytest.mark.skipif(not _mdcrd.HAS_NETCDF or _mdcrd.np is None,
+                    reason="needs a NetCDF backend + numpy to build an AMBERRESTART file")
+def test_amberrestart_does_not_crash_trajectory_parser(tmp_path):
+    import numpy as np
+    path = str(tmp_path / "prod.ncrst")
+    if _mdcrd.NETCDF_BACKEND == "netCDF4":
+        ds = _mdcrd.nc.Dataset(path, "w", format="NETCDF3_64BIT_OFFSET")
+        ds.Conventions = "AMBERRESTART"
+        ds.createDimension("atom", 3); ds.createDimension("spatial", 3)
+        t = ds.createVariable("time", "f8", ())      # 0-d scalar time
+        t[...] = 10.0
+        ds.createVariable("coordinates", "f8", ("atom", "spatial"))
+        ds.close()
+        # It is a .ncrst, but force the trajectory path to prove it degrades, not crashes:
+        md = _mdcrd.parse_mdcrd(path)
+        assert md is not None  # no uncaught TypeError
