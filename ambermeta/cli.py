@@ -204,6 +204,100 @@ def _suggest_stage_role(name: str) -> str:
     return classify_role(name)
 
 
+def _topology_path(sim, topo_id: Optional[str]) -> str:
+    for t in sim.topologies:
+        if t.id == topo_id:
+            return t.path
+    return topo_id or "no topology"
+
+
+def _input_source_label(step) -> str:
+    ic = step.input_coords
+    if ic.source == "starting_structure":
+        return "starting structure"
+    if ic.source == "step":
+        return f"step {ic.ref}" if ic.ref else "previous step"
+    return ic.path or "?"
+
+
+def _print_simulation(sim, report=None) -> None:
+    """Print the three-level Simulation structure (pool, starting structure, phases→steps)."""
+    _out("\nSimulation summary")
+    _out("==================")
+    _out(f"Topologies (pool): {len(sim.topologies)}")
+    for t in sim.topologies:
+        _out(f"  - {t.id} [{t.kind}]  {t.path}")
+    _out(f"Starting structure: {sim.starting_structure or '(none)'}")
+    _out(f"Phases: {len(sim.phases)}")
+    for phase in sim.phases:
+        role = phase.role or "unclassified"
+        _out(f"\nPhase: {phase.name} [{role}]")
+        for step in phase.steps:
+            topo = _topology_path(sim, step.topology) if step.topology else "no topology"
+            files = ", ".join(
+                f"{k}={getattr(step, k)}" for k in ("mdin", "mdout", "mdcrd") if getattr(step, k)
+            )
+            line = f"  - {step.name}  topology={topo}  input={_input_source_label(step)}"
+            _out(line + (f"  ({files})" if files else ""))
+    if report is not None:
+        _sim_findings(report)
+
+
+def _sim_findings(report) -> None:
+    """Print continuity/sequence findings + protocol notes + an overall status line."""
+    suggestions = report.get("suggestions", []) or []
+    findings = [s for s in suggestions if s.get("kind") in ("continuity_gap", "missing_run")]
+    if findings:
+        _out("\nContinuity / sequence findings:")
+        for s in findings:
+            _out(f"  - {s.get('title')}: {s.get('evidence')}")
+    issues = report.get("protocol_issues", []) or []
+    if issues:
+        _out("\nProtocol notes:")
+        for note in issues:
+            _out(f"  - {note}")
+    _out(f"\nValidation: {'OK' if report.get('ok') else 'ISSUES FOUND'}")
+
+
+def _resolve_sim_format(path: str, requested: Optional[str]) -> str:
+    """Choose a v2 serialization format: explicit request, else by extension, else json."""
+    if requested:
+        return requested
+    ext = os.path.splitext(path)[1].lower().lstrip(".")
+    return "yaml" if ext in ("yaml", "yml") else "json"
+
+
+def _discover_command(args: argparse.Namespace) -> int:
+    """Discover-as-draft: scan a directory into a Simulation draft; optionally write v2."""
+    from ambermeta.gui.api.core_bridge import discover_draft
+
+    directory = os.path.abspath(args.directory)
+    if not os.path.isdir(directory):
+        print(Colors.error(f"ERROR: Directory not found: {directory}"), file=sys.stderr)
+        return 1
+
+    result = discover_draft(directory, recursive=args.recursive, pattern=args.pattern)
+    sim = result["simulation"]
+    if not sim.phases:
+        _out("No simulation files discovered; nothing to draft.")
+        return 1
+
+    _print_simulation(sim)
+    for w in result.get("warnings", []) or []:
+        _out(Colors.warning(f"WARNING: {w}"))
+    suggestions = result.get("suggestions", []) or []
+    if suggestions:
+        _out("\nSuggestions:")
+        for s in suggestions:
+            _out(f"  - [{s.get('severity')}] {s.get('title')}")
+
+    if getattr(args, "write", None):
+        from ambermeta.simulation import write_simulation
+        fmt = _resolve_sim_format(args.write, getattr(args, "format", None))
+        write_simulation(sim, args.write, fmt)
+        _out(Colors.success(f"\nWrote v2 draft manifest: {args.write} ({fmt})"))
+    return 0
+
 
 def _print_protocol(protocol: SimulationProtocol, verbose: bool = False) -> None:
     totals = protocol.totals()
@@ -1621,6 +1715,22 @@ For documentation, visit: https://github.com/MicheleBonus/ambermeta
         help="Global prmtop file to use for all stages (avoids specifying it per stage)",
     )
 
+    discover_parser = subparsers.add_parser(
+        "discover",
+        help="Discover files into a Simulation draft (Sim→Phase→Step) and optionally write a v2 manifest",
+        description=(
+            "Scan a directory into a draft Simulation using the same discover-as-draft engine "
+            "as the GUI: a topology pool, phases inferred by role, and steps with per-step "
+            "topology binding and input-coordinate sources. Prints the draft and any suggestions; "
+            "with --write, saves a v2 manifest you can edit."
+        ),
+    )
+    discover_parser.add_argument("directory", nargs="?", default=".", help="Directory to scan (default: current directory)")
+    discover_parser.add_argument("--recursive", action=argparse.BooleanOptionalAction, default=True, help="Recurse into subdirectories (default: on; use --no-recursive to disable)")
+    discover_parser.add_argument("--pattern", help="Regex filter for discovered files")
+    discover_parser.add_argument("--write", help="Write the draft to this path as a v2 manifest")
+    discover_parser.add_argument("--format", choices=["json", "yaml"], help="Format for --write (default: inferred from extension, else json)")
+
     # UX-005: validate subcommand
     validate_parser = subparsers.add_parser(
         "validate",
@@ -1776,6 +1886,8 @@ def main(argv: List[str] | None = None) -> int:
     def _dispatch() -> int:
         if args.command == "plan":
             return _plan_command(args)
+        if args.command == "discover":
+            return _discover_command(args)
         if args.command == "validate":
             return _validate_command(args)
         if args.command == "info":
