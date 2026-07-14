@@ -1,4 +1,4 @@
-import { ArrowDown } from "lucide-react";
+import { ArrowDown } from "@/components/common";
 
 /** Extracts a "<number> <unit>" magnitude (e.g. "20 ps") from a continuity-gap
  * suggestion's evidence/title text such as "Stage starts +20 ps after previous ended." */

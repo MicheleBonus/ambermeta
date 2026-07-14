@@ -26,6 +26,7 @@ import {
   MoreVertical,
   Wand2,
   Layers,
+  ArrowDown,
   type LucideIcon,
 } from 'lucide-react';
 import type { FileType } from '../../types';
@@ -58,6 +59,7 @@ export {
   MoreVertical,
   Wand2,
   Layers,
+  ArrowDown,
 };
 
 const FILE_TYPE_ICONS: Record<FileType, LucideIcon> = {

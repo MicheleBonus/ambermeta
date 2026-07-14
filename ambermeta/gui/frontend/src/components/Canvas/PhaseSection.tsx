@@ -19,6 +19,12 @@ function stepNumber(name: string): number {
   return m ? parseInt(m[1], 10) : Number.POSITIVE_INFINITY;
 }
 
+/** Width (digit count) of the trailing numeric suffix, e.g. "prod_0001" -> 4. */
+function numWidth(name: string): number {
+  const m = name.match(/(\d+)$/);
+  return m ? m[1].length : 0;
+}
+
 function groupSteps(steps: StepModel[]): { base: string; steps: StepModel[] }[] {
   const groups: { base: string; steps: StepModel[] }[] = [];
   for (const step of steps) {
@@ -33,23 +39,27 @@ function groupSteps(steps: StepModel[]): { base: string; steps: StepModel[] }[] 
   return groups;
 }
 
-/** Best-effort extraction of a run/step name (e.g. "prod_0002") from suggestion text. */
-function extractRunName(text: string): string | null {
-  const m = text.match(/\b([A-Za-z][\w.-]*\d)\b/);
-  return m ? m[1] : null;
-}
-
 type GhostItem = { id: string; name: string; num: number };
 
-function ghostsForBase(base: string, suggestions: Suggestion[]): GhostItem[] {
+/** Ghost nodes for a numbered-sequence group, derived from the structured
+ * `base`/`missing` fields of missing_run suggestions (no free-text parsing). */
+function ghostsForBase(base: string, width: number, suggestions: Suggestion[]): GhostItem[] {
   const out: GhostItem[] = [];
   for (const s of suggestions) {
-    if (s.kind !== "missing_run") continue;
-    const name = extractRunName(s.title) ?? extractRunName(s.evidence);
-    if (!name || numericBase(name) !== base) continue;
-    out.push({ id: s.id, name, num: stepNumber(name) });
+    if (s.kind !== "missing_run" || s.base !== base || !s.missing) continue;
+    for (const idx of s.missing) {
+      out.push({ id: `${s.id}:${idx}`, name: `${base}_${String(idx).padStart(width, "0")}`, num: idx });
+    }
   }
   return out;
+}
+
+/** The continuity-gap suggestion (if any) that precedes step `stepId`, and its
+ * parsed magnitude label (e.g. "20 ps"). */
+function gapForStep(stepId: string, suggestions: Suggestion[]): string | null {
+  const s = suggestions.find((s) => s.kind === "continuity_gap" && s.step_id === stepId);
+  if (!s) return null;
+  return parseGap(s.evidence) ?? parseGap(s.title);
 }
 
 type SequenceItem =
@@ -64,8 +74,6 @@ export function PhaseSection({ phase, topologies }: { phase: PhaseModel; topolog
   const isSelected = sel.kind === "phase" && sel.id === phase.id;
   const groups = groupSteps(phase.steps);
   const suggestions = useSuggestions();
-  const gapSuggestion = suggestions.find((s) => s.kind === "continuity_gap");
-  const gapLabel = gapSuggestion ? (parseGap(gapSuggestion.evidence) ?? parseGap(gapSuggestion.title)) : null;
 
   return (
     <section className={`border-l-4 rounded mb-3 bg-surface ${isOver ? "border-accent" : "border-hairline"}`}>
@@ -140,14 +148,17 @@ export function PhaseSection({ phase, topologies }: { phase: PhaseModel; topolog
                 </button>
               )}
               {(() => {
-                const ghosts = ghostsForBase(g.base, suggestions);
+                const width = Math.max(0, ...g.steps.map((s) => numWidth(s.name)));
+                const ghosts = ghostsForBase(g.base, width, suggestions);
                 const items: SequenceItem[] = [
                   ...g.steps.map((step): SequenceItem => ({ kind: "step", num: stepNumber(step.name), step })),
                   ...ghosts.map((gh): SequenceItem => ({ kind: "ghost", num: gh.num, id: gh.id, name: gh.name })),
                 ].sort((a, b) => a.num - b.num);
                 return items.map((item, i) => (
                   <div key={item.kind === "step" ? item.step.id : `ghost:${item.id}`}>
-                    {i > 0 && <ContinuityArrow gap={gapLabel} />}
+                    {i > 0 && (
+                      <ContinuityArrow gap={item.kind === "step" ? gapForStep(item.step.id, suggestions) : null} />
+                    )}
                     {item.kind === "step" ? (
                       <StepNode step={item.step} topology={topologies.find((t) => t.id === item.step.topology)} />
                     ) : (
