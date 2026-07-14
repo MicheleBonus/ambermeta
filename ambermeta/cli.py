@@ -299,6 +299,76 @@ def _discover_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def _sim_to_legacy_payload(sim) -> Dict[str, Any]:
+    """Flatten a Simulation into a v1 flat-stages payload for downstream tools."""
+    topo_by_id = {t.id: t.path for t in sim.topologies}
+    normal = [t for t in sim.topologies if t.kind == "normal"]
+    hmr = [t for t in sim.topologies if t.kind == "hmr"]
+    payload: Dict[str, Any] = {}
+    if normal:
+        payload["global_prmtop"] = normal[0].path
+    if hmr:
+        payload["hmr_prmtop"] = hmr[0].path
+    stages: List[Dict[str, Any]] = []
+    for phase in sim.phases:
+        for step in phase.steps:
+            stage: Dict[str, Any] = {"name": step.name}
+            if phase.role:
+                stage["stage_role"] = phase.role
+            if step.topology:
+                stage["prmtop"] = topo_by_id.get(step.topology)
+            for k in ("mdin", "mdout", "mdcrd"):
+                if getattr(step, k):
+                    stage[k] = getattr(step, k)
+            ic = step.input_coords
+            if ic.path:
+                stage["inpcrd"] = ic.path
+            elif ic.source == "starting_structure" and sim.starting_structure:
+                stage["inpcrd"] = sim.starting_structure
+            if step.expected_gap_ps is not None or step.gap_tolerance_ps is not None:
+                stage["gaps"] = {"expected": step.expected_gap_ps, "tolerance": step.gap_tolerance_ps}
+            if step.notes:
+                stage["notes"] = list(step.notes)
+            stages.append(stage)
+    payload["stages"] = stages
+    return payload
+
+
+def _export_command(args: argparse.Namespace) -> int:
+    """Convert a manifest (v1 auto-migrated or v2) to canonical v2 or a legacy flat manifest."""
+    from ambermeta.simulation import load_simulation, write_simulation, simulation_to_payload
+
+    manifest = args.manifest
+    if not os.path.exists(manifest):
+        print(Colors.error(f"ERROR: Manifest not found: {manifest}"), file=sys.stderr)
+        return 1
+    try:
+        sim = load_simulation(manifest)
+    except (IOError, OSError, ValueError, RuntimeError) as e:
+        print(Colors.error(f"ERROR: Failed to load manifest: {e}"), file=sys.stderr)
+        return 1
+
+    if args.to == "legacy":
+        payload = _sim_to_legacy_payload(sim)
+        if args.output:
+            fmt = _resolve_manifest_format(args)      # yaml/json/toml/csv
+            from ambermeta import manifest as manifest_io
+            manifest_io.write_manifest(payload, args.output, fmt)
+            _out(Colors.success(f"Wrote legacy manifest: {args.output} ({fmt})"))
+        else:
+            print(json.dumps(payload, indent=2))
+        return 0
+
+    # default: canonical v2
+    if args.output:
+        fmt = _resolve_sim_format(args.output, getattr(args, "format", None))
+        write_simulation(sim, args.output, fmt)
+        _out(Colors.success(f"Wrote v2 manifest: {args.output} ({fmt})"))
+    else:
+        print(json.dumps(simulation_to_payload(sim), indent=2))
+    return 0
+
+
 def _print_protocol(protocol: SimulationProtocol, verbose: bool = False) -> None:
     totals = protocol.totals()
     _out("\nProtocol summary")
@@ -1771,6 +1841,21 @@ For documentation, visit: https://github.com/MicheleBonus/ambermeta
         help="Output format (default: text)",
     )
 
+    export_parser = subparsers.add_parser(
+        "export",
+        help="Convert a manifest to canonical v2 or a legacy flat manifest",
+        description=(
+            "Read any manifest (a v1 flat manifest is auto-migrated) and re-emit it. "
+            "--to v2 writes the canonical Simulation manifest (json/yaml); --to legacy writes "
+            "a flat stages: manifest (json/yaml/toml/csv) for downstream tools. Without --output, "
+            "prints JSON to stdout."
+        ),
+    )
+    export_parser.add_argument("manifest", help="Path to the manifest to convert")
+    export_parser.add_argument("--to", choices=["v2", "legacy"], default="v2", help="Target representation (default: v2)")
+    export_parser.add_argument("-o", "--output", help="Write to this path (default: print JSON to stdout)")
+    export_parser.add_argument("--format", choices=["json", "yaml", "toml", "csv"], help="Output format (default: inferred from --output extension)")
+
     # UX-009: init subcommand
     init_parser = subparsers.add_parser(
         "init",
@@ -1892,6 +1977,8 @@ def main(argv: List[str] | None = None) -> int:
             return _validate_command(args)
         if args.command == "info":
             return _info_command(args)
+        if args.command == "export":
+            return _export_command(args)
         if args.command == "init":
             return _init_command(args)
         if args.command == "gui":
