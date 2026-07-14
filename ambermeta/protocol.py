@@ -16,6 +16,7 @@ from ambermeta.parsers.prmtop import PrmtopData, PrmtopParser
 from ambermeta.legacy_extractors.prmtop import ION_RESNAMES, WATER_RESNAMES
 from ambermeta.errors import AmberMetaError, FileLoadError, classify_exception
 from ambermeta.logging_config import get_logger
+from ambermeta.roles import classify_role
 from ambermeta.manifest import (
     load_manifest,
     validate_manifest,
@@ -973,10 +974,10 @@ def _manifest_to_stages(
             stage.prmtop = _safe_parse(PrmtopParser, resolved["prmtop"], "prmtop", stage, strict=strict)
         if "mdin" in resolved:
             stage.mdin = _safe_parse(MdinParser, resolved["mdin"], "mdin", stage, strict=strict)
-            inferred_role = getattr(getattr(stage.mdin, "details", None), "stage_role", None) if stage.mdin else None
+            inferred_role = classify_role(mdin_details=getattr(stage.mdin, "details", None)) if stage.mdin else ""
             if not stage.stage_role and inferred_role:
                 stage.stage_role = inferred_role
-                stage.validation.append(f"INFO: stage_role '{inferred_role}' inferred from mdin file")
+                stage.validation.append(f"INFO: stage_role '{inferred_role}' inferred from mdin content")
         if "mdout" in resolved:
             stage.mdout = _safe_parse(MdoutParser, resolved["mdout"], "mdout", stage, strict=strict)
         if "mdcrd" in resolved:
@@ -1118,39 +1119,7 @@ def infer_stage_role_from_path(path: str) -> Optional[str]:
     Examines path components and filename to detect stage type patterns.
     Common directory names like 'equil', 'prod', 'min' are recognized.
     """
-    path_lower = path.lower()
-    parts = path_lower.replace("\\", "/").split("/")
-
-    # Check all path parts (directories and filename)
-    for part in parts:
-        # Minimization patterns
-        if part.startswith("min") or re.search(r'(?:^|_)min(?:$|_)', part) or part == "em":
-            return "minimization"
-
-        # Heating patterns
-        if re.search(r'(?:^|[_.\-])heat(?:[_.\-]|$|ing)', part) or re.search(r'(?:^|[_.\-])warm(?:[_.\-]|$)', part):
-            return "heating"
-
-        # Equilibration patterns
-        if part.startswith("equil") or part == "nvt" or part == "npt" or re.search(r'(?:^|_)equil(?:$|_)', part):
-            return "equilibration"
-
-        # Production patterns
-        if part.startswith("prod") or re.search(r'(?:^|_)prod(?:$|_)', part):
-            return "production"
-
-    # Check for common filename patterns
-    filename = parts[-1] if parts else ""
-    if re.search(r'(?:^|[_.\-/])(?:min|minim)(?:[_.\-/]|$)', filename) or re.search(r'(?:^|[_.\-/])em(?:[_.\-/]|$)', filename):
-        return "minimization"
-    if re.search(r'(?:^|[_.\-/])(?:heat|warm)(?:[_.\-/]|$)', filename):
-        return "heating"
-    if re.search(r'(?:^|[_.\-/])(?:equil|nvt|npt)(?:[_.\-/]|$)', filename):
-        return "equilibration"
-    if re.search(r'(?:^|[_.\-/])prod(?:[_.\-/]|$)', filename):
-        return "production"
-
-    return None
+    return classify_role(path) or None
 
 
 def infer_stage_role_from_content(
@@ -1161,44 +1130,9 @@ def infer_stage_role_from_content(
 
     Uses heuristics based on simulation parameters to determine the stage type.
     """
-    # Try mdin first
-    if mdin_data and mdin_data.details:
-        details = mdin_data.details
-        inferred = getattr(details, "stage_role", None)
-        if inferred:
-            return inferred
-
-        # Check for minimization indicators
-        cntrl = getattr(details, "cntrl_parameters", {}) or {}
-        imin = cntrl.get("imin")
-        if imin == 1:
-            return "minimization"
-
-        # Check for heating (increasing temperature)
-        tempi = cntrl.get("tempi", 0)
-        temp0 = cntrl.get("temp0", 300)
-        if isinstance(tempi, (int, float)) and isinstance(temp0, (int, float)):
-            if tempi < temp0 and tempi < 50:
-                return "heating"
-
-        # Check for equilibration vs production
-        ntr = cntrl.get("ntr")
-        ibelly = cntrl.get("ibelly")
-        if ntr == 1 or ibelly == 1:
-            return "equilibration"
-
-        # Check nstlim to distinguish short equilibration from long production
-        nstlim = cntrl.get("nstlim", 0)
-        if isinstance(nstlim, (int, float)) and nstlim > 500000:
-            return "production"
-
-    # Try mdout
-    if mdout_data and mdout_data.details:
-        details = mdout_data.details
-        if getattr(details, "imin", None) == 1:
-            return "minimization"
-
-    return None
+    mdin_details = getattr(mdin_data, "details", None)
+    mdout_details = getattr(mdout_data, "details", None)
+    return classify_role(mdin_details=mdin_details, mdout_details=mdout_details) or None
 
 
 def auto_detect_restart_chain(

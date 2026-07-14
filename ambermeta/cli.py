@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Optional
 
 from ambermeta.errors import AmberMetaError
 from ambermeta.logging_config import configure_logging, get_logger
+from ambermeta.roles import classify_role
 from ambermeta.protocol import (
     SimulationProtocol,
     auto_discover,
@@ -201,18 +202,7 @@ def _scan_directory_files(directory: str) -> Dict[str, List[str]]:
 
 def _suggest_stage_role(name: str) -> str:
     """Suggest a stage role based on the stage name."""
-    name_lower = name.lower()
-
-    if re.search(r'(?:^|[_.\-])(?:min|minim|em)(?:[_.\-]|$)', name_lower):
-        return "minimization"
-    if re.search(r'(?:^|[_.\-])(?:heat|warm|therm)(?:[_.\-]|$)', name_lower):
-        return "heating"
-    if re.search(r'(?:^|[_.\-])(?:equil|nvt|npt)(?:[_.\-]|$)', name_lower):
-        return "equilibration"
-    if re.search(r'(?:^|[_.\-])(?:prod|md|run)(?:[_.\-]|$)', name_lower):
-        return "production"
-
-    return ""
+    return classify_role(name)
 
 
 

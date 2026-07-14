@@ -40,3 +40,15 @@ def test_content_heuristics_are_reachable():
     assert classify_role("run", mdin_details=_Details(cntrl={"tempi": 0, "temp0": 300})) == "heating"
     assert classify_role("run", mdin_details=_Details(cntrl={"nstlim": 1_000_000})) == "production"
     assert classify_role("run") == ""
+
+
+from ambermeta.protocol import infer_stage_role_from_path
+from ambermeta.cli import _suggest_stage_role
+
+
+def test_gui_and_cli_agree_on_the_same_stems():
+    for stem in ["min/step1", "equil/step1", "prod/run", "minor_tweak",
+                 "product_notes", "md", "therm", "01_min", "heat"]:
+        gui = infer_stage_role_from_path(stem) or ""
+        cli = _suggest_stage_role(stem)
+        assert gui == cli, f"divergence on {stem!r}: gui={gui!r} cli={cli!r}"
