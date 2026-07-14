@@ -2,7 +2,7 @@ import { it, expect } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { queryClient } from "@/api/queryClient";
-import { SuggestionsContext } from "@/components/Canvas/Canvas";
+import { SuggestionsContext } from "./suggestionsContext";
 import { SuggestionsTray } from "./SuggestionsTray";
 import type { Suggestion } from "@/types";
 

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { DndContext, PointerSensor, useSensor, useSensors, type DragEndEvent } from "@dnd-kit/core";
 import { SelectionProvider } from "@/state/selection";
 import { ResizeHandle, Toaster } from "@/components/common";
@@ -6,7 +6,7 @@ import { usePersistentSize } from "@/lib/usePersistentSize";
 import { useUnsavedGuard } from "@/lib/useUnsavedGuard";
 import {
   useDocument, useAssign, useReorderSteps, useMoveStep, useReorderPhases,
-  useOpen, useSave, useDiscover,
+  useOpen, useSave, useDiscover, useValidate,
 } from "@/api/hooks";
 import { TopBar } from "@/components/TopBar/TopBar";
 import { DiscoverModal } from "@/components/TopBar/DiscoverModal";
@@ -14,7 +14,8 @@ import { ExportModal } from "@/components/TopBar/ExportModal";
 import { ValidationPanel } from "@/components/TopBar/ValidationPanel";
 import { FilePicker } from "@/components/FilePicker/FilePicker";
 import { FilePanel } from "@/components/FilePanel/FilePanel";
-import { Canvas, SuggestionsContext } from "@/components/Canvas/Canvas";
+import { Canvas } from "@/components/Canvas/Canvas";
+import { SuggestionsContext } from "@/components/Suggestions/suggestionsContext";
 import { Inspector } from "@/components/Inspector/Inspector";
 import { resolveDrop } from "@/components/Canvas/resolveDrop";
 import { reorderIds } from "@/components/Canvas/reorderIds";
@@ -32,12 +33,23 @@ export default function App() {
   const open = useOpen();
   const save = useSave();
   const discover = useDiscover();
+  const validate = useValidate();
 
   const [picker, setPicker] = useState<"open" | "save" | null>(null);
   const [discoverOpen, setDiscoverOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
   const [validateOpen, setValidateOpen] = useState(false);
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
+
+  useEffect(() => {
+    if (!doc) return;
+    validate.mutate(undefined, { onSuccess: (report) => setSuggestions(report.suggestions) });
+    // Re-validate whenever the document identity changes: on load and after every mutation
+    // (setDocument writes a new object into the one ["document"] cache entry). This is the
+    // single shared source of truth for suggestions -- both the canvas and the tray read it
+    // via SuggestionsContext.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [doc]);
 
   const onDragEnd = (e: DragEndEvent) => {
     const a = resolveDrop(String(e.active.id), e.over ? String(e.over.id) : null);

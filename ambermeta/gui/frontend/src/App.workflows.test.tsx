@@ -63,14 +63,21 @@ describe("top-bar workflows", () => {
       http.post("/api/document/discover", () => {
         discovered = true;
         return HttpResponse.json(result);
-      })
+      }),
+      // The App re-validates on every document-identity change (single shared
+      // suggestions source -- see suggestionsContext). A real backend would
+      // surface the same just-applied role_guess suggestion on that follow-up
+      // validate call, so the mock mirrors that instead of going quiet.
+      http.post("/api/validate", () =>
+        HttpResponse.json({ ok: true, totals: {}, protocol_issues: [], stage_issues: [], suggestions: result.suggestions })
+      ),
     );
     renderApp();
     await userEvent.click(await screen.findByRole("button", { name: "Discover" }));
     await userEvent.click(await screen.findByRole("button", { name: "Run discover" }));
     await waitFor(() => expect(discovered).toBe(true));
     await waitFor(() => expect(screen.getByText("prod_001")).toBeInTheDocument());
-    expect(screen.getByText("Production->production")).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText("Production->production")).toBeInTheDocument());
   });
 
   it("Validate feeds the report's suggestions into the tray", async () => {

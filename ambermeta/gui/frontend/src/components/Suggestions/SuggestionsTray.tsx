@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useSuggestions } from "@/components/Canvas/Canvas";
+import { useSuggestions } from "./suggestionsContext";
 import { useUndo } from "@/api/hooks";
 import { Button } from "@/components/common";
 import type { Suggestion } from "@/types";

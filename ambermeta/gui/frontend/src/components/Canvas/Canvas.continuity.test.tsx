@@ -6,14 +6,17 @@ import { http, HttpResponse } from "msw";
 import { server } from "@/test/server";
 import { queryClient } from "@/api/queryClient";
 import { SelectionProvider } from "@/state/selection";
+import { SuggestionsContext } from "@/components/Suggestions/suggestionsContext";
 import { Canvas } from "./Canvas";
-import type { DocumentResponse, ValidationReport } from "@/types";
+import type { DocumentResponse, Suggestion } from "@/types";
 
-function wrap(ui: React.ReactNode) {
+function wrap(ui: React.ReactNode, suggestions: Suggestion[] = []) {
   return (
     <QueryClientProvider client={queryClient}>
       <SelectionProvider>
-        <DndContext>{ui}</DndContext>
+        <DndContext>
+          <SuggestionsContext.Provider value={suggestions}>{ui}</SuggestionsContext.Provider>
+        </DndContext>
       </SelectionProvider>
     </QueryClientProvider>
   );
@@ -80,41 +83,32 @@ const docWithGap: DocumentResponse = {
   },
 };
 
-const reportWithGapAndGhost: ValidationReport = {
-  ok: false,
-  totals: {},
-  protocol_issues: ["Stage starts 20 ps after previous ended."],
-  stage_issues: [],
-  suggestions: [
-    {
-      id: "sug_1",
-      kind: "continuity_gap",
-      severity: "needs_you",
-      title: "Continuity note",
-      evidence: "Stage starts 20 ps after previous ended.",
-      actions: ["Set as expected", "Investigate"],
-      step_id: "s3",
-      phase_id: "p0",
-    },
-    {
-      id: "sug_2",
-      kind: "missing_run",
-      severity: "needs_you",
-      title: "prod sequence is missing member(s), run appears missing",
-      evidence: "present members of 'prod' skip index(es) 2",
-      actions: ["Mark as expected gap", "Locate file", "Ignore"],
-      base: "prod",
-      missing: [2],
-    },
-  ],
-};
+const suggestionsWithGapAndGhost: Suggestion[] = [
+  {
+    id: "sug_1",
+    kind: "continuity_gap",
+    severity: "needs_you",
+    title: "Continuity note",
+    evidence: "Stage starts 20 ps after previous ended.",
+    actions: ["Set as expected", "Investigate"],
+    step_id: "s3",
+    phase_id: "p0",
+  },
+  {
+    id: "sug_2",
+    kind: "missing_run",
+    severity: "needs_you",
+    title: "prod sequence is missing member(s), run appears missing",
+    evidence: "present members of 'prod' skip index(es) 2",
+    actions: ["Mark as expected gap", "Locate file", "Ignore"],
+    base: "prod",
+    missing: [2],
+  },
+];
 
 it("renders an amber continuity-gap marker scoped to the right arrow and a dashed missing-run ghost", async () => {
-  server.use(
-    http.get("/api/document", () => HttpResponse.json(docWithGap)),
-    http.post("/api/validate", () => HttpResponse.json(reportWithGapAndGhost)),
-  );
-  render(wrap(<Canvas />));
+  server.use(http.get("/api/document", () => HttpResponse.json(docWithGap)));
+  render(wrap(<Canvas />, suggestionsWithGapAndGhost));
 
   await waitFor(() => expect(screen.getByText("prod_0001")).toBeInTheDocument());
   expect(screen.getByText("prod_0003")).toBeInTheDocument();

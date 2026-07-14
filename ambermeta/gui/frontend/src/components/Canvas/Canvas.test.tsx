@@ -6,14 +6,17 @@ import { http, HttpResponse } from "msw";
 import { server } from "@/test/server";
 import { queryClient } from "@/api/queryClient";
 import { SelectionProvider } from "@/state/selection";
+import { SuggestionsContext } from "@/components/Suggestions/suggestionsContext";
 import { Canvas } from "./Canvas";
-import type { DocumentResponse } from "@/types";
+import type { DocumentResponse, Suggestion } from "@/types";
 
-function wrap(ui: React.ReactNode) {
+function wrap(ui: React.ReactNode, suggestions: Suggestion[] = []) {
   return (
     <QueryClientProvider client={queryClient}>
       <SelectionProvider>
-        <DndContext>{ui}</DndContext>
+        <DndContext>
+          <SuggestionsContext.Provider value={suggestions}>{ui}</SuggestionsContext.Provider>
+        </DndContext>
       </SelectionProvider>
     </QueryClientProvider>
   );

@@ -6,7 +6,7 @@ import { Badge, ChevronDown, ChevronRight } from "@/components/common";
 import type { PhaseModel, StepModel, Suggestion, TopologyModel } from "@/types";
 import { StepNode } from "./StepNode";
 import { ContinuityArrow, MissingRunGhost, parseGap } from "./ContinuityArrow";
-import { useSuggestions } from "./Canvas";
+import { useSuggestions } from "@/components/Suggestions/suggestionsContext";
 
 const COLLAPSE_THRESHOLD = 6;
 
