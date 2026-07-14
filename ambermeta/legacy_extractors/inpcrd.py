@@ -101,14 +101,16 @@ def _calc_volume(lengths: List[float], angles: List[float]) -> float:
     return a * b * c * math.sqrt(term)
 
 def _detect_format(filepath: str) -> str:
-    """
-    Reads the first 4 bytes to determine if file is NetCDF or ASCII.
-    NetCDF files start with 'CDF' (ASCII bytes 67 68 70).
+    """Determine NetCDF vs ASCII from the file's magic bytes.
+
+    Classic NetCDF-3 begins with ``CDF\\x01``/``CDF\\x02`` (not a bare 3-byte
+    ``CDF``, which an ASCII title could start with); NetCDF-4/HDF5 begins with
+    ``\\x89HDF``.
     """
     with open(filepath, 'rb') as f:
-        header = f.read(4)
-        if header.startswith(b'CDF'):
-            return "NetCDF"
+        header = f.read(8)
+    if header[:4] in (b'CDF\x01', b'CDF\x02') or header[:4] == b'\x89HDF':
+        return "NetCDF"
     return "ASCII"
 
 # -------------------------------

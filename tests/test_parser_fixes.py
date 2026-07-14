@@ -102,3 +102,15 @@ def test_box_flagged_topology_time(sample_md_data_dir):
     assert md.box_dimensions is not None
     assert md.box_is_topology_time is True
     assert any("topology-time box" in w.lower() for w in md.force_field_features + md.warnings)
+
+
+from ambermeta.legacy_extractors.inpcrd import _detect_format as _inpcrd_detect
+
+
+def test_inpcrd_detect_format_magic(tmp_path):
+    classic = tmp_path / "a.ncrst"; classic.write_bytes(b"CDF\x01rest")
+    hdf5 = tmp_path / "b.ncrst"; hdf5.write_bytes(b"\x89HDF\r\n")
+    ascii_cdf = tmp_path / "c.rst"; ascii_cdf.write_text("CDF2 my restart title\n     3\n")
+    assert _inpcrd_detect(str(classic)) == "NetCDF"
+    assert _inpcrd_detect(str(hdf5)) == "NetCDF"     # HDF5-backed NetCDF, was misread as ASCII
+    assert _inpcrd_detect(str(ascii_cdf)) == "ASCII" # title starting 'CDF', was misread as NetCDF
