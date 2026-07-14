@@ -134,3 +134,23 @@ def test_trailing_blank_line_does_not_fabricate_box(tmp_path):
     blanked = tmp_path / "blank.inpcrd"; _coords_only_inpcrd(blanked, 4, trailing_blank=True)
     assert parse_inpcrd(str(clean)).has_box is False
     assert parse_inpcrd(str(blanked)).has_box is False   # was True: coord line read as box
+
+
+from ambermeta.legacy_extractors.mdout import parse_mdout
+
+
+def _mdout(path, control):
+    path.write_text(
+        "          Amber 22 PMEMD\n\n"
+        "   1.  RESOURCE   USE:\n\n"
+        "     NATOM  =    1000 NRES   =     300\n\n"
+        "   2.  CONTROL  DATA:\n\n"
+        f"{control}\n"
+    )
+
+
+def test_barostat_from_keyword_not_ntp(tmp_path):
+    p = tmp_path / "npt.mdout"
+    _mdout(p, "     ntp     =       1, barostat=       2, temp0   = 300.0,")
+    md = parse_mdout(str(p))
+    assert md.barostat == "Monte Carlo"   # from barostat=2, NOT Berendsen-from-ntp=1

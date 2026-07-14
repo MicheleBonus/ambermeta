@@ -379,9 +379,15 @@ def parse_mdout(filepath: str) -> MdoutMetadata:
             
         if "ntp" in line and "=" in line:
             kvs = _extract_key_values(line)
-            if 'ntp' in kvs:
-                md.barostat = BAROSTATS.get(kvs['ntp'], str(kvs['ntp']))
-                
+            ntp = kvs.get('ntp')
+            if isinstance(ntp, (int, float)) and ntp > 0 and md.barostat == "None":
+                md.barostat = "Berendsen"   # Amber default when ntp>0 and barostat unset
+
+        if "barostat" in line and "=" in line:
+            kvs = _extract_key_values(line)
+            if 'barostat' in kvs:
+                md.barostat = BAROSTATS.get(kvs['barostat'], str(kvs['barostat']))
+
         if "ntc" in line and "=" in line:
             kvs = _extract_key_values(line)
             if 'ntc' in kvs and isinstance(kvs['ntc'], (int, float)) and kvs['ntc'] > 1:
