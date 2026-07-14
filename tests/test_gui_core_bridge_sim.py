@@ -55,3 +55,23 @@ def test_build_suggestions_flags_missing_run_and_hmr():
     assert "starting_structure" in kinds and "role_guess" in kinds
     miss = next(s for s in sug if s["kind"] == "missing_run")
     assert "2" in miss["evidence"]
+
+
+def test_discover_draft_on_real_fixtures(sample_md_data_dir):
+    out = core_bridge.discover_draft(str(sample_md_data_dir), recursive=False)
+    sim = out["simulation"]
+    # the .top topology is in the pool
+    assert any(t.path.endswith(".top") for t in sim.topologies)
+    # ntp_prod_000X.mdin/.mdout runs became steps
+    step_names = [s.name for p in sim.phases for s in p.steps]
+    assert any(n.startswith("ntp_prod_000") for n in step_names)
+    # the single-frame .crd is picked as the starting structure, not a run
+    assert sim.starting_structure and sim.starting_structure.endswith(".crd")
+    assert not any(n.endswith("6NAG") for n in step_names)
+    # first step reads the starting structure; a later one chains from a step
+    flat = [s for p in sim.phases for s in p.steps]
+    assert flat[0].input_coords.source == "starting_structure"
+    if len(flat) > 1:
+        assert flat[1].input_coords.source == "step"
+        assert flat[1].input_coords.path   # resolved previous-run restart, for continuity
+    assert isinstance(out["suggestions"], list)

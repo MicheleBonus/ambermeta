@@ -469,3 +469,84 @@ def build_suggestions(sim, base_directory):
         out.append(_sug("role_guess", "applied", "Phase roles inferred from file content/names",
                         "; ".join(role_pairs), ["Undo"]))
     return out
+
+
+def discover_draft(base_directory, recursive=True, pattern=None):
+    from ambermeta.simulation import Simulation, Phase, Step, Topology, InputCoords
+    from ambermeta.roles import classify_role
+    from ambermeta.topology_pool import classify_topology_pool, implies_hmr
+    from ambermeta.coords import sniff_coordinate_kind
+    from ambermeta.protocol import smart_group_files, _ordered_stems
+    from ambermeta.parsers import MdinParser
+    import uuid
+
+    grouped = smart_group_files(base_directory, pattern=pattern, recursive=recursive)
+
+    prmtop_rels = [p for p in sorted({
+        _relativize(v, base_directory)
+        for g in grouped.values() for k, v in g.items() if k == "prmtop" and v
+    }) if p]
+    pool = classify_topology_pool(base_directory, prmtop_rels)
+
+    sim = Simulation()
+    sim.topologies = [Topology(id=t.id, path=t.path, kind=t.kind) for t in pool.topologies]
+    normals = [t.id for t in sim.topologies if t.kind == "normal"]
+    hmrs = [t.id for t in sim.topologies if t.kind == "hmr"]
+    default_topo = normals[0] if normals else (sim.topologies[0].id if sim.topologies else None)
+    hmr_topo = hmrs[0] if hmrs else None
+
+    # starting structure: a single-frame coordinate file in a NON-run group
+    starting = None
+    for kinds in grouped.values():
+        if kinds.get("mdin") or kinds.get("mdout"):
+            continue
+        for k in ("inpcrd", "mdcrd"):
+            cand = kinds.get(k)
+            if cand and sniff_coordinate_kind(cand) == "inpcrd":
+                starting = _relativize(cand, base_directory)
+                break
+        if starting:
+            break
+    sim.starting_structure = starting
+
+    prev_step_id = None
+    prev_restart = None   # previous run's output restart (its stem group's inpcrd/.rst)
+    for stem in _ordered_stems(grouped):
+        kinds = grouped[stem]
+        if not (kinds.get("mdin") or kinds.get("mdout")):
+            continue  # not a run (topology-only or a coordinate artifact)
+        dt = None
+        mdin_details = None
+        if kinds.get("mdin"):
+            try:
+                mdin_details = getattr(MdinParser(kinds["mdin"]).parse(), "details", None)
+                dt = getattr(mdin_details, "dt", None)
+            except (IOError, OSError, ValueError, LookupError):
+                pass
+        role = classify_role(stem, mdin_details=mdin_details) or ""
+        topology = hmr_topo if (hmr_topo and implies_hmr(dt)) else default_topo
+        if prev_step_id is None:
+            ic = InputCoords(source="starting_structure")
+        else:
+            # chained: input coords ARE the previous run's output restart —
+            # store the resolved path so continuity can read its time.
+            ic = InputCoords(source="step", ref=prev_step_id,
+                             path=_relativize(prev_restart, base_directory) if prev_restart else None)
+        step = Step(
+            id=uuid.uuid4().hex[:8], name=stem, topology=topology, input_coords=ic,
+            mdin=_relativize(kinds.get("mdin"), base_directory),
+            mdout=_relativize(kinds.get("mdout"), base_directory),
+            mdcrd=_relativize(kinds.get("mdcrd"), base_directory),
+        )
+        if not sim.phases or sim.phases[-1].role != role:
+            sim.phases.append(Phase(id=uuid.uuid4().hex[:8],
+                                    name=(role.title() if role else "Stage"), role=role))
+        sim.phases[-1].steps.append(step)
+        prev_step_id = step.id
+        prev_restart = kinds.get("inpcrd")   # this run's output restart, for the next step
+
+    warnings = []
+    if len(sim.topologies) > 1:
+        warnings.append(f"{len(sim.topologies)} topologies found; confirm normal vs HMR.")
+    return {"simulation": sim, "suggestions": build_suggestions(sim, base_directory),
+            "warnings": warnings}
