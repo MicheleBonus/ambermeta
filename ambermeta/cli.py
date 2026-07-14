@@ -1382,6 +1382,22 @@ stages:
 """
 
 
+def _plan_v2(args: argparse.Namespace, directory: str) -> int:
+    """Summarize a v2 (Simulation) manifest: structure + continuity/sequence findings."""
+    from ambermeta.simulation import load_simulation
+    from ambermeta.gui.api.core_bridge import validate_simulation
+
+    sim = load_simulation(args.manifest)
+    settings = {
+        "strict_validation": not bool(getattr(args, "skip_cross_stage_validation", None)),
+        "allow_gaps": False,
+        "use_relative_paths": True,
+    }
+    report = validate_simulation(sim, settings, directory)
+    _print_simulation(sim, report)
+    return 0
+
+
 def _plan_command(args: argparse.Namespace) -> int:
     directory = os.path.abspath(args.directory)
 
@@ -1420,6 +1436,14 @@ def _plan_command(args: argparse.Namespace) -> int:
                 sys.stdout.write("\n")
 
     if args.manifest:
+        from ambermeta.manifest import _read_raw_manifest
+        from ambermeta.simulation import _is_v2
+        try:
+            _is_v2_manifest = _is_v2(_read_raw_manifest(args.manifest, expand_env=expand_env))
+        except Exception:
+            _is_v2_manifest = False
+        if _is_v2_manifest:
+            return _plan_v2(args, directory)
         _out(f"Loading manifest: {args.manifest}")
         protocol = load_protocol_from_manifest(
             args.manifest,
