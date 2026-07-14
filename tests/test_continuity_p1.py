@@ -34,6 +34,39 @@ def test_frame_interval_noise_is_still_tolerated():
     assert curr.observed_gap_ps == 0.0
 
 
+def test_mdout_end_time_used_when_no_trajectory_exact_match():
+    prev = SimulationStage(name="a")
+    prev.mdout = _F(stats=_D(count=1, time_end=100.0))
+    curr = SimulationStage(name="b")
+    curr.inpcrd = _F(time=100.0)
+    proto = SimulationProtocol(stages=[prev, curr])
+    proto.validate()
+    assert curr.observed_gap_ps == 0.0
+    assert not any("Cannot verify" in n for n in curr.continuity)
+
+
+def test_mdout_end_time_used_when_no_trajectory_with_gap():
+    prev = SimulationStage(name="a")
+    prev.mdout = _F(stats=_D(count=1, time_end=100.0))
+    curr = SimulationStage(name="b")
+    curr.inpcrd = _F(time=120.0)
+    proto = SimulationProtocol(stages=[prev, curr])
+    proto.validate()
+    assert curr.observed_gap_ps == 20.0
+    assert any("starts 20 ps after" in n for n in curr.continuity)
+
+
+def test_no_mdcrd_and_no_valid_mdout_cannot_verify():
+    prev = SimulationStage(name="a")
+    prev.mdout = _F(stats=_D(count=0, time_end=0.0))
+    curr = SimulationStage(name="b")
+    curr.inpcrd = _F(time=50.0)
+    proto = SimulationProtocol(stages=[prev, curr])
+    proto.validate()
+    assert any("Cannot verify" in n for n in curr.continuity)
+    assert curr.observed_gap_ps is None
+
+
 from ambermeta.protocol import detect_sequence_gaps
 
 

@@ -352,89 +352,92 @@ class SimulationProtocol:
 
     def _check_continuity(self, allow_unexpected_gaps: bool = False) -> None:
         for prev, current in zip(self.stages, self.stages[1:]):
-            prev_mdcrd = prev.mdcrd and prev.mdcrd.details
-            curr_inpcrd = current.inpcrd and current.inpcrd.details
+            end_time = None
+            if prev.mdcrd and prev.mdcrd.details:
+                end_time = getattr(prev.mdcrd.details, "time_end", None)
+            if end_time is None and prev.mdout and prev.mdout.details:
+                stats = getattr(prev.mdout.details, "stats", None)
+                if stats is not None and getattr(stats, "count", 0):
+                    end_time = getattr(stats, "time_end", None)
 
-            if not prev_mdcrd or not curr_inpcrd:
+            start_time = None
+            if current.inpcrd and current.inpcrd.details:
+                start_time = getattr(current.inpcrd.details, "time", None)
+
+            if end_time is None or start_time is None:
                 # Add informational note when continuity check is skipped
                 missing = []
-                if not prev_mdcrd:
-                    missing.append(f"mdcrd from {prev.name}")
-                if not curr_inpcrd:
-                    missing.append(f"inpcrd from {current.name}")
+                if end_time is None:
+                    missing.append(f"end time from {prev.name} (no mdcrd/mdout)")
+                if start_time is None:
+                    missing.append(f"inpcrd time from {current.name}")
                 current._add_continuity_note(
                     f"INFO: Cannot verify continuity between {prev.name} and {current.name} "
                     f"(missing {', '.join(missing)})"
                 )
                 continue
 
-            if prev.mdcrd and prev.mdcrd.details and current.inpcrd and current.inpcrd.details:
-                end_time = getattr(prev.mdcrd.details, "time_end", None)
-                start_time = getattr(current.inpcrd.details, "time", None)
-                if end_time is None or start_time is None:
-                    if current.expected_gap_ps is not None:
-                        current._add_continuity_note(
-                            "Expected gap could not be verified because timing metadata is missing."
-                        )
-                    continue
+            gap = start_time - end_time
 
-                gap = start_time - end_time
+            # Tolerance is a small absolute floor plus half a frame interval —
+            # NOT scaled by elapsed time, which would hide real gaps in long runs.
+            prior_dt = (
+                getattr(prev.mdcrd.details, "avg_dt", None)
+                if (prev.mdcrd and prev.mdcrd.details)
+                else None
+            )
+            default_tolerance = 0.1
+            if isinstance(prior_dt, (int, float)) and prior_dt > 0:
+                default_tolerance = max(default_tolerance, float(prior_dt) * 0.5)
 
-                # Tolerance is a small absolute floor plus half a frame interval —
-                # NOT scaled by elapsed time, which would hide real gaps in long runs.
-                prior_dt = getattr(prev.mdcrd.details, "avg_dt", None)
-                default_tolerance = 0.1
-                if isinstance(prior_dt, (int, float)) and prior_dt > 0:
-                    default_tolerance = max(default_tolerance, float(prior_dt) * 0.5)
+            # When no explicit gap expectation is provided, treat small
+            # differences as numerical noise instead of real gaps/overlaps.
+            if current.expected_gap_ps is None:
+                if abs(gap) <= default_tolerance:
+                    gap = 0.0
 
-                # When no explicit gap expectation is provided, treat small
-                # differences as numerical noise instead of real gaps/overlaps.
-                if current.expected_gap_ps is None:
-                    if abs(gap) <= default_tolerance:
-                        gap = 0.0
+            # Sanity check: massive gaps (> 1e6 ps = 1 µs) are likely errors
+            # in unit conversion or file parsing, not real discontinuities
+            if abs(gap) > 1e6:
+                current._add_continuity_note(
+                    f"INFO: Implausible gap detected ({gap:g} ps); likely a unit or parsing error. "
+                    f"Continuity check skipped."
+                )
+                current.observed_gap_ps = None
+                continue
 
-                # Sanity check: massive gaps (> 1e6 ps = 1 µs) are likely errors
-                # in unit conversion or file parsing, not real discontinuities
-                if abs(gap) > 1e6:
+            current.observed_gap_ps = gap
+
+            if gap < 0:
+                # Small negative gaps within tolerance are likely floating-point noise
+                if abs(gap) > default_tolerance:
                     current._add_continuity_note(
-                        f"INFO: Implausible gap detected ({gap:g} ps); likely a unit or parsing error. "
-                        f"Continuity check skipped."
+                        f"Stage appears to overlap previous stage by {abs(gap):g} ps."
                     )
-                    current.observed_gap_ps = None
-                    continue
+            elif gap > 0:
+                current._add_continuity_note(f"Stage starts {gap:g} ps after previous ended.")
 
-                current.observed_gap_ps = gap
-
-                if gap < 0:
-                    # Small negative gaps within tolerance are likely floating-point noise
-                    if abs(gap) > default_tolerance:
-                        current._add_continuity_note(
-                            f"Stage appears to overlap previous stage by {abs(gap):g} ps."
-                        )
-                elif gap > 0:
-                    current._add_continuity_note(f"Stage starts {gap:g} ps after previous ended.")
-
-                if current.expected_gap_ps is not None:
-                    tolerance = current.gap_tolerance_ps or default_tolerance
-                    lower = current.expected_gap_ps - tolerance
-                    upper = current.expected_gap_ps + tolerance
-                    if gap < lower:
-                        current._add_continuity_note(
-                            f"Observed gap {gap:g} ps is shorter than expected {current.expected_gap_ps:g} ps."
-                        )
-                    elif gap > upper:
-                        current._add_continuity_note(
-                            f"Observed gap {gap:g} ps exceeds expected {current.expected_gap_ps:g} ps."
-                        )
-                    else:
-                        current._add_continuity_note(
-                            f"Observed gap {gap:g} ps is within expected window ({current.expected_gap_ps:g}±{tolerance:g} ps)."
-                        )
-                elif gap != 0:
-                    if allow_unexpected_gaps:
-                        current._add_continuity_note("INFO: Gap detected and allowed by manifest settings.allow_gaps.")
-                    else:
-                        current._add_continuity_note("Gap detected without stated expectation; verify continuity.")
+            if current.expected_gap_ps is not None:
+                tolerance = current.gap_tolerance_ps or default_tolerance
+                lower = current.expected_gap_ps - tolerance
+                upper = current.expected_gap_ps + tolerance
+                if gap < lower:
+                    current._add_continuity_note(
+                        f"Observed gap {gap:g} ps is shorter than expected {current.expected_gap_ps:g} ps."
+                    )
+                elif gap > upper:
+                    current._add_continuity_note(
+                        f"Observed gap {gap:g} ps exceeds expected {current.expected_gap_ps:g} ps."
+                    )
+                else:
+                    current._add_continuity_note(
+                        f"Observed gap {gap:g} ps is within expected window ({current.expected_gap_ps:g}±{tolerance:g} ps)."
+                    )
+            elif gap != 0:
+                if allow_unexpected_gaps:
+                    current._add_continuity_note("INFO: Gap detected and allowed by manifest settings.allow_gaps.")
+                else:
+                    current._add_continuity_note("Gap detected without stated expectation; verify continuity.")
 
     def totals(self) -> Dict[str, float]:
         total_steps = 0.0
