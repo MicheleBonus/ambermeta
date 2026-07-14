@@ -399,3 +399,39 @@ def restart_chain(stages: List[Dict[str, Any]], settings: Dict[str, Any],
 def detect_sequences(stage_names: List[str]) -> Dict[str, List[str]]:
     """Numbered-run grouping, delegated to the core (no GUI re-implementation)."""
     return detect_numeric_sequences(list(stage_names))
+
+
+# ---------------------------------------------------------------------------
+# Task C1: open / save / preview via P1's simulation module (v2 manifests)
+# ---------------------------------------------------------------------------
+
+
+def open_simulation(path, base_directory):
+    from ambermeta.simulation import load_simulation
+    return load_simulation(path)
+
+
+def save_simulation(sim, base_directory, path, fmt):
+    from ambermeta.simulation import write_simulation
+    if fmt not in ("json", "yaml"):
+        raise ValueError(f"v2 save supports json/yaml only, got: {fmt}")
+    write_simulation(sim, path, fmt)
+    return []
+
+
+def preview_simulation(sim, base_directory, fmt):
+    from ambermeta.simulation import write_simulation
+    if fmt not in ("json", "yaml"):
+        raise ValueError(f"v2 preview supports json/yaml only, got: {fmt}")
+    tmp = tempfile.NamedTemporaryFile(suffix="." + fmt, delete=False)
+    tmp.close()
+    try:
+        write_simulation(sim, tmp.name, fmt)
+        with open(tmp.name, "r", encoding="utf-8") as fh:
+            content = fh.read()
+    finally:
+        try:
+            os.unlink(tmp.name)
+        except OSError:
+            pass
+    return {"content": content, "warnings": []}
