@@ -112,11 +112,18 @@ _KIND_PARSER = {
     "prmtop": PrmtopParser, "mdin": MdinParser, "mdout": MdoutParser,
     "mdcrd": MdcrdParser, "inpcrd": InpcrdParser,
 }
+_DEFAULT_BASENAME_KIND = {
+    "prmtop": "prmtop", "parm7": "prmtop",
+    "mdin": "mdin", "mdout": "mdout", "mdcrd": "mdcrd",
+    "inpcrd": "inpcrd", "restrt": "inpcrd",
+}
 
 
 def file_metadata(path: str) -> Dict[str, Any]:
     ext = os.path.splitext(path)[1].lower()
     kind = _EXT_KIND.get(ext, "other")
+    if kind == "other" and not ext:
+        kind = _DEFAULT_BASENAME_KIND.get(os.path.basename(path).lower(), "other")
     parser_cls = _KIND_PARSER.get(kind)
     if parser_cls is None:
         return {"details": None, "warnings": ["Unsupported file type"], "kind": kind}

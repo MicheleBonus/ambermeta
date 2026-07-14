@@ -24,6 +24,8 @@ def detect_file_type(path: str) -> FileType:
     name = Path(path).name.lower()
     if ext in ("prmtop", "parm7", "top") or name.endswith(".prmtop"):
         return FileType.PRMTOP
+    # NOTE: .in/.out are claimed for Amber mdin/mdout by convention; a non-Amber
+    # .in/.out would be mis-typed. Accepted trade-off (content sniff is a follow-up).
     if ext in ("mdin", "in") or name.endswith(".mdin"):
         return FileType.MDIN
     if ext in ("mdout", "out") or name.endswith(".mdout"):
@@ -32,6 +34,19 @@ def detect_file_type(path: str) -> FileType:
         return FileType.MDCRD
     if ext in ("inpcrd", "rst", "rst7", "restrt", "ncrst") or name.endswith(".inpcrd"):
         return FileType.INPCRD
+    # Extensionless canonical Amber default filenames (sander/pmemd defaults).
+    if not ext:
+        base = Path(path).name.lower()
+        if base in ("prmtop", "parm7"):
+            return FileType.PRMTOP
+        if base == "mdin":
+            return FileType.MDIN
+        if base == "mdout":
+            return FileType.MDOUT
+        if base == "mdcrd":
+            return FileType.MDCRD
+        if base in ("inpcrd", "restrt"):
+            return FileType.INPCRD
     return FileType.OTHER
 
 

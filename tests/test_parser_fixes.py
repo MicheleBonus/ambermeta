@@ -211,3 +211,21 @@ def test_relative_dt_variance_threshold():
     # a real doubling -> variable
     jumpy = _np.array([2.0, 4.0, 2.0, 4.0])
     assert _is_variable_dt(jumpy, 3.0) is True
+
+
+from ambermeta.gui.api.files import detect_file_type, FileType
+from ambermeta.gui.api import core_bridge
+from ambermeta.protocol import smart_group_files
+
+
+def test_extensionless_defaults_classified(tmp_path):
+    for name in ("prmtop", "inpcrd", "mdin", "mdout", "mdcrd", "restrt"):
+        (tmp_path / name).write_text("x")
+    assert detect_file_type(str(tmp_path / "prmtop")) == FileType.PRMTOP
+    assert detect_file_type(str(tmp_path / "mdout")) == FileType.MDOUT
+    assert detect_file_type(str(tmp_path / "restrt")) == FileType.INPCRD
+    assert core_bridge._EXT_KIND.get("") is None  # unchanged; kind resolved by basename
+    grouped = smart_group_files(str(tmp_path), recursive=False)
+    # the default job groups under stems (prmtop/inpcrd/... each their own stem)
+    kinds = {k for g in grouped.values() for k in g if not k.startswith("_")}
+    assert {"prmtop", "inpcrd", "mdin", "mdout", "mdcrd"} <= kinds

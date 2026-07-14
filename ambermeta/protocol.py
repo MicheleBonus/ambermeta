@@ -1354,6 +1354,11 @@ def smart_group_files(
         ".crd": "mdcrd",
         ".x": "mdcrd",
     }
+    _DEFAULT_BASENAME_KIND = {
+        "prmtop": "prmtop", "parm7": "prmtop",
+        "mdin": "mdin", "mdout": "mdout", "mdcrd": "mdcrd",
+        "inpcrd": "inpcrd", "restrt": "inpcrd",
+    }
 
     # Group by stem
     grouped: Dict[str, Dict[str, str]] = {}
@@ -1362,6 +1367,9 @@ def smart_group_files(
         stem = Path(rel_path).with_suffix("").as_posix()
         _, ext = os.path.splitext(rel_path)
         kind = ext_map.get(ext.lower())
+        if not kind and not ext:
+            # Extensionless canonical Amber default filenames.
+            kind = _DEFAULT_BASENAME_KIND.get(os.path.basename(rel_path).lower())
         if not kind:
             continue
         grouped.setdefault(stem, {})[kind] = full_path
