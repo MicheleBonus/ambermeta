@@ -51,6 +51,24 @@ def test_build_suggestions_flags_missing_run_and_hmr():
     assert "starting_structure" in kinds and "role_guess" in kinds
     miss = next(s for s in sug if s["kind"] == "missing_run")
     assert "2" in miss["evidence"]
+    assert miss["base"] == "prod"
+    assert miss["missing"] == [2]
+
+
+def test_continuity_gap_suggestions_are_step_scoped():
+    flat = [{"step_id": "a"}, {"step_id": "b"}]
+    stage_issues = [{"warnings": []},
+                    {"warnings": ["Stage starts 20 ps after previous ended."]}]
+    out = core_bridge._continuity_gap_suggestions(flat, stage_issues)
+    assert len(out) == 1
+    assert out[0]["step_id"] == "b"
+    assert "20" in out[0]["evidence"]
+
+    non_continuity = [{"step_id": "a"}, {"step_id": "b"}]
+    non_continuity_issues = [{"warnings": []},
+                             {"warnings": ["Atom count mismatch across topology and coordinates."]}]
+    out2 = core_bridge._continuity_gap_suggestions(non_continuity, non_continuity_issues)
+    assert out2 == []
 
 
 def test_discover_draft_on_real_fixtures(sample_md_data_dir):

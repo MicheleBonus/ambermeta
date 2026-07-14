@@ -271,10 +271,13 @@ def build_suggestions(sim, base_directory):
     step_names = [s.name for p in sim.phases for s in p.steps]
     for base, missing in detect_sequence_gaps(step_names).items():
         idxs = ", ".join(str(i) for i in missing)
-        out.append(_sug("missing_run", "needs_you",
-                        f"{base} sequence is missing member(s) {idxs}",
-                        f"present members of '{base}' skip index(es) {idxs}",
-                        ["Mark as expected gap", "Locate file", "Ignore"]))
+        sug = _sug("missing_run", "needs_you",
+                    f"{base} sequence is missing member(s) {idxs}",
+                    f"present members of '{base}' skip index(es) {idxs}",
+                    ["Mark as expected gap", "Locate file", "Ignore"])
+        sug["base"] = base
+        sug["missing"] = missing
+        out.append(sug)
 
     hmr = [t for t in sim.topologies if t.kind == "hmr"]
     if hmr and len(sim.topologies) > 1:
@@ -307,7 +310,7 @@ def _flatten_simulation(sim):
             else:                                  # "step" with no resolved restart path
                 inpcrd = None
             flat.append({
-                "name": s.name, "role": p.role,
+                "name": s.name, "role": p.role, "step_id": s.id,
                 "prmtop": topo_by_id.get(s.topology) if s.topology else None,
                 "mdin": s.mdin, "mdout": s.mdout, "mdcrd": s.mdcrd, "inpcrd": inpcrd,
                 "expected_gap_ps": s.expected_gap_ps, "gap_tolerance_ps": s.gap_tolerance_ps,
@@ -316,16 +319,38 @@ def _flatten_simulation(sim):
     return flat
 
 
+_CONTINUITY_HINTS = ("previous", "gap", "overlap", "expected")
+
+
+def _continuity_gap_suggestions(flat, stage_issues, start_index=0):
+    """One continuity_gap suggestion per stage that has a gap warning, carrying that step's id.
+
+    flat: the _flatten_simulation output (each dict has 'step_id', same order as stage_issues).
+    stage_issues: report['stage_issues'] (same order)."""
+    out = []
+    seen = set()
+    for step, si in zip(flat, stage_issues):
+        step_id = step.get("step_id")
+        for w in si.get("warnings", []):
+            wl = str(w).lower()
+            if "ps" in wl and any(h in wl for h in _CONTINUITY_HINTS):
+                key = (step_id, str(w))
+                if key in seen:
+                    continue
+                seen.add(key)
+                out.append({
+                    "id": f"sug_c_{start_index + len(out) + 1}", "kind": "continuity_gap",
+                    "severity": "needs_you", "title": "Continuity note", "evidence": str(w),
+                    "actions": ["Set as expected", "Investigate"], "step_id": step_id,
+                })
+    return out
+
+
 def validate_simulation(sim, settings, base_directory):
     flat = _flatten_simulation(sim)
     report = build_validation_report(flat, dict(settings), base_directory)
     suggestions = build_suggestions(sim, base_directory)
-    for issue in report.get("protocol_issues", []):
-        suggestions.append({
-            "id": f"sug_c_{len(suggestions) + 1}", "kind": "continuity_gap",
-            "severity": "needs_you", "title": "Continuity note", "evidence": issue,
-            "actions": ["Set as expected", "Investigate"],
-        })
+    suggestions.extend(_continuity_gap_suggestions(flat, report.get("stage_issues", []), start_index=len(suggestions)))
     report["suggestions"] = suggestions
     return report
 

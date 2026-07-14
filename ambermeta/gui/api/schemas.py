@@ -197,6 +197,10 @@ class Suggestion(BaseModel):
     title: str
     evidence: str
     actions: List[str] = Field(default_factory=list)
+    step_id: Optional[str] = None       # the step a step-scoped suggestion (e.g. continuity_gap) refers to
+    phase_id: Optional[str] = None
+    base: Optional[str] = None          # missing_run: the numbered-sequence base
+    missing: Optional[List[int]] = None # missing_run: the absent indices
 
 
 class MissingFile(BaseModel):
