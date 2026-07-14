@@ -380,13 +380,11 @@ class SimulationProtocol:
 
                 gap = start_time - end_time
 
-                # Robust tolerance calculation for numerical precision and unit issues
-                # Use a tolerance that scales with the magnitude of the times involved
-                # Default: 1 ps or 0.01% of end_time, whichever is larger
-                default_tolerance = max(1.0, abs(end_time) * 1e-4) if end_time else 1.0
+                # Tolerance is a small absolute floor plus half a frame interval —
+                # NOT scaled by elapsed time, which would hide real gaps in long runs.
                 prior_dt = getattr(prev.mdcrd.details, "avg_dt", None)
+                default_tolerance = 0.1
                 if isinstance(prior_dt, (int, float)) and prior_dt > 0:
-                    # Also consider the frame interval as a tolerance factor
                     default_tolerance = max(default_tolerance, float(prior_dt) * 0.5)
 
                 # When no explicit gap expectation is provided, treat small
