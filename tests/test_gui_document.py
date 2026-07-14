@@ -79,3 +79,55 @@ def test_reorder_phases_rejects_mismatched_ids():
     import pytest
     with pytest.raises(ValueError):
         st.reorder_phases([p, "bogus"])
+
+
+def test_step_mutators_move_reorder_clear():
+    st = _store()
+    pa = st.add_phase("A", "equilibration")
+    pb = st.add_phase("B", "production")
+    s1 = st.add_step(pa, {"name": "eq1", "mdin": "eq1.in",
+                          "input_coords": {"source": "starting_structure"}})
+    s2 = st.add_step(pa, {"name": "eq2", "mdin": "eq2.in"})
+
+    st.reorder_steps(pa, [s2, s1])
+    assert [s.id for s in st._find_phase(pa).steps] == [s2, s1]
+
+    st.move_step(s1, pb, 0)
+    assert [s.id for s in st._find_phase(pa).steps] == [s2]
+    assert [s.id for s in st._find_phase(pb).steps] == [s1]
+
+    st.update_step(s1, {"topology": None, "mdout": "eq1.out", "mdin": ""})
+    _, step = st._find_step(s1)
+    assert step.topology is None and step.mdout == "eq1.out" and step.mdin is None
+
+    st.delete_step(s2)
+    assert st._find_phase(pa).steps == []
+
+
+def test_add_step_sets_input_coords_source():
+    st = _store()
+    p = st.add_phase("P", "production")
+    sid = st.add_step(p, {"name": "prod", "input_coords": {"source": "step", "ref": "prev"}})
+    _, s = st._find_step(sid)
+    assert s.input_coords.source == "step" and s.input_coords.ref == "prev"
+
+
+def test_remove_topology_clears_step_binding():
+    st = _store()
+    tid = st.add_topology("wt.prmtop", "normal")
+    pid = st.add_phase("Prod", "production")
+    sid = st.add_step(pid, {"name": "prod", "topology": tid})
+    st.remove_topology(tid)
+    _, step = st._find_step(sid)
+    assert step.topology is None
+
+
+def test_delete_phase_reassigns_steps_to_neighbour():
+    st = _store()
+    p_min = st.add_phase("Min", "minimization")
+    p_prod = st.add_phase("Prod", "production")
+    st.add_step(p_min, {"name": "min"})
+    st.add_step(p_prod, {"name": "prod_001"})
+    st.delete_phase(p_min, reassign_to=p_prod)
+    assert [p.id for p in st.get().simulation.phases] == [p_prod]
+    assert [s.name for s in st._find_phase(p_prod).steps] == ["prod_001", "min"]

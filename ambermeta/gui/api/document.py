@@ -254,6 +254,79 @@ class DocumentStore:
             self._doc.simulation.phases.remove(p)
             self._doc.dirty = True
 
+    # -- step mutations -----------------------------------------------------
+    def add_step(self, phase_id: str, fields: Dict[str, Any]) -> str:
+        with self.lock:
+            p = self._find_phase(phase_id)
+            self._snapshot()
+            sid = _new_id()
+            ic = fields.get("input_coords") or {}
+            step = Step(
+                id=sid, name=fields.get("name", ""), topology=fields.get("topology"),
+                input_coords=InputCoords(source=ic.get("source", "starting_structure"),
+                                         ref=ic.get("ref"), path=ic.get("path")),
+                mdin=fields.get("mdin"), mdout=fields.get("mdout"), mdcrd=fields.get("mdcrd"),
+                expected_gap_ps=fields.get("expected_gap_ps"),
+                gap_tolerance_ps=fields.get("gap_tolerance_ps"),
+                notes=list(fields.get("notes") or []),
+            )
+            p.steps.append(step)
+            self._doc.dirty = True
+            return sid
+
+    def update_step(self, step_id: str, patch: Dict[str, Any]) -> None:
+        with self.lock:
+            _, s = self._find_step(step_id)
+            self._snapshot()
+            if patch.get("name") is not None:
+                s.name = patch["name"]
+            if "topology" in patch:                 # present => set (None clears)
+                s.topology = patch["topology"]
+            if patch.get("input_coords") is not None:
+                ic = patch["input_coords"]
+                s.input_coords = InputCoords(source=ic.get("source", "starting_structure"),
+                                             ref=ic.get("ref"), path=ic.get("path"))
+            for slot in _STEP_SLOTS:
+                if slot in patch:
+                    val = patch[slot]
+                    setattr(s, slot, val if val else None)   # "" clears
+            if patch.get("expected_gap_ps") is not None:
+                s.expected_gap_ps = patch["expected_gap_ps"]
+            if patch.get("gap_tolerance_ps") is not None:
+                s.gap_tolerance_ps = patch["gap_tolerance_ps"]
+            if patch.get("notes") is not None:
+                s.notes = list(patch["notes"])
+            self._doc.dirty = True
+
+    def delete_step(self, step_id: str) -> None:
+        with self.lock:
+            p, s = self._find_step(step_id)
+            self._snapshot()
+            p.steps.remove(s)
+            self._doc.dirty = True
+
+    def move_step(self, step_id: str, phase_id: str, index: int) -> None:
+        with self.lock:
+            src, s = self._find_step(step_id)
+            dst = self._find_phase(phase_id)
+            self._snapshot()
+            src.steps.remove(s)
+            if index < 0 or index > len(dst.steps):
+                dst.steps.append(s)
+            else:
+                dst.steps.insert(index, s)
+            self._doc.dirty = True
+
+    def reorder_steps(self, phase_id: str, ordered_ids: List[str]) -> None:
+        with self.lock:
+            p = self._find_phase(phase_id)
+            if set(ordered_ids) != {s.id for s in p.steps} or len(ordered_ids) != len(p.steps):
+                raise ValueError("reorder id set does not match phase steps")
+            self._snapshot()
+            by_id = {s.id: s for s in p.steps}
+            p.steps = [by_id[i] for i in ordered_ids]
+            self._doc.dirty = True
+
     def undo(self) -> None:
         with self.lock:
             if not self._undo:
