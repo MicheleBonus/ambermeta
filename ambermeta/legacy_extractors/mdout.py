@@ -393,6 +393,12 @@ def parse_mdout(filepath: str) -> MdoutMetadata:
             if 'ntc' in kvs and isinstance(kvs['ntc'], (int, float)) and kvs['ntc'] > 1:
                 md.shake_active = True
 
+        if "imin" in line and "=" in line:
+            kvs = _extract_key_values(line)
+            imin = kvs.get('imin')
+            if imin == 1:
+                md.run_type = "Minimization"
+
         # --- 4. Frame Processing ---
         if "A V E R A G E S" in line or "R M S  F L U C T U A T I O N S" in line:
             in_summary_section = True

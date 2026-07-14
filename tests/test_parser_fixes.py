@@ -154,3 +154,10 @@ def test_barostat_from_keyword_not_ntp(tmp_path):
     _mdout(p, "     ntp     =       1, barostat=       2, temp0   = 300.0,")
     md = parse_mdout(str(p))
     assert md.barostat == "Monte Carlo"   # from barostat=2, NOT Berendsen-from-ntp=1
+
+
+def test_minimization_run_type(tmp_path):
+    p = tmp_path / "min.mdout"
+    _mdout(p, "     imin    =       1, maxcyc  =    5000, ntb     =       1,")
+    md = parse_mdout(str(p))
+    assert md.run_type == "Minimization"
