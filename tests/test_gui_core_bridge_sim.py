@@ -92,3 +92,16 @@ def test_validate_simulation_reports_missing_files_and_suggestions(tmp_path):
     all_errors = [e for si in report["stage_issues"] for e in si["errors"]]
     assert any("missing" in e for e in all_errors)
     assert any(s["kind"] == "missing_run" for s in report["suggestions"])
+
+
+def test_read_file_head_truncates(tmp_path):
+    f = tmp_path / "big.txt"
+    f.write_text("A" * 10000)
+    out = core_bridge.read_file_head(str(f), max_bytes=100)
+    assert out["truncated"] is True and len(out["content"]) == 100
+
+
+def test_dead_flat_functions_are_gone():
+    assert not hasattr(core_bridge, "discover")          # replaced by discover_draft
+    assert not hasattr(core_bridge, "classify_topologies")
+    assert not hasattr(core_bridge, "open_manifest")

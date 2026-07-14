@@ -10,22 +10,14 @@ from __future__ import annotations
 
 import os
 import tempfile
-import uuid
 from typing import Any, Dict, List, Optional
 
-from ambermeta.legacy_extractors.prmtop import extract_prmtop_metadata
 from ambermeta.manifest import (
     STAGE_FILE_KINDS,
-    load_manifest,
-    write_manifest,
 )
 from ambermeta.protocol import (
-    _ordered_stems,
     _serialize_metadata,
     auto_discover,
-    detect_numeric_sequences,
-    infer_stage_role_from_path,
-    smart_group_files,
 )
 from ambermeta.parsers import (
     PrmtopParser, MdinParser, MdoutParser, MdcrdParser, InpcrdParser,
@@ -102,163 +94,6 @@ def _save_warnings(settings: Dict[str, Any], fmt: str) -> List[str]:
             "was folded into each stage's prmtop column."
         )
     return warnings
-
-
-def save_document(stages: List[Dict[str, Any]], settings: Dict[str, Any],
-                  base_directory: str, path: str, fmt: str) -> List[str]:
-    payload = document_to_payload(stages, settings, base_directory)
-    warnings = _save_warnings(settings, fmt)
-    write_manifest(payload, path, fmt)
-    return warnings
-
-
-def preview_document(stages: List[Dict[str, Any]], settings: Dict[str, Any],
-                     base_directory: str, fmt: str) -> Dict[str, Any]:
-    payload = document_to_payload(stages, settings, base_directory)
-    warnings = _save_warnings(settings, fmt)
-    suffix = "." + ("yaml" if fmt == "yaml" else fmt)
-    tmp = tempfile.NamedTemporaryFile(suffix=suffix, delete=False)
-    tmp.close()  # close the handle so write_manifest can write by path (Windows-safe)
-    try:
-        write_manifest(payload, tmp.name, fmt)
-        with open(tmp.name, "r", encoding="utf-8") as fh:
-            content = fh.read()
-    finally:
-        try:
-            os.unlink(tmp.name)
-        except OSError:
-            pass
-    return {"content": content, "warnings": warnings}
-
-
-def _stages_list_from_raw(raw: Any) -> List[Dict[str, Any]]:
-    """Mirror protocol.load_protocol_from_manifest stage-extraction."""
-    if isinstance(raw, dict):
-        if isinstance(raw.get("stages"), list):
-            return [e for e in raw["stages"] if isinstance(e, dict)]
-        out: List[Dict[str, Any]] = []
-        for name, entry in raw.items():
-            if isinstance(entry, dict):
-                e = dict(entry)
-                e.setdefault("name", name)
-                out.append(e)
-        return out
-    if isinstance(raw, list):
-        return [e for e in raw if isinstance(e, dict)]
-    return []
-
-
-def _gui_stage_from_entry(entry: Dict[str, Any]) -> Dict[str, Any]:
-    gaps = entry.get("gaps") or {}
-    notes = entry.get("notes")
-    if isinstance(notes, str):
-        notes = [notes]
-    return {
-        "id": uuid.uuid4().hex[:8],
-        "name": entry.get("name", ""),
-        "role": entry.get("stage_role") or "",
-        "prmtop": entry.get("prmtop"),
-        "mdin": entry.get("mdin"),
-        "mdout": entry.get("mdout"),
-        "mdcrd": entry.get("mdcrd"),
-        "inpcrd": entry.get("inpcrd"),
-        "expected_gap_ps": gaps.get("expected"),
-        "gap_tolerance_ps": gaps.get("tolerance"),
-        "notes": list(notes) if notes else [],
-    }
-
-
-def open_manifest(path: str, base_directory: str) -> Dict[str, Any]:
-    raw = load_manifest(path)  # tolerant reader; entries already key-normalized
-    settings_patch: Dict[str, Any] = {}
-    if isinstance(raw, dict):
-        g = raw.get("global_prmtop")
-        if g is None:
-            g = raw.get("prmtop")  # legacy GUI export compatibility
-        if g is not None:
-            settings_patch["global_prmtop"] = g
-        if raw.get("hmr_prmtop") is not None:
-            settings_patch["hmr_prmtop"] = raw["hmr_prmtop"]
-        block = raw.get("settings")
-        if isinstance(block, dict):
-            if "strict_validation" in block:
-                settings_patch["strict_validation"] = bool(block["strict_validation"])
-            if "allow_gaps" in block:
-                settings_patch["allow_gaps"] = bool(block["allow_gaps"])
-    stages = [_gui_stage_from_entry(e) for e in _stages_list_from_raw(raw)]
-    return {"stages": stages, "settings_patch": settings_patch}
-
-
-# ---------------------------------------------------------------------------
-# Task 3: discovery + HMR/normal topology split
-# ---------------------------------------------------------------------------
-
-_NON_TOPOLOGY_KINDS = ("mdin", "mdout", "mdcrd", "inpcrd")
-
-
-def classify_topologies(directory: str, prmtops: List[str]) -> Dict[str, Any]:
-    ordered = sorted(prmtops)
-    normal: List[str] = []
-    hmr: List[str] = []
-    for rel in ordered:
-        try:
-            md = extract_prmtop_metadata(os.path.join(directory, rel))
-            (hmr if md.hmr_active else normal).append(rel)
-        except (IOError, OSError, ValueError, LookupError):
-            normal.append(rel)
-    warnings: List[str] = []
-    if len(ordered) > 1:
-        warnings.append(
-            f"{len(ordered)} topology files found; "
-            f"normal={normal or '-'}, HMR={hmr or '-'}."
-        )
-    global_prmtop = normal[0] if normal else (ordered[0] if ordered else None)
-    hmr_prmtop = hmr[0] if hmr else None
-    return {"global_prmtop": global_prmtop, "hmr_prmtop": hmr_prmtop,
-            "warnings": warnings}
-
-
-def discover(directory: str, recursive: bool = True,
-             pattern: Optional[str] = None) -> Dict[str, Any]:
-    grouped = smart_group_files(directory, pattern=pattern, recursive=recursive)
-
-    prmtop_rel = sorted({
-        _relativize(v, directory)
-        for g in grouped.values()
-        for k, v in g.items()
-        if k == "prmtop"
-    })
-    topo = classify_topologies(directory, [p for p in prmtop_rel if p])
-
-    stages: List[Dict[str, Any]] = []
-    for stem in _ordered_stems(grouped):
-        kinds = grouped[stem]
-        files = {k: _relativize(v, directory)
-                 for k, v in kinds.items() if k in _NON_TOPOLOGY_KINDS}
-        if not files:
-            continue  # prmtop-only / metadata-only group is not a stage
-        stage = {
-            "id": uuid.uuid4().hex[:8],
-            "name": stem,
-            "role": infer_stage_role_from_path(stem) or "",
-            "prmtop": None,
-            "mdin": files.get("mdin"),
-            "mdout": files.get("mdout"),
-            "mdcrd": files.get("mdcrd"),
-            "inpcrd": files.get("inpcrd"),
-            "expected_gap_ps": None,
-            "gap_tolerance_ps": None,
-            "notes": [],
-        }
-        stages.append(stage)
-
-    settings_patch: Dict[str, Any] = {}
-    if topo["global_prmtop"] is not None:
-        settings_patch["global_prmtop"] = topo["global_prmtop"]
-    if topo["hmr_prmtop"] is not None:
-        settings_patch["hmr_prmtop"] = topo["hmr_prmtop"]
-    return {"stages": stages, "settings_patch": settings_patch,
-            "warnings": topo["warnings"]}
 
 
 # ---------------------------------------------------------------------------
@@ -374,31 +209,12 @@ def build_validation_report(stages: List[Dict[str, Any]], settings: Dict[str, An
     }
 
 
-def restart_chain(stages: List[Dict[str, Any]], settings: Dict[str, Any],
-                  base_directory: str, recursive: bool = False) -> Dict[str, str]:
-    payload = document_to_payload(stages, settings, base_directory)
-    protocol = auto_discover(
-        base_directory,
-        manifest=payload["stages"],
-        global_prmtop=payload.get("global_prmtop"),
-        hmr_prmtop=payload.get("hmr_prmtop"),
-        auto_detect_restarts=True,
-        recursive=recursive,
-        skip_cross_stage_validation=True,
-        strict=False,
-    )
-    out: Dict[str, str] = {}
-    for s in protocol.stages:
-        if s.restart_path:
-            rel = _relativize(s.restart_path, base_directory)
-            if rel:
-                out[s.name] = rel
-    return out
-
-
-def detect_sequences(stage_names: List[str]) -> Dict[str, List[str]]:
-    """Numbered-run grouping, delegated to the core (no GUI re-implementation)."""
-    return detect_numeric_sequences(list(stage_names))
+def read_file_head(path, max_bytes=4096):
+    with open(path, "rb") as fh:
+        data = fh.read(max_bytes + 1)
+    truncated = len(data) > max_bytes
+    return {"content": data[:max_bytes].decode("utf-8", errors="replace"),
+            "truncated": truncated}
 
 
 # ---------------------------------------------------------------------------
