@@ -613,6 +613,12 @@ def _get_parser_for_file(filepath: str):
 
 def _validate_command(args: argparse.Namespace) -> int:
     """Validate simulation files and report issues."""
+    manifest = getattr(args, "manifest", None)
+    if manifest:
+        return _validate_manifest(args, manifest)
+    if not getattr(args, "files", None):
+        print("ERROR: provide files to validate or --manifest.", file=sys.stderr)
+        return 2
     result: Dict[str, Any] = {
         "status": "ok",
         "files": [],
@@ -709,6 +715,51 @@ def _validate_command(args: argparse.Namespace) -> int:
     if has_errors:
         return 1
     if has_warnings and args.strict:
+        return 1
+    return 0
+
+
+def _validate_manifest(args: argparse.Namespace, manifest: str) -> int:
+    """Validate a whole Simulation manifest: continuity, sequence holes, suggestions."""
+    from ambermeta.simulation import load_simulation
+    from ambermeta.gui.api.core_bridge import validate_simulation
+
+    if not os.path.exists(manifest):
+        print(Colors.error(f"ERROR: Manifest not found: {manifest}"), file=sys.stderr)
+        return 1
+    try:
+        sim = load_simulation(manifest)
+    except (IOError, OSError, ValueError, RuntimeError) as e:
+        print(Colors.error(f"ERROR: Failed to load manifest: {e}"), file=sys.stderr)
+        return 1
+
+    base_dir = os.path.dirname(os.path.abspath(manifest)) or "."
+    settings = {
+        "strict_validation": True,
+        "allow_gaps": bool(getattr(args, "allow_gaps", False)),
+        "use_relative_paths": True,
+    }
+    report = validate_simulation(sim, settings, base_dir)
+
+    if args.format == "json":
+        print(json.dumps(report, indent=2))
+    elif args.format == "yaml":
+        if yaml is None:
+            print(Colors.error("ERROR: PyYAML is required for YAML output"), file=sys.stderr)
+            return 1
+        print(yaml.safe_dump(report, sort_keys=False))
+    else:
+        _out(Colors.header("\nSimulation validation"))
+        for stage in report.get("stage_issues", []):
+            for err in stage.get("errors", []):
+                _out(f"  {Colors.error('ERROR')} {stage['name']}: {err}")
+        _sim_findings(report)
+
+    ok = bool(report.get("ok", True))
+    findings = [s for s in report.get("suggestions", []) if s.get("kind") in ("continuity_gap", "missing_run")]
+    if not ok:
+        return 1
+    if args.strict and findings:
         return 1
     return 0
 
@@ -1833,8 +1884,8 @@ For documentation, visit: https://github.com/MicheleBonus/ambermeta
     )
     validate_parser.add_argument(
         "files",
-        nargs="+",
-        help="Files to validate (prmtop, mdin, mdout, mdcrd, inpcrd)",
+        nargs="*",
+        help="Files to validate (prmtop, mdin, mdout, mdcrd, inpcrd). Omit when using --manifest.",
     )
     validate_parser.add_argument(
         "--strict",
@@ -1846,6 +1897,15 @@ For documentation, visit: https://github.com/MicheleBonus/ambermeta
         choices=["text", "json", "yaml"],
         default="text",
         help="Output format (default: text)",
+    )
+    validate_parser.add_argument(
+        "--manifest",
+        help="Validate a whole simulation manifest (v1 auto-migrated) — continuity, sequence holes, suggestions",
+    )
+    validate_parser.add_argument(
+        "--allow-gaps",
+        action="store_true",
+        help="With --manifest: treat unexpected inter-step gaps as allowed",
     )
 
     # UX-005: info subcommand
