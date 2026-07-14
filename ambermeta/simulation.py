@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import List, Optional
+from typing import Any, Dict   # add to the existing typing import at the top
 
 
 @dataclass
@@ -47,3 +48,68 @@ class Simulation:
     topologies: List[Topology] = field(default_factory=list)
     starting_structure: Optional[str] = None
     phases: List[Phase] = field(default_factory=list)
+
+
+def _step_payload(step: Step, phase_id: str, order: int) -> Dict[str, Any]:
+    ic: Dict[str, Any] = {"source": step.input_coords.source}
+    if step.input_coords.ref is not None:
+        ic["ref"] = step.input_coords.ref
+    if step.input_coords.path is not None:
+        ic["path"] = step.input_coords.path
+    data: Dict[str, Any] = {
+        "id": step.id, "name": step.name, "phase": phase_id, "order": order,
+        "topology": step.topology, "input_coords": ic,
+        "mdin": step.mdin, "mdout": step.mdout, "mdcrd": step.mdcrd,
+        "notes": list(step.notes),
+    }
+    if step.expected_gap_ps is not None or step.gap_tolerance_ps is not None:
+        data["gaps"] = {"expected": step.expected_gap_ps, "tolerance": step.gap_tolerance_ps}
+    return data
+
+
+def simulation_to_payload(sim: Simulation) -> Dict[str, Any]:
+    return {
+        "version": sim.version,
+        "simulation": {
+            "topologies": [{"id": t.id, "path": t.path, "kind": t.kind} for t in sim.topologies],
+            "starting_structure": sim.starting_structure,
+        },
+        "phases": [
+            {"id": p.id, "name": p.name, "role": p.role, "order": i}
+            for i, p in enumerate(sim.phases)
+        ],
+        "steps": [
+            _step_payload(s, p.id, j)
+            for p in sim.phases for j, s in enumerate(p.steps)
+        ],
+    }
+
+
+def payload_to_simulation(payload: Dict[str, Any]) -> Simulation:
+    sim = Simulation(version=payload.get("version", 2))
+    block = payload.get("simulation", {}) or {}
+    for t in block.get("topologies", []) or []:
+        sim.topologies.append(Topology(id=t["id"], path=t["path"], kind=t.get("kind", "normal")))
+    sim.starting_structure = block.get("starting_structure")
+
+    phases_by_id: Dict[str, Phase] = {}
+    for p in sorted(payload.get("phases", []) or [], key=lambda x: x.get("order", 0)):
+        phase = Phase(id=p["id"], name=p.get("name", ""), role=p.get("role", ""))
+        sim.phases.append(phase)
+        phases_by_id[p["id"]] = phase
+
+    for s in sorted(payload.get("steps", []) or [], key=lambda x: (x.get("phase", ""), x.get("order", 0))):
+        ic = s.get("input_coords", {}) or {}
+        gaps = s.get("gaps", {}) or {}
+        step = Step(
+            id=s["id"], name=s.get("name", ""), topology=s.get("topology"),
+            input_coords=InputCoords(source=ic.get("source", "starting_structure"),
+                                     ref=ic.get("ref"), path=ic.get("path")),
+            mdin=s.get("mdin"), mdout=s.get("mdout"), mdcrd=s.get("mdcrd"),
+            expected_gap_ps=gaps.get("expected"), gap_tolerance_ps=gaps.get("tolerance"),
+            notes=list(s.get("notes", []) or []),
+        )
+        phase = phases_by_id.get(s.get("phase"))
+        if phase is not None:
+            phase.steps.append(step)
+    return sim
