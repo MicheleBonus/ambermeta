@@ -1,18 +1,25 @@
 import { useSelection } from "@/state/selection";
+import { useFileMetadata } from "@/api/hooks";
 import { FilePeek } from "./FilePeek";
 import { FileDetails } from "./FileDetails";
+import { AssignActions } from "./AssignActions";
+
+function FileInspector({ path }: { path: string }) {
+  const { data } = useFileMetadata(path);
+  return (
+    <div className="flex flex-col h-full">
+      <FilePeek path={path} />
+      {data?.file_type && <AssignActions path={path} fileType={data.file_type} />}
+      <FileDetails path={path} />
+    </div>
+  );
+}
 
 export function Inspector() {
   const { sel } = useSelection();
 
   if (sel.kind === "file" && sel.id) {
-    const path = sel.id;
-    return (
-      <div className="flex flex-col h-full">
-        <FilePeek path={path} />
-        <FileDetails path={path} />
-      </div>
-    );
+    return <FileInspector path={sel.id} />;
   }
 
   if (sel.kind === "step" && sel.id) {
