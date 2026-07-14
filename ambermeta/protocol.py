@@ -1353,6 +1353,7 @@ def smart_group_files(
         ".nc": "mdcrd",
         ".crd": "mdcrd",
         ".x": "mdcrd",
+        ".trj": "mdcrd",
     }
     _DEFAULT_BASENAME_KIND = {
         "prmtop": "prmtop", "parm7": "prmtop",

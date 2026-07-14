@@ -104,7 +104,7 @@ _EXT_KIND = {
     ".prmtop": "prmtop", ".top": "prmtop", ".parm7": "prmtop",
     ".mdin": "mdin", ".in": "mdin",
     ".mdout": "mdout", ".out": "mdout",
-    ".mdcrd": "mdcrd", ".nc": "mdcrd", ".crd": "mdcrd", ".x": "mdcrd",
+    ".mdcrd": "mdcrd", ".nc": "mdcrd", ".crd": "mdcrd", ".x": "mdcrd", ".trj": "mdcrd",
     ".inpcrd": "inpcrd", ".rst": "inpcrd", ".rst7": "inpcrd",
     ".ncrst": "inpcrd", ".restrt": "inpcrd",
 }

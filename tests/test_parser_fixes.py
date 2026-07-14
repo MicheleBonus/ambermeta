@@ -229,3 +229,11 @@ def test_extensionless_defaults_classified(tmp_path):
     # the default job groups under stems (prmtop/inpcrd/... each their own stem)
     kinds = {k for g in grouped.values() for k in g if not k.startswith("_")}
     assert {"prmtop", "inpcrd", "mdin", "mdout", "mdcrd"} <= kinds
+
+
+def test_trj_classified_as_trajectory(tmp_path):
+    (tmp_path / "run.trj").write_text("x")
+    assert detect_file_type(str(tmp_path / "run.trj")) == FileType.MDCRD
+    assert core_bridge._EXT_KIND.get(".trj") == "mdcrd"
+    grouped = smart_group_files(str(tmp_path), recursive=False)
+    assert any("mdcrd" in g for g in grouped.values())

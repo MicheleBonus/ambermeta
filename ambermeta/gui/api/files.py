@@ -30,7 +30,7 @@ def detect_file_type(path: str) -> FileType:
         return FileType.MDIN
     if ext in ("mdout", "out") or name.endswith(".mdout"):
         return FileType.MDOUT
-    if ext in ("mdcrd", "nc", "crd", "x") or name.endswith(".mdcrd"):
+    if ext in ("mdcrd", "nc", "crd", "x", "trj") or name.endswith(".mdcrd"):
         return FileType.MDCRD
     if ext in ("inpcrd", "rst", "rst7", "restrt", "ncrst") or name.endswith(".inpcrd"):
         return FileType.INPCRD
