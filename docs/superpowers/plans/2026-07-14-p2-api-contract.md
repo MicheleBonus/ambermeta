@@ -1262,6 +1262,7 @@ def test_discover_draft_on_real_fixtures(sample_md_data_dir):
     assert flat[0].input_coords.source == "starting_structure"
     if len(flat) > 1:
         assert flat[1].input_coords.source == "step"
+        assert flat[1].input_coords.path   # resolved previous-run restart, for continuity
     assert isinstance(out["suggestions"], list)
 ```
 
@@ -1312,6 +1313,7 @@ def discover_draft(base_directory, recursive=True, pattern=None):
     sim.starting_structure = starting
 
     prev_step_id = None
+    prev_restart = None   # previous run's output restart (its stem group's inpcrd/.rst)
     for stem in _ordered_stems(grouped):
         kinds = grouped[stem]
         if not (kinds.get("mdin") or kinds.get("mdout")):
@@ -1329,7 +1331,10 @@ def discover_draft(base_directory, recursive=True, pattern=None):
         if prev_step_id is None:
             ic = InputCoords(source="starting_structure")
         else:
-            ic = InputCoords(source="step", ref=prev_step_id)
+            # chained: input coords ARE the previous run's output restart —
+            # store the resolved path so continuity can read its time.
+            ic = InputCoords(source="step", ref=prev_step_id,
+                             path=_relativize(prev_restart, base_directory) if prev_restart else None)
         step = Step(
             id=uuid.uuid4().hex[:8], name=stem, topology=topology, input_coords=ic,
             mdin=_relativize(kinds.get("mdin"), base_directory),
@@ -1341,6 +1346,7 @@ def discover_draft(base_directory, recursive=True, pattern=None):
                                     name=(role.title() if role else "Stage"), role=role))
         sim.phases[-1].steps.append(step)
         prev_step_id = step.id
+        prev_restart = kinds.get("inpcrd")   # this run's output restart, for the next step
 
     warnings = []
     if len(sim.topologies) > 1:
@@ -1459,7 +1465,7 @@ git commit -m "feat(gui): build_suggestions (missing runs, HMR confirm, start, r
 **Interfaces:**
 - Consumes: the existing `build_validation_report` (kept), `build_suggestions`.
 - Produces: `_flatten_simulation(sim) -> List[dict]` (resolves each step's effective topology path + input-coords into a flat stage dict); `validate_simulation(sim, settings, base_directory) -> dict` shaped like `ValidationReport` plus a `suggestions` list (structural suggestions + one `continuity_gap` per `protocol_issue`).
-- **Limitation (documented):** an `input_coords.source == "step"` resolves to `inpcrd=None` (the restart file is not stored on the step), so cross-step continuity shows "cannot verify" unless the step has an explicit `path` source. Missing-file, atom-count, and per-run checks are unaffected. Richer restart resolution is a follow-up.
+- **Continuity resolution:** `_flatten_simulation` resolves `inpcrd` from `input_coords.path` whenever set — which `discover_draft` (Task C2) now populates for chained steps with the previous run's output restart. Combined with the P1 mdout-fallback end-time (committed on this branch before P2), time-gaps between runs surface as `continuity_gap` suggestions. A chained step with no resolvable restart (e.g. a hand-created step with `source="step"` and no `path`) still shows "cannot verify" — rare and acceptable.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1496,11 +1502,11 @@ def _flatten_simulation(sim):
     flat = []
     for p in sim.phases:
         for s in p.steps:
-            if s.input_coords.source == "path":
+            if s.input_coords.path:                # explicit path OR a resolved chained restart
                 inpcrd = s.input_coords.path
             elif s.input_coords.source == "starting_structure":
                 inpcrd = sim.starting_structure
-            else:  # "step" — restart not stored on the step (documented limitation)
+            else:                                  # "step" with no resolved restart path
                 inpcrd = None
             flat.append({
                 "name": s.name, "role": p.role,
