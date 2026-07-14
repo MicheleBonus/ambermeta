@@ -1364,7 +1364,7 @@ def smart_group_files(
     # Group by stem
     grouped: Dict[str, Dict[str, str]] = {}
 
-    for rel_path, full_path in discovered:
+    for rel_path, full_path in sorted(discovered):   # deterministic order
         stem = Path(rel_path).with_suffix("").as_posix()
         _, ext = os.path.splitext(rel_path)
         kind = ext_map.get(ext.lower())
@@ -1373,7 +1373,13 @@ def smart_group_files(
             kind = _DEFAULT_BASENAME_KIND.get(os.path.basename(rel_path).lower())
         if not kind:
             continue
-        grouped.setdefault(stem, {})[kind] = full_path
+        group = grouped.setdefault(stem, {})
+        if kind in group:
+            # Same stem + same kind (e.g. prod.nc and prod.mdcrd): keep the first
+            # (sorted) deterministically and record the collision.
+            group.setdefault(f"_collision_{kind}", os.path.basename(full_path))
+            continue
+        group[kind] = full_path
 
     # Detect and handle numeric sequences
     all_stems = list(grouped.keys())

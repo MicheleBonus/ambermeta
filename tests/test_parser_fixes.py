@@ -237,3 +237,13 @@ def test_trj_classified_as_trajectory(tmp_path):
     assert core_bridge._EXT_KIND.get(".trj") == "mdcrd"
     grouped = smart_group_files(str(tmp_path), recursive=False)
     assert any("mdcrd" in g for g in grouped.values())
+
+
+def test_smart_group_same_kind_collision_deterministic(tmp_path):
+    (tmp_path / "prod.nc").write_text("x")
+    (tmp_path / "prod.mdcrd").write_text("x")  # both -> kind "mdcrd", same stem "prod"
+    grouped = smart_group_files(str(tmp_path), recursive=False)
+    g = grouped["prod"]
+    # deterministic winner (sorted-first path) + a recorded collision marker
+    assert g["mdcrd"].endswith("prod.mdcrd")           # ".mdcrd" sorts before ".nc"
+    assert any(k.startswith("_collision") for k in g)
