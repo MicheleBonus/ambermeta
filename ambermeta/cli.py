@@ -991,6 +991,12 @@ def _init_command(args: argparse.Namespace) -> int:
                 _out("Aborted.")
                 return 1
 
+    if getattr(args, "v2", False):
+        with open(output_path, "w", encoding="utf-8") as fh:
+            fh.write(_generate_v2_template())
+        _out(Colors.success(f"Created {args.output} (v2)"))
+        return 0
+
     # Scan directory for common file patterns
     discovered_files = {
         "prmtop": [],
@@ -1227,6 +1233,45 @@ def _render_candidate_stages(
         lines.append("")
 
     return lines
+
+
+def _generate_v2_template() -> str:
+    """A commented v2 (Simulation) template manifest a user can edit."""
+    return """\
+# AmberMeta Manifest - v2 (Simulation -> Phase -> Step)
+# Topologies live in a Simulation-owned pool; each step binds one by id.
+# input_coords.source is one of: starting_structure | step (ref: <step id>) | path
+version: 2
+simulation:
+  topologies:
+    - id: top_wt
+      path: system.prmtop
+      kind: normal          # "normal" or "hmr" (hydrogen-mass-repartitioned)
+    - id: top_wt_hmr
+      path: system_hmr.prmtop
+      kind: hmr
+  starting_structure: system.inpcrd
+phases:
+  - { id: ph_min,  name: Minimization,  role: minimization, order: 0 }
+  - { id: ph_prod, name: Production,     role: production,   order: 1 }
+steps:
+  - id: st_min
+    phase: ph_min
+    order: 0
+    topology: top_wt
+    input_coords: { source: starting_structure }
+    mdin: min.in
+    mdout: min.out
+  - id: st_prod_001
+    phase: ph_prod
+    order: 0
+    topology: top_wt_hmr
+    input_coords: { source: step, ref: st_min }
+    mdin: prod_001.in
+    mdout: prod_001.out
+    mdcrd: prod_001.nc
+    gaps: { expected: null, tolerance: null }
+"""
 
 
 def _generate_minimal_manifest(discovered: Dict[str, List[str]], stage_candidates: List[Dict[str, Any]]) -> str:
@@ -1987,6 +2032,11 @@ For documentation, visit: https://github.com/MicheleBonus/ambermeta
         "--force",
         action="store_true",
         help="Overwrite existing output file without prompting (required for non-interactive --auto mode)",
+    )
+    init_parser.add_argument(
+        "--v2",
+        action="store_true",
+        help="Emit a v2 (Simulation → Phase → Step) template manifest instead of the v1 flat template",
     )
 
     # GUI subcommand
