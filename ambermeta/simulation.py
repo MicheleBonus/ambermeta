@@ -113,3 +113,42 @@ def payload_to_simulation(payload: Dict[str, Any]) -> Simulation:
         if phase is not None:
             phase.steps.append(step)
     return sim
+
+
+import json
+
+from ambermeta.manifest import _read_raw_manifest, _normalize_container
+
+try:  # optional dependency, mirrors manifest.py
+    import yaml
+except ImportError:  # pragma: no cover
+    yaml = None
+
+
+def _is_v2(raw: Any) -> bool:
+    return isinstance(raw, dict) and (raw.get("version") == 2 or "phases" in raw or "simulation" in raw)
+
+
+def write_simulation(sim: Simulation, path: str, fmt: str) -> None:
+    """Write a Simulation as a v2 manifest. JSON and YAML are lossless; TOML/CSV
+    flat export is deferred (documented lossy view, a later task)."""
+    payload = simulation_to_payload(sim)
+    if fmt == "json":
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(payload, fh, indent=2)
+        return
+    if fmt == "yaml":
+        if yaml is None:
+            raise RuntimeError("PyYAML is required for YAML output")
+        with open(path, "w", encoding="utf-8") as fh:
+            yaml.safe_dump(payload, fh, sort_keys=False)
+        return
+    raise ValueError(f"v2 write supports json/yaml only, got: {fmt}")
+
+
+def load_simulation(path: str) -> Simulation:
+    """Load a Simulation from a manifest file, auto-migrating v1 manifests."""
+    raw = _read_raw_manifest(path)
+    if _is_v2(raw):
+        return payload_to_simulation(raw)
+    return migrate_v1_manifest(_normalize_container(raw))

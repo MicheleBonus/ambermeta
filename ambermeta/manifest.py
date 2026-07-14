@@ -345,6 +345,34 @@ def write_manifest(payload: Dict[str, Any], path: str, fmt: str) -> None:
 # Tolerant reader
 # ---------------------------------------------------------------------------
 
+def _read_raw_manifest(manifest_path: Any, expand_env: bool = True) -> Any:
+    """Read + parse a manifest file to its raw container, WITHOUT v1 key
+    normalization. v2 loaders need the untouched structure; v1 callers normalize
+    afterwards via _normalize_container."""
+    path = Path(manifest_path)
+    if not path.exists():
+        raise FileNotFoundError(f"Manifest not found: {manifest_path}")
+    text = path.read_text(encoding="utf-8")
+    suffix = path.suffix.lower()
+    if suffix in {".yaml", ".yml"}:
+        if yaml is None:
+            raise ImportError("PyYAML is required to read YAML manifests. Install with `pip install pyyaml`.")
+        manifest = yaml.safe_load(text)
+    elif suffix == ".toml":
+        manifest = _parse_toml_manifest(text)
+    elif suffix == ".csv":
+        manifest = _parse_csv_manifest(text)
+    else:
+        manifest = json.loads(text)
+    if manifest is None:
+        return {}
+    if not isinstance(manifest, (dict, list)):
+        raise TypeError("Manifest must be a mapping or list of stage entries.")
+    if expand_env:
+        manifest = _expand_env_vars(manifest)
+    return manifest
+
+
 def load_manifest(
     manifest_path: Any,
     expand_env: bool = True,
@@ -365,37 +393,9 @@ def load_manifest(
     Manifest data as a list of stage dictionaries or a mapping, with all
     stage keys normalised via normalize_stage_keys.
     """
-    path = Path(manifest_path)
-    if not path.exists():
-        raise FileNotFoundError(f"Manifest not found: {manifest_path}")
-
-    text = path.read_text(encoding="utf-8")
-    suffix = path.suffix.lower()
-
-    if suffix in {".yaml", ".yml"}:
-        if yaml is None:
-            raise ImportError(
-                "PyYAML is required to read YAML manifests. "
-                "Install with `pip install pyyaml`."
-            )
-        manifest = yaml.safe_load(text)
-    elif suffix == ".toml":
-        manifest = _parse_toml_manifest(text)
-    elif suffix == ".csv":
-        manifest = _parse_csv_manifest(text)
-    else:
-        # Default to JSON
-        manifest = json.loads(text)
-
-    if manifest is None:
+    manifest = _read_raw_manifest(manifest_path, expand_env=expand_env)
+    if manifest == {}:
         return {}
-
-    if not isinstance(manifest, (dict, list)):
-        raise TypeError("Manifest must be a mapping or list of stage entries.")
-
-    if expand_env:
-        manifest = _expand_env_vars(manifest)
-
     return _normalize_container(manifest)
 
 
@@ -413,4 +413,5 @@ __all__ = [
     "_expand_env_vars",
     "_normalize_manifest",
     "_normalize_container",
+    "_read_raw_manifest",
 ]

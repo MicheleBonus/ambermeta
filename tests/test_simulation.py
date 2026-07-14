@@ -44,3 +44,20 @@ def test_payload_shape_and_round_trip():
 
     back = payload_to_simulation(payload)
     assert back == sim          # dataclass equality: full round trip
+
+
+from ambermeta.simulation import write_simulation, load_simulation
+
+
+def test_write_then_load_v2_yaml_and_json(tmp_path):
+    sim = Simulation(
+        topologies=[Topology(id="top_wt", path="wt.prmtop", kind="normal")],
+        starting_structure="wt.inpcrd",
+        phases=[Phase(id="ph_0", name="Min", role="minimization", steps=[
+            Step(id="st_0", name="min", topology="top_wt", mdin="min.in")])],
+    )
+    for fmt, ext in [("json", ".json"), ("yaml", ".yaml")]:
+        target = tmp_path / f"sim{ext}"
+        write_simulation(sim, str(target), fmt)
+        loaded = load_simulation(str(target))
+        assert loaded == sim
