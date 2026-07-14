@@ -421,12 +421,21 @@ def extract_prmtop_metadata(filepath: str) -> PrmtopMetadata:
         md.hmr_detection_method = "atomic_number"
     elif masses and atom_names:
         n = min(len(masses), len(atom_names))
+        def _is_h_name(nm: str) -> bool:
+            nm = str(nm).strip()
+            # "H", "H1", "HA", "HG1" are hydrogen; "He"/"Hg"/"Ho"/"Hf" (2nd char lowercase) are not.
+            return bool(nm) and nm[0].upper() == "H" and not (len(nm) > 1 and nm[1].islower())
         hydrogen_masses = [masses[i] for i in range(n)
                            if masses[i] is not None
-                           and str(atom_names[i]).strip().upper().startswith("H")
+                           and _is_h_name(atom_names[i])
                            and masses[i] < 5.0]
         if hydrogen_masses:
             md.hmr_detection_method = "atom_name"
+            if any(1.9 <= m <= 2.2 for m in hydrogen_masses):
+                md.warnings.append(
+                    "Hydrogen masses ~2.0 amu on the atom-name path may be deuterium, "
+                    "not HMR; confirm via ATOMIC_NUMBER."
+                )
 
     if hydrogen_masses:
         min_mass, max_mass = min(hydrogen_masses), max(hydrogen_masses)

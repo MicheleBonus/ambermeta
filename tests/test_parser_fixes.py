@@ -84,3 +84,14 @@ def test_incomplete_charge_leaves_neutrality_unknown(tmp_path):
     md = extract_prmtop_metadata(str(p))
     assert md.is_neutral is None
     assert any("neutrality verdict is uncertain" in w for w in md.warnings)
+
+
+def test_atom_name_hmr_fallback_excludes_non_hydrogen(tmp_path):
+    p = tmp_path / "names.prmtop"
+    # "He" (helium, ~4.0) currently passes startswith("H") and mass<5 -> wrongly a "hydrogen".
+    _write_prmtop(p, natom=3, nres=1, res_labels=["LIG"],
+                  masses=[4.003, 1.008, 1.008], atom_names=["He", "H1", "H2"])
+    md = extract_prmtop_metadata(str(p))
+    assert md.hmr_detection_method == "atom_name"
+    assert md.hmr_hydrogen_mass_range == (1.008, 1.008)   # He excluded
+    assert md.hmr_active is False
