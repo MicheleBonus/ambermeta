@@ -10,6 +10,8 @@ from .schemas import FileInfo, FileType
 
 
 def resolve_within_base(path: str, base_directory: str) -> str:
+    if not os.path.isabs(path):
+        path = os.path.join(base_directory, path)
     resolved = os.path.realpath(path)
     base = os.path.realpath(base_directory)
     if resolved == base or resolved.startswith(base + os.sep):

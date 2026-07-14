@@ -278,48 +278,4 @@ class PreviewResponse(BaseModel):
     format: str
 
 
-# ---------------------------------------------------------------------------
-# Transitional flat-model classes — the not-yet-rewritten routes.py still
-# imports these, so the package (and the whole test suite's collection) only
-# stays importable if we keep them here. Removed in Task D1 once routes.py is
-# rewritten onto the new surface. DO NOT SKIP THESE.
-# ---------------------------------------------------------------------------
-
-class GlobalSettings(BaseModel):
-    global_prmtop: Optional[str] = None
-    hmr_prmtop: Optional[str] = None
-    initial_coordinates: Optional[str] = None
-    auto_link_restarts: bool = True
-    strict_validation: bool = True
-    allow_gaps: bool = False
-    use_relative_paths: bool = True
-
-
-class StageCreate(BaseModel):
-    name: str
-    role: StageRole = StageRole.UNKNOWN
-    files: StageFiles = Field(default_factory=StageFiles)
-    expected_gap_ps: Optional[float] = None
-    gap_tolerance_ps: Optional[float] = None
-    notes: List[str] = Field(default_factory=list)
-
-
-class StageUpdate(BaseModel):
-    name: Optional[str] = None
-    role: Optional[StageRole] = None
-    files: Optional[StageFiles] = None
-    expected_gap_ps: Optional[float] = None
-    gap_tolerance_ps: Optional[float] = None
-    notes: Optional[List[str]] = None
-
-
-class StageReorderRequest(BaseModel):
-    stage_ids: List[str]
-
-
-class BulkStageUpdate(BaseModel):
-    stage_ids: List[str]
-    update: StageUpdate
-
-
 FileInfo.model_rebuild()
