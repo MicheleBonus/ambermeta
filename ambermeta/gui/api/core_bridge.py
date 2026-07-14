@@ -471,6 +471,42 @@ def build_suggestions(sim, base_directory):
     return out
 
 
+def _flatten_simulation(sim):
+    """Flatten a Simulation into the flat stage dicts the validation engine expects."""
+    topo_by_id = {t.id: t.path for t in sim.topologies}
+    flat = []
+    for p in sim.phases:
+        for s in p.steps:
+            if s.input_coords.path:                # explicit path OR a resolved chained restart
+                inpcrd = s.input_coords.path
+            elif s.input_coords.source == "starting_structure":
+                inpcrd = sim.starting_structure
+            else:                                  # "step" with no resolved restart path
+                inpcrd = None
+            flat.append({
+                "name": s.name, "role": p.role,
+                "prmtop": topo_by_id.get(s.topology) if s.topology else None,
+                "mdin": s.mdin, "mdout": s.mdout, "mdcrd": s.mdcrd, "inpcrd": inpcrd,
+                "expected_gap_ps": s.expected_gap_ps, "gap_tolerance_ps": s.gap_tolerance_ps,
+                "notes": list(s.notes),
+            })
+    return flat
+
+
+def validate_simulation(sim, settings, base_directory):
+    flat = _flatten_simulation(sim)
+    report = build_validation_report(flat, dict(settings), base_directory)
+    suggestions = build_suggestions(sim, base_directory)
+    for issue in report.get("protocol_issues", []):
+        suggestions.append({
+            "id": f"sug_c_{len(suggestions) + 1}", "kind": "continuity_gap",
+            "severity": "needs_you", "title": "Continuity note", "evidence": issue,
+            "actions": ["Set as expected", "Investigate"],
+        })
+    report["suggestions"] = suggestions
+    return report
+
+
 def discover_draft(base_directory, recursive=True, pattern=None):
     from ambermeta.simulation import Simulation, Phase, Step, Topology, InputCoords
     from ambermeta.roles import classify_role

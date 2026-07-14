@@ -75,3 +75,20 @@ def test_discover_draft_on_real_fixtures(sample_md_data_dir):
         assert flat[1].input_coords.source == "step"
         assert flat[1].input_coords.path   # resolved previous-run restart, for continuity
     assert isinstance(out["suggestions"], list)
+
+
+def test_validate_simulation_reports_missing_files_and_suggestions(tmp_path):
+    (tmp_path / "prod_0001.in").write_text("&cntrl\nimin=0, nstlim=1000, dt=0.002,\n/\n")
+    sim = Simulation(
+        topologies=[Topology(id="t0", path="wt.prmtop", kind="normal")],
+        phases=[Phase(id="p0", name="Production", role="production", steps=[
+            Step(id="a", name="prod_0001", topology="t0", mdin="prod_0001.in"),
+            Step(id="b", name="prod_0003", topology="t0", mdin="prod_0003.in")])],
+    )
+    settings = {"strict_validation": True, "allow_gaps": False}
+    report = core_bridge.validate_simulation(sim, settings, str(tmp_path))
+    assert "stage_issues" in report and "suggestions" in report
+    # prod_0003.in and the topology don't exist -> missing-file errors surface
+    all_errors = [e for si in report["stage_issues"] for e in si["errors"]]
+    assert any("missing" in e for e in all_errors)
+    assert any(s["kind"] == "missing_run" for s in report["suggestions"])
