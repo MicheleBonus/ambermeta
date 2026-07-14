@@ -259,7 +259,10 @@ def _parse_ascii_trajectory(filepath: str) -> TrajectoryMetadata:
     try:
         with open(filepath, 'r') as f:
             md.title = f.readline().strip()
-        md.warnings.append("ASCII format: No detailed metadata (time, box, count) extractable without prmtop.")
+        md.warnings.append(
+            "ASCII trajectory: no per-frame time/box/atom-count metadata without the prmtop; "
+            "excluded from time-based sequence analysis."
+        )
     except (IOError, OSError, UnicodeDecodeError):
         md.warnings.append("File empty or unreadable.")
     return md

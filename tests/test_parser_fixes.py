@@ -190,3 +190,24 @@ def test_amberrestart_does_not_crash_trajectory_parser(tmp_path):
         # It is a .ncrst, but force the trajectory path to prove it degrades, not crashes:
         md = _mdcrd.parse_mdcrd(path)
         assert md is not None  # no uncaught TypeError
+
+
+from ambermeta.legacy_extractors.mdcrd import parse_mdcrd, _is_variable_dt
+import numpy as _np
+
+
+def test_ascii_trajectory_flagged_not_silent(tmp_path):
+    p = tmp_path / "old.mdcrd"
+    p.write_text("TITLE\n" + "  1.000  2.000  3.000  4.000  5.000  6.000\n" * 4)
+    md = parse_mdcrd(str(p))
+    assert md.file_format == "ASCII"
+    assert any("sequence analysis" in w.lower() for w in md.warnings)
+
+
+def test_relative_dt_variance_threshold():
+    # ~2 ps interval, float32-scale jitter -> NOT variable (relative check)
+    steady = _np.array([2.0, 2.0001, 1.9999, 2.0002])
+    assert _is_variable_dt(steady, 2.0) is False
+    # a real doubling -> variable
+    jumpy = _np.array([2.0, 4.0, 2.0, 4.0])
+    assert _is_variable_dt(jumpy, 3.0) is True
