@@ -303,7 +303,12 @@ def _classify_simulation(md: PrmtopMetadata):
     # If no major biomolecules found but we have other stuff (excluding water/ions)
     # calculate remainder
     known_solvents = WATER_RESNAMES | ORGANIC_SOLVENT_RESNAMES | ION_RESNAMES
-    unknown_residues = [r for r in md.residue_composition if r not in known_solvents and not (has_protein or has_dna or has_rna or has_lipid)]
+    biomol = PROTEIN_RESNAMES | DNA_RESNAMES | RNA_RESNAMES | LIPID_RESNAMES
+    unknown_residues = [
+        r for r in md.residue_composition
+        if r not in known_solvents and r not in biomol
+        and not (len(r) == 4 and r[1:] in PROTEIN_RESNAMES)
+    ]
     if unknown_residues and not solutes:
         solutes.append("Small Molecule / Ligand")
     elif unknown_residues:

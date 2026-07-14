@@ -59,3 +59,13 @@ def test_boxless_prmtop_is_non_periodic_not_implicit(tmp_path):
 def test_boxed_prmtop_is_explicit(sample_md_data_dir):
     md = extract_prmtop_metadata(str(sample_md_data_dir / "CH3L1_HUMAN_6NAG.top"))
     assert md.solvent_type == "Explicit Solvent"
+
+
+def _md(comp, solvent="Explicit Solvent"):
+    return PrmtopMetadata(filename="x", residue_composition=comp, solvent_type=solvent)
+
+
+def test_protein_ligand_complex_names_ligand():
+    md = _md({"ALA": 20, "LIG": 1, "WAT": 500})
+    _classify_simulation(md)
+    assert "Protein" in md.simulation_category and "Ligand" in md.simulation_category
