@@ -13,7 +13,6 @@ export function ExportModal({ open, onClose }: { open: boolean; onClose: () => v
           onChange={(e) => setFormat(e.target.value as ExportFormat)}
           className="px-2 py-1 border border-hairline rounded bg-app text-sm">
           <option value="yaml">yaml</option><option value="json">json</option>
-          <option value="toml">toml</option><option value="csv">csv</option>
         </select>
         <Button variant="primary" onClick={() => preview.mutate(format)}>Render</Button>
         {preview.data && (

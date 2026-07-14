@@ -1,15 +1,24 @@
+import { useState } from "react";
 import { DndContext, PointerSensor, useSensor, useSensors, type DragEndEvent } from "@dnd-kit/core";
 import { SelectionProvider } from "@/state/selection";
 import { ResizeHandle, Toaster } from "@/components/common";
 import { usePersistentSize } from "@/lib/usePersistentSize";
 import { useUnsavedGuard } from "@/lib/useUnsavedGuard";
-import { useDocument, useAssign, useReorderSteps, useMoveStep, useReorderPhases } from "@/api/hooks";
+import {
+  useDocument, useAssign, useReorderSteps, useMoveStep, useReorderPhases,
+  useOpen, useSave, useDiscover,
+} from "@/api/hooks";
 import { TopBar } from "@/components/TopBar/TopBar";
+import { DiscoverModal } from "@/components/TopBar/DiscoverModal";
+import { ExportModal } from "@/components/TopBar/ExportModal";
+import { ValidationPanel } from "@/components/TopBar/ValidationPanel";
+import { FilePicker } from "@/components/FilePicker/FilePicker";
 import { FilePanel } from "@/components/FilePanel/FilePanel";
-import { Canvas } from "@/components/Canvas/Canvas";
+import { Canvas, SuggestionsContext } from "@/components/Canvas/Canvas";
 import { Inspector } from "@/components/Inspector/Inspector";
 import { resolveDrop } from "@/components/Canvas/resolveDrop";
 import { reorderIds } from "@/components/Canvas/reorderIds";
+import type { Suggestion } from "@/types";
 
 export default function App() {
   const [filesW, setFilesW] = usePersistentSize("files-w", 280);
@@ -20,6 +29,16 @@ export default function App() {
   const reorderSteps = useReorderSteps();
   const moveStep = useMoveStep();
   const reorderPhases = useReorderPhases();
+  const open = useOpen();
+  const save = useSave();
+  const discover = useDiscover();
+
+  const [picker, setPicker] = useState<"open" | "save" | null>(null);
+  const [discoverOpen, setDiscoverOpen] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
+  const [validateOpen, setValidateOpen] = useState(false);
+  const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
+
   const onDragEnd = (e: DragEndEvent) => {
     const a = resolveDrop(String(e.active.id), e.over ? String(e.over.id) : null);
     if (!a || !doc) return;
@@ -54,24 +73,48 @@ export default function App() {
     }
   };
   useUnsavedGuard(!!doc?.dirty);
+  const confirmIfDirty = () => !doc?.dirty || window.confirm("Discard unsaved changes?");
+
+  const onOpen = () => { if (confirmIfDirty()) setPicker("open"); };
+  const onSave = () => {
+    if (doc?.manifest_path) save.mutate({});
+    else setPicker("save");
+  };
+  const onDiscover = () => { if (confirmIfDirty()) setDiscoverOpen(true); };
 
   return (
     <SelectionProvider>
-      <DndContext sensors={sensors} onDragEnd={onDragEnd}>
-        <div className="flex flex-col h-full">
-          <TopBar />
-          <div className="flex flex-1 min-h-0">
-            <div data-testid="pane-files" style={{ width: filesW }}
-              className="shrink-0 border-r border-hairline overflow-auto bg-surface"><FilePanel /></div>
-            <ResizeHandle direction="left" currentWidth={filesW} onResize={setFilesW} minWidth={200} maxWidth={480} />
-            <div data-testid="pane-canvas" className="flex-1 min-w-0 overflow-auto"><Canvas /></div>
-            <ResizeHandle direction="right" currentWidth={inspW} onResize={setInspW} minWidth={280} maxWidth={560} />
-            <div data-testid="pane-inspector" style={{ width: inspW }}
-              className="shrink-0 border-l border-hairline overflow-auto bg-surface"><Inspector /></div>
+      <SuggestionsContext.Provider value={suggestions}>
+        <DndContext sensors={sensors} onDragEnd={onDragEnd}>
+          <div className="flex flex-col h-full">
+            <TopBar onOpen={onOpen} onSave={onSave} onDiscover={onDiscover}
+              onExport={() => setExportOpen(true)} onValidate={() => setValidateOpen(true)} />
+            <div className="flex flex-1 min-h-0">
+              <div data-testid="pane-files" style={{ width: filesW }}
+                className="shrink-0 border-r border-hairline overflow-auto bg-surface"><FilePanel /></div>
+              <ResizeHandle direction="left" currentWidth={filesW} onResize={setFilesW} minWidth={200} maxWidth={480} />
+              <div data-testid="pane-canvas" className="flex-1 min-w-0 overflow-auto"><Canvas /></div>
+              <ResizeHandle direction="right" currentWidth={inspW} onResize={setInspW} minWidth={280} maxWidth={560} />
+              <div data-testid="pane-inspector" style={{ width: inspW }}
+                className="shrink-0 border-l border-hairline overflow-auto bg-surface"><Inspector /></div>
+            </div>
           </div>
-        </div>
-        <Toaster />
-      </DndContext>
+
+          <FilePicker open={picker === "open"} mode="open" title="Open manifest"
+            onClose={() => setPicker(null)}
+            onPick={({ path }) => { setPicker(null); open.mutate(path); }} />
+          <FilePicker open={picker === "save"} mode="save" title="Save manifest as"
+            onClose={() => setPicker(null)}
+            onPick={({ path, format }) => { setPicker(null); save.mutate({ path, format }); }} />
+          <DiscoverModal open={discoverOpen} onClose={() => setDiscoverOpen(false)}
+            onRun={(a) => discover.mutate(a, { onSuccess: (res) => setSuggestions(res.suggestions) })} />
+          <ExportModal open={exportOpen} onClose={() => setExportOpen(false)} />
+          <ValidationPanel open={validateOpen} onClose={() => setValidateOpen(false)}
+            onSuggestions={setSuggestions} />
+
+          <Toaster />
+        </DndContext>
+      </SuggestionsContext.Provider>
     </SelectionProvider>
   );
 }
