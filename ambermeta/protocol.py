@@ -1112,6 +1112,34 @@ def detect_numeric_sequences(filenames: List[str]) -> Dict[str, List[str]]:
     return result
 
 
+def detect_sequence_gaps(names: List[str]) -> Dict[str, List[int]]:
+    """Return, per numbered-sequence base, the integer indices that are missing.
+
+    e.g. ['prod_0001', 'prod_0002', 'prod_0004'] -> {'prod': [3]}.
+    Only bases with 2+ present members are considered; pure-numeric bases skipped.
+    """
+    suffix_pattern = re.compile(r'^(.+?)[-_.]?(\d+)$')
+    present: Dict[str, set] = {}
+    for name in names:
+        stem = Path(name).stem
+        match = suffix_pattern.match(stem)
+        if not match:
+            continue
+        base = match.group(1)
+        if base.isdigit():
+            continue
+        present.setdefault(base, set()).add(int(match.group(2)))
+
+    gaps: Dict[str, List[int]] = {}
+    for base, nums in present.items():
+        if len(nums) < 2:
+            continue
+        missing = [i for i in range(min(nums), max(nums) + 1) if i not in nums]
+        if missing:
+            gaps[base] = missing
+    return gaps
+
+
 def infer_stage_role_from_path(path: str) -> Optional[str]:
     """Infer stage role from the directory or file path.
 

@@ -32,3 +32,20 @@ def test_frame_interval_noise_is_still_tolerated():
     proto = SimulationProtocol(stages=[prev, curr])
     proto.validate()
     assert curr.observed_gap_ps == 0.0
+
+
+from ambermeta.protocol import detect_sequence_gaps
+
+
+def test_missing_member_is_detected():
+    names = ["ntp_prod_0001.mdin", "ntp_prod_0002.mdin", "ntp_prod_0004.mdin"]
+    assert detect_sequence_gaps(names) == {"ntp_prod": [3]}
+
+
+def test_complete_sequence_has_no_gaps():
+    names = ["prod_1.mdin", "prod_2.mdin", "prod_3.mdin"]
+    assert detect_sequence_gaps(names) == {}
+
+
+def test_single_member_is_not_a_sequence():
+    assert detect_sequence_gaps(["prod_1.mdin"]) == {}
