@@ -377,13 +377,57 @@ class PreviewResponse(BaseModel):
     format: str
 
 
+# ---------------------------------------------------------------------------
+# Transitional flat-model classes — the not-yet-rewritten routes.py still
+# imports these, so the package (and the whole test suite's collection) only
+# stays importable if we keep them here. Removed in Task D1 once routes.py is
+# rewritten onto the new surface. DO NOT SKIP THESE.
+# ---------------------------------------------------------------------------
+
+class GlobalSettings(BaseModel):
+    global_prmtop: Optional[str] = None
+    hmr_prmtop: Optional[str] = None
+    initial_coordinates: Optional[str] = None
+    auto_link_restarts: bool = True
+    strict_validation: bool = True
+    allow_gaps: bool = False
+    use_relative_paths: bool = True
+
+
+class StageCreate(BaseModel):
+    name: str
+    role: StageRole = StageRole.UNKNOWN
+    files: StageFiles = Field(default_factory=StageFiles)
+    expected_gap_ps: Optional[float] = None
+    gap_tolerance_ps: Optional[float] = None
+    notes: List[str] = Field(default_factory=list)
+
+
+class StageUpdate(BaseModel):
+    name: Optional[str] = None
+    role: Optional[StageRole] = None
+    files: Optional[StageFiles] = None
+    expected_gap_ps: Optional[float] = None
+    gap_tolerance_ps: Optional[float] = None
+    notes: Optional[List[str]] = None
+
+
+class StageReorderRequest(BaseModel):
+    stage_ids: List[str]
+
+
+class BulkStageUpdate(BaseModel):
+    stage_ids: List[str]
+    update: StageUpdate
+
+
 FileInfo.model_rebuild()
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [ ] **Step 4: Run tests to verify they pass**
 
-Run: `pytest tests/test_gui_schemas_sim.py -q`
-Expected: PASS (3 passed)
+Run: `pytest tests/test_gui_schemas_sim.py -q` → PASS (3 passed). Then run the FULL suite `pytest -q` → it must be all green: the transitional classes keep the not-yet-rewritten `routes.py` importable, so `test_gui_api.py` / `test_gui_core_bridge.py` / `test_gui_files.py` still collect and pass.
+Expected: PASS
 
 - [ ] **Step 5: Commit**
 
@@ -401,6 +445,9 @@ git commit -m "feat(gui): rewrite API schemas for the Simulation->Phase->Step mo
 **Files:**
 - Rewrite: `ambermeta/gui/api/document.py`
 - Rewrite: `tests/test_gui_document.py` (the old flat-stage tests are replaced)
+- Delete: `tests/test_gui_api.py` (see note)
+
+**Why delete `test_gui_api.py` here:** rewriting the store removes the old flat mutators (`add_stage`/`update_stage`/…) that the not-yet-rewritten `routes.py` handlers call, so the old `/stages`-surface tests in `tests/test_gui_api.py` can no longer pass. Delete it in THIS task; its coverage is replaced by `tests/test_gui_api_sim.py` in Group D. `routes.py` itself stays importable (A1's transitional schema classes) and its now-dormant handlers are removed when `routes.py` is rewritten in D1.
 
 **Interfaces:**
 - Consumes: `ambermeta.simulation.{Simulation, Phase, Step, Topology, InputCoords}`; `schemas` (lazily, in `to_response`).
@@ -643,14 +690,15 @@ class DocumentStore:
             self._restore(self._redo.pop())
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [ ] **Step 4: Run tests to verify they pass**
 
-Run: `pytest tests/test_gui_document.py -q`
-Expected: PASS (3 passed)
+Run: `pytest tests/test_gui_document.py -q` → PASS (3 passed). Then the FULL suite `pytest -q` → all green (after `git rm tests/test_gui_api.py`).
+Expected: PASS
 
 - [ ] **Step 5: Commit**
 
 ```bash
+git rm tests/test_gui_api.py
 git add ambermeta/gui/api/document.py tests/test_gui_document.py
 git commit -m "feat(gui): DocumentStore holds a Simulation; state/undo/redo/to_response"
 ```
@@ -1620,6 +1668,7 @@ git commit -m "feat(gui): read_file_head; remove dead flat-model bridge function
 
 **Files:**
 - Rewrite: `ambermeta/gui/api/routes.py`
+- Modify: `ambermeta/gui/api/schemas.py` (remove the A1 transitional classes — see after Step 3)
 - Test: `tests/test_gui_api_sim.py`
 
 **Interfaces:**
@@ -1817,6 +1866,8 @@ def update_settings(req: SettingsPatch) -> DocumentResponse:
     return store.to_response()
 ```
 
+Now that `routes.py` no longer imports them, **remove the transitional flat-model classes** — `GlobalSettings`, `StageCreate`, `StageUpdate`, `StageReorderRequest`, `BulkStageUpdate`, and their "Transitional flat-model classes" comment header — from `ambermeta/gui/api/schemas.py`. Confirm the package still imports: `python -c "import ambermeta.gui.api.routes, ambermeta.gui.api.document, ambermeta.gui.api.core_bridge; print('ok')"`.
+
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `pytest tests/test_gui_api_sim.py -q`
@@ -1825,8 +1876,8 @@ Expected: PASS (3 passed)
 - [ ] **Step 5: Commit**
 
 ```bash
-git add ambermeta/gui/api/routes.py tests/test_gui_api_sim.py
-git commit -m "feat(gui): document/open/save/preview/discover/validate/undo/redo routes"
+git add ambermeta/gui/api/routes.py ambermeta/gui/api/schemas.py tests/test_gui_api_sim.py
+git commit -m "feat(gui): document/open/save/preview/discover/validate/undo/redo routes; drop transitional schemas"
 ```
 
 ### Task D2: Topology + starting-structure routes
