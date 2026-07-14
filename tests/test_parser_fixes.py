@@ -114,3 +114,23 @@ def test_inpcrd_detect_format_magic(tmp_path):
     assert _inpcrd_detect(str(classic)) == "NetCDF"
     assert _inpcrd_detect(str(hdf5)) == "NetCDF"     # HDF5-backed NetCDF, was misread as ASCII
     assert _inpcrd_detect(str(ascii_cdf)) == "ASCII" # title starting 'CDF', was misread as NetCDF
+
+
+from ambermeta.legacy_extractors.inpcrd import parse_inpcrd
+
+
+def _coords_only_inpcrd(path, natoms, trailing_blank):
+    # title, "NATOM", then ceil(natoms*3/6) coord lines of 6 floats
+    import math as _m
+    body = "\n".join("  1.0  2.0  3.0  4.0  5.0  6.0" for _ in range(_m.ceil(natoms * 3 / 6)))
+    text = f"default_name\n{natoms:6d}\n{body}\n"
+    if trailing_blank:
+        text += "\n"
+    path.write_text(text)
+
+
+def test_trailing_blank_line_does_not_fabricate_box(tmp_path):
+    clean = tmp_path / "clean.inpcrd"; _coords_only_inpcrd(clean, 4, trailing_blank=False)
+    blanked = tmp_path / "blank.inpcrd"; _coords_only_inpcrd(blanked, 4, trailing_blank=True)
+    assert parse_inpcrd(str(clean)).has_box is False
+    assert parse_inpcrd(str(blanked)).has_box is False   # was True: coord line read as box
