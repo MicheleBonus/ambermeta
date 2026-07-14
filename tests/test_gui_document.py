@@ -55,3 +55,27 @@ def test_topology_pool_mutators_and_undo():
 
     st.undo()   # undo the remove
     assert len(st.get().simulation.topologies) == 2
+
+
+def test_phase_mutators_reorder_update_delete():
+    st = _store()
+    p_min = st.add_phase("Min", "minimization")
+    p_prod = st.add_phase("Prod", "production")
+
+    st.reorder_phases([p_prod, p_min])
+    assert [p.id for p in st.get().simulation.phases] == [p_prod, p_min]
+
+    st.update_phase(p_min, {"name": "Minimization", "role": "minimization"})
+    assert st._find_phase(p_min).name == "Minimization"
+
+    # default delete (reassign_to=None) drops the phase and its steps
+    st.delete_phase(p_min)
+    assert [p.id for p in st.get().simulation.phases] == [p_prod]
+
+
+def test_reorder_phases_rejects_mismatched_ids():
+    st = _store()
+    p = st.add_phase("A", "")
+    import pytest
+    with pytest.raises(ValueError):
+        st.reorder_phases([p, "bogus"])

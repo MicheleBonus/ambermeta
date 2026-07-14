@@ -215,6 +215,45 @@ class DocumentStore:
         self._doc.simulation.topologies.append(Topology(id=tid, path=path, kind=kind or "normal"))
         return tid
 
+    # -- phase mutations ----------------------------------------------------
+    def add_phase(self, name: str, role: str) -> str:
+        with self.lock:
+            self._snapshot()
+            pid = _new_id()
+            self._doc.simulation.phases.append(Phase(id=pid, name=name, role=role or ""))
+            self._doc.dirty = True
+            return pid
+
+    def update_phase(self, phase_id: str, patch: Dict[str, Any]) -> None:
+        with self.lock:
+            p = self._find_phase(phase_id)
+            self._snapshot()
+            if patch.get("name") is not None:
+                p.name = patch["name"]
+            if "role" in patch and patch["role"] is not None:
+                p.role = patch["role"]
+            self._doc.dirty = True
+
+    def reorder_phases(self, ordered_ids: List[str]) -> None:
+        with self.lock:
+            phases = self._doc.simulation.phases
+            if set(ordered_ids) != {p.id for p in phases} or len(ordered_ids) != len(phases):
+                raise ValueError("reorder id set does not match current phases")
+            self._snapshot()
+            by_id = {p.id: p for p in phases}
+            self._doc.simulation.phases = [by_id[i] for i in ordered_ids]
+            self._doc.dirty = True
+
+    def delete_phase(self, phase_id: str, reassign_to: Optional[str] = None) -> None:
+        with self.lock:
+            p = self._find_phase(phase_id)
+            target = self._find_phase(reassign_to) if reassign_to is not None else None
+            self._snapshot()
+            if target is not None:
+                target.steps.extend(p.steps)
+            self._doc.simulation.phases.remove(p)
+            self._doc.dirty = True
+
     def undo(self) -> None:
         with self.lock:
             if not self._undo:
