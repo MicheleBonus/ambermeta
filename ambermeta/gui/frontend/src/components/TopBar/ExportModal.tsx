@@ -27,7 +27,7 @@ export function ExportModal({ open, onClose }: { open: boolean; onClose: () => v
       )}
       {preview.data?.warnings && preview.data.warnings.length > 0 && (
         <div className="mt-2 space-y-0.5">
-          {preview.data.warnings.map((w, i) => (
+          {preview.data.warnings.map((w: string, i: number) => (
             <p key={i} className="text-warning text-xs">{w}</p>
           ))}
         </div>
