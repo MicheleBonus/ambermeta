@@ -1283,6 +1283,8 @@ git commit -m "feat(gui): open/save/preview via ambermeta.simulation (v2)"
 
 ### Task C2: `discover_draft` — build a best-guess Simulation from a directory
 
+> **Execution order:** implement Task C3 (`build_suggestions`) BEFORE this task — `discover_draft`'s final line calls `build_suggestions(sim, base_directory)`.
+
 **Files:**
 - Modify: `ambermeta/gui/api/core_bridge.py`
 - Test: `tests/test_gui_core_bridge_sim.py`
@@ -2209,12 +2211,11 @@ git add ambermeta/gui/api/routes.py tests/test_gui_api_sim.py
 git commit -m "feat(gui): step routes (create/reorder/update-with-clear/delete/move)"
 ```
 
-### Task D5: Unified `/assign` + file routes; delete stale `test_gui_api.py`
+### Task D5: Unified `/assign` + file routes
 
 **Files:**
 - Modify: `ambermeta/gui/api/routes.py`
 - Modify: `tests/test_gui_api_sim.py`
-- Delete/replace: `tests/test_gui_api.py` (asserts the removed flat `/stages` contract)
 
 **Interfaces:**
 - Produces: `POST /assign`, `GET /files`, `GET /files/metadata`, `GET /files/raw`, `GET /files/related/{stem:path}`.
@@ -2298,7 +2299,7 @@ def get_file_raw(path: str = Query(...), max_bytes: int = Query(4096)) -> RawFil
     return RawFile(path=resolved, content=out["content"], truncated=out["truncated"])
 ```
 
-Also port the existing `GET /files/related/{stem:path}` route from the old `routes.py` verbatim (it is model-agnostic — it scans the filesystem, not the document). Then delete `tests/test_gui_api.py` (it asserts the removed `/stages`, `/settings` topology fields, `/link-restarts`, `/sequences` surface; its coverage is replaced by `tests/test_gui_api_sim.py`). If any assertions there cover file-tree/security behavior still present, move those specific tests into `tests/test_gui_api_sim.py` instead of deleting them.
+Also port the existing `GET /files/related/{stem:path}` route from the old `routes.py` verbatim (it is model-agnostic — it scans the filesystem, not the document). Note: `tests/test_gui_api.py` was already deleted in Task A1, so there is nothing to remove here; its coverage is fully replaced by `tests/test_gui_api_sim.py`.
 
 - [ ] **Step 4: Run test to verify it passes**
 
@@ -2309,8 +2310,7 @@ Expected: PASS (whole suite green; confirm no remaining references to removed en
 
 ```bash
 git add ambermeta/gui/api/routes.py tests/test_gui_api_sim.py
-git rm tests/test_gui_api.py
-git commit -m "feat(gui): unified /assign + file routes (raw head, metadata, related); drop flat API tests"
+git commit -m "feat(gui): unified /assign + file routes (raw head, metadata, related)"
 ```
 
 ---
