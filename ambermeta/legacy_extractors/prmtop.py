@@ -313,8 +313,8 @@ def _classify_simulation(md: PrmtopMetadata):
 
     # 3. Build Solvent Description
     solvent_context = ""
-    if md.solvent_type == "Implicit Solvent":
-        solvent_context = "in Implicit Solvent"
+    if md.solvent_type == "Non-periodic":
+        solvent_context = "non-periodic (vacuum or implicit solvent — depends on mdin igb)"
     elif md.solvent_type == "Vacuum":
         solvent_context = "in Vacuum"
     else:
@@ -451,8 +451,11 @@ def extract_prmtop_metadata(filepath: str) -> PrmtopMetadata:
         else:
             md.force_field_features.append("Orthorhombic Box")
         md.solvent_type = "Explicit Solvent"
-    elif prmtop.get("RADIUS_SET"):
-        md.solvent_type = "Implicit Solvent"
+    else:
+        # Vacuum vs implicit solvent is a runtime mdin choice (igb), NOT encoded in
+        # the topology — LEaP writes RADIUS_SET/PBRadii into virtually every prmtop.
+        # From the topology alone we can only say the system is non-periodic.
+        md.solvent_type = "Non-periodic"
         rs = prmtop.get("RADIUS_SET")
         if rs:
             radius_str = "".join(str(x) for x in rs if x).strip()
