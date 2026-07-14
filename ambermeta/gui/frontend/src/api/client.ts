@@ -1,8 +1,12 @@
 import type {
-  DocumentResponse, SaveResult, PreviewResponse, ValidationReport,
-  GlobalSettings, FileInfo, FileMetadata, StageCreate, StageUpdate,
-  SettingsPatch, ExportFormat,
+  DocumentResponse, SaveResult, PreviewResponse, ValidationReport, DiscoverResult,
+  RuntimeSettings, SettingsPatch, FileInfo, FileMetadata, RawFile, ExportFormat,
+  AddTopology, UpdateTopology, PhaseCreate, PhaseUpdate,
+  StepCreatePayload, StepUpdatePayload, StepMovePayload, AssignRequest,
 } from "@/types";
+// (SaveResult / SettingsPatch below)
+export interface SaveResult { document: DocumentResponse; warnings: string[]; }
+export interface SettingsPatch { auto_link_restarts?: boolean; strict_validation?: boolean; allow_gaps?: boolean; use_relative_paths?: boolean; }
 
 export class ApiError extends Error {
   status: number;
@@ -39,45 +43,47 @@ const post = <T>(path: string, body?: unknown) =>
 const put = <T>(path: string, body: unknown) =>
   request<T>(path, { method: "PUT", body: JSON.stringify(body) });
 
+const del = <T>(path: string) => request<T>(path, { method: "DELETE" });
+
 export const api = {
   getDocument: () => request<DocumentResponse>("/document"),
   openDocument: (path: string) => post<DocumentResponse>("/document/open", { path }),
-  saveDocument: (args: { path?: string; format?: ExportFormat }) =>
-    post<SaveResult>("/document/save", args),
-  previewDocument: (format: ExportFormat) =>
-    post<PreviewResponse>("/document/preview", { format }),
-  discover: (args: { recursive: boolean; pattern?: string }) =>
-    post<DocumentResponse>("/document/discover", args),
-
-  createStage: (stage: StageCreate) => post<DocumentResponse>("/stages", stage),
-  updateStage: (id: string, update: StageUpdate) =>
-    put<DocumentResponse>(`/stages/${id}`, update),
-  deleteStage: (id: string) =>
-    request<DocumentResponse>(`/stages/${id}`, { method: "DELETE" }),
-  reorderStages: (stage_ids: string[]) =>
-    post<DocumentResponse>("/stages/reorder", { stage_ids }),
-  bulkUpdateStages: (stage_ids: string[], update: StageUpdate) =>
-    put<DocumentResponse>("/stages/bulk", { stage_ids, update }),
-
-  getSettings: () => request<GlobalSettings>("/settings"),
-  updateSettings: (patch: SettingsPatch) => put<DocumentResponse>("/settings", patch),
-
+  saveDocument: (a: { path?: string; format?: ExportFormat }) => post<SaveResult>("/document/save", a),
+  previewDocument: (format: ExportFormat) => post<PreviewResponse>("/document/preview", { format }),
+  discover: (a: { recursive: boolean; pattern?: string }) => post<DiscoverResult>("/document/discover", a),
+  validate: () => post<ValidationReport>("/validate"),
   undo: () => post<DocumentResponse>("/undo"),
   redo: () => post<DocumentResponse>("/redo"),
+  getSettings: () => request<RuntimeSettings>("/settings"),
+  updateSettings: (p: SettingsPatch) => put<DocumentResponse>("/settings", p),
 
-  validate: () => post<ValidationReport>("/validate"),
-  linkRestarts: () => post<DocumentResponse>("/link-restarts"),
+  addTopology: (b: AddTopology) => post<DocumentResponse>("/topologies", b),
+  updateTopology: (id: string, b: UpdateTopology) => put<DocumentResponse>(`/topologies/${id}`, b),
+  removeTopology: (id: string) => del<DocumentResponse>(`/topologies/${id}`),
+  setStartingStructure: (path: string | null) => put<DocumentResponse>("/simulation/starting-structure", { path }),
 
-  listFiles: (args: { path?: string; recursive?: boolean; include_all?: boolean }) => {
+  createPhase: (b: PhaseCreate) => post<DocumentResponse>("/phases", b),
+  updatePhase: (id: string, b: PhaseUpdate) => put<DocumentResponse>(`/phases/${id}`, b),
+  reorderPhases: (phase_ids: string[]) => post<DocumentResponse>("/phases/reorder", { phase_ids }),
+  deletePhase: (id: string, reassign_to?: string) =>
+    del<DocumentResponse>(`/phases/${id}${reassign_to ? `?reassign_to=${encodeURIComponent(reassign_to)}` : ""}`),
+
+  createStep: (phaseId: string, b: StepCreatePayload) => post<DocumentResponse>(`/phases/${phaseId}/steps`, b),
+  reorderSteps: (phaseId: string, step_ids: string[]) => post<DocumentResponse>(`/phases/${phaseId}/steps/reorder`, { step_ids }),
+  updateStep: (id: string, b: StepUpdatePayload) => put<DocumentResponse>(`/steps/${id}`, b),
+  deleteStep: (id: string) => del<DocumentResponse>(`/steps/${id}`),
+  moveStep: (id: string, b: StepMovePayload) => post<DocumentResponse>(`/steps/${id}/move`, b),
+
+  assign: (b: AssignRequest) => post<DocumentResponse>("/assign", b),
+
+  listFiles: (a: { path?: string; recursive?: boolean; include_all?: boolean }) => {
     const q = new URLSearchParams();
-    if (args.path) q.set("path", args.path);
-    if (args.recursive !== undefined) q.set("recursive", String(args.recursive));
-    if (args.include_all !== undefined) q.set("include_all", String(args.include_all));
+    if (a.path) q.set("path", a.path);
+    if (a.recursive !== undefined) q.set("recursive", String(a.recursive));
+    if (a.include_all !== undefined) q.set("include_all", String(a.include_all));
     return request<FileInfo[]>(`/files?${q.toString()}`);
   },
-  fileMetadata: (path: string) =>
-    request<FileMetadata>(`/files/metadata?path=${encodeURIComponent(path)}`),
-  relatedFiles: (stem: string) =>
-    request<Record<string, string>>(`/files/related/${encodeURIComponent(stem)}`),
-  sequences: () => request<Record<string, string[]>>("/sequences"),
+  fileMetadata: (path: string) => request<FileMetadata>(`/files/metadata?path=${encodeURIComponent(path)}`),
+  fileRaw: (path: string, maxBytes = 4096) => request<RawFile>(`/files/raw?path=${encodeURIComponent(path)}&max_bytes=${maxBytes}`),
+  relatedFiles: (stem: string) => request<Record<string, string>>(`/files/related/${encodeURIComponent(stem)}`),
 };

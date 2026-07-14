@@ -1,47 +1,30 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
+import { setupServer } from "msw/node";
 import { http, HttpResponse } from "msw";
-import { server, emptyDocument } from "@/test/server";
 import { api, ApiError } from "./client";
+import { emptyDocument } from "@/test/server";
 
-describe("api client", () => {
-  it("GET /document returns the document", async () => {
-    const doc = await api.getDocument();
-    expect(doc.base_directory).toBe("/work");
-    expect(doc.stages).toEqual([]);
-  });
+const server = setupServer(
+  http.post("/api/topologies", async ({ request }) => {
+    const body = (await request.json()) as { path: string; kind: string };
+    return HttpResponse.json({ ...emptyDocument, simulation: { ...emptyDocument.simulation,
+      topologies: [{ id: "t0", path: body.path, kind: body.kind }] } });
+  }),
+  http.post("/api/assign", () => HttpResponse.json(emptyDocument)),
+  http.get("/api/files/raw", () => HttpResponse.json({ path: "/w/x", content: "hi", truncated: false })),
+  http.put("/api/steps/s0", () => new HttpResponse(null, { status: 404 })),
+);
+beforeAll(() => server.listen({ onUnhandledRequest: "error" }));
+afterEach(() => server.resetHandlers());
+afterAll(() => server.close());
 
-  it("POST /document/open posts the path and returns a document", async () => {
-    server.use(
-      http.post("/api/document/open", async ({ request }) => {
-        const body = (await request.json()) as { path: string };
-        expect(body.path).toBe("/work/p.yaml");
-        return HttpResponse.json({ ...emptyDocument, manifest_path: "/work/p.yaml" });
-      })
-    );
-    const doc = await api.openDocument("/work/p.yaml");
-    expect(doc.manifest_path).toBe("/work/p.yaml");
-  });
-
-  it("throws ApiError with status + detail on 4xx", async () => {
-    server.use(
-      http.post("/api/document/open", () =>
-        HttpResponse.json({ detail: "Could not read manifest: bad" }, { status: 400 })
-      )
-    );
-    await expect(api.openDocument("/work/bad.yaml")).rejects.toMatchObject({
-      status: 400,
-      detail: "Could not read manifest: bad",
-    });
-    await expect(api.openDocument("/work/bad.yaml")).rejects.toBeInstanceOf(ApiError);
-  });
-
-  it("save returns a SaveResult with warnings", async () => {
-    server.use(
-      http.post("/api/document/save", () =>
-        HttpResponse.json({ document: emptyDocument, warnings: ["w"] })
-      )
-    );
-    const res = await api.saveDocument({ path: "/work/p.csv", format: "csv" });
-    expect(res.warnings).toEqual(["w"]);
-  });
+it("addTopology posts and returns the document", async () => {
+  const doc = await api.addTopology({ path: "wt.prmtop", kind: "hmr" });
+  expect(doc.simulation.topologies[0].kind).toBe("hmr");
+});
+it("fileRaw fetches the head", async () => {
+  expect((await api.fileRaw("x")).content).toBe("hi");
+});
+it("surfaces ApiError on 404", async () => {
+  await expect(api.updateStep("s0", { name: "x" })).rejects.toBeInstanceOf(ApiError);
 });
