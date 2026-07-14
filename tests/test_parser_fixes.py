@@ -95,3 +95,10 @@ def test_atom_name_hmr_fallback_excludes_non_hydrogen(tmp_path):
     assert md.hmr_detection_method == "atom_name"
     assert md.hmr_hydrogen_mass_range == (1.008, 1.008)   # He excluded
     assert md.hmr_active is False
+
+
+def test_box_flagged_topology_time(sample_md_data_dir):
+    md = extract_prmtop_metadata(str(sample_md_data_dir / "CH3L1_HUMAN_6NAG.top"))
+    assert md.box_dimensions is not None
+    assert md.box_is_topology_time is True
+    assert any("topology-time box" in w.lower() for w in md.force_field_features + md.warnings)

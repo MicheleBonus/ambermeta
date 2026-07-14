@@ -246,6 +246,7 @@ class PrmtopMetadata:
     box_angles: Optional[List[float]] = None     
     box_volume: Optional[float] = None
     density: Optional[float] = None
+    box_is_topology_time: bool = True   # BOX_DIMENSIONS is the LEaP-time box, not the equilibrated one
     solvent_type: str = "Vacuum"
     simulation_category: str = "Vacuum"
 
@@ -468,6 +469,7 @@ def extract_prmtop_metadata(filepath: str) -> PrmtopMetadata:
         else:
             md.force_field_features.append("Orthorhombic Box")
         md.solvent_type = "Explicit Solvent"
+        md.force_field_features.append("Box/density are from the topology-time box (LEaP BOX_DIMENSIONS), not the equilibrated system")
     else:
         # Vacuum vs implicit solvent is a runtime mdin choice (igb), NOT encoded in
         # the topology — LEaP writes RADIUS_SET/PBRadii into virtually every prmtop.
