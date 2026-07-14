@@ -38,3 +38,22 @@ def test_discover_returns_result_with_suggestions(sample_md_data_dir):
     body = r.json()
     assert "document" in body and "suggestions" in body
     assert body["document"]["simulation"]["phases"]
+
+
+def test_topology_routes(tmp_path):
+    c = _client(tmp_path)
+    r = c.post("/api/topologies", json={"path": "wt.prmtop", "kind": "hmr"})
+    assert r.status_code == 200
+    tid = r.json()["simulation"]["topologies"][0]["id"]
+    assert r.json()["simulation"]["topologies"][0]["kind"] == "hmr"
+
+    r = c.put(f"/api/topologies/{tid}", json={"kind": "normal"})
+    assert r.json()["simulation"]["topologies"][0]["kind"] == "normal"
+
+    r = c.put("/api/simulation/starting-structure", json={"path": "wt.inpcrd"})
+    assert r.json()["simulation"]["starting_structure"] == "wt.inpcrd"
+
+    r = c.delete(f"/api/topologies/{tid}")
+    assert r.json()["simulation"]["topologies"] == []
+
+    assert c.put("/api/topologies/bogus", json={"kind": "hmr"}).status_code == 404

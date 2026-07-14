@@ -133,3 +133,46 @@ def update_settings(req: SettingsPatch) -> DocumentResponse:
     store = get_store()
     store.patch_settings(req.model_dump(exclude_none=True))
     return store.to_response()
+
+
+def _enum_value(v) -> Optional[str]:
+    if v is None:
+        return None
+    return v.value if hasattr(v, "value") else v
+
+
+@router.post("/topologies", response_model=DocumentResponse)
+def add_topology(req: AddTopology) -> DocumentResponse:
+    store = get_store()
+    doc = store.get()
+    _within_base(req.path, doc.base_directory) if os.path.isabs(req.path) else None
+    store.add_topology(req.path, _enum_value(req.kind) or "normal")
+    return store.to_response()
+
+
+@router.put("/topologies/{topology_id}", response_model=DocumentResponse)
+def update_topology(topology_id: str, req: UpdateTopology) -> DocumentResponse:
+    store = get_store()
+    patch = {"path": req.path, "kind": _enum_value(req.kind)}
+    try:
+        store.update_topology(topology_id, patch)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Topology not found: {topology_id}")
+    return store.to_response()
+
+
+@router.delete("/topologies/{topology_id}", response_model=DocumentResponse)
+def remove_topology(topology_id: str) -> DocumentResponse:
+    store = get_store()
+    try:
+        store.remove_topology(topology_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Topology not found: {topology_id}")
+    return store.to_response()
+
+
+@router.put("/simulation/starting-structure", response_model=DocumentResponse)
+def set_starting_structure(req: SetStartingStructure) -> DocumentResponse:
+    store = get_store()
+    store.set_starting_structure(req.path)
+    return store.to_response()
