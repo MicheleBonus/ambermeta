@@ -1,6 +1,6 @@
-import { useDroppable } from "@dnd-kit/core";
+import { useDraggable, useDroppable } from "@dnd-kit/core";
 import { useSelection } from "@/state/selection";
-import { Badge } from "@/components/common";
+import { Badge, GripVertical } from "@/components/common";
 import type { StepModel, TopologyModel } from "@/types";
 
 function inputSourceLabel(step: StepModel): string {
@@ -32,7 +32,10 @@ function FileSlot({ stepId, kind, label, value }: { stepId: string; kind: "mdin"
 
 export function StepNode({ step, topology }: { step: StepModel; topology?: TopologyModel }) {
   const { sel, select } = useSelection();
+  // Same id in both registries: the node is a drop target (files / other steps land on it)
+  // AND a drag source (grip handle) so it can be reordered or moved between phases.
   const { setNodeRef, isOver } = useDroppable({ id: `step:${step.id}` });
+  const drag = useDraggable({ id: `step:${step.id}` });
   const isSelected = sel.kind === "step" && sel.id === step.id;
   const isHmr = topology?.kind === "hmr";
 
@@ -41,15 +44,26 @@ export function StepNode({ step, topology }: { step: StepModel; topology?: Topol
       ref={setNodeRef}
       className={`rounded border border-hairline bg-surface px-2 py-1.5 space-y-1 ${
         isSelected ? "bg-accent-subtle" : ""
-      } ${isOver ? "border-accent" : ""}`}
+      } ${isOver ? "border-accent" : ""} ${drag.isDragging ? "opacity-50" : ""}`}
     >
-      <button
-        type="button"
-        onClick={() => select("step", step.id)}
-        className="block text-left text-sm text-ink hover:underline"
-      >
-        {step.name}
-      </button>
+      <div className="flex items-center gap-1.5">
+        <span
+          ref={drag.setNodeRef}
+          {...drag.attributes}
+          {...drag.listeners}
+          aria-label={`drag step ${step.name}`}
+          className="cursor-grab text-ink-muted shrink-0"
+        >
+          <GripVertical size={14} />
+        </span>
+        <button
+          type="button"
+          onClick={() => select("step", step.id)}
+          className="text-left text-sm text-ink hover:underline"
+        >
+          {step.name}
+        </button>
+      </div>
       <div className="flex items-center gap-1 flex-wrap">
         <span className={`font-mono text-xs ${isHmr ? "text-accent" : "text-ink-secondary"}`}>
           ▸ {topology ? topology.path : "no topology"}

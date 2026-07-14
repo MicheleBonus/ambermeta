@@ -56,19 +56,43 @@ def test_build_suggestions_flags_missing_run_and_hmr():
 
 
 def test_continuity_gap_suggestions_are_step_scoped():
+    # Driven by the structured per-stage `continuity` list, not fuzzy warning text.
     flat = [{"step_id": "a"}, {"step_id": "b"}]
-    stage_issues = [{"warnings": []},
-                    {"warnings": ["Stage starts 20 ps after previous ended."]}]
+    stage_issues = [{"continuity": []},
+                    {"continuity": ["Observed gap 20 ps exceeds expected 5 ps."]}]
     out = core_bridge._continuity_gap_suggestions(flat, stage_issues)
     assert len(out) == 1
     assert out[0]["step_id"] == "b"
     assert "20" in out[0]["evidence"]
 
+    # A general (non-continuity) warning must NOT produce a continuity suggestion:
+    # the classifier reads `continuity`, never `warnings`.
     non_continuity = [{"step_id": "a"}, {"step_id": "b"}]
-    non_continuity_issues = [{"warnings": []},
-                             {"warnings": ["Atom count mismatch across topology and coordinates."]}]
+    non_continuity_issues = [{"continuity": [], "warnings": []},
+                             {"continuity": [],
+                              "warnings": ["Atom count mismatch across topology and coordinates."]}]
     out2 = core_bridge._continuity_gap_suggestions(non_continuity, non_continuity_issues)
     assert out2 == []
+
+
+def test_continuity_gap_surfaces_note_without_ps_substring():
+    # Regression: the real gap warning "Gap detected without stated expectation…" has no
+    # "ps" substring; the old text-matcher silently dropped it. It must now surface.
+    flat = [{"step_id": "a"}, {"step_id": "b"}]
+    stage_issues = [{"continuity": []},
+                    {"continuity": ["Gap detected without stated expectation; verify continuity."]}]
+    out = core_bridge._continuity_gap_suggestions(flat, stage_issues)
+    assert len(out) == 1 and out[0]["step_id"] == "b"
+
+
+def test_continuity_gap_ignores_healthy_and_info_notes():
+    # A satisfied transition ("within expected window") is INFO-prefixed at the source and
+    # excluded upstream; even if one slips through, the classifier drops INFO defensively.
+    flat = [{"step_id": "a"}, {"step_id": "b"}]
+    stage_issues = [{"continuity": []},
+                    {"continuity": ["INFO: Observed gap 5 ps is within expected window (5±1 ps)."]}]
+    out = core_bridge._continuity_gap_suggestions(flat, stage_issues)
+    assert out == []
 
 
 def test_discover_draft_on_real_fixtures(sample_md_data_dir):

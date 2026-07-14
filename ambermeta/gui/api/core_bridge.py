@@ -203,6 +203,10 @@ def build_validation_report(stages: List[Dict[str, Any]], settings: Dict[str, An
             "errors": errors,
             "warnings": warns,
             "info": info,
+            # Genuine (non-INFO) continuity problems for this stage, kept separate from
+            # the general warnings so continuity_gap suggestions are driven by the
+            # engine's own healthy/problem categorization, not by fuzzy text matching.
+            "continuity": [c for c in sd.get("continuity", []) if not str(c).startswith("INFO:")],
             "missing_files": miss,
         })
 
@@ -319,30 +323,34 @@ def _flatten_simulation(sim):
     return flat
 
 
-_CONTINUITY_HINTS = ("previous", "gap", "overlap", "expected")
-
-
 def _continuity_gap_suggestions(flat, stage_issues, start_index=0):
-    """One continuity_gap suggestion per stage that has a gap warning, carrying that step's id.
+    """One continuity_gap suggestion per genuine (non-INFO) continuity note on a step.
+
+    Driven by each stage's structured ``continuity`` list — the engine already decides
+    healthy vs. problem (healthy/informational notes are INFO-prefixed at the source and
+    excluded upstream). This is deliberately NOT fuzzy warning-text matching: a satisfied
+    "within expected window" transition is never flagged, and a real gap whose note happens
+    to lack the substring "ps" (e.g. "Gap detected without stated expectation…") is never
+    missed.
 
     flat: the _flatten_simulation output (each dict has 'step_id', same order as stage_issues).
-    stage_issues: report['stage_issues'] (same order)."""
+    stage_issues: report['stage_issues'] (same order; each carries a 'continuity' list)."""
     out = []
     seen = set()
     for step, si in zip(flat, stage_issues):
         step_id = step.get("step_id")
-        for w in si.get("warnings", []):
-            wl = str(w).lower()
-            if "ps" in wl and any(h in wl for h in _CONTINUITY_HINTS):
-                key = (step_id, str(w))
-                if key in seen:
-                    continue
-                seen.add(key)
-                out.append({
-                    "id": f"sug_c_{start_index + len(out) + 1}", "kind": "continuity_gap",
-                    "severity": "needs_you", "title": "Continuity note", "evidence": str(w),
-                    "actions": ["Set as expected", "Investigate"], "step_id": step_id,
-                })
+        for note in si.get("continuity", []):
+            if str(note).startswith("INFO:"):        # defensive; upstream already excludes INFO
+                continue
+            key = (step_id, str(note))
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append({
+                "id": f"sug_c_{start_index + len(out) + 1}", "kind": "continuity_gap",
+                "severity": "needs_you", "title": "Continuity note", "evidence": str(note),
+                "actions": ["Set as expected", "Investigate"], "step_id": step_id,
+            })
     return out
 
 

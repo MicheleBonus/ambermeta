@@ -1,8 +1,8 @@
 import { useState } from "react";
-import { useDroppable } from "@dnd-kit/core";
+import { useDraggable, useDroppable } from "@dnd-kit/core";
 import { useSelection } from "@/state/selection";
 import { useAssign } from "@/api/hooks";
-import { Badge, ChevronDown, ChevronRight } from "@/components/common";
+import { Badge, ChevronDown, ChevronRight, GripVertical } from "@/components/common";
 import type { PhaseModel, StepModel, Suggestion, TopologyModel } from "@/types";
 import { StepNode } from "./StepNode";
 import { ContinuityArrow, MissingRunGhost, parseGap } from "./ContinuityArrow";
@@ -69,18 +69,33 @@ type SequenceItem =
 export function PhaseSection({ phase, topologies }: { phase: PhaseModel; topologies: TopologyModel[] }) {
   const { sel, select } = useSelection();
   const assign = useAssign();
+  // Drop target (files / steps land on it) AND drag source (grip) so phases can be reordered.
   const { setNodeRef, isOver } = useDroppable({ id: `phase:${phase.id}` });
+  const drag = useDraggable({ id: `phase:${phase.id}` });
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const isSelected = sel.kind === "phase" && sel.id === phase.id;
   const groups = groupSteps(phase.steps);
   const suggestions = useSuggestions();
 
   return (
-    <section className={`border-l-4 rounded mb-3 bg-surface ${isOver ? "border-accent" : "border-hairline"}`}>
+    <section
+      className={`border-l-4 rounded mb-3 bg-surface ${isOver ? "border-accent" : "border-hairline"} ${
+        drag.isDragging ? "opacity-50" : ""
+      }`}
+    >
       <header
         ref={setNodeRef}
         className={`flex items-center gap-2 px-3 py-2 ${isSelected ? "bg-accent-subtle" : ""}`}
       >
+        <span
+          ref={drag.setNodeRef}
+          {...drag.attributes}
+          {...drag.listeners}
+          aria-label={`drag phase ${phase.name}`}
+          className="cursor-grab text-ink-muted shrink-0"
+        >
+          <GripVertical size={14} />
+        </span>
         <button
           type="button"
           onClick={() => select("phase", phase.id)}

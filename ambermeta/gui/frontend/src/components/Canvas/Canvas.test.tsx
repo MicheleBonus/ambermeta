@@ -82,6 +82,17 @@ it("renders the phase, its steps, and an HMR chip for the HMR-bound step", async
   expect(screen.getAllByText(/hmr/i).length).toBeGreaterThan(0);
 });
 
+it("renders drag handles so steps and phases can be reordered/moved (drop sources exist)", async () => {
+  server.use(http.get("/api/document", () => HttpResponse.json(docWithProductionPhase)));
+  render(wrap(<Canvas />));
+
+  // The phase and each step expose a draggable grip whose id (phase:/step:) is what
+  // resolveDrop + onDragEnd already route to reorder_phases / reorder_or_move_step.
+  await waitFor(() => expect(screen.getByLabelText("drag phase Production")).toBeInTheDocument());
+  expect(screen.getByLabelText("drag step prod_0001")).toBeInTheDocument();
+  expect(screen.getByLabelText("drag step prod_0002")).toBeInTheDocument();
+});
+
 it("shows a start hint when the simulation is empty", async () => {
   render(wrap(<Canvas />));
   await waitFor(() => expect(screen.getByText(/discover or drop files to start/i)).toBeInTheDocument());

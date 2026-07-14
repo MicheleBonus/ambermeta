@@ -415,7 +415,10 @@ class SimulationProtocol:
                         f"Stage appears to overlap previous stage by {abs(gap):g} ps."
                     )
             elif gap > 0:
-                current._add_continuity_note(f"Stage starts {gap:g} ps after previous ended.")
+                # Informational: the raw observed gap. The actual judgement (within
+                # window / shorter / exceeds / unexpected) is emitted separately below,
+                # so this line is INFO-only and must not surface as a continuity problem.
+                current._add_continuity_note(f"INFO: Stage starts {gap:g} ps after previous ended.")
 
             if current.expected_gap_ps is not None:
                 tolerance = current.gap_tolerance_ps or default_tolerance
@@ -430,8 +433,11 @@ class SimulationProtocol:
                         f"Observed gap {gap:g} ps exceeds expected {current.expected_gap_ps:g} ps."
                     )
                 else:
+                    # Healthy: the observed gap matched the stated expectation. This is a
+                    # positive confirmation, not a problem — INFO so it is never surfaced
+                    # as a "needs you" continuity suggestion.
                     current._add_continuity_note(
-                        f"Observed gap {gap:g} ps is within expected window ({current.expected_gap_ps:g}±{tolerance:g} ps)."
+                        f"INFO: Observed gap {gap:g} ps is within expected window ({current.expected_gap_ps:g}±{tolerance:g} ps)."
                     )
             elif gap != 0:
                 if allow_unexpected_gaps:
