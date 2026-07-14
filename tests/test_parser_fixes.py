@@ -75,3 +75,12 @@ def test_signless_ions_not_ligands():
     md = _md({"ALA": 20, "NA": 8, "CL": 8, "WAT": 500})
     _classify_simulation(md)
     assert "Ligand" not in md.simulation_category  # NA/CL are ions, not a ligand
+
+
+def test_incomplete_charge_leaves_neutrality_unknown(tmp_path):
+    p = tmp_path / "partial.prmtop"
+    # natom=4 but only 2 charges present -> incomplete
+    _write_prmtop(p, natom=4, nres=1, res_labels=["LIG"], charges=[0.5, -0.5])
+    md = extract_prmtop_metadata(str(p))
+    assert md.is_neutral is None
+    assert any("neutrality verdict is uncertain" in w for w in md.warnings)

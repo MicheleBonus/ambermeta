@@ -239,7 +239,7 @@ class PrmtopMetadata:
     # Chemistry
     total_mass: float = 0.0
     total_charge: float = 0.0
-    is_neutral: bool = False
+    is_neutral: Optional[bool] = None
     
     # Box / Density
     box_dimensions: Optional[List[float]] = None 
@@ -390,16 +390,16 @@ def extract_prmtop_metadata(filepath: str) -> PrmtopMetadata:
     charges = prmtop.get("CHARGE")
     if charges:
         valid_charges = [c for c in charges if c is not None]
-        if md.natom and len(valid_charges) != md.natom:
+        complete = not (md.natom and len(valid_charges) != md.natom)
+        if not complete:
             md.warnings.append(
                 f"CHARGE has {len(valid_charges)} valid of {md.natom} atoms; "
                 "neutrality verdict is uncertain."
             )
         if valid_charges:
-            raw_sum = sum(valid_charges)
-            md.total_charge = raw_sum / 18.2223
-            # Threshold set to 1e-2 as requested
-            md.is_neutral = abs(md.total_charge) < 1e-2
+            md.total_charge = sum(valid_charges) / 18.2223
+            # Only assert neutrality when the CHARGE section was fully read.
+            md.is_neutral = (abs(md.total_charge) < 1e-2) if complete else None
 
     masses = prmtop.get("MASS")
     if masses:
@@ -516,7 +516,8 @@ def summarize_metadata(md: PrmtopMetadata) -> str:
     lines.append(f"  Atoms:    {natom_str}")
     lines.append(f"  Residues: {nres_str}")
     lines.append(f"  Mass:     {md.total_mass:,.2f} Da")
-    lines.append(f"  Charge:   {md.total_charge:.4f} e ({'Neutral' if md.is_neutral else 'Charged'})")
+    neutral_str = "Unknown" if md.is_neutral is None else ("Neutral" if md.is_neutral else "Charged")
+    lines.append(f"  Charge:   {md.total_charge:.4f} e ({neutral_str})")
     
     lines.append(f"\n[Simulation Environment]")
     lines.append(f"  Category: {md.simulation_category}")
