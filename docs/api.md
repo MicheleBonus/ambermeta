@@ -1,10 +1,21 @@
 # Python API reference
 
-**AmberMeta is a library, not just a CLI.** Everything `ambermeta` does on the command line is one import away: parse a file, reconstruct a protocol from a directory or manifest, validate continuity, and export reproducibility artifacts.
+**AmberMeta is a library, not just a CLI.** Everything `ambermeta` does on the command line is one import away.
 
-The supported import surface (everything re-exported from `ambermeta/__init__.py`):
+There are **two layers**, and it matters which one you reach for:
+
+1. **`ambermeta.simulation`** — the new Simulation → Phase → Step model (plain dataclasses). Read/write manifest v2, round-trip a `Simulation` object, hand it to the GUI's own helpers. **Not yet re-exported at the `ambermeta` top level** — import it from `ambermeta.simulation` explicitly.
+2. **Top-level `ambermeta.*`** — the retained parsing/assembly engine that powers file parsing, the legacy flat `plan --recursive` path, and everything under the hood of layer 1. This is where the parsers, `SimulationProtocol`/`SimulationStage`, and the discovery utilities live. Nothing here was removed; it is still the public `__all__`.
 
 ```python
+# Layer 1 — the new model
+from ambermeta.simulation import (
+    load_simulation, write_simulation,
+    simulation_to_payload, payload_to_simulation,
+    Simulation, Phase, Step, Topology, InputCoords,
+)
+
+# Layer 2 — the retained parsing/assembly engine (ambermeta/__init__.py __all__)
 from ambermeta import (
     SimulationProtocol, SimulationStage, ProtocolBuilder,
     auto_discover, load_protocol_from_manifest, load_manifest,
@@ -23,16 +34,173 @@ from ambermeta.parsers import (
 > result = PrmtopParser("system.prmtop").parse()
 > meta = result.details        # <-- the metadata object
 > meta.natom                   # 64528
-> result.warnings              # ['...']  (on the wrapper, not .details)
+> result.warnings              # [] (on the wrapper, not .details)
 > ```
 >
-> Field names are AMBER-flavored and differ from intuition: `hmr_active` (not `is_hmr`), `residue_composition` (not `residue_counts`), `temp_control`/`press_control`/`stage_role` on `mdin`. The exact field list per file type is in [§6](#6-parser-metadata-fields).
+> Field names are AMBER-flavored and differ from intuition: `hmr_active` (not `is_hmr`), `residue_composition` (not `residue_counts`), `temp_control`/`press_control`/`stage_role` on `mdin`. The exact field list per file type is in [§7](#7-parser-metadata-fields).
+
+Examples below run against the sample data shipped in the repo: `tests/data/amber/md_test_files/` — a 64,528-atom glycoprotein system (`CH3L1_HUMAN_6NAG.top`/`.crd`) with a six-member NPT production sequence `ntp_prod_0000..0005`.
 
 ---
 
-## 1. Discovery & assembly
+## 1. The `ambermeta.simulation` model
 
-These build a `SimulationProtocol` from files or a manifest. This is the top of the API — most programs call one of these and never touch a parser directly.
+Plain dataclasses mirroring [manifest v2](manifest.md): a `Simulation` owns a **topology pool** and a **starting structure**; it contains `Phase`s; each `Phase` contains `Step`s.
+
+```python
+@dataclass
+class Topology:
+    id: str
+    path: str
+    kind: str = "normal"          # "normal" | "hmr"
+
+@dataclass
+class InputCoords:
+    source: str = "starting_structure"   # "starting_structure" | "step" | "path"
+    ref: Optional[str] = None             # Step.id when source == "step"
+    path: Optional[str] = None            # explicit path when source == "path"
+
+@dataclass
+class Step:
+    id: str
+    name: str
+    topology: Optional[str] = None        # Topology.id
+    input_coords: InputCoords = field(default_factory=InputCoords)
+    mdin: Optional[str] = None
+    mdout: Optional[str] = None
+    mdcrd: Optional[str] = None
+    expected_gap_ps: Optional[float] = None
+    gap_tolerance_ps: Optional[float] = None
+    notes: List[str] = field(default_factory=list)
+
+@dataclass
+class Phase:
+    id: str
+    name: str
+    role: str = ""                        # "minimization" | "heating" | "equilibration" | "production" | ""
+    steps: List[Step] = field(default_factory=list)
+
+@dataclass
+class Simulation:
+    version: int = 2
+    topologies: List[Topology] = field(default_factory=list)
+    starting_structure: Optional[str] = None
+    phases: List[Phase] = field(default_factory=list)
+```
+
+### `load_simulation()`
+
+```python
+def load_simulation(path: str) -> Simulation
+```
+
+Reads any manifest — v2, or a **v1 flat manifest**, which is auto-migrated in memory (each stage becomes a `Step`; contiguous same-role stages coalesce into one `Phase`; `global_prmtop`/`hmr_prmtop` become pool entries; `initial_coordinates` becomes the starting structure). See the [manifest schema](manifest.md) for the exact migration table.
+
+### `write_simulation()`
+
+```python
+def write_simulation(sim: Simulation, path: str, fmt: str) -> None
+```
+
+Writes a `Simulation` as a v2 manifest. `fmt` is `"json"` or `"yaml"` **only** — v2 has no TOML/CSV writer (use `export --to legacy` for those, which flattens to the v1 shape first).
+
+### `simulation_to_payload()` / `payload_to_simulation()`
+
+```python
+def simulation_to_payload(sim: Simulation) -> Dict[str, Any]
+def payload_to_simulation(payload: Dict[str, Any]) -> Simulation
+```
+
+The v2 dict round-trip `write_simulation`/`load_simulation` use internally — reach for these directly when you want the dict (e.g. to `json.dumps` it yourself, hand it to a web response, or inspect it without touching disk).
+
+### Worked example: discover, inspect, round-trip
+
+```python
+import os
+from ambermeta.gui.api.core_bridge import discover_draft
+from ambermeta.simulation import simulation_to_payload, write_simulation, load_simulation
+
+base = os.path.abspath("tests/data/amber/md_test_files")
+result = discover_draft(base)
+sim = result["simulation"]
+
+[(t.id, t.path, t.kind) for t in sim.topologies]
+# [('top_CH3L1_HUMAN_6NAG', 'CH3L1_HUMAN_6NAG.top', 'normal')]
+
+sim.starting_structure
+# 'CH3L1_HUMAN_6NAG.crd'
+
+sim.phases[0].name, sim.phases[0].role, len(sim.phases[0].steps)
+# ('Production', 'production', 5)
+
+sim.phases[0].steps[0].input_coords
+# InputCoords(source='starting_structure', ref=None, path=None)
+
+sim.phases[0].steps[1].input_coords
+# InputCoords(source='step', ref='4a09deaa', path='ntp_prod_0001.rst')
+
+write_simulation(sim, "simulation.json", "json")
+sim2 = load_simulation("simulation.json")
+len(sim2.phases) == len(sim.phases)
+# True
+```
+
+`input_coords` on the first step of a phase resolves to the Simulation's starting structure; every later step chains from the previous step's output restart — `discover_draft` already resolves that restart's path into `input_coords.path` so continuity can read its time without re-scanning the directory.
+
+---
+
+## 2. Advanced/shared helpers — `ambermeta.gui.api.core_bridge`
+
+Pure functions the CLI and GUI both call — this module is the **only** place in `ambermeta.gui` that imports the parsing/assembly engine, so it is the ground truth for how `discover`/`validate --manifest` actually work. Useful directly if you're building your own tooling on top of the same engine the GUI uses.
+
+### `discover_draft()`
+
+```python
+def discover_draft(
+    base_directory: str,
+    recursive: bool = True,
+    pattern: Optional[str] = None,
+) -> Dict[str, Any]   # {"simulation": Simulation, "suggestions": [...], "warnings": [...]}
+```
+
+Scans a directory into a **Simulation draft**: builds the topology pool (HMR detected from timestep, `ambermeta.topology_pool.classify_topology_pool`), finds a starting structure (a single-frame coordinate file outside any run group), groups runs into phases by inferred role (`ambermeta.roles.classify_role` — the one classifier shared by CLI and GUI), and chains each step's `input_coords` off the previous step. This is what `ambermeta discover` calls; see [§1](#1-the-ambermetasimulation-model) for a full run.
+
+### `validate_simulation()`
+
+```python
+def validate_simulation(
+    sim: Simulation,
+    settings: dict,
+    base_directory: str,
+) -> Dict[str, Any]
+```
+
+Flattens the `Simulation` back to the stage shape the retained engine validates (`_flatten_simulation` internally, then `auto_discover(..., manifest=flat_stages)`), and layers on continuity/sequence-hole suggestions. Returns a report with `ok`, `totals`, `protocol_issues`, `stage_issues`, and `suggestions`. This is what `ambermeta validate --manifest` calls.
+
+```python
+report = validate_simulation(sim, {}, base)
+report["ok"]
+# True
+report["totals"]
+# {'steps': 25000000.0, 'time_ps': 100000.0, 'stage_count': 5}
+report["suggestions"]
+# [{'id': 'sug_1', 'kind': 'starting_structure', 'severity': 'applied',
+#   'title': 'CH3L1_HUMAN_6NAG.crd set as the starting structure',
+#   'evidence': 'single-frame coordinates; feeds the first run', 'actions': ['Undo']},
+#  {'id': 'sug_2', 'kind': 'role_guess', 'severity': 'applied',
+#   'title': 'Phase roles inferred from file content/names',
+#   'evidence': 'Production->production', 'actions': ['Undo']}]
+```
+
+Each suggestion carries a `kind` (`missing_run`, `topology_confirm`, `starting_structure`, `role_guess`, `continuity_gap`), a `severity` (`applied` — already assumed, reversible; `needs_you` — a real decision), and `evidence` explaining why it fired. This is the same list the GUI's suggestions tray renders.
+
+Other `core_bridge` entry points worth knowing about: `file_metadata(path)` (parse-and-serialize one file by extension), `read_file_head(path, max_bytes=4096)` (raw text preview), and `open_simulation`/`save_simulation`/`preview_simulation` (thin wrappers over `load_simulation`/`write_simulation` behind the GUI's document endpoints — see the [GUI guide](gui.md) for the HTTP API surface).
+
+---
+
+## 3. The retained engine: discovery & assembly
+
+These build a `SimulationProtocol` from files or a manifest — the layer that predates the Simulation/Phase/Step model and still does all the actual file parsing and cross-run validation underneath it. Most programs that only need "read these files and tell me what happened" call one of these directly and never touch a parser.
 
 ### `auto_discover()`
 
@@ -56,15 +224,17 @@ def auto_discover(
 ) -> SimulationProtocol
 ```
 
-Discover and parse simulation files into an ordered protocol. With `manifest` provided, it parses the listed stages; with `manifest=None`, it discovers files on disk (`recursive=True` to descend). `strict=True` makes the first unreadable file a hard `AmberMetaError`; the default skips it and records a `FileLoadError`.
+Discover and parse simulation files into an ordered protocol. With `manifest` provided, it parses the listed stages; with `manifest=None`, it discovers files on disk (`recursive=True` to descend) — note this directory-scan path builds one stage per **file group** (stem), including non-run groups such as a bare topology+coordinate pair, unlike `discover_draft` which only emits steps for groups with an `mdin`/`mdout`. `strict=True` makes the first unreadable file a hard `AmberMetaError`; the default skips it and records a `FileLoadError`.
 
 ```python
 from ambermeta import auto_discover
 
-protocol = auto_discover("runs/", recursive=True, auto_detect_restarts=True)
+protocol = auto_discover("tests/data/amber/md_test_files", recursive=True, auto_detect_restarts=True)
 print(len(protocol.stages), protocol.totals())
 # 7 {'steps': 25000000.0, 'time_ps': 100000.0}
 ```
+
+(Seven stages: the bare `CH3L1_HUMAN_6NAG` topology/coordinate pair, the starting `ntp_prod_0000` restart, and the five `ntp_prod_0001..0005` production runs.)
 
 ### `load_protocol_from_manifest()`
 
@@ -86,13 +256,15 @@ def load_protocol_from_manifest(
 ) -> SimulationProtocol
 ```
 
-Load a manifest (YAML / JSON / TOML / CSV) and build a protocol. Relative paths resolve against `directory` (or the manifest's own directory). `skip_cross_stage_validation=None` defers to the manifest's `settings.strict_validation`.
+Load a **v1 flat** manifest (YAML / JSON / TOML / CSV) and build a protocol directly, bypassing the Simulation/Phase/Step model entirely. Relative paths resolve against `directory` (or the manifest's own directory). `skip_cross_stage_validation=None` defers to the manifest's `settings.strict_validation`.
 
 ```python
 from ambermeta import load_protocol_from_manifest
 
-protocol = load_protocol_from_manifest("protocol.yaml", directory="runs/")
+protocol = load_protocol_from_manifest("legacy_protocol.yaml", directory="runs/")
 ```
+
+> To load a **v2** manifest (or a v1 manifest into the new model), use `ambermeta.simulation.load_simulation` instead ([§1](#1-the-ambermetasimulation-model)).
 
 ### `load_manifest()`
 
@@ -100,7 +272,7 @@ protocol = load_protocol_from_manifest("protocol.yaml", directory="runs/")
 def load_manifest(manifest_path, expand_env: bool = True) -> Any
 ```
 
-Parse a manifest file into normalized stage data (a list/dict) **without** building a protocol — format detected by extension, `${VAR}`/`$VAR` expanded unless `expand_env=False`, legacy keys normalized. Useful when you want the raw stage entries.
+Parse a v1-shaped manifest file into normalized stage data (a list/dict) **without** building a protocol — format detected by extension, `${VAR}`/`$VAR` expanded unless `expand_env=False`, legacy keys normalized. Useful when you want the raw stage entries.
 
 ### `ProtocolBuilder`
 
@@ -126,20 +298,20 @@ from ambermeta import ProtocolBuilder
 
 protocol = (
     ProtocolBuilder()
-    .from_directory("runs/", recursive=True)
-    .with_grouping_rules({r"min.*": "minimization", r"prod.*": "production"})
-    .with_pattern_filter(r"prod_\d+")
+    .from_directory("tests/data/amber/md_test_files", recursive=True)
+    .with_grouping_rules({r"ntp_prod.*": "production"})
+    .with_pattern_filter(r"ntp_prod_\d+")
     .auto_detect_restarts()
-    .with_stage_tolerance("prod_001", expected_gap_ps=0.0, tolerance_ps=0.1)
+    .with_stage_tolerance("ntp_prod_0001", expected_gap_ps=0.0, tolerance_ps=0.1)
     .build()
 )
 ```
 
 ---
 
-## 2. `SimulationProtocol`
+## 4. `SimulationProtocol`
 
-The container for an ordered list of stages.
+The container for an ordered list of stages (a "stage" is the pre-Phase/Step unit — one actual run, same concept as today's `Step`).
 
 ```python
 @dataclass
@@ -152,10 +324,10 @@ class SimulationProtocol:
 | `validate` | `(cross_stage: bool = True, allow_unexpected_gaps: bool = False) -> None` | Runs per-stage + (optionally) cross-stage checks, attaching notes to each stage |
 | `totals` | `() -> Dict[str, float]` | `{"steps": float, "time_ps": float}` summed across stages |
 | `to_dict` | `() -> Dict[str, Any]` | `totals` + each stage's `to_dict()` — the full protocol summary |
-| `to_methods_dict` | `() -> Dict[str, Any]` | Publication-oriented summary (see [§7](#7-export-structures)) |
+| `to_methods_dict` | `() -> Dict[str, Any]` | Publication-oriented summary (see [§8](#8-export-structures)) |
 
 ```python
-protocol = auto_discover("runs/", recursive=True)
+protocol = auto_discover("tests/data/amber/md_test_files", recursive=True)
 print(protocol.totals())                      # {'steps': 25000000.0, 'time_ps': 100000.0}
 for stage in protocol.stages:
     print(stage.name, stage.summary()["result"])
@@ -163,7 +335,7 @@ for stage in protocol.stages:
 
 ---
 
-## 3. `SimulationStage`
+## 5. `SimulationStage`
 
 One stage: its files (as parsed wrappers), its expectations, and its accumulated validation.
 
@@ -186,6 +358,8 @@ class SimulationStage:
     load_errors: List[FileLoadError] = field(default_factory=list)
 ```
 
+`stage_role` holds the canonical short token (`"minimization" | "heating" | "equilibration" | "production" | ""`, from `ambermeta.roles.classify_role` — the same classifier the Phase/Step model and the GUI use) once inferred, not the free-text `stage_role` string `MdinMetadata` derives from the AMBER namelist (e.g. `"Production [NPT (isotropic)]"`); `summary()`'s `intent` prefers the canonical token when set.
+
 | Member | Signature | Notes |
 |---|---|---|
 | `degraded` | `property -> bool` | `True` when any file failed to parse (`load_errors` non-empty) |
@@ -196,28 +370,30 @@ class SimulationStage:
 Reach a parsed field through the file wrapper's `.details`:
 
 ```python
-stage = protocol.stages[2]
+stage = protocol.stages[2]   # ntp_prod_0001
 if stage.mdout and stage.mdout.details:
     md = stage.mdout.details
     print(md.finished_properly, md.thermostat, md.stats.temp_stats.mean)
 ```
 
-A real `summary()` (from the sample data's `ntp_prod_0001`):
+A real `summary()` (from the sample data's `ntp_prod_0001`, via `auto_discover(..., recursive=True, auto_detect_restarts=True)`):
 
 ```json
 {
-  "intent": "Production [NPT (isotropic)]",
+  "intent": "production",
   "result": "Completed",
   "expected_gap_ps": "",
   "observed_gap_ps": "",
-  "continuity": "INFO: Cannot verify continuity between ntp_prod_0000 and ntp_prod_0001 (missing mdcrd from ntp_prod_0000)",
-  "evidence": "INFO: Part of sequence 'ntp_prod' (item 2 of 6); INFO: stage_role inferred from mdin file; ..."
+  "continuity": "INFO: Cannot verify continuity between ntp_prod_0000 and ntp_prod_0001 (missing end time from ntp_prod_0000 (no mdcrd/mdout))",
+  "evidence": "INFO: Part of sequence 'ntp_prod' (item 2 of 6); INFO: stage_role 'production' inferred from mdin file; INFO: Cannot verify continuity between ntp_prod_0000 and ntp_prod_0001 (missing end time from ntp_prod_0000 (no mdcrd/mdout))"
 }
 ```
 
+(`ntp_prod_0000` has only a `.rst` restart in the sample data — no `mdcrd`/`mdout` — so its end time can't be read; continuity resumes reporting normally from `ntp_prod_0002` onward, where the previous step's own `mdout` supplies an end time.)
+
 ---
 
-## 4. Parsers
+## 6. Parsers
 
 All five parsers share one shape: construct with a path, call `parse()`, read `.details`.
 
@@ -242,44 +418,9 @@ result.details        # the metadata object (None if parsing failed hard)
 
 ---
 
-## 5. Utility functions
+## 7. Parser metadata fields
 
-Lower-level building blocks used by the assembly layer; useful directly for custom tooling.
-
-```python
-detect_numeric_sequences(filenames: List[str]) -> Dict[str, List[str]]
-```
-Group filenames into numbered families. Recognizes `name_001`, `name.001`, `name-001`, and `name001`.
-```python
-detect_numeric_sequences(["prod_001.out", "prod_002.out", "equil.out"])
-# {'prod_': ['prod_001.out', 'prod_002.out']}
-```
-
-```python
-smart_group_files(directory: str, pattern: Optional[str] = None,
-                  recursive: bool = False) -> Dict[str, Dict[str, str]]
-```
-Bucket files by stem into `STAGE_FILE_KINDS` slots, with sequence metadata. Returns `{stem: {kind: path, ...}}`.
-
-```python
-auto_detect_restart_chain(stages: List[SimulationStage], directory: str,
-                          recursive: bool = False) -> Dict[str, str]
-```
-Infer the restart chain (atom-count match + time continuity + sequence order). Returns `{stage_name: restart_path}`.
-
-```python
-infer_stage_role_from_content(mdin_data: Optional[MdinData] = None,
-                              mdout_data: Optional[MdoutData] = None) -> Optional[str]
-```
-Infer a role (`minimization` / `heating` / `equilibration` / `production`) from parsed content. Returns `None` if undeterminable.
-
-> Module constant: `ambermeta.protocol.HMR_TIMESTEP_THRESHOLD_PS = 0.003` — a timestep ≥ 3 fs is taken as evidence of hydrogen-mass repartitioning.
-
----
-
-## 6. Parser metadata fields
-
-These are the fields on `.details` — what `ambermeta info` prints and what your code reads. Each metadata class also carries `filename: str` and `warnings: List[str]`.
+These are the fields on `.details` — what `ambermeta info` prints and what your code reads. Each metadata class also carries `filename: str` and `warnings: List[str]`. This layer is unchanged from v1.
 
 ### `PrmtopMetadata` (`prmtop`)
 
@@ -316,7 +457,7 @@ These are the fields on `.details` — what `ambermeta info` prints and what you
 | `dt` | `float\|str` | `dt` (ps) |
 | `restart_flag` | `int\|str` | `irest` |
 | `ensemble` | `str` | derived (NVE/NVT/NPT) |
-| `stage_role` | `str` | inferred |
+| `stage_role` | `str` | inferred (free text, e.g. `"Production [NPT (isotropic)]"`) |
 | `energy_freq` / `coord_freq` / `restart_freq` | `int\|str` | `ntpr` / `ntwx` / `ntwr` |
 | `traj_format` | `str` | `ioutfm` |
 | `cutoff` | `float\|str` | `cut` |
@@ -361,7 +502,7 @@ These are the fields on `.details` — what `ambermeta info` prints and what you
 | `sum_bond` / `sum_angle` / `sum_dihed` / `sum_vdw` / `sum_elec` | energy-term sums |
 
 ```python
-md = MdoutParser("prod.mdout").parse().details
+md = MdoutParser("tests/data/amber/md_test_files/ntp_prod_0001.mdout").parse().details
 print(md.stats.count)                  # 200
 print(md.stats.temp_stats.mean)        # 300.43200000000013
 print(md.stats.temp_stats.stdev)       # 1.2504190252445306
@@ -391,9 +532,17 @@ print(md.stats.density_stats.mean)     # 1.0369550000000003
 | `has_box`, `box_dimensions`, `box_angles`, `box_volume` | box info |
 | `program`, `program_version`, `conventions` | provenance |
 
+```python
+r = InpcrdParser("tests/data/amber/md_test_files/ntp_prod_0001.rst").parse().details
+r.file_format, r.natoms, r.time
+# ('NetCDF', 64528, 20920.00000242704)
+r.has_box, r.box_dimensions
+# (True, [91.78526594551442, 70.98306005877042, 75.81276343991902])
+```
+
 ---
 
-## 7. Export structures
+## 8. Export structures
 
 ### `to_dict()`
 
@@ -401,14 +550,15 @@ print(md.stats.density_stats.mean)     # 1.0369550000000003
 
 ### `to_methods_dict()`
 
-A publication-oriented view: reproducibility-critical metadata, energies and bulk arrays dropped. The real top-level shape is `{"stage_sequence": [...], "stages": [...]}`. A production stage entry (verbatim from the sample data):
+A publication-oriented view: reproducibility-critical metadata, energies and bulk arrays dropped. The real top-level shape is `{"stage_sequence": [...], "stages": [...]}`. A production stage entry (real output, `ntp_prod_0001` from the sample data):
 
 ```json
 {
   "name": "ntp_prod_0001",
-  "role": "Production [NPT (isotropic)]",
+  "role": "production",
   "software": [
-    {"source": "mdout", "program": "PMEMD", "version": "22"}
+    {"source": "mdout", "program": "PMEMD", "version": "22"},
+    {"source": "inpcrd", "program": "pmemd", "version": "Version 22"}
   ],
   "md_engine": {
     "ensemble": "NPT (isotropic)",
@@ -416,10 +566,12 @@ A publication-oriented view: reproducibility-critical metadata, energies and bul
     "barostat": "Berendsen (Isotropic)",
     "cutoff": 9.0,
     "constraints": "H-bonds",
+    "pbc": "PBC / Constant Pressure",
     "timestep_ps": 0.004,
     "run_length_steps": 5000000,
-    "run_length_ps": 20000.0,
-    "shake_active": true
+    "cntrl_parameters": { "ntx": 5, "irest": 1, "nstlim": 5000000, "dt": 0.004, "ntt": 3, "ntp": 1, "ntc": 2, "ntb": 2, "cut": 9.0, "_namelist": "cntrl" },
+    "shake_active": true,
+    "run_length_ps": 20000.0
   },
   "restraints": {"active": false},
   "system": {
@@ -429,10 +581,13 @@ A publication-oriented view: reproducibility-critical metadata, energies and bul
       "hmr_active": true,
       "hmr_inferred_from_timestep": true,
       "average_density": 1.037,
-      "density_std": 0.00124
+      "density_std": 0.00124,
+      "density": 1.037,
+      "first_density": 1.0348,
+      "final_density": 1.0374
     }
   },
-  "trajectory_output": { ... }
+  "trajectory_output": {"coord_write_interval_steps": 25000, "traj_format": "NetCDF"}
 }
 ```
 
@@ -448,7 +603,7 @@ stage_name,stage_role,time_start_ps,time_end_ps,duration_ns,frame_count,temp_avg
 import json
 from ambermeta import auto_discover
 
-protocol = auto_discover("runs/", recursive=True)
+protocol = auto_discover("tests/data/amber/md_test_files", recursive=True)
 with open("protocol.json", "w") as f:
     json.dump(protocol.to_dict(), f, indent=2)
 with open("methods.json", "w") as f:
@@ -457,7 +612,7 @@ with open("methods.json", "w") as f:
 
 ---
 
-## 8. Errors
+## 9. Errors
 
 ```python
 class AmberMetaError(Exception): ...        # base for clean, expected failures
@@ -480,18 +635,39 @@ A single file's failure, captured as data (not raised) under the default fault-t
 ```python
 def classify_exception(exc: BaseException) -> str
 ```
-Maps an exception to an `error_type`: `FileNotFoundError`→`"missing"`, `PermissionError`→`"permission"`, `UnicodeDecodeError`→`"decode"`, otherwise `"malformed"`.
+
+Maps an exception to an `error_type`: `FileNotFoundError`→`"missing"`, `PermissionError`→`"permission"`, `UnicodeDecodeError`→`"decode"`, otherwise `"malformed"`. Lives in `ambermeta.errors`, not top-level `ambermeta`.
 
 ---
 
-## 9. Worked examples
+## 10. Worked examples
 
-**Audit completion and temperature stability across a project:**
+**Discover a directory into a v2 manifest, then validate it (the new model, end to end):**
+
+```python
+import os
+from ambermeta.gui.api.core_bridge import discover_draft, validate_simulation
+from ambermeta.simulation import write_simulation
+
+base = os.path.abspath("tests/data/amber/md_test_files")
+draft = discover_draft(base)
+sim = draft["simulation"]
+
+write_simulation(sim, "simulation.json", "json")
+
+report = validate_simulation(sim, {}, base)
+if not report["ok"]:
+    for issue in report["stage_issues"]:
+        if not issue["ok"]:
+            print(issue["name"], issue["errors"])
+```
+
+**Audit completion and temperature stability across a project (the retained engine):**
 
 ```python
 from ambermeta import auto_discover
 
-protocol = auto_discover("runs/", recursive=True, auto_detect_restarts=True)
+protocol = auto_discover("tests/data/amber/md_test_files", recursive=True, auto_detect_restarts=True)
 for stage in protocol.stages:
     md = stage.mdout.details if stage.mdout else None
     if not md:
@@ -523,7 +699,8 @@ for d in Path("all_projects").iterdir():
 
 ## See also
 
-- [Architecture](architecture.md) — how these pieces fit together
+- [Architecture](architecture.md) — how these pieces fit together, and the v1→v2 migration mechanics
 - [CLI reference](cli.md) — the command-line surface over this API
-- [Manifest schema](manifest.md) — the file format `load_*` consumes
+- [Manifest schema](manifest.md) — the v2 file format `load_simulation`/`write_simulation` read and write, and the v1 auto-migration table
+- [GUI](gui.md) — the HTTP API that wraps `core_bridge`
 - [Tutorials](tutorials.md) — task-oriented walkthroughs

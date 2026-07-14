@@ -1,339 +1,647 @@
 # Tutorials
 
-Task-oriented walkthroughs for getting real work done with AmberMeta. Each uses the sample data in `tests/data/amber/md_test_files/` — a 64,528-atom glycoprotein system with a six-member NPT production sequence — so every command and output below is reproducible.
+Task-oriented walkthroughs for getting real work done with AmberMeta. Each uses the sample data in `tests/data/amber/md_test_files/` — a 64,528-atom glycoprotein system (`CH3L1_HUMAN_6NAG.top` + `.crd`) with a six-member NPT production sequence (`ntp_prod_0001` … `ntp_prod_0005`) — so every command and every line of output below is reproducible. Run them from a writable scratch copy so you don't touch the repo's test fixtures:
+
+```bash
+mkdir -p /tmp/ambermeta-tutorial
+cp tests/data/amber/md_test_files/* /tmp/ambermeta-tutorial/
+cd /tmp/ambermeta-tutorial
+```
+
+> **Note on IDs.** Phases and steps get a random 8-character id (`uuid4().hex[:8]`) whenever `discover` or the GUI creates them. Every id shown below is real output from one particular run — yours will differ. Everything else (names, paths, findings, validation verdicts) is deterministic.
+
+> **Prerequisite.** `pip install -e ".[all]"` (the NetCDF extra parses `.nc`/`.ncrst` restarts some projects use; the bundled sample restarts are plain binary `.rst`, so the base install is enough for these tutorials).
 
 ## Contents
 
-1. [Inspect individual files](#1-inspect-individual-files)
-2. [Build a protocol](#2-build-a-protocol)
-3. [Build a manifest interactively (GUI)](#3-build-a-manifest-interactively-gui)
-4. [Write manifests for reproducibility](#4-write-manifests-for-reproducibility)
-5. [Validate continuity](#5-validate-continuity)
-6. [Export for publications](#6-export-for-publications)
-7. [Work with production sequences](#7-work-with-production-sequences)
-8. [Automate metadata collection](#8-automate-metadata-collection)
-
-> **Prerequisite.** `pip install -e ".[all]"` (the NetCDF extra is needed to parse the `.nc`/`.ncrst` files some projects use; the sample restarts are NetCDF).
-
-> ⚠️ **Python usage — read this first.** A parser's `parse()` returns a wrapper; the metadata is on `.details`. Every Python example below uses `Parser(path).parse().details`. See [API reference](api.md#6-parser-metadata-fields) for the full field list.
+1. [Discover, edit, and export a v2 manifest](#1-discover-edit-and-export-a-v2-manifest)
+2. [Validate continuity and catch a sequence hole](#2-validate-continuity-and-catch-a-sequence-hole)
+3. [Upgrade a v1 manifest with `export`](#3-upgrade-a-v1-manifest-with-export)
+4. [Round-trip a manifest through the GUI](#4-round-trip-a-manifest-through-the-gui)
 
 ---
 
-## 1. Inspect individual files
+## 1. Discover, edit, and export a v2 manifest
 
-**Goal:** pull the metadata out of each AMBER file type.
+**Goal:** turn a directory of loose AMBER files into a hand-editable, canonical manifest.
 
-### Topology (`prmtop`)
+### Discover
+
+`discover` scans a directory into a draft `Simulation` — a topology pool, phases grouped by role, and steps with a resolved input-coordinate source for each — using the same engine the GUI's **Discover** button calls.
 
 ```bash
-ambermeta info tests/data/amber/md_test_files/CH3L1_HUMAN_6NAG.top
+ambermeta discover .
 ```
 
-```python
-from ambermeta.parsers import PrmtopParser
+```
+Simulation summary
+==================
+Topologies (pool): 1
+  - top_CH3L1_HUMAN_6NAG [normal]  CH3L1_HUMAN_6NAG.top
+Starting structure: CH3L1_HUMAN_6NAG.crd
+Phases: 1
 
-meta = PrmtopParser("tests/data/amber/md_test_files/CH3L1_HUMAN_6NAG.top").parse().details
-print(meta.natom, meta.nres)                 # 64528 15102
-print(meta.solvent_type, meta.density)       # Explicit Solvent 0.8434
-print(meta.residue_composition["WAT"])       # 14659
-print(meta.hmr_active, meta.hmr_detection_method)   # False atomic_number
+Phase: Production [production]
+  - ntp_prod_0001  topology=CH3L1_HUMAN_6NAG.top  input=starting structure  (mdin=ntp_prod_0001.mdin, mdout=ntp_prod_0001.mdout)
+  - ntp_prod_0002  topology=CH3L1_HUMAN_6NAG.top  input=step 8f9b2e3f  (mdin=ntp_prod_0002.mdin, mdout=ntp_prod_0002.mdout)
+  - ntp_prod_0003  topology=CH3L1_HUMAN_6NAG.top  input=step de27bb87  (mdin=ntp_prod_0003.mdin, mdout=ntp_prod_0003.mdout)
+  - ntp_prod_0004  topology=CH3L1_HUMAN_6NAG.top  input=step 6aa07bf3  (mdin=ntp_prod_0004.mdin, mdout=ntp_prod_0004.mdout)
+  - ntp_prod_0005  topology=CH3L1_HUMAN_6NAG.top  input=step 71f7cca0  (mdin=ntp_prod_0005.mdin, mdout=ntp_prod_0005.mdout)
+
+Suggestions:
+  - [applied] CH3L1_HUMAN_6NAG.crd set as the starting structure
+  - [applied] Phase roles inferred from file content/names
 ```
 
-You get atom/residue counts, box geometry, density, solvent model, system composition (`residue_composition`, including ions and water), and HMR status (`hmr_active` + how it was detected).
+`CH3L1_HUMAN_6NAG.top` was found once and put in the topology pool; `CH3L1_HUMAN_6NAG.crd` (a single-frame restart, no trajectory) was picked as the Simulation's starting structure and feeds `ntp_prod_0001`. Every later step's `input` is `step <id>` — the previous step's own output restart, the continuity chain. Both suggestions are `[applied]` automatically; a `[needs_you]` suggestion (you'll see one in [§2](#2-validate-continuity-and-catch-a-sequence-hole)) is not.
 
-### Input (`mdin`)
-
-```python
-from ambermeta.parsers import MdinParser
-
-meta = MdinParser("tests/data/amber/md_test_files/ntp_prod_0001.mdin").parse().details
-print(meta.length_steps, meta.dt)            # 5000000 0.004
-print(meta.ensemble, meta.stage_role)        # NPT (isotropic)  Production [NPT (isotropic)]
-print(meta.temp_control, meta.target_temp)   # Langevin Dynamics 300.0
-print(meta.press_control, meta.constraints)  # Berendsen (Isotropic)  H-bonds
-print(meta.cntrl_parameters["nstlim"])       # 5000000
-```
-
-Run length, timestep, ensemble, temperature/pressure control, constraints, and the raw `&cntrl` namelist in `cntrl_parameters` — plus a heuristic `stage_role`.
-
-### Output (`mdout`)
-
-```python
-from ambermeta.parsers import MdoutParser
-
-meta = MdoutParser("tests/data/amber/md_test_files/ntp_prod_0001.mdout").parse().details
-print(meta.program, meta.version)            # PMEMD 22
-print(meta.finished_properly)                # True
-print(meta.thermostat, meta.barostat)        # Langevin Berendsen
-s = meta.stats
-print(s.count, s.time_start, s.time_end)     # 200 1020.0 20920.0
-print(s.temp_stats.mean, s.temp_stats.stdev) # 300.43200000000013 1.2504190252445306
-print(s.density_stats.mean)                  # 1.0369550000000003
-```
-
-Completion status, engine settings, performance (`wall_time_seconds`, `ns_per_day`), and streaming thermodynamics. Per-quantity stats live on `stats.<q>_stats` (`temp_stats`, `pressure_stats`, `density_stats`, `etot_stats`, `volume_stats`), each exposing `.mean` and `.stdev`.
-
-### Restart (`inpcrd`)
-
-```python
-from ambermeta.parsers import InpcrdParser
-
-meta = InpcrdParser("tests/data/amber/md_test_files/ntp_prod_0001.rst").parse().details
-print(meta.natoms, meta.time)                # 64528 20920.00000242704
-print(meta.has_velocities, meta.has_box)     # True True
-```
-
-Atom count and `time` are what continuity checking uses to chain stages.
-
----
-
-## 2. Build a protocol
-
-**Goal:** assemble loose files into an ordered `SimulationProtocol`.
-
-### From a directory
-
-```python
-from ambermeta import auto_discover
-
-protocol = auto_discover("tests/data/amber/md_test_files", recursive=True)
-print(len(protocol.stages))                  # 7
-for stage in protocol.stages:
-    print(stage.name, "->", stage.summary()["intent"])
-```
-
-### From a manifest
-
-```python
-from ambermeta import load_protocol_from_manifest
-
-protocol = load_protocol_from_manifest("protocol.yaml", directory="runs/")
-```
-
-### With the builder (full control)
-
-```python
-from ambermeta import ProtocolBuilder
-
-protocol = (
-    ProtocolBuilder()
-    .from_directory("tests/data/amber/md_test_files", recursive=True)
-    .with_grouping_rules({r"ntp_prod.*": "production"})
-    .with_pattern_filter(r"ntp_prod_\d+")
-    .auto_detect_restarts()
-    .build()
-)
-print(protocol.totals())   # {'steps': 25000000.0, 'time_ps': 100000.0}
-```
-
-`ProtocolBuilder` chains the same primitives `auto_discover` uses; see [API §1](api.md#1-discovery--assembly).
-
----
-
-## 3. Build a manifest interactively (GUI)
-
-**Goal:** assemble a manifest in the browser.
+Write the draft to a v2 manifest with `--write`:
 
 ```bash
-ambermeta gui tests/data/amber/md_test_files
+ambermeta discover . --write draft.yaml
 ```
 
-This starts a localhost server and opens a three-pane window — **Files** · **Stages** · **Properties**.
-
-1. **Discover** auto-groups the directory into stages (one per file group), detects the numbered sequence, and classifies the topology.
-2. Drag a file from **Files** onto a stage slot, or use the picker in **Properties**.
-3. Select a stage to edit its name, role, gap/tolerance, and notes.
-4. **Validate** reports issues with jump-to-issue; **Save** writes the canonical manifest — byte-identical to the CLI's.
-
-Full walkthrough: [GUI guide](gui.md). Prefer the terminal? `ambermeta plan … --interactive` and `ambermeta init … --auto` cover the same ground headlessly.
-
----
-
-## 4. Write manifests for reproducibility
-
-**Goal:** capture a protocol as a durable, reviewable file.
-
-Bootstrap one from a directory, then edit:
-
-```bash
-ambermeta init runs/ --auto --output manifest.yaml --validate --force
+```
+...
+Wrote v2 draft manifest: draft.yaml (yaml)
 ```
 
-Or write it by hand:
+### Edit
+
+`draft.yaml` is plain YAML — edit it in any text editor. Rename the phase and add a note to the first step:
 
 ```yaml
-# protocol.yaml
-global_prmtop: systems/complex.prmtop
+# draft.yaml (excerpt, before editing)
+phases:
+- id: 34e5b79a
+  name: Production
+  role: production
+  order: 0
+steps:
+- id: 8f9b2e3f
+  name: ntp_prod_0001
+  ...
+  notes: []
+```
+
+```yaml
+# draft.yaml (after editing)
+phases:
+- id: 34e5b79a
+  name: NPT Production
+  role: production
+  order: 0
+steps:
+- id: 8f9b2e3f
+  name: ntp_prod_0001
+  ...
+  notes: ["First production run; starts from the equilibrated starting structure."]
+```
+
+Check that the edit didn't break anything:
+
+```bash
+ambermeta validate --manifest draft.yaml
+```
+
+```
+Simulation validation
+
+Validation: OK
+```
+
+### Export
+
+`export` re-emits any manifest (v1 auto-migrated) as canonical v2, or as a legacy flat manifest for tools that still expect one. Re-exporting to v2 canonicalizes formatting and lets you switch YAML/JSON:
+
+```bash
+ambermeta export draft.yaml -o simulation.yaml
+```
+
+```
+Wrote v2 manifest: simulation.yaml (yaml)
+```
+
+```yaml
+# simulation.yaml
+version: 2
+simulation:
+  topologies:
+  - id: top_CH3L1_HUMAN_6NAG
+    path: CH3L1_HUMAN_6NAG.top
+    kind: normal
+  starting_structure: CH3L1_HUMAN_6NAG.crd
+phases:
+- id: 34e5b79a
+  name: NPT Production
+  role: production
+  order: 0
+steps:
+- id: 8f9b2e3f
+  name: ntp_prod_0001
+  phase: 34e5b79a
+  order: 0
+  topology: top_CH3L1_HUMAN_6NAG
+  input_coords:
+    source: starting_structure
+  mdin: ntp_prod_0001.mdin
+  mdout: ntp_prod_0001.mdout
+  mdcrd: null
+  notes:
+  - First production run; starts from the equilibrated starting structure.
+# ... ntp_prod_0002 .. ntp_prod_0005 follow, each chained to the previous step
+```
+
+Or hand it to a tool that only understands the flat `stages:` shape:
+
+```bash
+ambermeta export simulation.yaml --to legacy -o legacy_export.json
+```
+
+```
+Wrote legacy manifest: legacy_export.json (json)
+```
+
+```json
+{
+  "global_prmtop": "CH3L1_HUMAN_6NAG.top",
+  "stages": [
+    {
+      "name": "ntp_prod_0001",
+      "stage_role": "production",
+      "prmtop": "CH3L1_HUMAN_6NAG.top",
+      "mdin": "ntp_prod_0001.mdin",
+      "mdout": "ntp_prod_0001.mdout",
+      "inpcrd": "CH3L1_HUMAN_6NAG.crd",
+      "notes": ["First production run; starts from the equilibrated starting structure."]
+    },
+    {
+      "name": "ntp_prod_0002",
+      "stage_role": "production",
+      "prmtop": "CH3L1_HUMAN_6NAG.top",
+      "mdin": "ntp_prod_0002.mdin",
+      "mdout": "ntp_prod_0002.mdout",
+      "inpcrd": "ntp_prod_0001.rst"
+    }
+    // ... ntp_prod_0003 .. ntp_prod_0005, each inpcrd chained to the previous stage's restart
+  ]
+}
+```
+
+Note what's lost going to legacy: the topology pool collapses to one `global_prmtop`, phases disappear (each step becomes a bare stage), and each step's continuity is flattened into a plain `inpcrd` path — the explicit `source`/`ref` distinction is gone. Round-trip through `--to v2` if you need it back.
+
+Prefer a browser? [§4](#4-round-trip-a-manifest-through-the-gui) does the same discover → edit → save loop in the GUI, and writes the identical file. Full schema: [manifest reference](manifest.md). Full flag reference: [CLI reference](cli.md).
+
+---
+
+## 2. Validate continuity and catch a sequence hole
+
+**Goal:** confirm a simulation's steps actually connect, and understand the two distinct things AmberMeta checks for.
+
+`ambermeta validate --manifest` runs whole-Simulation validation: per-step file checks, plus two continuity-specific things —
+
+- **Continuity**: does each step's declared input-coordinate time match the end-time of the step it's chained from? A `default_tolerance` (0.1 ps, or half the previous step's frame interval if larger) absorbs floating-point noise; anything bigger is a real finding.
+- **Sequence holes**: does a numbered run (`ntp_prod_0001`, `0002`, …) skip an index? This is checked independently of continuity — a missing member is flagged even if every step that *is* present chains perfectly.
+
+### A sequence hole
+
+Copy the sample data but drop `ntp_prod_0003`:
+
+```bash
+mkdir -p /tmp/ambermeta-hole && cd /tmp/ambermeta-hole
+cp /tmp/ambermeta-tutorial/CH3L1_HUMAN_6NAG.* .
+cp /tmp/ambermeta-tutorial/ntp_prod_000{1,2,4,5}.* .
+ambermeta discover . --write manifest.yaml
+```
+
+```
+Simulation summary
+==================
+Topologies (pool): 1
+  - top_CH3L1_HUMAN_6NAG [normal]  CH3L1_HUMAN_6NAG.top
+Starting structure: CH3L1_HUMAN_6NAG.crd
+Phases: 1
+
+Phase: Production [production]
+  - ntp_prod_0001  topology=CH3L1_HUMAN_6NAG.top  input=starting structure  (mdin=ntp_prod_0001.mdin, mdout=ntp_prod_0001.mdout)
+  - ntp_prod_0002  topology=CH3L1_HUMAN_6NAG.top  input=step baf48c84  (mdin=ntp_prod_0002.mdin, mdout=ntp_prod_0002.mdout)
+  - ntp_prod_0004  topology=CH3L1_HUMAN_6NAG.top  input=step f11face0  (mdin=ntp_prod_0004.mdin, mdout=ntp_prod_0004.mdout)
+  - ntp_prod_0005  topology=CH3L1_HUMAN_6NAG.top  input=step dbee856a  (mdin=ntp_prod_0005.mdin, mdout=ntp_prod_0005.mdout)
+
+Suggestions:
+  - [needs_you] ntp_prod sequence is missing member(s) 3
+  - [applied] CH3L1_HUMAN_6NAG.crd set as the starting structure
+  - [applied] Phase roles inferred from file content/names
+
+Wrote v2 draft manifest: manifest.yaml (yaml)
+```
+
+`discover` already flagged it as `[needs_you]`. `validate --manifest` surfaces the same finding:
+
+```bash
+ambermeta validate --manifest manifest.yaml
+```
+
+```
+Simulation validation
+
+Continuity / sequence findings:
+  - ntp_prod sequence is missing member(s) 3: present members of 'ntp_prod' skip index(es) 3
+
+Validation: OK
+```
+
+Note the verdict is still `OK` — a sequence hole is a "needs you" finding, not a hard error, because a genuinely non-contiguous set of runs (independent replicas, say) is legitimate. `ntp_prod_0004`'s continuity is *not* separately flagged as broken: its bound input-coordinate source is honestly `ntp_prod_0002`'s own restart (that's the file that exists), so the continuity check — which only compares a step's declared input against its declared predecessor — has nothing to complain about. The hole is a distinct, first-class finding. To make holes count as failures in CI:
+
+```bash
+ambermeta validate --manifest manifest.yaml --strict; echo "exit: $?"
+```
+
+```
+Simulation validation
+
+Continuity / sequence findings:
+  - ntp_prod sequence is missing member(s) 3: present members of 'ntp_prod' skip index(es) 3
+
+Validation: OK
+exit: 1
+```
+
+### A continuity break
+
+This time take the intact 5-step `simulation.yaml` from [§1](#1-discover-edit-and-export-a-v2-manifest) and introduce a real mistake: point `ntp_prod_0003` at `ntp_prod_0001`'s restart instead of `ntp_prod_0002`'s (a copy-paste error while hand-editing).
+
+```bash
+cd /tmp/ambermeta-tutorial
+cp simulation.yaml broken.yaml
+```
+
+```yaml
+# broken.yaml — ntp_prod_0003's input_coords, edited
+input_coords:
+  source: step
+  ref: 8f9b2e3f          # was de27bb87 (ntp_prod_0002) — now points at ntp_prod_0001
+  path: ntp_prod_0001.rst
+```
+
+```bash
+ambermeta validate --manifest broken.yaml
+```
+
+```
+Simulation validation
+
+Continuity / sequence findings:
+  - Continuity note: Stage appears to overlap previous stage by 20000 ps.
+  - Continuity note: Gap detected without stated expectation; verify continuity.
+
+Protocol notes:
+  - Stage appears to overlap previous stage by 20000 ps.
+  - Gap detected without stated expectation; verify continuity.
+
+Validation: OK
+```
+
+This time it's a genuine continuity problem: `ntp_prod_0002` really did finish 20000 ps later than the restart `ntp_prod_0003` now claims to start from. `--format json` gives the same finding machine-readably, including which step it's attached to:
+
+```bash
+ambermeta validate --manifest broken.yaml --format json
+```
+
+```json
+{
+  "ok": true,
+  ...
+  "stage_issues": [
+    ...
+    {
+      "name": "ntp_prod_0003",
+      "ok": true,
+      "degraded": false,
+      "errors": [],
+      "warnings": [
+        "Stage appears to overlap previous stage by 20000 ps.",
+        "Gap detected without stated expectation; verify continuity."
+      ],
+      "info": [],
+      "continuity": [
+        "Stage appears to overlap previous stage by 20000 ps.",
+        "Gap detected without stated expectation; verify continuity."
+      ],
+      "missing_files": []
+    },
+    ...
+  ],
+  "suggestions": [
+    ...
+    {
+      "id": "sug_c_3",
+      "kind": "continuity_gap",
+      "severity": "needs_you",
+      "title": "Continuity note",
+      "evidence": "Stage appears to overlap previous stage by 20000 ps.",
+      "actions": ["Set as expected", "Investigate"],
+      "step_id": "6aa07bf3"
+    },
+    ...
+  ]
+}
+```
+
+(A step's own `notes` ride along in the same `warnings`/`protocol_issues` channel as real findings — if you added a note in [§1](#1-discover-edit-and-export-a-v2-manifest), you'll see it listed there too. Reserve `notes` for things worth a reviewer's attention.)
+
+`--strict` turns this into exit code 1 the same way it did for the sequence hole. Fix the reference (`ref: de27bb87`, `path: ntp_prod_0002.rst`) and `validate` goes back to a bare `Validation: OK` — no findings section at all, which is itself the signal that continuity is clean.
+
+**Declaring an intentional gap.** If a step genuinely restarts from a checkpoint after a real time jump, say so — an unstated gap is what triggers "verify continuity"; a stated one that matches is silently confirmed (`INFO`, not surfaced as a problem):
+
+```yaml
+- id: st_prod_003
+  ...
+  gaps: { expected: 2.0, tolerance: 0.5 }   # ps
+```
+
+For genuinely independent, non-contiguous runs (replicas), pass `--allow-gaps` instead of annotating every step. Full field reference: [manifest reference](manifest.md).
+
+---
+
+## 3. Upgrade a v1 manifest with `export`
+
+**Goal:** take a manifest written for AmberMeta 1.0 (flat `stages:`, `global_prmtop`) and get a canonical v2 file out of it — without hand-translating anything.
+
+v1 manifests still open: the reader auto-migrates a flat `stages:` list (with `global_prmtop`/`hmr_prmtop`/per-stage `inpcrd`) into a `Simulation` in memory. Here's a v1 manifest, unchanged from what 1.0 would have read:
+
+```yaml
+# v1.yaml
+global_prmtop: CH3L1_HUMAN_6NAG.top
 stages:
-  - name: minimize
-    stage_role: minimization
-    mdin: inputs/min.in
-    mdout: outputs/min.out
-    notes: ["Steepest descent, 5000 steps"]
-
-  - name: equilibrate
-    stage_role: equilibration
-    mdin: inputs/equil.in
-    mdout: outputs/equil.out
-    mdcrd: traj/equil.nc
-    inpcrd: restarts/heat.rst7
-    gaps: { expected: 0.0, tolerance: 0.1 }
-
-  - name: production
+  - name: ntp_prod_0001
     stage_role: production
-    mdin: inputs/prod.in
-    mdout: outputs/prod.out
-    mdcrd: traj/prod.nc
-    inpcrd: restarts/equil.rst7
+    mdin: ntp_prod_0001.mdin
+    mdout: ntp_prod_0001.mdout
+    inpcrd: CH3L1_HUMAN_6NAG.crd
+
+  - name: ntp_prod_0002
+    stage_role: production
+    mdin: ntp_prod_0002.mdin
+    mdout: ntp_prod_0002.mdout
+    inpcrd: ntp_prod_0001.rst
+
+  - name: ntp_prod_0003
+    stage_role: production
+    mdin: ntp_prod_0003.mdin
+    mdout: ntp_prod_0003.mdout
+    inpcrd: ntp_prod_0002.rst
 ```
 
-Make it portable with environment variables, then load it:
+`plan --manifest` still reads it exactly as 1.0 did — a v1 flat manifest keeps the classic per-stage **Protocol summary** (the retained flat engine, not the new model):
+
+```bash
+ambermeta plan . --manifest v1.yaml
+```
+
+```
+Loading manifest: v1.yaml
+
+Protocol summary
+================
+Stages: 3
+Total steps: 15000000
+Total simulated time (ps): 60000.000
+
+- ntp_prod_0001
+  intent: production
+  result: Completed
+  prmtop: atoms=64528, box=98.34×76.05×81.23 Å, density=0.843 g/cc
+  mdin: steps=5000000, dt=0.004 ps
+  mdout: status=complete, steps=5000000, dt=0.004 ps, thermostat=Langevin @ 300 K, barostat=Berendsen, box=RECTILINEAR
+  inpcrd: atoms=64528, box
+  stats: frames=200, time=1020–20920 ps, temp=300.43 ± 1.25 K, density=1.0370 ± 0.0012 g/cc
+  restart: /tmp/ambermeta-tutorial/CH3L1_HUMAN_6NAG.crd
+  evidence: INFO: using global prmtop: CH3L1_HUMAN_6NAG.top
+  note: INFO: using global prmtop: CH3L1_HUMAN_6NAG.top
+...
+```
+
+`validate --manifest`, by contrast, always goes through the new model — it auto-migrates the v1 file first:
+
+```bash
+ambermeta validate --manifest v1.yaml
+```
+
+```
+Simulation validation
+
+Validation: OK
+```
+
+Now convert it for real:
+
+```bash
+ambermeta export v1.yaml -o v1_as_v2.yaml
+```
+
+```
+Wrote v2 manifest: v1_as_v2.yaml (yaml)
+```
 
 ```yaml
-- name: production
-  prmtop: ${PROJECT_ROOT}/systems/complex.prmtop
-  mdout: ${OUTPUT_DIR}/prod.out
+# v1_as_v2.yaml
+version: 2
+simulation:
+  topologies:
+  - id: top_0
+    path: CH3L1_HUMAN_6NAG.top
+    kind: normal
+  starting_structure: null
+phases:
+- id: ph_0
+  name: Production
+  role: production
+  order: 0
+steps:
+- id: st_0
+  name: ntp_prod_0001
+  phase: ph_0
+  order: 0
+  topology: top_0
+  input_coords:
+    source: path
+    path: CH3L1_HUMAN_6NAG.crd
+  mdin: ntp_prod_0001.mdin
+  mdout: ntp_prod_0001.mdout
+  mdcrd: null
+  notes: []
+- id: st_1
+  name: ntp_prod_0002
+  phase: ph_0
+  order: 1
+  topology: top_0
+  input_coords: { source: step, ref: st_0 }
+  mdin: ntp_prod_0002.mdin
+  mdout: ntp_prod_0002.mdout
+  mdcrd: null
+  notes: []
+- id: st_2
+  name: ntp_prod_0003
+  phase: ph_0
+  order: 2
+  topology: top_0
+  input_coords: { source: step, ref: st_1 }
+  mdin: ntp_prod_0003.mdin
+  mdout: ntp_prod_0003.mdout
+  mdcrd: null
+  notes: []
 ```
 
-```bash
-export PROJECT_ROOT=/home/user/sim OUTPUT_DIR=/scratch/out
-ambermeta plan ./runs --manifest protocol.yaml -v
-```
-
-Full schema: [manifest reference](manifest.md).
-
----
-
-## 5. Validate continuity
-
-**Goal:** confirm stages actually connect.
-
-```python
-from ambermeta import auto_discover
-
-protocol = auto_discover("runs/", recursive=True, auto_detect_restarts=True)
-for stage in protocol.stages:
-    for note in stage.validation + stage.continuity:
-        print(f"{stage.name}: {note}")
-```
-
-Notes are tagged `INFO` (role inferred, gap confirmed, check skipped for missing data) or `WARNING` (atom-count mismatch, timing inconsistency, box change, unexpected gap).
-
-Configure expected gaps where a discontinuity is intentional:
+`global_prmtop` became a single `normal` pool entry; the three flat stages became three steps under one auto-named `Production` phase, chained `st_0 → st_1 → st_2`. One thing worth noticing: `starting_structure` came back `null`. The migrator only promotes coordinates to the Simulation-level starting structure when v1 declared them that way (a top-level `initial_coordinates` key); this v1 file set `inpcrd` explicitly on the first *stage* instead, so the migrator kept that as an explicit `path` on `st_0` rather than guessing it should be global. That's a good moment to clean it up by hand:
 
 ```yaml
-- name: prod_002
-  stage_role: production
-  mdin: prod_002.in
-  mdout: prod_002.out
-  inpcrd: prod_001.rst7
-  gaps:
-    expected: 2.0      # expected 2 ps jump (e.g. restart from a checkpoint)
-    tolerance: 0.5
-    notes: ["Gap due to job failure and restart"]
+# v1_as_v2.yaml, hand-edited
+simulation:
+  ...
+  starting_structure: CH3L1_HUMAN_6NAG.crd   # was null
+steps:
+- id: st_0
+  ...
+  input_coords:
+    source: starting_structure               # was {source: path, path: CH3L1_HUMAN_6NAG.crd}
 ```
-
-For non-contiguous protocols (independent replicas), skip the cross-stage checks:
 
 ```bash
-ambermeta plan --manifest protocol.yaml --skip-cross-stage-validation
+ambermeta validate --manifest v1_as_v2.yaml
 ```
 
----
+```
+Simulation validation
 
-## 6. Export for publications
-
-**Goal:** produce methods-section-ready artifacts.
+Validation: OK
+```
 
 ```bash
-ambermeta plan --manifest protocol.yaml \
-  --methods-summary-path methods.json \
-  --stats-csv stats.csv \
-  --summary-path protocol.json
+ambermeta plan . --manifest v1_as_v2.yaml
 ```
 
-```python
-import json
-from ambermeta import auto_discover
+```
+Simulation summary
+==================
+Topologies (pool): 1
+  - top_0 [normal]  CH3L1_HUMAN_6NAG.top
+Starting structure: CH3L1_HUMAN_6NAG.crd
+Phases: 1
 
-protocol = auto_discover("runs/", recursive=True)
-json.dump(protocol.to_methods_dict(), open("methods.json", "w"), indent=2)
+Phase: Production [production]
+  - ntp_prod_0001  topology=CH3L1_HUMAN_6NAG.top  input=starting structure  (mdin=ntp_prod_0001.mdin, mdout=ntp_prod_0001.mdout)
+  - ntp_prod_0002  topology=CH3L1_HUMAN_6NAG.top  input=step st_0  (mdin=ntp_prod_0002.mdin, mdout=ntp_prod_0002.mdout)
+  - ntp_prod_0003  topology=CH3L1_HUMAN_6NAG.top  input=step st_1  (mdin=ntp_prod_0003.mdin, mdout=ntp_prod_0003.mdout)
+
+Validation: OK
 ```
 
-The methods summary is `{stage_sequence, stages[]}`, where each stage carries `software`, `md_engine` (ensemble / thermostat / barostat / cutoff / constraints / timestep / run length), `restraints`, and `system` (atom counts, box, composition) — energies and bulk arrays are dropped. The exact shape is in [API §7](api.md#7-export-structures). The stats CSV has one row per stage with temperature/pressure/density/energy as mean ± σ.
+Note that `plan` now prints the new **Simulation summary** rather than the old **Protocol summary** — the only thing that changed between the two `plan` invocations above is that the file on disk is v2, not the command. That's the whole point: whether a manifest reads as a flat protocol or a three-level Simulation is a property of the file, and `export` is how you move a file from the former to the latter for good.
+
+If you only need one field checked (`hmr_prmtop`, a stage role, …) rather than a full rewrite, the [manifest reference](manifest.md) documents exactly which v1 key becomes which v2 field. And if your downstream tooling can't take TOML/CSV *and* an HMR topology (CSV can't represent `hmr_prmtop` alongside `global_prmtop`), keep both a v2 (`export --to v2`) and a legacy (`export --to legacy`) copy side by side.
 
 ---
 
-## 7. Work with production sequences
+## 4. Round-trip a manifest through the GUI
 
-**Goal:** handle numbered runs (`ntp_prod_0001`, `…0002`, …).
+**Goal:** discover, edit, validate, and save a manifest without touching a terminal — and confirm it's the exact file the CLI would have produced.
 
-```python
-from ambermeta import detect_numeric_sequences, smart_group_files
-
-detect_numeric_sequences(["ntp_prod_0001.mdout", "ntp_prod_0002.mdout", "equil.mdout"])
-# {'ntp_prod_': ['ntp_prod_0001.mdout', 'ntp_prod_0002.mdout']}
-
-groups = smart_group_files("tests/data/amber/md_test_files", pattern=r"ntp_prod_\d+", recursive=True)
-for stem, files in groups.items():
-    print(stem, {k: v for k, v in files.items() if not k.startswith("_")})
+```bash
+ambermeta gui .
 ```
 
-Each numbered run becomes its own stage (sequences are **not** collapsed), ordered by index, each carrying a "item *n* of *m*" note. In the GUI, the sequence collapses into one expandable group whose role you can set in one action.
+```
+Starting AmberMeta GUI...
+Base directory: /tmp/ambermeta-tutorial
+Server: http://127.0.0.1:8765
+API docs: http://127.0.0.1:8765/docs
 
-```python
-from ambermeta import ProtocolBuilder
-
-protocol = (
-    ProtocolBuilder()
-    .from_directory("tests/data/amber/md_test_files", recursive=True)
-    .with_pattern_filter(r"ntp_prod_\d+")
-    .with_grouping_rules({r"ntp_prod.*": "production"})
-    .auto_detect_restarts()      # chains 0002←0001, 0003←0002, ...
-    .build()
-)
+Opening browser: http://127.0.0.1:8765
 ```
 
----
+This launches a local, single-user server (bound to `127.0.0.1` only) and opens a three-pane window at that URL:
 
-## 8. Automate metadata collection
+1. **Files** (left) — a searchable list of everything under the launch directory. Rows carry data-driven hints (`prmtop`, `mdin`, restart, …).
+2. **Canvas** (center) — a continuous vertical timeline: the phase as a section, steps as cards showing their bound topology (▸) and input-coordinate source (◂), with continuity arrows between them (amber only where a real gap exists) and a **missing-run ghost** where a sequence hole was detected.
+3. **Inspector** (right) — peek and full-details/raw tabs for whatever's selected, plus an actions list. The step/phase inline editors here are still stubs in this release — do structural edits (renaming, gap tolerances, notes) by editing the saved YAML/JSON directly, as in [§1](#1-discover-edit-and-export-a-v2-manifest), until they land.
 
-**Goal:** process many simulation directories unattended.
+Walk through the round trip:
 
-```python
-#!/usr/bin/env python3
-"""Summarize every simulation directory under a root."""
-import json
-from pathlib import Path
-from ambermeta import auto_discover, AmberMetaError
+1. Click **Discover**. The Files pane's `CH3L1_HUMAN_6NAG.top`/`.crd` and the five `ntp_prod_*` groups populate the Canvas as one `Production` phase with five steps, exactly like `ambermeta discover .` printed in [§1](#1-discover-edit-and-export-a-v2-manifest). The **Suggestions tray** lists the same `[applied]`/`[needs_you]` items the CLI's `Suggestions:` block shows.
+2. Drag a file from **Files** onto a step's `mdin`/`mdout` slot, the topology pool, or the starting-structure slot to rebind it; drag a step card to reorder it within the phase or move it to another phase.
+3. Click **Validate**. The panel lists the same findings `ambermeta validate --manifest` would print for this draft, with jump-to-issue.
+4. Click **Save** and give it a filename (`gui_manifest.yaml`, say).
 
-def process(sim_dir: Path, out_dir: Path) -> bool:
-    try:
-        protocol = auto_discover(str(sim_dir), recursive=True, auto_detect_restarts=True)
-    except AmberMetaError as e:
-        print(f"{sim_dir.name}: {e}")
-        return False
-    (out_dir / f"{sim_dir.name}_protocol.json").write_text(
-        json.dumps(protocol.to_dict(), indent=2))
-    (out_dir / f"{sim_dir.name}_methods.json").write_text(
-        json.dumps(protocol.to_methods_dict(), indent=2))
-    return True
+**Save writes exactly what the CLI writes.** The GUI's save handler and `ambermeta export`/`ambermeta discover --write` both call the same `ambermeta.simulation.write_simulation` — there is no separate GUI serializer. You can verify this from the terminal without touching the browser at all, since every GUI action is just a call to the local HTTP API (documented in full in the [GUI guide](gui.md)) that the page's own JavaScript calls:
 
-def main():
-    root, out = Path("/path/to/simulations"), Path("/path/to/output")
-    out.mkdir(exist_ok=True)
-    ok = sum(process(d, out) for d in root.iterdir() if d.is_dir())
-    print(f"Processed {ok} directories")
-
-if __name__ == "__main__":
-    main()
+```bash
+curl -s -X POST http://127.0.0.1:8765/api/document/discover \
+  -H "Content-Type: application/json" -d '{"recursive": true}' \
+  | python -c "import json,sys; d=json.load(sys.stdin); print(d['document']['simulation']['phases'][0]['steps'][0]['id'])"
 ```
 
-`auto_discover` is fault-tolerant by default — a bad file in one directory is recorded as a `FileLoadError` on its stage rather than aborting the batch. To audit completion across runs, read `stage.mdout.details.finished_properly` (see [API §9](api.md#9-worked-examples)).
+```
+005b39cd
+```
+
+```bash
+curl -s -X PUT http://127.0.0.1:8765/api/steps/005b39cd \
+  -H "Content-Type: application/json" \
+  -d '{"notes": ["Reviewed for the tutorial round-trip."]}' \
+  -o /dev/null -w "PUT /api/steps/005b39cd -> %{http_code}\n"
+```
+
+```
+PUT /api/steps/005b39cd -> 200
+```
+
+```bash
+curl -s -X POST http://127.0.0.1:8765/api/validate -d '{}' -H "Content-Type: application/json" \
+  | python -c "import json,sys; d=json.load(sys.stdin); print('ok:', d['ok'])"
+```
+
+```
+ok: True
+```
+
+```bash
+curl -s -X POST http://127.0.0.1:8765/api/document/save \
+  -H "Content-Type: application/json" -d '{"path": "gui_manifest.yaml"}' \
+  -o /dev/null -w "POST /api/document/save -> %{http_code}\n"
+```
+
+```
+POST /api/document/save -> 200
+```
+
+Stop the server (`Ctrl+C` in its terminal), then check the file it wrote with the plain CLI:
+
+```bash
+ambermeta validate --manifest gui_manifest.yaml
+```
+
+```
+Simulation validation
+
+Validation: OK
+```
+
+```yaml
+# gui_manifest.yaml (excerpt) — note the step notes made it through the save
+steps:
+- id: 005b39cd
+  name: ntp_prod_0001
+  ...
+  notes:
+  - Reviewed for the tutorial round-trip.
+```
+
+Same manifest, same validator, whichever end you edited it from. `Open`/`Save` in the GUI read and write this same v2 manifest the CLI does; `discover` in the GUI is the same `discover_draft` function `ambermeta discover` calls. Full pane-by-pane reference, the HTTP API surface, and the security model (file access is confined to the launch directory; a path-traversal attempt gets a `403`): [GUI guide](gui.md).
 
 ---
 
 ## See also
 
 - [Recipes](recipes.md) — short copy-paste one-liners
-- [CLI reference](cli.md) · [Python API](api.md) · [Manifest schema](manifest.md) · [GUI guide](gui.md)
+- [CLI reference](cli.md) · [Python API](api.md) · [Manifest schema](manifest.md) · [GUI guide](gui.md) · [Architecture](architecture.md)

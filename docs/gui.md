@@ -1,14 +1,14 @@
 # GUI guide
 
-**The AmberMeta GUI is a browser-based manifest editor over the same engine the CLI uses.** It runs a small local web server, opens a three-pane app in your browser, and lets you assemble, audit, and save a protocol manifest by clicking and dragging instead of hand-editing YAML. It is single-user, **localhost-only**, and works fully offline.
+**The AmberMeta GUI is a browser-based editor for a Simulation → Phase → Step manifest, over the same engine the CLI uses.** It runs a small local web server, opens a three-pane app in your browser, and lets you assemble, audit, and save a manifest by dragging files onto a timeline instead of hand-editing YAML. It is single-user, **localhost-only**, and works fully offline — the frontend is a pre-built static bundle, no Node.js and no CDN.
 
-> When to use it: interactively building or sanity-checking a manifest, especially for a directory you're seeing for the first time. For scripting, CI, and cluster/SSH use, the [CLI](cli.md) is the complete headless equivalent — the GUI's **Save** writes the *same canonical manifest* `ambermeta init --auto` would.
+> When to use it: interactively building or sanity-checking a manifest for a directory you're seeing for the first time. For scripting, CI, and cluster/SSH use, the [CLI](cli.md) is the complete headless equivalent — the GUI's **Save** writes the same canonical [v2 manifest](manifest.md) `ambermeta discover --write` or `ambermeta export` would.
 
 ---
 
 ## 1. Install & launch
 
-The GUI needs the `gui` extra (FastAPI + Uvicorn); the frontend itself is pre-built and bundled, so there is no Node.js or build step.
+The GUI needs the `gui` extra (FastAPI + Uvicorn); the frontend itself is pre-built and bundled under `ambermeta/gui/static/`, so there is no build step.
 
 ```bash
 python -m pip install -e ".[gui]"
@@ -30,262 +30,367 @@ ambermeta gui tests/data/amber/md_test_files       # opens http://127.0.0.1:8765
 ambermeta gui runs/ --port 9000 --no-browser       # then browse there yourself
 ```
 
-The server (FastAPI + Uvicorn) binds the host/port, sets the launch directory as its containment root, and — unless `--no-browser` — opens `http://<host>:<port>` after a short delay.
+The server (FastAPI + Uvicorn) binds the host/port, resolves `directory` to an absolute path and sets it as the containment root, and — unless `--no-browser` — opens `http://<host>:<port>` in your default browser after a short delay.
 
-> ⚠️ **The launch directory is a hard boundary.** The server will only read files inside `directory` (resolved through symlinks). Launch it at the top of the project you want to work with.
+> ⚠️ **The launch directory is a hard boundary.** The server only reads files inside `directory` (resolved with `realpath`, symlink-safe). Launch it at the top of the project you want to work with.
 
 ---
 
 ## 2. The window
 
 ```
-┌────────────────────────────────────────────────────────────────────────────┐
-│ AmberMeta   [Open] [Save]   [Discover] [Link Restarts]   [Export] [Validate] │
-├──────────────────┬───────────────────────────────┬───────────────────────────┤
-│                  │                               │                           │
-│   FILES          │   STAGES                      │   PROPERTIES              │
-│                  │                               │                           │
-│   runs/          │   ┌─────────────────────────┐ │   Stage: ntp_prod_0001   │
-│     system.top   │   │ ⠿ ntp_prod_0001   prod  │ │   ───────────────────    │
-│     prod_0001.in │   │   4/5 files        ok   │ │   Name   [____________]  │
-│     prod_0001.out│   └─────────────────────────┘ │   Role   [Production ▾]  │
-│     prod_0002.in │   ┌─────────────────────────┐ │   prmtop (using global)  │
-│     ...          │   │ ⠿ ntp_prod_0002   prod  │ │   mdin   prod_0001.in    │
-│                  │   │   4/5 files        ok   │ │   mdout  prod_0001.out   │
-│   [search…]      │   └─────────────────────────┘ │   Gap (ps) [__] ±[__]    │
-│                  │            [+ Add stage]      │   Notes  [____________]  │
-└──────────────────┴───────────────────────────────┴───────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ AmberMeta  [Open] [Save] ●          [Discover] [Validate] [Export] [↶] [↷]   │
+├───────────────┬────────────────────────────────────┬─────────────────────────┤
+│               │  Simulation                        │                         │
+│  FILES        │  ┌ pool ───────────────────────┐   │  INSPECTOR              │
+│               │  │ CH3L1_HUMAN_6NAG.top normal │   │                         │
+│  [search…]    │  └──────────────────────────────┘   │  (file peek / details / │
+│  ⠿ system.top │  starting structure: …crd.crd       │   assign actions, or    │
+│  ⠿ prod_0001… │                                      │   the suggestions      │
+│  ⠿ prod_0002… │  ▎ Production  production  set topology ▾                    │
+│  ...          │  ┃ ┌ ⠿ ntp_prod_0001  ▸ …top  ◂ starting structure          │
+│               │  ┃ │   mdin: …0001.mdin  mdout: …0001.mdout  mdcrd: —       │
+│               │  ┃ └───────────────────────────────┘                         │
+│               │  ┃      ↓ (continuity arrow)                                 │
+│               │  ┃ ┌ ⠿ ntp_prod_0002  ▸ …top  ◂ ntp_prod_0001                │
+│               │  ┃ └───────────────────────────────┘                         │
+└───────────────┴────────────────────────────────────┴─────────────────────────┘
 ```
 
 | Pane / control | Role |
 |---|---|
-| **Files** (left) | The directory tree, file-type-tagged, searchable. Drag files onto stage slots. |
-| **Stages** (center) | Ordered stage cards. Drag the handle to reorder; click a card to select it. |
-| **Properties** (right) | Edits for the selected stage, or global settings when none is selected. |
-| **Open / Save** | Load an existing manifest / write the current one to disk. |
-| **Discover** | Auto-group the directory into stages (one stage per file group). |
-| **Link Restarts** | Auto-detect and assign the restart chain across stages. |
-| **Export** | Preview the manifest in any format and save it. |
+| **Files** (left) | A searchable, drag-source file list scanned from the launch directory. |
+| **Canvas** (center) | The Simulation header (topology pool + starting structure) above a vertical timeline of phase sections and step cards. |
+| **Inspector** (right) | Peek/details/assign actions for the selected file; the suggestions tray when a phase, the Simulation itself, or nothing is selected. |
+| **Open / Save** | Load an existing manifest / write the current one to disk (dot = unsaved changes). |
+| **Discover** | Discover-as-draft: scan the launch directory into a Simulation draft. |
 | **Validate** | Run full validation and show the report. |
+| **Export** | Preview the manifest as YAML or JSON and copy it. |
+| **↶ / ↷** | Undo / redo, resolved server-side. |
 
-The design is deliberately restrained: an off-white surface, a neutral sans-serif UI face with a monospace face for file paths and data, and color/icons used only where they carry meaning (file-type tags, validation state).
+Each pane is resizable (drag the divider); widths persist across sessions.
 
 ---
 
 ## 3. A typical session
 
-1. **Discover.** Click **Discover** (optionally recursive, with a filename regex). The server scans the directory, groups files by stem into stages, detects numbered sequences, and classifies the topology (normal vs. HMR). One file group → one stage; numbered runs are kept separate, not collapsed.
-2. **Assign & adjust.** Drag a file from **Files** onto a stage's slot, or open the file picker from **Properties**. Existing slots are preserved — a drop only fills the slot you target.
-3. **Edit.** Select a stage and set its name, role, expected gap/tolerance, and notes. Set a shared topology once under global settings instead of per stage.
-4. **Link restarts.** Click **Link Restarts** to chain `inpcrd` files across consecutive stages automatically.
-5. **Validate.** Click **Validate**. The panel lists per-stage issues (missing files, continuity gaps) and a protocol-level summary, and lets you jump to each one. A protocol with continuity notes shows as *valid, with N notes* — never a silent clean pass.
-6. **Save / Export.** **Save** writes the canonical manifest to disk; **Export** lets you preview and choose the format first.
+1. **Discover.** Click **Discover**, optionally uncheck "Search subdirectories" or set a filename pattern, then **Run discover**. The server scans the launch directory, groups files by stem, classifies the topology pool (normal vs. HMR), picks a starting structure, and chains later steps' input coordinates to the previous step's output restart. This **replaces** the current draft (a confirmation guards unsaved changes) and repopulates the suggestions tray.
+2. **Assign & adjust.** Drag a file from **Files** onto the topology pool, the starting-structure slot, a step's `mdin`/`mdout`/`mdcrd` slot, or a phase's/step's topology target. Or select a file in **Files** and use the Inspector's **Assign** actions (§7) — the same mutations, without dragging.
+3. **Arrange.** In the **Canvas**, drag a step's grip handle to reorder it within a phase or drop it onto another phase to move it; drag a phase's grip handle to reorder phases.
+4. **Validate.** Click **Validate**. The panel lists per-step issues (missing files, continuity/sequence problems) and protocol-level notes, and lets you jump to a step. A simulation with continuity notes shows as *valid, with N protocol note(s)* — never a silent clean pass when something is worth a look.
+5. **Save / Export.** **Save** writes the canonical **v2 manifest** to disk (YAML or JSON, inferred from the extension); **Export** lets you preview and copy YAML or JSON first without writing.
 
-Undo/redo and a dirty-state indicator live in the top bar; history is kept on the server.
+Undo/redo and a dirty-state dot live in the top bar; history is kept on the server (100 steps), and Discover/Open reset it.
 
 ---
 
 ## 4. Files pane
 
-Files are tagged by type, detected from extension (and basename):
+Files are tagged by type from extension, and by canonical Amber default basename when extensionless:
 
-| Type | Extensions |
-|---|---|
-| `prmtop` | `.prmtop`, `.parm7`, `.top` |
-| `mdin` | `.mdin`, `.in` |
-| `mdout` | `.mdout`, `.out` |
-| `mdcrd` | `.mdcrd`, `.nc`, `.crd`, `.x` |
-| `inpcrd` | `.inpcrd`, `.rst`, `.rst7`, `.restrt`, `.ncrst` |
-
-The tree descends up to five levels and skips noise (`.`-prefixed dirs, `__pycache__`, `node_modules`, `.git`). Use the search box to filter by name. Drag a file onto a stage slot to assign it.
-
----
-
-## 5. Stages pane
-
-Each stage is a card showing its name, role tag, file count (e.g. `4/5 files`), and validation state. Drag the handle to reorder; the order is the protocol order. **+ Add stage** creates an empty stage. Each stage exposes the five file slots (`prmtop`, `mdin`, `mdout`, `mdcrd`, `inpcrd`) as drop targets.
-
----
-
-## 6. Properties pane
-
-**With a stage selected**, you edit:
-
-| Field | Notes |
-|---|---|
-| Name | Unique stage identifier |
-| Role | `minimization` / `heating` / `equilibration` / `production` / _(unset)_ |
-| File slots | Each of the five kinds; shows "(using global)" when inheriting the global topology |
-| Expected gap / tolerance (ps) | Drives continuity validation |
-| Notes | Free-text, one per line |
-
-**With no stage selected**, the pane shows global settings:
-
-| Setting | Default | Meaning |
+| Type | Extensions | Extensionless default |
 |---|---|---|
-| `global_prmtop` | _(none)_ | Shared topology for stages without their own |
-| `hmr_prmtop` | _(none)_ | HMR topology (used when a stage's timestep warrants it) |
-| `initial_coordinates` | _(none)_ | Starting coordinates for the first stage |
-| `auto_link_restarts` | `true` | Link restarts on discover |
-| `strict_validation` | `true` | Run cross-stage continuity checks |
-| `allow_gaps` | `false` | Treat unconfigured positive gaps as info, not warnings |
-| `use_relative_paths` | `true` | Write relative paths on save |
+| `prmtop` | `.prmtop`, `.parm7`, `.top` | `prmtop`, `parm7` |
+| `mdin` | `.mdin`, `.in` | `mdin` |
+| `mdout` | `.mdout`, `.out` | `mdout` |
+| `mdcrd` | `.mdcrd`, `.nc`, `.crd`, `.x`, `.trj` | `mdcrd` |
+| `inpcrd` | `.inpcrd`, `.rst`, `.rst7`, `.restrt`, `.ncrst` | `inpcrd`, `restrt` |
+
+> `.in`/`.out` are claimed for Amber `mdin`/`mdout` by convention — a non-Amber `.in`/`.out` in the launch directory would be mis-typed as one. Content sniffing is a possible follow-up, not done today.
+
+The tree descends up to five levels and skips `.`-prefixed directories, `__pycache__`, `node_modules`, and `.git`. Use the search box to filter by name. Every row is a drag source; drop it on a canvas target to assign it, or select it to inspect and use the Assign actions.
 
 ---
 
-## 7. Validation
+## 5. Canvas: the timeline
 
-**Validate** builds a report against the same engine the CLI uses. Its shape:
+The canvas is a continuous vertical timeline, not a flat list of cards.
 
-```jsonc
-{
-  "ok": false,
-  "totals": { "steps": 25000000, "time_ps": 100000.0, "stage_count": 7 },
-  "protocol_issues": ["..."],
-  "stage_issues": [
-    {
-      "name": "ntp_prod_0001",
-      "ok": true,
-      "degraded": false,
-      "errors": [],
-      "warnings": [],
-      "info": ["INFO: Part of sequence 'ntp_prod' (item 2 of 6)"],
-      "missing_files": [{ "kind": "mdcrd", "path": "" }]
-    }
-  ]
-}
-```
+**Simulation header** — click "Simulation" to select the Simulation itself (shows the suggestions tray). Below it:
+- **Topology pool** — a drop zone. Each entry shows its path and a `normal`/`HMR` badge. Drop a `prmtop` here to add it to the pool.
+- **Starting structure** — a drop zone for the single-frame coordinates that feed the first step.
 
-A non-empty `protocol_issues` means the protocol is *not* fully clean even when individual stages are `ok` — the panel reflects that rather than reporting a false all-clear.
+**Phase sections** — one per phase, in protocol order, with a left accent bar. Each header shows the phase name, its role badge (`minimization`/`heating`/`equilibration`/`production`, or none), and a **"set topology ▾"** dropdown that assigns a pool topology to every step currently in the phase (a one-shot cascade, not a stored per-phase default). The grip handle drags the whole phase to reorder it.
+
+**Step cards** — inside each phase, grouped by numeric base name (so `ntp_prod_0001..0005` group together) and shown in ascending numeric order:
+- `▸ <topology path>` — the step's bound topology; HMR-bound steps get an accent color and an `HMR` badge.
+- `◂ <source>` — the resolved input-coordinate source: `◂ starting structure`, `◂ <previous step id>` (chained), or `◂ <explicit path>`.
+- Three dashed drop-target slots: `mdin`, `mdout`, `mdcrd`, each showing its filename or `—`.
+- A grip handle to drag the step within the phase or onto another phase.
+
+**Continuity arrows** sit between consecutive steps in a sequence: a plain downward arrow when the previous run's end and this run's start line up within tolerance, or an amber arrow annotated with the gap magnitude (e.g. `20 ps`) when a real continuity gap was found.
+
+**Missing-run ghosts** — a dashed, muted card labeled `<name> missing` is inserted at the correct position in a numbered sequence when a member is absent (e.g. `ntp_prod_0003` between `0002` and `0004`), driven by the same sequence-hole detection the CLI uses.
+
+**Long numbered runs collapse**: a group of 6 or more steps sharing a numeric base starts collapsed behind a `<base> × N steps` toggle; expand it to work with the individual cards.
+
+If the Simulation has no phases yet, the canvas shows "Discover or drop files to start".
+
+---
+
+## 6. Inspector pane
+
+The Inspector's content depends on what's selected:
+
+- **A file** (from the Files pane, or a step's bound topology) — a **peek** header (filename plus a few curated fields: atoms, residues, frames, steps, `hmr_active`, box), an **Assign** section (below), and a tabbed detail view: **Overview** (parsed-field count, warning count), **Full details** (every parsed field), **Raw file** (a byte-capped prefix of the file), **Warnings**.
+- **A step or a phase** — a placeholder (`Step editor.` / `Phase editor.`). **These inline editors are stubs today**: selecting a step or phase does highlight it and lets Validate jump to it, but editing its name, role, gap tolerance, or notes from the Inspector is not yet wired up. Use drag-and-drop assignment, the Inspector's file-side Assign actions, or the [HTTP API](#8-http-api)/CLI to change those fields in the meantime.
+- **The Simulation, or nothing** — the **suggestions tray** (§7).
+
+### Assign actions (per selected file type)
+
+| File type | Actions offered |
+|---|---|
+| `prmtop` | **Add to pool as HMR** / **Add to pool as normal** (pre-selected by whether the filename contains `hmr`); **Set as phase default ▾** (assigns this topology to every step in a chosen phase); **Assign to a step ▾** (assigns it to one step) |
+| `inpcrd` | **Set as starting structure** |
+| `mdin` | A **Role** selector (Minimization/Heating/Equilibration/Production/Unassigned) and **Create a step** — reuses an existing phase with that role or creates one, then creates a step named after the file's stem with this `mdin` bound |
+| `mdcrd`, `mdout`, other | No assign actions (assign these to an existing step's slot by dragging onto its card instead) |
+
+---
+
+## 7. Suggestions tray
+
+Every inferred thing is surfaced as an explainable suggestion rather than applied silently — this is the draft-first design: roles, the HMR topology, the starting structure, sequence holes, and continuity gaps all show up here. Suggestions are grouped:
+
+- **Needs you** — something the tool can't resolve on its own (`missing_run`: a numbered-sequence hole; `continuity_gap`: a genuine start/end mismatch between consecutive steps; `topology_confirm`: more than one topology in the pool, confirm which is HMR). Each card offers **Accept** / **Adjust** / **Ignore**.
+- **Applied** — something already reflected in the draft, shown for transparency (`starting_structure`, `role_guess`). Each card offers **Dismiss**, plus **Undo** (calls the server's undo) when the suggestion says it can be undone.
+
+Every card shows a `title` and a monospace `evidence` string explaining the inference. Dismissing a card only hides it in this browser session — it does not mutate the document; **Undo** is the only action here that does.
+
+The tray re-runs validation (and refills itself) after every document mutation, after Discover, and whenever the Validate panel is opened.
 
 ---
 
 ## 8. Open, Save, Export
 
-- **Open** loads any supported manifest (YAML / JSON / TOML / CSV) for editing and resets undo history.
-- **Save** writes the current document as a **canonical manifest** — byte-identical to the CLI's output for the same protocol.
-- **Export** previews the manifest in a chosen format before writing, so you can copy it or pick a format.
+- **Open** loads a manifest — **v1 or v2**, YAML/JSON/TOML/CSV — and resets undo history. A v1 flat manifest (`stages:` + optional `global_prmtop`/`hmr_prmtop`/`initial_coordinates`) is **auto-migrated in memory** into the Simulation → Phase → Step model: each stage becomes a step, contiguous same-role stages coalesce into a phase, `global_prmtop`/`hmr_prmtop` seed the topology pool, `initial_coordinates` becomes the starting structure. See [manifest §migration](manifest.md) for the full mapping.
+- **Save** always writes the canonical **v2 manifest** — YAML or JSON only, chosen by the target's extension (or an explicit format). There is no GUI path to write a v1 flat manifest or TOML/CSV; use `ambermeta export --to legacy` for that.
+- **Export** renders a preview (YAML or JSON) in a modal without touching disk, with a **Copy** button; any writer warnings are listed underneath.
 
-The on-disk manifest the GUI writes:
+The manifest the GUI writes (real output — `Save` after `Discover` on the sample glycoprotein sequence, path `manifest_test.yaml`):
 
 ```yaml
-global_prmtop: systems/complex.prmtop      # omitted if unset
-hmr_prmtop: systems/complex_hmr.prmtop     # omitted if unset
-stages:
-  - name: prod_0001
-    stage_role: production                  # omitted if unset
-    mdin: production/prod_0001.in
-    mdout: production/prod_0001.out
-    inpcrd: restarts/equil.rst7
-    gaps: { expected: 0.0, tolerance: 0.1 } # omitted if unset
-    notes: [ "..." ]                        # omitted if empty
+version: 2
+simulation:
+  topologies:
+  - id: top_CH3L1_HUMAN_6NAG
+    path: CH3L1_HUMAN_6NAG.top
+    kind: normal
+  starting_structure: CH3L1_HUMAN_6NAG.crd
+phases:
+- id: a2a37983
+  name: Production
+  role: production
+  order: 0
+steps:
+- id: b71986d7
+  name: ntp_prod_0001
+  phase: a2a37983
+  order: 0
+  topology: top_CH3L1_HUMAN_6NAG
+  input_coords:
+    source: starting_structure
+  mdin: ntp_prod_0001.mdin
+  mdout: ntp_prod_0001.mdout
+  mdcrd: null
+  notes: []
+- id: c1e0498e
+  name: ntp_prod_0002
+  phase: a2a37983
+  order: 1
+  topology: top_CH3L1_HUMAN_6NAG
+  input_coords:
+    source: step
+    ref: b71986d7
+    path: ntp_prod_0001.rst
+  mdin: ntp_prod_0002.mdin
+  mdout: ntp_prod_0002.mdout
+  mdcrd: null
+  notes: []
+# ...ntp_prod_0003..0005 follow the same chained-restart pattern
 ```
 
-Toggle `use_relative_paths` in global settings to choose relative vs. absolute paths. Save/export warnings (for example, CSV cannot represent a separate HMR topology) are surfaced as toasts — they are never dropped silently.
+Note `discover` here only found one `prmtop`, so it became the sole (`normal`) pool entry and every step bound it — with two topologies present, the second (`hmr`-named) one would also show up in the pool and a `topology_confirm` suggestion would ask you to confirm which is which.
 
 ---
 
-## 9. Security model
+## 9. Validation
+
+**Validate** builds a report against the same engine the CLI uses. Real output (`POST /api/validate` after Discover, on the sample data):
+
+```json
+{
+  "ok": true,
+  "totals": { "steps": 25000000.0, "time_ps": 100000.0, "stage_count": 5.0 },
+  "protocol_issues": [],
+  "stage_issues": [
+    { "name": "ntp_prod_0001", "ok": true, "degraded": false,
+      "errors": [], "warnings": [], "info": [], "missing_files": [] }
+  ],
+  "suggestions": [
+    { "id": "sug_1", "kind": "starting_structure", "severity": "applied",
+      "title": "CH3L1_HUMAN_6NAG.crd set as the starting structure",
+      "evidence": "single-frame coordinates; feeds the first run", "actions": ["Undo"] },
+    { "id": "sug_2", "kind": "role_guess", "severity": "applied",
+      "title": "Phase roles inferred from file content/names",
+      "evidence": "Production->production", "actions": ["Undo"] }
+  ]
+}
+```
+
+The panel shows a status badge — `N stage(s) with errors` if any step failed, else `Valid, with N protocol note(s)` if there are protocol-level notes, else `All checks passed` — then any protocol notes, then a per-step card (`ok`/`error` badge, errors/warnings/info) you can click to select that step (subject to the Inspector's step-editor stub, §6). A non-empty `protocol_issues` list means the simulation is *not* fully clean even when every step reports `ok` — the panel reflects that rather than reporting a false all-clear.
+
+---
+
+## 10. Security model
 
 The GUI is built to be safe to run on a workstation; it is not a multi-user service.
 
 | Control | Mechanism |
 |---|---|
-| **Localhost only** | Binds `127.0.0.1` by default; CORS is pinned to `http://localhost:8765` / `http://127.0.0.1:8765`. |
-| **No path escape** | Every requested path is resolved with `realpath` and rejected (`403`) if it falls outside the launch directory — including sibling-prefix tricks. |
-| **API can't be spoofed by the SPA** | The catch-all route returns `404` for unknown `/api/*` paths and refuses `..`/absolute paths before serving the app shell. |
-| **Server-authoritative state** | One in-memory document on the server is the source of truth; the browser is a view. Undo/redo and validation run server-side. |
+| **Localhost only** | Binds `127.0.0.1` by default. |
+| **CORS pinned** | The CORS middleware allows only `http://localhost:8765` and `http://127.0.0.1:8765` (the default port). The bundled frontend is served same-origin from the API's own host:port, so this mainly hardens against a separately-hosted page targeting the API — it does not widen with `--port`. |
+| **No path escape** | Every request-supplied path is resolved with `realpath` against the launch directory and rejected with `403` if it falls outside it (verified: `GET /api/files?path=../../` → `403`). |
+| **API can't be spoofed by the SPA** | The catch-all static route returns `404` for any unmatched `/api/*` path (verified: `GET /api/nonexistent` → `404`) and refuses `..`/absolute path segments before serving a file, falling back to the app shell. |
+| **Server-authoritative state** | One in-memory `Simulation` document on the server is the source of truth; the browser is a view. Validation and undo/redo run server-side; every mutating response returns the full updated document. |
 
-> ⚠️ Binding `--host 0.0.0.0` exposes the file browser of the launch directory to your network. Only do so on a trusted network, and prefer an SSH tunnel for remote access.
+> ⚠️ Binding `--host 0.0.0.0` exposes the launch directory's file browser to your network. Only do so on a trusted network, and prefer an SSH tunnel for remote access.
 
 ---
 
-## 10. HTTP API
+## 11. HTTP API
 
-The frontend talks to a small REST API under `/api`. You can drive it directly for scripting or testing. All paths are constrained to the launch directory; responses that mutate state return the full updated document.
+The frontend talks to a small REST API under `/api` (`ambermeta/gui/api/routes.py`). You can drive it directly for scripting or testing — every mutating call returns the full updated document.
 
 ### Document
 
 | Method | Path | Body | Returns |
 |---|---|---|---|
 | `GET` | `/api/document` | — | Current document |
-| `POST` | `/api/document/open` | `{ path }` | Document (history reset) |
-| `POST` | `/api/document/save` | `{ path?, format? }` | `{ document, warnings[] }` |
+| `POST` | `/api/document/open` | `{ path }` | Document (history reset); `404` if the file doesn't exist |
+| `POST` | `/api/document/save` | `{ path?, format? }` | `{ document, warnings[] }`; `400` if no path is known and none is given |
 | `POST` | `/api/document/preview` | `{ format }` | `{ content, warnings[], format }` |
-| `POST` | `/api/document/discover` | `{ recursive, pattern? }` | Document |
+| `POST` | `/api/document/discover` | `{ recursive, pattern? }` | `{ document, suggestions[], warnings[] }` |
 
-### Stages
-
-| Method | Path | Body | Returns |
-|---|---|---|---|
-| `POST` | `/api/stages` | `{ name, role?, files?, expected_gap_ps?, gap_tolerance_ps?, notes? }` | Document |
-| `PUT` | `/api/stages/{id}` | partial stage | Document (`404` if unknown) |
-| `DELETE` | `/api/stages/{id}` | — | Document (`404` if unknown) |
-| `POST` | `/api/stages/reorder` | `{ stage_ids[] }` | Document (`400` unless all IDs present) |
-| `PUT` | `/api/stages/bulk` | `{ stage_ids[], update }` | Document |
-
-### Settings, history, validation, restarts
+### Topologies & starting structure
 
 | Method | Path | Body | Returns |
 |---|---|---|---|
-| `GET` / `PUT` | `/api/settings` | _(GET)_ / partial settings | Settings / Document |
+| `POST` | `/api/topologies` | `{ path, kind }` (`kind` default `normal`) | Document |
+| `PUT` | `/api/topologies/{id}` | `{ path?, kind? }` | Document (`404` if unknown) |
+| `DELETE` | `/api/topologies/{id}` | — | Document (`404` if unknown; clears the id from any step that referenced it) |
+| `PUT` | `/api/simulation/starting-structure` | `{ path? }` | Document |
+
+### Phases & steps
+
+| Method | Path | Body | Returns |
+|---|---|---|---|
+| `POST` | `/api/phases` | `{ name, role? }` | Document |
+| `POST` | `/api/phases/reorder` | `{ phase_ids[] }` | Document (`400` unless the id set matches exactly) |
+| `PUT` | `/api/phases/{id}` | `{ name?, role? }` | Document (`404`) |
+| `DELETE` | `/api/phases/{id}?reassign_to=<phase_id>` | — | Document (`404`); moves the deleted phase's steps to `reassign_to` if given |
+| `POST` | `/api/phases/{id}/steps` | `{ name, topology?, input_coords?, mdin?, mdout?, mdcrd?, expected_gap_ps?, gap_tolerance_ps?, notes? }` | Document (`404` if phase unknown) |
+| `POST` | `/api/phases/{id}/steps/reorder` | `{ step_ids[] }` | Document (`404`/`400`) |
+| `PUT` | `/api/steps/{id}` | `{ name?, topology?, input_coords?, files?: {mdin?,mdout?,mdcrd?}, expected_gap_ps?, gap_tolerance_ps?, notes? }` | Document (`404`) |
+| `DELETE` | `/api/steps/{id}` | — | Document (`404`) |
+| `POST` | `/api/steps/{id}/move` | `{ phase_id, index? }` (`index` default `-1` = append) | Document (`404`) |
+
+### Unified assignment, settings, history, validation
+
+| Method | Path | Body | Returns |
+|---|---|---|---|
+| `POST` | `/api/assign` | `{ path, target_type, target_id?, kind?, slot? }` — `target_type` ∈ `pool \| starting_structure \| phase_topology \| step_topology \| step_slot` (`step_slot` also needs `slot` ∈ `mdin\|mdout\|mdcrd`) | Document (`404`/`400`) |
+| `GET` / `PUT` | `/api/settings` | _(GET)_ / `{ auto_link_restarts?, strict_validation?, allow_gaps?, use_relative_paths? }` | Settings / Document |
 | `POST` | `/api/undo` · `/api/redo` | — | Document |
-| `POST` | `/api/validate` | — | Validation report |
-| `POST` | `/api/link-restarts` | — | Document |
-| `GET` | `/api/sequences` | — | `{ sequence_base: [stage_id, ...] }` |
+| `POST` | `/api/validate` | — | Validation report (§9) |
 
 ### Files
 
 | Method | Path | Query | Returns |
 |---|---|---|---|
-| `GET` | `/api/files` | `path?`, `recursive?`, `include_all?` | File tree (`FileInfo[]`) |
+| `GET` | `/api/files` | `path?`, `recursive?` (default `true`), `include_all?` (default `false`) | File tree (`FileInfo[]`), depth-limited to 5 |
 | `GET` | `/api/files/metadata` | `path` | `{ file_path, file_type, metadata, warnings[] }` |
-| `GET` | `/api/files/related/{stem}` | — | `{ kind: path, ... }` for same-stem files |
+| `GET` | `/api/files/raw` | `path`, `max_bytes?` (default `4096`) | `{ path, content, truncated }` |
+| `GET` | `/api/files/related/{stem}` | — | `{ kind: path, ... }` for files sharing `stem`'s basename |
+
+Real session against the sample data (`ambermeta gui tests/data/amber/md_test_files --no-browser --port 8799`):
 
 ```bash
-curl http://127.0.0.1:8765/api/document
-curl -X POST http://127.0.0.1:8765/api/document/discover \
-  -H 'Content-Type: application/json' -d '{"recursive": true}'
-curl -X POST http://127.0.0.1:8765/api/validate
+$ curl -s http://127.0.0.1:8799/api/document
+{"base_directory":"...\\tests\\data\\amber\\md_test_files","manifest_path":null,"dirty":false,
+ "can_undo":false,"can_redo":false,
+ "settings":{"auto_link_restarts":true,"strict_validation":true,"allow_gaps":false,"use_relative_paths":true},
+ "simulation":{"version":2,"topologies":[],"starting_structure":null,"phases":[]}}
+
+$ curl -s -X POST http://127.0.0.1:8799/api/document/discover \
+    -H 'Content-Type: application/json' -d '{"recursive": true}'
+# -> {"document": {... 1 topology, starting_structure set, 1 phase "Production" with 5 chained steps ...},
+#     "suggestions": [{"kind":"starting_structure", ...}, {"kind":"role_guess", ...}], "warnings": []}
+
+$ curl -s "http://127.0.0.1:8799/api/files?recursive=false" | head -c 200
+[{"path":"...CH3L1_HUMAN_6NAG.crd","name":"CH3L1_HUMAN_6NAG.crd","file_type":"mdcrd",
+  "is_directory":false,"size":2387632,"extension":".crd", ...
+
+$ curl -s -o /dev/null -w '%{http_code}\n' 'http://127.0.0.1:8799/api/files?path=../../'
+403
+
+$ curl -s -o /dev/null -w '%{http_code}\n' 'http://127.0.0.1:8799/api/nonexistent'
+404
 ```
 
-### Data models
-
-The server's document and its persisted manifest:
+### Data model: `DocumentResponse`
 
 ```jsonc
-// GET /api/document
 {
-  "base_directory": "...", "manifest_path": null,
+  "base_directory": "...",
+  "manifest_path": null,
   "dirty": false, "can_undo": false, "can_redo": false,
-  "settings": { "global_prmtop": null, "hmr_prmtop": null, "initial_coordinates": null,
-                "auto_link_restarts": true, "strict_validation": true,
+  "settings": { "auto_link_restarts": true, "strict_validation": true,
                 "allow_gaps": false, "use_relative_paths": true },
-  "stages": [
-    { "id": "a1b2c3d4", "name": "prod_0001", "role": "production",
-      "prmtop": null, "mdin": "prod_0001.in", "mdout": "prod_0001.out",
-      "mdcrd": null, "inpcrd": "equil.rst7",
-      "expected_gap_ps": 0.0, "gap_tolerance_ps": 0.1, "notes": [] }
-  ]
+  "simulation": {
+    "version": 2,
+    "topologies": [ { "id": "top_CH3L1_HUMAN_6NAG", "path": "CH3L1_HUMAN_6NAG.top", "kind": "normal" } ],
+    "starting_structure": "CH3L1_HUMAN_6NAG.crd",
+    "phases": [
+      { "id": "a2a37983", "name": "Production", "role": "production",
+        "steps": [
+          { "id": "b71986d7", "name": "ntp_prod_0001", "topology": "top_CH3L1_HUMAN_6NAG",
+            "input_coords": { "source": "starting_structure", "ref": null, "path": null },
+            "mdin": "ntp_prod_0001.mdin", "mdout": "ntp_prod_0001.mdout", "mdcrd": null,
+            "expected_gap_ps": null, "gap_tolerance_ps": null, "notes": [] }
+        ] }
+    ]
+  }
 }
 ```
 
+This is `ambermeta.gui.api.schemas.DocumentResponse` — the same shape the frontend renders and the shape `simulation_to_payload`/`payload_to_simulation` round-trip to a v2 manifest (`docs/manifest.md`).
+
 ---
 
-## 11. Troubleshooting
+## 12. Known limitations
+
+- **Step and phase inline editing is stubbed.** The Inspector shows a placeholder (`Step editor.` / `Phase editor.`) when a step or phase is selected — you cannot yet rename a step, change its role, or set its gap tolerance/notes from there. Reach those fields via drag-and-drop assignment, the file-side Assign actions (§6), the HTTP API (§11), or by editing the saved manifest and reopening it.
+- **Save/Preview only write v2** (YAML/JSON). To produce a legacy flat manifest or TOML/CSV, use `ambermeta export --to legacy` after saving from the GUI.
+- **Suggestion cards are advisory**, not bound to their nominal actions beyond Dismiss/Undo — "Accept"/"Adjust"/"Ignore" currently just dismiss the card in the browser; the underlying condition (e.g. a sequence hole) still needs to be fixed via assignment or by adding the missing run's files.
+
+---
+
+## 13. Troubleshooting
 
 | Symptom | Fix |
 |---|---|
-| `ImportError: fastapi` on launch | Install the GUI extra: `pip install -e ".[gui]"` |
+| `ImportError: fastapi` (or the launcher exits with "GUI dependencies not installed") | Install the GUI extra: `pip install -e ".[gui]"` |
 | Browser didn't open | Use `--no-browser` and visit `http://127.0.0.1:8765` yourself |
 | `Address already in use` | Pick another port: `--port 9000` |
-| A file is missing from the tree | Check the extension is recognized (§4), the file is readable, and it's under the launch directory (hidden `.`-files are excluded) |
+| A file is missing from the Files pane | Check the extension is recognized (§4), the file is readable, and it's under the launch directory (hidden `.`-files are excluded) |
 | A path is rejected (`403`) | The path is outside the launch directory; restart the GUI rooted higher up |
+| Opened an old manifest and the model looks different | That's the v1→v2 auto-migration (§8) — it's read-only in memory until you Save, which writes v2 |
 
 ---
 
 ## See also
 
-- [Architecture §9](architecture.md#9-the-gui-bridge--one-engine-enforced) — how the GUI maps onto the core
-- [CLI reference](cli.md) — the headless equivalent of every GUI action
-- [Manifest schema](manifest.md) — the format Open/Save read and write
+- [Architecture §9](architecture.md#9-the-gui-bridge--one-engine-enforced) — how the GUI maps onto the core (`core_bridge`)
+- [CLI reference](cli.md) — `discover`/`validate --manifest`/`export` are the headless equivalents of Discover/Validate/Export
+- [Manifest schema](manifest.md) — the v2 format Open/Save read and write, and the v1→v2 migration table

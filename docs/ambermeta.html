@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>AmberMeta — Documentation</title>
-<meta name="description" content="AmberMeta: a provenance engine for AMBER molecular-dynamics workflows. Reads prmtop/mdin/mdout/mdcrd/inpcrd, reconstructs the staged protocol, validates continuity, and exports a machine-readable record. CLI + offline browser GUI.">
+<meta name="description" content="AmberMeta: a provenance engine for AMBER molecular-dynamics workflows. Reads prmtop/mdin/mdout/mdcrd/inpcrd, reconstructs the Simulation → Phase → Step model, validates continuity and sequence holes, and exports a machine-readable v2 manifest. CLI + offline browser GUI.">
 <style>
 :root{
   --bg:#fafaf9; --panel:#ffffff; --ink:#1c1c1a; --muted:#6b6b66; --faint:#9a9a95;
@@ -103,12 +103,13 @@ footer.foot a{color:var(--muted)}
 
   <div class="group">Getting started</div>
   <a href="#overview">Overview</a>
+  <a href="#model">The model</a>
   <a href="#install">Installation</a>
   <a href="#quickstart">Quickstart</a>
 
   <div class="group">Using AmberMeta</div>
   <a href="#cli">Command-line interface</a>
-  <a href="#manifests">Manifests</a>
+  <a href="#manifests">Manifests (v2)</a>
   <a href="#api">Python API</a>
   <a href="#gui">Browser GUI</a>
 
@@ -125,10 +126,10 @@ footer.foot a{color:var(--muted)}
 <a id="top"></a>
 <header class="hero">
   <h1>AmberMeta Documentation</h1>
-  <p class="lede">A provenance engine for AMBER molecular-dynamics workflows. It reads the files a run already produced — <code>prmtop</code>, <code>mdin</code>, <code>mdout</code>, <code>mdcrd</code>, <code>inpcrd</code> — reconstructs the staged protocol behind them, validates that the stages connect, and exports a machine-readable record for a methods section or a downstream pipeline.</p>
+  <p class="lede">A provenance engine for AMBER molecular-dynamics workflows. It reads the files a run already produced — <code>prmtop</code>, <code>mdin</code>, <code>mdout</code>, <code>mdcrd</code>, <code>inpcrd</code> — reconstructs the simulation behind them as a <code>Simulation → Phase → Step</code> document, validates that the steps actually connect, and exports a machine-readable record for a methods section or a downstream pipeline.</p>
   <div class="pills">
-    <span class="pill">v1.0.0</span>
-    <span class="pill neutral">Python ≥ 3.8 · BUSL-1.1</span>
+    <span class="pill">v1.1.0</span>
+    <span class="pill neutral">Python ≥ 3.9 · BUSL-1.1</span>
     <span class="pill neutral">CLI + GUI · offline</span>
   </div>
 </header>
@@ -136,16 +137,16 @@ footer.foot a{color:var(--muted)}
 <section id="overview" class="wrap">
 <h2>Overview <a class="anchor" href="#overview">#</a></h2>
 
-<p><strong>AmberMeta answers the questions that are tedious to answer by hand</strong> about a finished AMBER simulation: <em>What was actually run? In what order? Do the restarts line up? Is the topology hydrogen-mass-repartitioned? What were the ensemble, thermostat, barostat, and cutoff? Did the run finish?</em> You point it at a directory — or a manifest — and it reconstructs the protocol and reports the provenance.</p>
+<p><strong>AmberMeta answers the questions that are tedious to answer by hand</strong> about a finished AMBER simulation: <em>What was actually run? In what order? Do the restarts line up? Is any topology hydrogen-mass-repartitioned? What were the ensemble, thermostat, barostat, and cutoff? Did the run finish? Is a member of a numbered sequence missing?</em> You point it at a directory — or a manifest — and it reconstructs the simulation and reports the provenance.</p>
 
 <table>
 <thead><tr><th>Capability</th><th>What you get</th></tr></thead>
 <tbody>
 <tr><td><strong>Metadata extraction</strong></td><td>Per-file parsers for topology, input, output, trajectory, and restart files: atom/residue counts, box geometry, density, solvent model, HMR status, ensemble, thermostat/barostat, cutoff, SHAKE, completion, and streaming thermodynamics (temperature/pressure/density/energy, mean&nbsp;±&nbsp;σ).</td></tr>
-<tr><td><strong>Protocol assembly</strong></td><td>Groups loose files into ordered stages, detects numbered sequences (<code>prod_0001 … prod_0050</code>), infers each stage's role, and links the restart chain.</td></tr>
-<tr><td><strong>Continuity validation</strong></td><td>Per-file checks (atom-count agreement, box sanity) and cross-stage checks (timing gaps, restart→trajectory continuity), with configurable tolerances.</td></tr>
-<tr><td><strong>Canonical manifests</strong></td><td>A <em>tolerant reader</em> (YAML / JSON / TOML / CSV, legacy aliases, several shapes) and a <em>canonical writer</em> (one deterministic on-disk form). The CLI and GUI write byte-identical manifests.</td></tr>
-<tr><td><strong>Reproducibility exports</strong></td><td>A full protocol summary (JSON/YAML), a Materials-&amp;-Methods-ready summary, and a per-stage statistics CSV.</td></tr>
+<tr><td><strong>Simulation discovery</strong></td><td>Scans a directory into a <code>Simulation</code> draft: builds the topology pool, detects numbered sequences, infers each step's role (minimization/heating/equilibration/production) from content then path, and resolves the input-coordinate chain — all as explainable, undoable suggestions.</td></tr>
+<tr><td><strong>Continuity &amp; sequence validation</strong></td><td>Per-file checks (atom-count agreement, box sanity) and whole-simulation checks (timing gaps between chained steps against a frame-interval-based tolerance, missing members of a numbered run), with configurable per-step tolerances.</td></tr>
+<tr><td><strong>Manifest format v2</strong></td><td>A <em>tolerant reader</em> that opens v2 manifests natively and auto-migrates legacy v1 flat manifests in memory, plus a <em>canonical writer</em> (JSON or YAML). The GUI and CLI share the same document.</td></tr>
+<tr><td><strong>Reproducibility exports</strong></td><td>A full simulation/protocol summary (JSON/YAML), a Materials-&amp;-Methods-ready summary, and a per-stage statistics CSV.</td></tr>
 </tbody>
 </table>
 
@@ -158,12 +159,34 @@ footer.foot a{color:var(--muted)}
 </tbody>
 </table>
 
-<aside class="note"><strong>One engine, two faces.</strong> The CLI is the complete, headless interface — everything AmberMeta does is reachable without the GUI. The GUI is an optional, offline, localhost-only manifest editor that imports the same core through a single bridge module; it re-implements no logic. There is no separate TUI.</aside>
+<aside class="note"><strong>One engine, two faces.</strong> The CLI is the complete, headless interface — everything AmberMeta does is reachable without the GUI. The GUI is an optional, offline, localhost-only manifest editor that imports the core through a single bridge module (<code>ambermeta.gui.api.core_bridge</code>); it re-implements no logic. There is no separate TUI.</aside>
+</section>
+
+<section id="model" class="wrap">
+<h2>The model <a class="anchor" href="#model">#</a></h2>
+<p>v1.0 modeled a run as a flat <strong>Protocol → Stage</strong> (two levels; a "stage" was one run). v1.1 rebuilds this as <strong>three levels</strong>, matching how people actually think about a run:</p>
+
+<table>
+<thead><tr><th>Level</th><th>Owns</th></tr></thead>
+<tbody>
+<tr><td><strong>Simulation</strong></td><td>The whole document. A <strong>topology pool</strong> (one or more prmtops, each labeled <code>normal</code> or <code>hmr</code>) and a single <strong>starting structure</strong> (the initial coordinates that feed the first run).</td></tr>
+<tr><td><strong>Phase</strong></td><td>A named, role-bearing container (minimization / heating / equilibration / production) — a grouping/convenience level. It carries no files or topology of its own.</td></tr>
+<tr><td><strong>Step</strong></td><td>One actual run (today's old "stage"). It binds one topology from the pool, names its <code>mdin</code>/<code>mdout</code>/<code>mdcrd</code>, and declares an explicit <strong>input-coordinate source</strong>.</td></tr>
+</tbody>
+</table>
+
+<p>Every step's starting coordinates resolve through <code>input_coords</code>: the FIRST step ← the Simulation's <strong>starting structure</strong>; every LATER step ← the <strong>previous step's output restart</strong> (the continuity chain); any step may override to an explicit <strong>path</strong>. This makes the old implicit "first stage uses <code>initial_coordinates</code>, later stages use the previous restart" rule an explicit, inspectable field instead of an assumption baked into ordering.</p>
+
+<p><strong>Continuity</strong> compares the previous step's output-restart end-time to the current step's input-coordinate time, with a <strong>frame-interval-based tolerance</strong> (not scaled to absolute elapsed time) — a healthy transition is never flagged. A <strong>missing member of a numbered sequence</strong> (e.g. <code>prod_0001, prod_0002, prod_0004</code> → missing <code>0003</code>) is a separate, first-class "sequence hole" finding, independent of whether any continuity gap was measured.</p>
+
+<p>Both the CLI and GUI classify roles through the one shared function, <code>ambermeta.roles.classify_role</code> — canonical tokens are <code>"minimization" | "heating" | "equilibration" | "production" | ""</code>, matched on word boundaries so <code>minor.in</code> never matches <code>minimization</code>.</p>
+
+<aside class="note"><strong>What changed from v1.</strong> 2-level Protocol→Stage ⇒ 3-level Simulation→Phase→Step. Per-stage <code>prmtop</code>/global <code>global_prmtop</code>/<code>hmr_prmtop</code> ⇒ a Simulation-owned <strong>topology pool</strong> that steps bind by id. A flat <code>initial_coordinates</code> ⇒ a Simulation <strong>starting structure</strong> plus explicit per-step <code>input_coords</code>. New <strong>manifest format v2</strong> (v1 manifests auto-migrate on open). New CLI verbs <code>discover</code> and <code>export</code>. A rebuilt GUI (new canvas/inspector/suggestions tray).</aside>
 </section>
 
 <section id="install" class="wrap">
 <h2>Installation <a class="anchor" href="#install">#</a></h2>
-<p>AmberMeta targets <strong>Python&nbsp;3.8+</strong>. The base install is dependency-light; optional features live behind extras.</p>
+<p>AmberMeta targets <strong>Python&nbsp;3.9+</strong>. The base install is dependency-light; optional features live behind extras.</p>
 <pre><code><span class="p">$</span> python -m pip install -e .</code></pre>
 
 <table>
@@ -173,7 +196,9 @@ footer.foot a{color:var(--muted)}
 <tr><td><code>netcdf</code></td><td><code>netCDF4</code>, <code>scipy</code>, <code>numpy</code></td><td>NetCDF trajectory (<code>.nc</code>) and restart (<code>.ncrst</code>) parsing</td></tr>
 <tr><td><code>gui</code></td><td><code>fastapi</code>, <code>uvicorn</code>, <code>websockets</code>, <code>python-multipart</code>, <code>pyyaml</code></td><td>The browser GUI (<code>ambermeta gui</code>)</td></tr>
 <tr><td><code>yaml</code></td><td><code>pyyaml</code></td><td>YAML manifests</td></tr>
-<tr><td><code>toml</code></td><td><code>tomli</code> (only on Python &lt; 3.11)</td><td>TOML manifests (3.11+ uses stdlib <code>tomllib</code>)</td></tr>
+<tr><td><code>toml</code></td><td><code>tomli</code> (only on Python &lt; 3.11)</td><td>TOML manifests (legacy flat export only)</td></tr>
+<tr><td><code>tests</code></td><td><code>pytest</code>, <code>pytest-cov</code>, <code>httpx</code></td><td>Running the test suite</td></tr>
+<tr><td><code>dev</code></td><td><code>black</code>, <code>ruff</code>, <code>mypy</code></td><td>Linting and type checking</td></tr>
 <tr><td><code>all</code></td><td>netcdf + gui + yaml + toml</td><td>The full runtime feature set (not <code>tests</code>/<code>dev</code>)</td></tr>
 </tbody>
 </table>
@@ -188,40 +213,29 @@ footer.foot a{color:var(--muted)}
 <h2>Quickstart <a class="anchor" href="#quickstart">#</a></h2>
 <p>Every command below runs against the sample data in <code>tests/data/amber/md_test_files/</code> — a real 64,528-atom glycoprotein system with a six-member NPT production sequence — so the output is reproducible.</p>
 
-<h3>Preview how a directory groups into stages</h3>
-<pre><code><span class="p">$</span> ambermeta init tests/data/amber/md_test_files --auto --dry-run
+<h3>Discover the directory into a Simulation draft and save it as a v2 manifest</h3>
+<pre><code><span class="p">$</span> ambermeta discover tests/data/amber/md_test_files --write sim.yaml
 
-<span class="o">Auto-grouped stages:
-  global_prmtop: CH3L1_HUMAN_6NAG.top
-  1. CH3L1_HUMAN_6NAG [unclassified]
-     mdcrd: CH3L1_HUMAN_6NAG.crd
-  2. ntp_prod_0000 [production]
-     inpcrd: ntp_prod_0000.rst
-  3. ntp_prod_0001 [production]
-     mdin: ntp_prod_0001.mdin
-     mdout: ntp_prod_0001.mdout
-     inpcrd: ntp_prod_0001.rst
-  ...
-Dry run complete; no files were written.</span></code></pre>
+<span class="o">Simulation summary
+==================
+Topologies (pool): 1
+  - top_CH3L1_HUMAN_6NAG [normal]  CH3L1_HUMAN_6NAG.top
+Starting structure: CH3L1_HUMAN_6NAG.crd
+Phases: 1
 
-<h3>Reconstruct and summarize a directory</h3>
-<pre><code><span class="p">$</span> ambermeta plan tests/data/amber/md_test_files --recursive
+Phase: Production [production]
+  - ntp_prod_0001  topology=CH3L1_HUMAN_6NAG.top  input=starting structure  (mdin=ntp_prod_0001.mdin, mdout=ntp_prod_0001.mdout)
+  - ntp_prod_0002  topology=CH3L1_HUMAN_6NAG.top  input=step ffb5de6a  (mdin=ntp_prod_0002.mdin, mdout=ntp_prod_0002.mdout)
+  - ntp_prod_0003  topology=CH3L1_HUMAN_6NAG.top  input=step 295e0a9f  (mdin=ntp_prod_0003.mdin, mdout=ntp_prod_0003.mdout)
+  - ntp_prod_0004  topology=CH3L1_HUMAN_6NAG.top  input=step 9ab831d9  (mdin=ntp_prod_0004.mdin, mdout=ntp_prod_0004.mdout)
+  - ntp_prod_0005  topology=CH3L1_HUMAN_6NAG.top  input=step f0eb600f  (mdin=ntp_prod_0005.mdin, mdout=ntp_prod_0005.mdout)
 
-<span class="o">Scanning .../md_test_files recursively for simulation files...
-Discovered 7 stage(s).
+Suggestions:
+  - [applied] CH3L1_HUMAN_6NAG.crd set as the starting structure
+  - [applied] Phase roles inferred from file content/names
 
-Protocol summary
-================
-Stages: 7
-Total steps: 25000000
-Total simulated time (ps): 100000.000
-
-- ntp_prod_0001
-  intent: Production [NPT (isotropic)]
-  result: Completed
-  mdout: status=complete, steps=5000000, dt=0.004 ps, thermostat=Langevin @ 300 K, barostat=Berendsen
-  stats: frames=200, time=1020–20920 ps, temp=300.43 ± 1.25 K, density=1.0370 ± 0.0012 g/cc
-  evidence: INFO: Part of sequence 'ntp_prod' (item 2 of 6); INFO: stage_role inferred from mdin file</span></code></pre>
+Wrote v2 draft manifest: tests/data/amber/md_test_files/sim.yaml (yaml)</span></code></pre>
+<p class="lead">Step ids are randomly generated each run — do not depend on them being stable across invocations.</p>
 
 <h3>Inspect a single file</h3>
 <pre><code><span class="p">$</span> ambermeta info tests/data/amber/md_test_files/CH3L1_HUMAN_6NAG.top
@@ -230,45 +244,62 @@ Total simulated time (ps): 100000.000
 ============================================================
   natom: 64528
   nres: 15102
-  total_charge: 8.02e-05
-  box_dimensions: [98.34, 76.05, 81.23]
-  density: 0.8434
+  nbond: 64539
+  total_charge: 8.020996347271433e-05
+  is_neutral: True
+  box_dimensions: [98.3405545, 76.0526585, 81.2272985]
+  density: 0.8433970648221194
   solvent_type: Explicit Solvent
-  simulation_category: Protein in Explicit Water
+  simulation_category: Protein / Ligand in Explicit Water
+  num_solvent_molecules: 14659
+  num_solute_residues: 443
   hmr_active: False
-  hmr_detection_method: atomic_number</span></code></pre>
+  hmr_hydrogen_mass_summary: 1.008-1.008 amu across 32188 H
+  hmr_detection_method: atomic_number
+  ... (also: version, title, force_field_features, total_mass, box_angles,
+      box_volume, box_is_topology_time, residue_composition — run it yourself
+      for the full field list)</span></code></pre>
 
-<h3>Validate files for CI</h3>
-<pre><code><span class="p">$</span> ambermeta validate tests/data/amber/md_test_files/*.{top,mdin,mdout,rst}
+<h3>Validate the whole Simulation — continuity, sequence holes, suggestions</h3>
+<pre><code><span class="p">$</span> ambermeta validate --manifest sim.yaml
 
-<span class="o">Validation Results
-==================================================
-OK: CH3L1_HUMAN_6NAG.top
-OK: ntp_prod_0001.mdin
-OK: ntp_prod_0001.mdout
-OK: ntp_prod_0001.rst
-==================================================
-Validation PASSED</span></code></pre>
+<span class="o">Simulation validation
+
+Validation: OK</span></code></pre>
+
+<h3>Export the manifest — here, downgrading it to the legacy flat form</h3>
+<pre><code><span class="p">$</span> ambermeta export sim.yaml --to legacy -o legacy.yaml
+
+<span class="o">Wrote legacy manifest: tests/data/amber/md_test_files/legacy.yaml (yaml)</span></code></pre>
+
+<p>The full manifest-driven workflow — editing a manifest by hand, re-validating, exporting reproducibility artifacts — is in the <a href="https://github.com/MicheleBonus/ambermeta/blob/main/docs/cli.md">CLI reference</a> and the <a href="https://github.com/MicheleBonus/ambermeta/blob/main/docs/tutorials.md">tutorials</a>.</p>
 </section>
 
 <section id="cli" class="wrap">
 <h2>Command-line interface <a class="anchor" href="#cli">#</a></h2>
-<p>The CLI is the complete, headless surface. Six commands sit under one entry point; global options (<code>--log-level</code>, <code>--log-file</code>, <code>-q/--quiet</code>) precede the subcommand.</p>
+<p>The CLI is the complete, headless surface. Eight commands sit under one entry point; global options (<code>--log-level</code>, <code>--log-file</code>, <code>-q/--quiet</code>) precede the subcommand.</p>
 
 <table>
 <thead><tr><th>Command</th><th>Purpose</th></tr></thead>
 <tbody>
-<tr><td><code>plan</code></td><td>Build &amp; summarize a protocol; export reproducibility artifacts</td></tr>
-<tr><td><code>init</code></td><td>Generate a manifest (template, or <code>--auto</code> from a directory)</td></tr>
-<tr><td><code>validate</code></td><td>Validate files without building a full protocol</td></tr>
+<tr><td><code>plan</code></td><td>Build &amp; summarize a manifest (v2-aware) or a discovered/interactive protocol; export reproducibility artifacts</td></tr>
+<tr><td><code>discover</code> <em>(new)</em></td><td>Scan a directory into a Simulation draft (topology pool + phases + steps)</td></tr>
+<tr><td><code>validate</code></td><td>Validate individual files, or a whole Simulation manifest with <code>--manifest</code></td></tr>
+<tr><td><code>export</code> <em>(new)</em></td><td>Convert a manifest (v1 auto-migrated) to canonical v2, or a legacy flat manifest</td></tr>
+<tr><td><code>init</code></td><td>Generate a manifest — v1 templates, <code>--auto</code> discovery, or <code>--v2</code></td></tr>
 <tr><td><code>info</code></td><td>Print parsed metadata for a single file</td></tr>
 <tr><td><code>gui</code></td><td>Launch the browser GUI</td></tr>
 <tr><td><code>completion</code></td><td>Emit a shell-completion script (bash / zsh / fish)</td></tr>
 </tbody>
 </table>
 
+<h3 id="cli-discover"><code>discover</code> <span class="badge cli">draft</span> <em>(new)</em></h3>
+<p>Discover-as-draft: scans a directory into a <strong>Simulation draft</strong> using the same engine the GUI's <em>Discover</em> button calls (<code>ambermeta.gui.api.core_bridge.discover_draft</code>) — a topology pool, phases inferred by role, and steps with per-step topology binding and input-coordinate sources. Prints the draft plus any suggestions; <code>--write PATH</code> saves it as a v2 manifest. <code>--recursive/--no-recursive</code> (default on), <code>--pattern</code>, <code>--format {json,yaml}</code>.</p>
+<p>Exit <code>0</code> on success; <code>1</code> if <code>directory</code> doesn't exist or nothing was discovered.</p>
+
 <h3 id="cli-plan"><code>plan</code> <span class="badge cli">build + export</span></h3>
 <p>Build a protocol from a manifest, recursive discovery, or interactive prompts — and export artifacts. <strong>Pick exactly one mode:</strong> <code>--manifest</code>, <code>--recursive</code>, or <code>--interactive</code>.</p>
+<p><code>plan -m</code> is <strong>manifest-shape-aware</strong>: an actually v2-shaped manifest (<code>version: 2</code>, or top-level <code>phases</code>/<code>simulation</code> keys) loads as a <code>Simulation</code> and prints the <strong>Simulation → Phase → Step structure</strong> plus continuity/sequence-hole findings; a v1 flat manifest (<code>stages: [...]</code>) still goes through the retained flat engine and prints the classic per-stage <strong>Protocol summary</strong>. <code>--recursive</code> discovery under <code>plan</code> always uses the retained flat engine too — use <code>discover</code> for the new Simulation-draft view of a raw directory.</p>
 <table>
 <thead><tr><th>Export flag</th><th>Output</th></tr></thead>
 <tbody>
@@ -279,78 +310,172 @@ Validation PASSED</span></code></pre>
 </table>
 <aside class="warn"><strong>Fault-tolerant by default.</strong> A missing/malformed/unreadable file is skipped, the error is recorded against its stage, and the run exits <code>0</code>. <code>--strict</code> makes the first bad file a hard error (clean message, exit <code>1</code>, no traceback). A stage keeps every file that <em>did</em> parse.</aside>
 
-<h3 id="cli-init"><code>init</code> <span class="badge cli">bootstrap</span></h3>
-<p><code>--auto</code> discovers files recursively and writes <strong>one stage per file-group stem</strong> — numbered sequences stay separate, not collapsed. Topology is classified automatically: an HMR-scaled prmtop becomes top-level <code>hmr_prmtop</code>, others <code>global_prmtop</code>. Use <code>--dry-run</code> to preview; <code>--auto</code> needs <code>--force</code> to overwrite.</p>
+<pre><code><span class="p">$</span> ambermeta plan tests/data/amber/md_test_files -m sim.yaml
+
+<span class="o">Simulation summary
+==================
+Topologies (pool): 1
+  - top_CH3L1_HUMAN_6NAG [normal]  CH3L1_HUMAN_6NAG.top
+Starting structure: CH3L1_HUMAN_6NAG.crd
+Phases: 1
+
+Phase: Production [production]
+  - ntp_prod_0001  topology=CH3L1_HUMAN_6NAG.top  input=starting structure  (mdin=ntp_prod_0001.mdin, mdout=ntp_prod_0001.mdout)
+  - ntp_prod_0002  topology=CH3L1_HUMAN_6NAG.top  input=step 10428ec4  (mdin=ntp_prod_0002.mdin, mdout=ntp_prod_0002.mdout)
+  ...
+
+Validation: OK</span></code></pre>
+
+<h3 id="cli-export"><code>export</code> <span class="badge cli">convert</span> <em>(new)</em></h3>
+<p>Read any manifest — a v1 flat manifest is auto-migrated — and re-emit it as canonical <strong>v2</strong> (<code>--to v2</code>, default; JSON/YAML) or a <strong>legacy flat</strong> manifest (<code>--to legacy</code>; JSON/YAML/TOML/CSV) for older tooling. <code>-o/--output PATH</code> (else prints JSON to stdout), <code>--format</code>.</p>
+<pre><code><span class="p">$</span> ambermeta export v1_manifest.yaml -o sim_v2.yaml --format yaml
+<span class="o">Wrote v2 manifest: sim_v2.yaml (yaml)</span></code></pre>
+<p>Unlike <code>discover</code>'s randomly generated ids, migration from a v1 manifest assigns <strong>deterministic</strong> ids (<code>top_0</code>, <code>ph_0</code>, <code>st_0</code>, ...) in source order — rerunning <code>export</code> on the same input reproduces the same ids.</p>
 
 <h3 id="cli-validate"><code>validate</code> &amp; <code>info</code> <span class="badge cli">inspect</span></h3>
-<p><code>validate</code> reports <strong>OK</strong> / <strong>WARN</strong> / <strong>ERROR</strong> per file and exits <code>0</code>/<code>1</code> (<code>--strict</code> turns warnings into failures). <code>info</code> prints one file's parsed metadata as text, JSON, or YAML — the field names are the <a href="#fields">parser metadata fields</a>.</p>
+<p><code>validate</code> reports <strong>OK</strong> / <strong>WARN</strong> / <strong>ERROR</strong> per file and exits <code>0</code>/<code>1</code> (<code>--strict</code> turns warnings into failures). With <strong><code>--manifest PATH</code></strong>, it instead loads the whole Simulation through <code>load_simulation</code> (v1 auto-migrated) and runs continuity/sequence-hole/suggestion checks — the same engine <code>discover</code> and the GUI's Validate panel use. <code>--allow-gaps</code> relaxes unexpected-gap findings without touching sequence holes. <code>info</code> prints one file's parsed metadata as text, JSON, or YAML — the field names are the <a href="#fields">parser metadata fields</a>.</p>
+
+<h3 id="cli-init"><code>init</code> <span class="badge cli">bootstrap</span></h3>
+<p><code>--v2</code> emits a static, commented <strong>v2 template</strong> manifest (topology pool, minimization + production phases, both <code>input_coords</code> sources shown) — it does not scan the directory; it's a starting point to hand-edit. Without <code>--v2</code>, <code>--auto</code> discovers files recursively and writes <strong>one stage per file-group stem</strong> in the v1 flat shape — numbered sequences stay separate, not collapsed; an HMR-scaled prmtop becomes top-level <code>hmr_prmtop</code>, others <code>global_prmtop</code>. Use <code>--dry-run</code> to preview; <code>--auto</code> needs <code>--force</code> to overwrite.</p>
 
 <aside class="note"><strong>The full flag list is generated from the parser and kept in sync by CI.</strong> See the <a href="https://github.com/MicheleBonus/ambermeta/blob/main/docs/cli.md">CLI reference</a> for every flag, with verbatim <code>--help</code> output.</aside>
 </section>
 
 <section id="manifests" class="wrap">
-<h2>Manifests <a class="anchor" href="#manifests">#</a></h2>
-<p>A manifest is the durable, hand-editable description of a protocol. AmberMeta reads four formats and writes one canonical form.</p>
+<h2>Manifests (v2) <a class="anchor" href="#manifests">#</a></h2>
+<p>A manifest is the durable, hand-editable description of a Simulation: a topology pool, a starting structure, an ordered list of phases, and the steps inside them. This is <strong>manifest format v2</strong> — the canonical, current shape:</p>
+
+<pre><code><span class="o">version: 2
+simulation:
+  topologies:
+    - id: top_wt
+      path: wt.prmtop
+      kind: normal          # "normal" | "hmr" (detected, overridable)
+    - id: top_wt_hmr
+      path: wt_hmr.prmtop
+      kind: hmr
+  starting_structure: wt.inpcrd
+phases:
+  - { id: ph_min,  name: Minimization, role: minimization, order: 0 }
+  - { id: ph_prod, name: Production,    role: production,   order: 1 }
+steps:
+  - id: st_min
+    name: minimize
+    phase: ph_min
+    order: 0
+    topology: top_wt
+    input_coords: { source: starting_structure }
+    mdin: min.in
+    mdout: min.out
+  - id: st_prod_001
+    name: prod_001
+    phase: ph_prod
+    order: 0
+    topology: top_wt_hmr
+    input_coords: { source: step, ref: st_min }   # or { source: path, path: "..." }
+    mdin: prod_001.in
+    mdout: prod_001.out
+    mdcrd: prod_001.nc
+    gaps: { expected: null, tolerance: null }</span></code></pre>
 
 <table>
-<thead><tr><th>Format</th><th>Extension</th><th>Requires</th></tr></thead>
+<thead><tr><th>Field</th><th>Meaning</th></tr></thead>
 <tbody>
-<tr><td>YAML</td><td><code>.yaml</code>, <code>.yml</code></td><td><code>pyyaml</code></td></tr>
-<tr><td>JSON</td><td><code>.json</code></td><td>stdlib</td></tr>
-<tr><td>TOML</td><td><code>.toml</code></td><td><code>tomllib</code> (3.11+) or <code>tomli</code></td></tr>
-<tr><td>CSV</td><td><code>.csv</code></td><td>stdlib</td></tr>
+<tr><td><code>simulation.topologies[]</code></td><td>The pool — every prmtop the Simulation uses, once, each an <code>{id, path, kind}</code>. Steps bind by <code>id</code> instead of each run carrying its own copy.</td></tr>
+<tr><td><code>simulation.starting_structure</code></td><td>The initial coordinate file feeding the first step whose <code>input_coords.source</code> is <code>starting_structure</code>.</td></tr>
+<tr><td><code>phases[]</code></td><td><code>{id, name, role, order}</code> — a role-bearing grouping; <code>role</code> is one of the <a href="#fields">canonical role tokens</a> or empty.</td></tr>
+<tr><td><code>steps[]</code></td><td><code>{id, name, phase, order, topology, input_coords, mdin, mdout, mdcrd, notes, gaps}</code> — one actual run.</td></tr>
+<tr><td><code>input_coords.source</code></td><td><code>starting_structure</code> · <code>step</code> (with <code>ref: &lt;step id&gt;</code>) · <code>path</code> (with <code>path: "..."</code>) — the continuity anchor the validator walks.</td></tr>
+<tr><td><code>gaps.expected</code> / <code>gaps.tolerance</code></td><td>Expected inter-run gap and tolerance, in ps; both may be <code>null</code>.</td></tr>
 </tbody>
 </table>
 
-<p>A manifest is <strong>either</strong> a list of stage dictionaries <strong>or</strong> a mapping of stage-name&nbsp;→&nbsp;dictionary. A stage recognizes exactly five file slots — <code>prmtop</code>, <code>mdin</code>, <code>mdout</code>, <code>mdcrd</code>, <code>inpcrd</code> — given either under a <code>files</code> mapping or as top-level keys.</p>
+<p><strong>v2 is written as JSON or YAML only</strong> (<code>write_simulation</code>). The legacy flat form (<code>export --to legacy</code>) can additionally write TOML or CSV, for tooling that hasn't moved to v2 yet. Reading is format-agnostic across all four (YAML/JSON/TOML/CSV) for both v1 and v2 shapes — CSV is the one exception in practice, since flat rows can only ever express a v1 stage list.</p>
 
-<pre><code><span class="o"># protocol.yaml</span>
-global_prmtop: systems/complex.prmtop
-hmr_prmtop: systems/complex_hmr.prmtop
+<h3>Coming from v1?</h3>
+<p>v1's flat <code>stages:</code> manifest — <code>global_prmtop</code>/<code>hmr_prmtop</code>, <code>initial_coordinates</code>, one stage per run — <strong>still opens</strong>. AmberMeta's reader detects it and auto-migrates it to a <code>Simulation</code> in memory: each stage becomes a step, contiguous same-role stages coalesce into a phase, <code>global_prmtop</code>/<code>hmr_prmtop</code> become pool entries, <code>initial_coordinates</code> becomes the starting structure, and the first step reads it while every later step chains from the previous step's restart. <strong>Saving always writes v2.</strong></p>
+
+<pre><code><span class="o"># v1_manifest.yaml
+global_prmtop: CH3L1_HUMAN_6NAG.top
 stages:
-  - name: minimize
-    stage_role: minimization
-    mdin: mdin/min.in
-    mdout: logs/min.out
   - name: prod1
     stage_role: production
-    mdin: mdin/prod1.in
-    mdout: logs/prod1.out
-    mdcrd: traj/prod1.nc
-    inpcrd: restarts/equil.rst7
-    expected_gap_ps: 0.0
-    gap_tolerance_ps: 0.1</code></pre>
+    mdin: ntp_prod_0001.mdin
+    mdout: ntp_prod_0001.mdout
+    inpcrd: ntp_prod_0000.rst
+  - name: prod2
+    stage_role: production
+    mdin: ntp_prod_0002.mdin
+    mdout: ntp_prod_0002.mdout
+    inpcrd: ntp_prod_0001.rst</span></code></pre>
 
-<table>
-<thead><tr><th>Stage key</th><th>Required</th><th>Meaning</th></tr></thead>
-<tbody>
-<tr><td><code>name</code></td><td><strong>yes</strong></td><td>Unique identifier; used for ordering and restart lookup</td></tr>
-<tr><td><code>stage_role</code></td><td>no</td><td>Inferred from content/path if omitted (always with an <code>INFO</code> note)</td></tr>
-<tr><td><code>prmtop … inpcrd</code></td><td>no</td><td>The five file slots</td></tr>
-<tr><td><code>gaps</code> / <code>expected_gap_ps</code> / <code>gap_tolerance_ps</code></td><td>no</td><td>Expected discontinuity before this stage</td></tr>
-<tr><td><code>notes</code></td><td>no</td><td>String or list → validation notes</td></tr>
-</tbody>
-</table>
+<p><code>ambermeta export v1_manifest.yaml --to v2</code> prints the migrated v2 document — note the second step's coordinate source resolved to <code>{"source": "step", "ref": "st_0"}</code>: the migrator recognized <code>ntp_prod_0001.rst</code> as the first step's own restart output and rewired it into an explicit continuity edge instead of leaving it as a bare path.</p>
 
-<p>Top-level <code>settings</code> controls validation: <code>strict_validation</code> (default <code>true</code>) toggles cross-stage continuity checks; <code>allow_gaps</code> (default <code>false</code>) records unconfigured gaps as info rather than warnings. Paths support <code>${VAR}</code>/<code>$VAR</code> expansion unless disabled.</p>
+<pre><code><span class="o">{
+  "version": 2,
+  "simulation": { "topologies": [{"id": "top_0", "path": "CH3L1_HUMAN_6NAG.top", "kind": "normal"}],
+                  "starting_structure": null },
+  "phases": [{ "id": "ph_0", "name": "Production", "role": "production", "order": 0 }],
+  "steps": [
+    { "id": "st_0", "name": "prod1", "phase": "ph_0", "order": 0, "topology": "top_0",
+      "input_coords": {"source": "path", "path": "ntp_prod_0000.rst"},
+      "mdin": "ntp_prod_0001.mdin", "mdout": "ntp_prod_0001.mdout", "mdcrd": null, "notes": [] },
+    { "id": "st_1", "name": "prod2", "phase": "ph_0", "order": 1, "topology": "top_0",
+      "input_coords": {"source": "step", "ref": "st_0"},
+      "mdin": "ntp_prod_0002.mdin", "mdout": "ntp_prod_0002.mdout", "mdcrd": null, "notes": [] }
+  ]
+}</span></code></pre>
 
-<aside class="note"><strong>Tolerant in, canonical out.</strong> The reader accepts legacy aliases (<code>stage</code>→<code>name</code>, <code>role</code>→<code>stage_role</code>) and several shapes; the writer emits exactly one deterministic form. There is one on-disk representation to diff and review. Full schema: <a href="https://github.com/MicheleBonus/ambermeta/blob/main/docs/manifest.md">manifest reference</a>.</aside>
+<aside class="note"><strong>Tolerant in, canonical out.</strong> <code>ambermeta plan</code>/<code>info</code> still read v1 manifests directly through the retained flat engine too, and <code>ambermeta init --v2</code> generates a fresh v2 template if you'd rather start clean. Full schema — every key, all migration rules, environment-variable expansion, role tokens: <a href="https://github.com/MicheleBonus/ambermeta/blob/main/docs/manifest.md">manifest reference</a>.</aside>
 </section>
 
 <section id="api" class="wrap">
 <h2>Python API <a class="anchor" href="#api">#</a></h2>
-<p>The same engine is a library. The supported import surface is everything re-exported from <code>ambermeta</code>.</p>
+<p>The same engine is a library, with two layers.</p>
 
 <aside class="warn"><strong>The one thing to get right.</strong> A parser's <code>parse()</code> returns a wrapper that carries <code>filename</code> and <code>warnings</code>. <strong>The parsed metadata lives on <code>.details</code>.</strong> Field names are AMBER-flavored: <code>hmr_active</code> (not <code>is_hmr</code>), <code>residue_composition</code> (not <code>residue_counts</code>), <code>temp_control</code>/<code>press_control</code>/<code>stage_role</code> on <code>mdin</code>.</aside>
 
-<pre><code><span class="o"># Reconstruct a protocol from a directory...</span>
+<h3>Layer 1 — the new model: <code>ambermeta.simulation</code></h3>
+<p>Plain dataclasses mirroring manifest v2. <strong>Not yet re-exported at the <code>ambermeta</code> top level</strong> — import it explicitly.</p>
+<pre><code><span class="o">from ambermeta.simulation import load_simulation
+
+sim = load_simulation("sim.yaml")   # v1 manifests auto-migrate on read
+print(sim.topologies)
+# -> [Topology(id='top_CH3L1_HUMAN_6NAG', path='CH3L1_HUMAN_6NAG.top', kind='normal')]
+print(sim.starting_structure)
+# -> CH3L1_HUMAN_6NAG.crd
+for phase in sim.phases:
+    print(phase.name, phase.role, [s.name for s in phase.steps])
+# -> Production production ['ntp_prod_0001', 'ntp_prod_0002', 'ntp_prod_0003', 'ntp_prod_0004', 'ntp_prod_0005']</span></code></pre>
+
+<table>
+<thead><tr><th>Function</th><th>Signature</th></tr></thead>
+<tbody>
+<tr><td><code>load_simulation</code></td><td><code>(path: str) -&gt; Simulation</code> — reads any manifest, v1 auto-migrated</td></tr>
+<tr><td><code>write_simulation</code></td><td><code>(sim, path: str, fmt: str) -&gt; None</code> — <code>fmt</code> ∈ <code>{"json","yaml"}</code> only</td></tr>
+<tr><td><code>simulation_to_payload</code> / <code>payload_to_simulation</code></td><td>the v2 dict round-trip the GUI's HTTP API uses</td></tr>
+</tbody>
+</table>
+<p>Dataclasses: <code>Topology(id, path, kind="normal")</code>; <code>InputCoords(source="starting_structure", ref=None, path=None)</code>; <code>Step(id, name, topology=None, input_coords, mdin=None, mdout=None, mdcrd=None, expected_gap_ps=None, gap_tolerance_ps=None, notes=[])</code>; <code>Phase(id, name, role="", steps=[])</code>; <code>Simulation(version=2, topologies=[], starting_structure=None, phases=[])</code>.</p>
+
+<h3>Advanced/shared helpers — <code>ambermeta.gui.api.core_bridge</code></h3>
+<p>Pure functions the CLI and GUI both call — the only place in <code>ambermeta.gui</code> that imports the core engine, so it's the ground truth for how <code>discover</code>/<code>validate --manifest</code> actually work.</p>
+<pre><code><span class="o">discover_draft(base_directory, recursive=True, pattern=None)
+# -> {"simulation": Simulation, "suggestions": [...], "warnings": [...]}
+
+validate_simulation(sim, settings: dict, base_directory)
+# -> {"ok", "totals", "protocol_issues", "stage_issues", "suggestions"}</span></code></pre>
+
+<h3>Layer 2 — the retained parsing engine (top-level <code>ambermeta.*</code>)</h3>
+<p>Still the public <code>__all__</code> — file discovery, the flat <code>SimulationProtocol</code>/<code>SimulationStage</code> model, and the per-file parsers. This still powers <code>plan --recursive</code> and everything under the hood of layer 1.</p>
+<pre><code><span class="o"># Reconstruct a flat protocol from a directory...</span>
 from ambermeta import auto_discover, load_protocol_from_manifest
 
-protocol = auto_discover("runs/", recursive=True, auto_detect_restarts=True)
+protocol = auto_discover("tests/data/amber/md_test_files", recursive=True, auto_detect_restarts=True)
 print(len(protocol.stages), protocol.totals())
 <span class="o"># 7 {'steps': 25000000.0, 'time_ps': 100000.0}</span>
 
-<span class="o"># ...or from a manifest</span>
+<span class="o"># ...or from a v1 manifest</span>
 protocol = load_protocol_from_manifest("protocol.yaml", directory="runs/")
 
 <span class="o"># Per-file parsing — note the .details accessor</span>
@@ -358,7 +483,7 @@ from ambermeta.parsers import PrmtopParser
 meta = PrmtopParser("system.prmtop").parse().details
 print(meta.natom, meta.hmr_active, meta.solvent_type)</code></pre>
 
-<h3>Core objects</h3>
+<h3>Core objects (retained engine)</h3>
 <table>
 <thead><tr><th>Object</th><th>Key members</th></tr></thead>
 <tbody>
@@ -380,23 +505,37 @@ print(md.stats.temp_stats.stdev)       <span class="o"># 1.2504190252445306</spa
 
 <section id="gui" class="wrap">
 <h2>Browser GUI <a class="anchor" href="#gui">#</a></h2>
-<p>A three-pane browser app — <strong>Files</strong> · <strong>Stages</strong> · <strong>Properties</strong> — for assembling and auditing a manifest. Single-user, localhost-only, fully offline.</p>
+<p>A rebuilt three-pane browser app — <strong>Files</strong> · <strong>Canvas</strong> · <strong>Inspector</strong> — for assembling and auditing a Simulation. Single-user, localhost-only, fully offline.</p>
 
 <pre><code><span class="p">$</span> ambermeta gui tests/data/amber/md_test_files     <span class="o"># opens http://127.0.0.1:8765</span>
 <span class="p">$</span> ambermeta gui runs/ --port 9000 --no-browser</code></pre>
 
-<p>A typical session: <strong>Discover</strong> auto-groups the directory into stages → drag files from <strong>Files</strong> onto stage slots (or use the picker) → edit a stage's name/role/gaps/notes in <strong>Properties</strong> → <strong>Link Restarts</strong> chains the <code>inpcrd</code> files → <strong>Validate</strong> reports issues with jump-to-issue → <strong>Save</strong> writes the canonical manifest, byte-identical to the CLI's.</p>
+<table>
+<thead><tr><th>Pane</th><th>Role</th></tr></thead>
+<tbody>
+<tr><td><strong>Files</strong> (left)</td><td>A searchable file list; drag a file onto the topology pool, the starting-structure slot, a step's topology, or a step's <code>mdin</code>/<code>mdout</code>/<code>mdcrd</code> slot.</td></tr>
+<tr><td><strong>Canvas</strong> (center)</td><td>A continuous vertical timeline — phases as sections, steps as cards showing their bound topology (▸) and input-coordinate source (◂); continuity arrows between steps (amber only where a real gap exists); missing-run ghosts for sequence holes; long numbered runs collapse. Drag to reorder steps within a phase, move a step across phases, or reorder phases.</td></tr>
+<tr><td><strong>Inspector</strong> (right)</td><td>Peek + full-details/raw tabs for the selected file/step/phase, and assign actions. The Simulation, a phase, or nothing selected shows the suggestions tray instead.</td></tr>
+</tbody>
+</table>
 
-<aside class="key"><strong>Built to be safe on a workstation.</strong> The server binds <code>127.0.0.1</code>, pins CORS to localhost, and confines every file path to the launch directory (resolved through symlinks; escapes get <code>403</code>). State is server-authoritative — undo/redo and validation run server-side. It is not a multi-user service.</aside>
+<p>A typical session: <strong>Discover</strong> scans the launch directory into a Simulation draft (topology pool, phases by role, chained steps) → drag files from <strong>Files</strong> onto canvas slots, or use the Inspector's assign actions → arrange steps/phases by dragging their grip handles → <strong>Validate</strong> reports continuity/sequence issues → <strong>Save</strong> writes the canonical v2 manifest, the same one the CLI's <code>discover --write</code>/<code>export</code> write.</p>
+
+<aside class="warn"><strong>Known limitation: the step/phase inline editors are still stubs.</strong> Selecting a step or phase highlights it and lets Validate jump to it, but the Inspector shows a placeholder rather than an editable form — rename a step, change its role, or set its gap tolerance via drag-and-drop assignment, the file-side Assign actions, the HTTP API, or by editing the manifest directly.</aside>
+
+<p>Every inferred thing — roles, the HMR topology, the starting structure, sequence holes, continuity gaps — is surfaced in the <strong>Suggestions</strong> tray as an explainable, undoable suggestion rather than applied silently. This is the draft-first design.</p>
+
+<aside class="key"><strong>Built to be safe on a workstation.</strong> The server binds <code>127.0.0.1</code>, pins CORS to localhost, and confines every file path to the launch directory (resolved through symlinks; escapes get <code>403</code>). State is server-authoritative — a single document held server-side, every mutation returns the new document, undo/redo call the server. It is not a multi-user service.</aside>
 
 <p>The frontend (React + TypeScript + Vite + Tailwind, drag-and-drop via dnd-kit) talks to a small REST API under <code>/api</code> you can drive directly:</p>
 <table>
 <thead><tr><th>Area</th><th>Endpoints</th></tr></thead>
 <tbody>
-<tr><td>Document</td><td><code>GET /api/document</code>, <code>/document/open</code>, <code>/document/save</code>, <code>/document/preview</code>, <code>/document/discover</code></td></tr>
-<tr><td>Stages</td><td><code>POST /api/stages</code>, <code>PUT/DELETE /api/stages/{id}</code>, <code>/stages/reorder</code>, <code>/stages/bulk</code></td></tr>
-<tr><td>State</td><td><code>GET/PUT /api/settings</code>, <code>POST /api/undo</code>·<code>/redo</code>, <code>/validate</code>, <code>/link-restarts</code>, <code>GET /api/sequences</code></td></tr>
-<tr><td>Files</td><td><code>GET /api/files</code>, <code>/files/metadata</code>, <code>/files/related/{stem}</code></td></tr>
+<tr><td>Document</td><td><code>GET /api/document</code>, <code>POST /document/{open,save,preview,discover}</code></td></tr>
+<tr><td>Topologies / starting structure</td><td><code>POST /api/topologies</code>, <code>PUT/DELETE /api/topologies/{id}</code>, <code>PUT /api/simulation/starting-structure</code></td></tr>
+<tr><td>Phases / steps</td><td><code>POST /api/phases</code>, <code>/phases/reorder</code>, <code>PUT/DELETE /api/phases/{id}</code>, <code>POST /api/phases/{id}/steps</code>, <code>/steps/reorder</code>, <code>PUT/DELETE /api/steps/{id}</code>, <code>POST /api/steps/{id}/move</code></td></tr>
+<tr><td>Assignment / state</td><td><code>POST /api/assign</code>, <code>GET/PUT /api/settings</code>, <code>POST /api/undo</code>·<code>/redo</code>, <code>POST /api/validate</code></td></tr>
+<tr><td>Files</td><td><code>GET /api/files</code>, <code>/files/metadata</code>, <code>/files/raw</code>, <code>/files/related/{stem}</code></td></tr>
 </tbody>
 </table>
 <aside class="note">Full endpoint shapes, data models, and the UI tour are in the <a href="https://github.com/MicheleBonus/ambermeta/blob/main/docs/gui.md">GUI guide</a>.</aside>
@@ -404,33 +543,53 @@ print(md.stats.temp_stats.stdev)       <span class="o"># 1.2504190252445306</spa
 
 <section id="architecture" class="wrap">
 <h2>Architecture <a class="anchor" href="#architecture">#</a></h2>
-<p>AmberMeta is one engine with two faces. A single core — parsers, a manifest contract, protocol assembly, and a validation model — does all the work; the CLI and GUI are thin presentation layers over it. The same pipeline runs whether the entry point is <code>ambermeta plan</code>, <code>load_protocol_from_manifest()</code>, or a GUI <strong>Validate</strong> click:</p>
+<p>AmberMeta is one engine with two faces. A single core — parsers, a role classifier, a manifest contract, simulation assembly, and a validation model — does all the work; the CLI and GUI are thin presentation layers over it. Two engine layers live side by side, deliberately:</p>
+
+<table>
+<thead><tr><th>Layer</th><th>Role</th></tr></thead>
+<tbody>
+<tr><td><code>ambermeta.simulation</code></td><td>The new Simulation → Phase → Step model: plain dataclasses plus <code>load_simulation</code>/<code>write_simulation</code>/<code>migrate_v1_manifest</code>. What <code>discover</code>, <code>export</code>, <code>validate --manifest</code>, <code>plan -m &lt;v2&gt;</code>, and every GUI operation build and hand around.</td></tr>
+<tr><td><code>ambermeta.protocol</code></td><td>The retained flat <code>SimulationProtocol</code>/<code>SimulationStage</code> engine. Still does the actual file grouping, parsing orchestration, role inference, and continuity math — the v2 layer <em>flattens into it</em> rather than reimplementing validation. Also the whole path for <code>plan --recursive</code> and v1 manifests loaded outside <code>ambermeta.simulation</code>.</td></tr>
+</tbody>
+</table>
 
 <pre><code>directory or manifest
-  → discovery / manifest   group files into stages, order them
-  → parsing                Parser → .details (legacy *Metadata); failures → FileLoadError
-  → assembly               build SimulationStage per group; infer role; link restarts
-  → validation             per-stage + cross-stage continuity (notes, not exceptions)
-  → export                 to_dict / to_methods_dict / stats CSV / canonical manifest</code></pre>
+  → discovery / manifest   group files into a topology pool + phases + steps (or flat stages)
+  → parsing                Parser → .details (typed *Metadata); failures → FileLoadError
+  → assembly                build SimulationStage per group; infer role; link restarts
+  → validation              per-stage + cross-stage continuity, sequence-hole detection (notes, not exceptions)
+  → export                 to_dict / to_methods_dict / stats CSV / v2 or legacy manifest</code></pre>
+
+<h3>The validation model — how v2 reuses the old engine</h3>
+<p>The v2 validator does not reimplement continuity or per-stage checks; it <strong>flattens a <code>Simulation</code> back into the flat stage-dict shape <code>ambermeta.protocol</code> already knows how to validate</strong>, then calls the same discovery/validation pipeline the CLI's <code>--recursive</code> path and v1 manifests use. Concretely, <code>core_bridge.validate_simulation(sim, settings, base_directory)</code> flattens, runs <code>auto_discover</code>, then layers on two v2-specific suggestion kinds — <code>missing_run</code> (sequence holes) and <code>continuity_gap</code> (genuine, non-<code>INFO</code> continuity notes).</p>
+
+<h3>Manifest v2 and the tolerant, auto-migrating reader</h3>
+<pre><code>def load_simulation(path: str) -> Simulation:
+    """Load a Simulation from a manifest file, auto-migrating v1 manifests."""
+    raw = _read_raw_manifest(path)
+    if _is_v2(raw):
+        return payload_to_simulation(raw)
+    return migrate_v1_manifest(_normalize_container(raw))</code></pre>
+<p><code>_is_v2(raw)</code> is a shape check — <code>raw.get("version") == 2</code>, or the presence of a top-level <code>"phases"</code> or <code>"simulation"</code> key — not a strict version gate, so a hand-edited v2-shaped file without an explicit <code>version:</code> still loads as v2. <strong>Saving always writes v2</strong>; opening a v1 manifest never mutates the file on disk by itself.</p>
 
 <table>
 <thead><tr><th>Layer</th><th>Responsibility</th></tr></thead>
 <tbody>
 <tr><td>Parsing</td><td><code>parsers/</code> wrappers + <code>legacy_extractors/</code> populate typed <code>*Metadata</code> on <code>.details</code>; <code>mdout</code> stats use Welford's online algorithm</td></tr>
-<tr><td>Manifest</td><td>Tolerant reader (<code>load_manifest</code>, <code>normalize_stage_keys</code>) + canonical writer (<code>write_manifest</code>); <code>STAGE_FILE_KINDS</code>, <code>CSV_COLUMNS</code></td></tr>
-<tr><td>Assembly</td><td><code>auto_discover</code> / <code>ProtocolBuilder</code>: group → sequence-detect → role-infer → link restarts</td></tr>
-<tr><td>Validation</td><td>Per-stage (<code>SimulationStage.validate</code>) + cross-stage continuity; outcomes are <code>INFO</code>/<code>WARNING</code> notes</td></tr>
-<tr><td>GUI bridge</td><td><code>core_bridge.py</code> is the only GUI module importing the core; server-authoritative document; byte-identical manifests</td></tr>
+<tr><td>Manifest</td><td>Tolerant reader (<code>load_manifest</code>, <code>normalize_stage_keys</code>) + canonical v2 writer (<code>write_simulation</code>, JSON/YAML) + legacy flat writer (<code>write_manifest</code>, +TOML/CSV)</td></tr>
+<tr><td>Assembly</td><td><code>auto_discover</code> / <code>ProtocolBuilder</code> / <code>discover_draft</code>: group → sequence-detect → role-infer → link restarts</td></tr>
+<tr><td>Validation</td><td>Per-stage (<code>SimulationStage.validate</code>) + cross-stage continuity + sequence-hole detection; outcomes are <code>INFO</code>/<code>WARNING</code> notes or suggestions</td></tr>
+<tr><td>GUI bridge</td><td><code>core_bridge.py</code> is the only GUI module importing the core; server-authoritative document; byte-identical manifests to the CLI</td></tr>
 </tbody>
 </table>
 
-<aside class="key"><strong>Invariants worth remembering.</strong> (1) <code>parse().details</code> carries the metadata. (2) Tolerant reader, canonical writer. (3) One file group → one stage; sequences preserved, not collapsed. (4) Inference is always announced with an <code>INFO</code> note. (5) Failures are data (<code>FileLoadError</code>), not crashes — <code>--strict</code> opts into hard failure. (6) The GUI imports the core only through <code>core_bridge.py</code>.</aside>
-<aside class="note">The full internals walkthrough is in the <a href="https://github.com/MicheleBonus/ambermeta/blob/main/docs/architecture.md">architecture document</a>.</aside>
+<aside class="key"><strong>Invariants worth remembering.</strong> (1) <code>parse().details</code> carries the metadata. (2) Tolerant reader, canonical writer — <code>load_simulation()</code> accepts v1 or v2 and always returns a <code>Simulation</code>; <code>write_simulation()</code> always emits v2 JSON or YAML. (3) One role classifier (<code>roles.classify_role</code>), one continuity algorithm, one sequence-hole detector — shared verbatim by the CLI and the GUI. (4) Inference is always announced as an <code>INFO</code> note or suggestion, never a silent guess. (5) Failures are data (<code>FileLoadError</code>), not crashes — <code>--strict</code> opts into hard failure. (6) The GUI imports the core only through <code>core_bridge.py</code>.</aside>
+<aside class="note">The full internals walkthrough, including the v1→v2 migration table, is in the <a href="https://github.com/MicheleBonus/ambermeta/blob/main/docs/architecture.md">architecture document</a>.</aside>
 </section>
 
 <section id="fields" class="wrap">
 <h2>Parser metadata fields <a class="anchor" href="#fields">#</a></h2>
-<p>These are the fields on <code>.details</code> — what <code>ambermeta info</code> prints and what your code reads. Each metadata object also carries <code>filename</code> and <code>warnings</code>.</p>
+<p>These are the fields on <code>.details</code> — what <code>ambermeta info</code> prints and what your code reads. Each metadata object also carries <code>filename</code> and <code>warnings</code>. This layer is unchanged from v1.</p>
 
 <h3><code>prmtop</code> — <code>PrmtopMetadata</code></h3>
 <table>
@@ -441,7 +600,7 @@ print(md.stats.temp_stats.stdev)       <span class="o"># 1.2504190252445306</spa
 <tr><td><code>total_charge</code>, <code>is_neutral</code></td><td>float, bool</td><td>Net charge</td></tr>
 <tr><td><code>box_dimensions</code> / <code>box_angles</code></td><td>List[float]</td><td><code>[a,b,c]</code> Å / <code>[α,β,γ]</code> deg</td></tr>
 <tr><td><code>box_volume</code>, <code>density</code></td><td>float</td><td>Å³ / g·cm⁻³</td></tr>
-<tr><td><code>solvent_type</code>, <code>simulation_category</code></td><td>str</td><td>e.g. <code>Explicit Solvent</code>, <code>Protein in Explicit Water</code></td></tr>
+<tr><td><code>solvent_type</code>, <code>simulation_category</code></td><td>str</td><td>e.g. <code>Explicit Solvent</code>, <code>Protein / Ligand in Explicit Water</code></td></tr>
 <tr><td><code>residue_composition</code></td><td>Dict[str,int]</td><td>Residue-name → count (includes ions, water)</td></tr>
 <tr><td><code>hmr_active</code></td><td>Optional[bool]</td><td>HMR detected from masses</td></tr>
 <tr><td><code>hmr_hydrogen_mass_summary</code>, <code>hmr_detection_method</code></td><td>str</td><td>HMR detail / how it was detected</td></tr>
@@ -474,6 +633,9 @@ print(md.stats.temp_stats.stdev)       <span class="o"># 1.2504190252445306</spa
 
 <h3><code>mdcrd</code> / <code>inpcrd</code></h3>
 <p><code>TrajectoryMetadata</code>: <code>file_format</code>, <code>n_atoms</code>, <code>n_frames</code>, <code>time_start</code>/<code>time_end</code>/<code>avg_dt</code>, <code>has_box</code>/<code>box_type</code>, <code>volume_stats</code>, REMD fields. &nbsp;<code>InpcrdMetadata</code>: <code>natoms</code>, <code>time</code> (drives continuity), <code>has_velocities</code>/<code>has_box</code>, <code>box_dimensions</code>/<code>box_angles</code>/<code>box_volume</code>.</p>
+
+<h3>Canonical role tokens</h3>
+<p>Both the GUI and CLI classify roles through the one shared function, <code>ambermeta.roles.classify_role</code>: <code>"minimization" | "heating" | "equilibration" | "production" | ""</code>. Precedence: (1) authoritative content — <code>imin=1</code> ⇒ <code>minimization</code>; (2) filename/path cues on word boundaries (<code>min</code>/<code>minim</code>/<code>em</code>, <code>heat</code>/<code>warm</code>/<code>therm</code>/<code>anneal</code>, <code>equil</code>/<code>eq</code>/<code>nvt</code>/<code>npt</code>, <code>prod</code>) — so <code>minor.in</code> never matches; (3) other content heuristics (restraints ⇒ equilibration; a temperature ramp ⇒ heating; a long run ⇒ production).</p>
 </section>
 
 <section id="reference" class="wrap">
@@ -481,8 +643,9 @@ print(md.stats.temp_stats.stdev)       <span class="o"># 1.2504190252445306</spa
 <table>
 <thead><tr><th>Code</th><th>Meaning</th></tr></thead>
 <tbody>
-<tr><td><code>0</code></td><td>Success (including a fault-tolerant <code>plan</code> that skipped bad files)</td></tr>
-<tr><td><code>1</code></td><td>Error — invalid input, parse/validation failure, or a <code>--strict</code> hard stop</td></tr>
+<tr><td><code>0</code></td><td>Success (including a fault-tolerant <code>plan</code>/<code>discover</code> that skipped bad files, or a <code>validate</code> with no failing findings)</td></tr>
+<tr><td><code>1</code></td><td>Runtime failure — unreadable/missing input, parse/validation failure, nothing discovered, manifest not found/invalid, or a <code>--strict</code> hard stop</td></tr>
+<tr><td><code>2</code></td><td>Bad invocation — <code>plan</code> with no mode selected (<code>--manifest</code>/<code>--recursive</code>/<code>--interactive</code>); <code>validate</code> with neither <code>files</code> nor <code>--manifest</code></td></tr>
 </tbody>
 </table>
 
@@ -498,7 +661,7 @@ print(md.stats.temp_stats.stdev)       <span class="o"># 1.2504190252445306</spa
 </tbody>
 </table>
 
-<p>Manifest paths support <code>${VAR}</code>/<code>$VAR</code> expansion by default; disable with <code>--no-expand-env</code>. Undefined variables are left unchanged.</p>
+<p>Manifest paths (topology paths, <code>starting_structure</code>, <code>mdin</code>/<code>mdout</code>/<code>mdcrd</code>, an explicit <code>input_coords.path</code>) support <code>${VAR}</code>/<code>$VAR</code> expansion by default; disable with <code>--no-expand-env</code> on <code>plan</code>. Undefined variables are left unchanged. <code>discover</code>/<code>export</code>/<code>validate --manifest</code> load through <code>load_simulation</code>, which always expands — there is no switch to disable it on that path.</p>
 </section>
 
 <section id="docs" class="wrap">
@@ -507,11 +670,11 @@ print(md.stats.temp_stats.stdev)       <span class="o"># 1.2504190252445306</spa
 <table>
 <thead><tr><th>Document</th><th>Contents</th></tr></thead>
 <tbody>
-<tr><td><a href="https://github.com/MicheleBonus/ambermeta/blob/main/docs/architecture.md">architecture.md</a></td><td>Engine internals and invariants</td></tr>
-<tr><td><a href="https://github.com/MicheleBonus/ambermeta/blob/main/docs/cli.md">cli.md</a></td><td>Every command, flag, exit code, env var</td></tr>
-<tr><td><a href="https://github.com/MicheleBonus/ambermeta/blob/main/docs/api.md">api.md</a></td><td>Classes, functions, parser fields, examples</td></tr>
-<tr><td><a href="https://github.com/MicheleBonus/ambermeta/blob/main/docs/manifest.md">manifest.md</a></td><td>The full file format across all four formats</td></tr>
-<tr><td><a href="https://github.com/MicheleBonus/ambermeta/blob/main/docs/gui.md">gui.md</a></td><td>The browser app, its API, its security model</td></tr>
+<tr><td><a href="https://github.com/MicheleBonus/ambermeta/blob/main/docs/architecture.md">architecture.md</a></td><td>Engine internals, the Simulation → Phase → Step model, and the v1→v2 migration mechanics</td></tr>
+<tr><td><a href="https://github.com/MicheleBonus/ambermeta/blob/main/docs/cli.md">cli.md</a></td><td>Every command, flag, exit code, env var — including <code>discover</code>/<code>export</code></td></tr>
+<tr><td><a href="https://github.com/MicheleBonus/ambermeta/blob/main/docs/api.md">api.md</a></td><td>The <code>ambermeta.simulation</code> model, the retained engine, core_bridge helpers, parser fields, examples</td></tr>
+<tr><td><a href="https://github.com/MicheleBonus/ambermeta/blob/main/docs/manifest.md">manifest.md</a></td><td>The full v2 schema, all four input formats, and the v1→v2 auto-migration table</td></tr>
+<tr><td><a href="https://github.com/MicheleBonus/ambermeta/blob/main/docs/gui.md">gui.md</a></td><td>The rebuilt browser app, its HTTP API, its security model</td></tr>
 <tr><td><a href="https://github.com/MicheleBonus/ambermeta/blob/main/docs/tutorials.md">tutorials.md</a></td><td>Task-oriented walkthroughs</td></tr>
 <tr><td><a href="https://github.com/MicheleBonus/ambermeta/blob/main/docs/recipes.md">recipes.md</a></td><td>Copy-paste CLI one-liners</td></tr>
 </tbody>
@@ -519,7 +682,7 @@ print(md.stats.temp_stats.stdev)       <span class="o"># 1.2504190252445306</spa
 </section>
 
 <footer class="foot">
-<p>AmberMeta v1.0.0 · distributed under the Business Source License 1.1 (BUSL-1.1) · <a href="https://github.com/MicheleBonus/ambermeta">github.com/MicheleBonus/ambermeta</a></p>
+<p>AmberMeta v1.1.0 · distributed under the Business Source License 1.1 (BUSL-1.1) · <a href="https://github.com/MicheleBonus/ambermeta">github.com/MicheleBonus/ambermeta</a></p>
 </footer>
 </main>
 </div>
