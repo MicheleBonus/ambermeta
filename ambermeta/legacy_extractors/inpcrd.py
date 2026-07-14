@@ -101,14 +101,16 @@ def _calc_volume(lengths: List[float], angles: List[float]) -> float:
     return a * b * c * math.sqrt(term)
 
 def _detect_format(filepath: str) -> str:
-    """
-    Reads the first 4 bytes to determine if file is NetCDF or ASCII.
-    NetCDF files start with 'CDF' (ASCII bytes 67 68 70).
+    """Determine NetCDF vs ASCII from the file's magic bytes.
+
+    Classic NetCDF-3 begins with ``CDF\\x01``/``CDF\\x02`` (not a bare 3-byte
+    ``CDF``, which an ASCII title could start with); NetCDF-4/HDF5 begins with
+    ``\\x89HDF``.
     """
     with open(filepath, 'rb') as f:
-        header = f.read(4)
-        if header.startswith(b'CDF'):
-            return "NetCDF"
+        header = f.read(8)
+    if header[:4] in (b'CDF\x01', b'CDF\x02') or header[:4] == b'\x89HDF':
+        return "NetCDF"
     return "ASCII"
 
 # -------------------------------
@@ -163,8 +165,9 @@ def _parse_ascii_inpcrd(filepath: str) -> InpcrdMetadata:
     # Count total lines in file (minus header)
     # Re-open to count efficiently
     with open(filepath, 'r') as f:
-        # Subtract 2 for Title + Natom line
-        line_count = sum(1 for _ in f) - 2
+        # Count only non-blank lines, then drop Title + NATOM header (2 lines).
+        non_blank = sum(1 for ln in f if ln.strip())
+        line_count = non_blank - 2
 
     if line_count < 0:
         md.warnings.append("File header exists but body is missing.")
@@ -189,7 +192,7 @@ def _parse_ascii_inpcrd(filepath: str) -> InpcrdMetadata:
             _is_float(t) for t in toks)
 
     extra = line_count - lines_per_structure
-    if extra == 1:
+    if extra == 1 and _looks_like_box(md.filename):
         md.has_velocities = False
         md.has_box = True
         _parse_ascii_box(md)

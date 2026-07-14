@@ -25,3 +25,16 @@ def test_completion_scripts_have_no_tui_branch() -> None:
     # The TUI was removed; completion scripts must not advertise it.
     for shell in ("bash", "zsh", "fish"):
         assert "tui" not in cli._completion_script(shell)
+
+
+def test_completion_lists_new_subcommands():
+    import ambermeta.cli as cli
+    for shell in ("bash", "zsh", "fish"):
+        script = cli._completion_script(shell)
+        assert "discover" in script, f"{shell} completion missing discover"
+        assert "export" in script, f"{shell} completion missing export"
+
+
+def test_completion_bash_covers_new_validate_flag():
+    import ambermeta.cli as cli
+    assert "--manifest" in cli._completion_script("bash")

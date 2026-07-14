@@ -1,100 +1,67 @@
-export type FileType = "prmtop" | "mdin" | "mdout" | "mdcrd" | "inpcrd" | "folder" | "other";
+export type TopologyKind = "normal" | "hmr";
 export type StageRole = "minimization" | "heating" | "equilibration" | "production" | "";
-export type ExportFormat = "yaml" | "json" | "toml" | "csv";
+export type ExportFormat = "yaml" | "json";
 
-export interface StageModel {
-  id: string;
-  name: string;
-  role: string;
-  prmtop: string | null;
-  mdin: string | null;
-  mdout: string | null;
-  mdcrd: string | null;
-  inpcrd: string | null;
-  expected_gap_ps: number | null;
-  gap_tolerance_ps: number | null;
-  notes: string[];
+export interface TopologyModel { id: string; path: string; kind: TopologyKind; }
+export interface InputCoordsModel { source: "starting_structure" | "step" | "path"; ref: string | null; path: string | null; }
+export interface StepModel {
+  id: string; name: string; topology: string | null; input_coords: InputCoordsModel;
+  mdin: string | null; mdout: string | null; mdcrd: string | null;
+  expected_gap_ps: number | null; gap_tolerance_ps: number | null; notes: string[];
 }
-
-export interface GlobalSettings {
-  global_prmtop: string | null;
-  hmr_prmtop: string | null;
-  initial_coordinates: string | null;
-  auto_link_restarts: boolean;
-  strict_validation: boolean;
-  allow_gaps: boolean;
-  use_relative_paths: boolean;
+export interface PhaseModel { id: string; name: string; role: StageRole; steps: StepModel[]; }
+export interface SimulationModel {
+  version: number; topologies: TopologyModel[]; starting_structure: string | null; phases: PhaseModel[];
 }
-
+export interface RuntimeSettings {
+  auto_link_restarts: boolean; strict_validation: boolean; allow_gaps: boolean; use_relative_paths: boolean;
+}
 export interface DocumentResponse {
-  base_directory: string;
-  manifest_path: string | null;
-  dirty: boolean;
-  can_undo: boolean;
-  can_redo: boolean;
-  settings: GlobalSettings;
-  stages: StageModel[];
+  base_directory: string; manifest_path: string | null; dirty: boolean;
+  can_undo: boolean; can_redo: boolean; settings: RuntimeSettings; simulation: SimulationModel;
 }
-
-export interface SaveResult { document: DocumentResponse; warnings: string[]; }
-export interface PreviewResponse { content: string; warnings: string[]; format: string; }
-
+export interface Suggestion {
+  id: string; kind: string; severity: "needs_you" | "applied" | "info";
+  title: string; evidence: string; actions: string[];
+  step_id?: string; phase_id?: string; base?: string; missing?: number[];
+}
 export interface MissingFile { kind: string; path: string; }
 export interface StageIssue {
   name: string; ok: boolean; degraded: boolean;
   errors: string[]; warnings: string[]; info: string[]; missing_files: MissingFile[];
 }
 export interface ValidationReport {
-  ok: boolean;
-  totals: { steps: number; time_ps: number; stage_count: number };
-  protocol_issues: string[];
-  stage_issues: StageIssue[];
+  ok: boolean; totals: Record<string, number>; protocol_issues: string[];
+  stage_issues: StageIssue[]; suggestions: Suggestion[];
 }
+export interface DiscoverResult { document: DocumentResponse; suggestions: Suggestion[]; warnings: string[]; }
 
+export type FileType = "prmtop" | "mdin" | "mdout" | "mdcrd" | "inpcrd" | "folder" | "other";
 export interface FileInfo {
   path: string; name: string; file_type: FileType; is_directory: boolean;
-  size: number | null; extension: string | null; parent: string | null;
-  children: FileInfo[] | null;
+  size: number | null; extension: string | null; parent: string | null; children: FileInfo[] | null;
 }
-export interface FileMetadata {
-  file_path: string; file_type: FileType;
-  metadata: { details: Record<string, unknown> | null; warnings: string[]; kind: string };
-  warnings: string[];
-}
+export interface FileMetadata { file_path: string; file_type: FileType; metadata: Record<string, unknown>; warnings: string[]; }
+export interface RawFile { path: string; content: string; truncated: boolean; }
 
-export interface StageFilesPatch {
-  prmtop?: string | null; mdin?: string | null; mdout?: string | null;
-  mdcrd?: string | null; inpcrd?: string | null;
+// --- request bodies ---
+export interface AddTopology { path: string; kind: TopologyKind; }
+export interface UpdateTopology { path?: string; kind?: TopologyKind; }
+export interface SetStartingStructure { path: string | null; }
+export interface PhaseCreate { name: string; role: StageRole; }
+export interface PhaseUpdate { name?: string; role?: StageRole; }
+export interface StepFilesPatch { mdin?: string; mdout?: string; mdcrd?: string; }
+export interface StepCreatePayload {
+  name: string; topology?: string | null; input_coords?: InputCoordsModel;
+  mdin?: string; mdout?: string; mdcrd?: string;
+  expected_gap_ps?: number; gap_tolerance_ps?: number; notes?: string[];
 }
-export interface StageCreate {
-  name: string; role?: StageRole; files?: StageFilesPatch;
-  expected_gap_ps?: number | null; gap_tolerance_ps?: number | null; notes?: string[];
+export interface StepUpdatePayload {
+  name?: string; topology?: string | null; input_coords?: InputCoordsModel; files?: StepFilesPatch;
+  expected_gap_ps?: number; gap_tolerance_ps?: number; notes?: string[];
 }
-export interface StageUpdate {
-  name?: string; role?: StageRole; files?: StageFilesPatch;
-  expected_gap_ps?: number | null; gap_tolerance_ps?: number | null; notes?: string[];
+export interface StepMovePayload { phase_id: string; index: number; }
+export type AssignTarget = "pool" | "starting_structure" | "phase_topology" | "step_topology" | "step_slot";
+export interface AssignRequest {
+  path: string; target_type: AssignTarget; target_id?: string; kind?: TopologyKind; slot?: "mdin" | "mdout" | "mdcrd";
 }
-export interface SettingsPatch {
-  global_prmtop?: string | null; hmr_prmtop?: string | null; initial_coordinates?: string | null;
-  auto_link_restarts?: boolean; strict_validation?: boolean; allow_gaps?: boolean;
-  use_relative_paths?: boolean;
-}
-
-// Functional display config only (icon name = lucide; color = token name).
-export const FILE_TYPE_CONFIG: Record<FileType, { label: string; icon: string; color: string }> = {
-  prmtop: { label: "Topology",     icon: "Atom",       color: "ink" },
-  mdin:   { label: "Input",        icon: "FileInput",  color: "ink" },
-  mdout:  { label: "Output",       icon: "FileOutput", color: "ink" },
-  mdcrd:  { label: "Trajectory",   icon: "Film",       color: "ink" },
-  inpcrd: { label: "Coordinates",  icon: "Move3d",     color: "ink" },
-  folder: { label: "Folder",       icon: "Folder",     color: "ink-muted" },
-  other:  { label: "File",         icon: "File",       color: "ink-muted" },
-};
-
-export const STAGE_ROLE_CONFIG: Record<string, { label: string }> = {
-  minimization:  { label: "Minimization" },
-  heating:       { label: "Heating" },
-  equilibration: { label: "Equilibration" },
-  production:    { label: "Production" },
-  "":            { label: "Unknown" },
-};

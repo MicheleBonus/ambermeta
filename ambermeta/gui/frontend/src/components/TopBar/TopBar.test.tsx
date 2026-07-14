@@ -1,0 +1,60 @@
+import { describe, it, expect, vi } from "vitest";
+import { render, screen, waitFor } from "@testing-library/react";
+import { QueryClientProvider } from "@tanstack/react-query";
+import { http, HttpResponse } from "msw";
+import { server, emptyDocument } from "@/test/server";
+import { queryClient } from "@/api/queryClient";
+import { TopBar } from "./TopBar";
+import { ExportModal } from "./ExportModal";
+
+function renderTopBar() {
+  queryClient.clear();
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <TopBar onOpen={vi.fn()} onSave={vi.fn()} onDiscover={vi.fn()}
+        onExport={vi.fn()} onValidate={vi.fn()} />
+    </QueryClientProvider>
+  );
+}
+
+describe("TopBar", () => {
+  it("renders all workflow buttons", async () => {
+    renderTopBar();
+    await waitFor(() => expect(screen.getByRole("button", { name: "Open" })).toBeInTheDocument());
+    expect(screen.getByRole("button", { name: "Save" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Discover" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Validate" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Export" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Undo" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Redo" })).toBeInTheDocument();
+  });
+
+  it("disables Undo/Redo when the document reports can_undo/can_redo false", async () => {
+    renderTopBar();
+    await waitFor(() => expect(screen.getByRole("button", { name: "Undo" })).toBeDisabled());
+    expect(screen.getByRole("button", { name: "Redo" })).toBeDisabled();
+  });
+
+  it("enables Undo/Redo when the document reports can_undo/can_redo true", async () => {
+    server.use(
+      http.get("/api/document", () => HttpResponse.json({ ...emptyDocument, can_undo: true, can_redo: true }))
+    );
+    renderTopBar();
+    await waitFor(() => expect(screen.getByRole("button", { name: "Undo" })).not.toBeDisabled());
+    expect(screen.getByRole("button", { name: "Redo" })).not.toBeDisabled();
+  });
+});
+
+describe("ExportModal", () => {
+  it("offers only yaml/json export formats", () => {
+    queryClient.clear();
+    render(
+      <QueryClientProvider client={queryClient}>
+        <ExportModal open onClose={vi.fn()} />
+      </QueryClientProvider>
+    );
+    const select = screen.getByLabelText(/format/i) as HTMLSelectElement;
+    const values = Array.from(select.options).map((o) => o.value);
+    expect(values).toEqual(["yaml", "json"]);
+  });
+});

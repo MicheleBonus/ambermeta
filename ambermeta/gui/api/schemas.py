@@ -1,14 +1,10 @@
-"""
-Pydantic schemas for the AmberMeta GUI API.
-"""
-
+"""Pydantic schemas for the AmberMeta GUI API (v2: Simulation -> Phase -> Step)."""
 from typing import Dict, List, Optional, Any
 from pydantic import BaseModel, Field
 from enum import Enum
 
 
 class FileType(str, Enum):
-    """Enumeration of supported file types."""
     PRMTOP = "prmtop"
     MDIN = "mdin"
     MDOUT = "mdout"
@@ -19,7 +15,6 @@ class FileType(str, Enum):
 
 
 class StageRole(str, Enum):
-    """Enumeration of simulation stage roles."""
     MINIMIZATION = "minimization"
     HEATING = "heating"
     EQUILIBRATION = "equilibration"
@@ -27,8 +22,12 @@ class StageRole(str, Enum):
     UNKNOWN = ""
 
 
+class TopologyKind(str, Enum):
+    NORMAL = "normal"
+    HMR = "hmr"
+
+
 class FileInfo(BaseModel):
-    """Information about a discovered file."""
     path: str
     name: str
     file_type: FileType
@@ -42,40 +41,55 @@ class FileInfo(BaseModel):
         use_enum_values = True
 
 
-class StageFiles(BaseModel):
-    """Files associated with a simulation stage."""
-    prmtop: Optional[str] = None
+# ---- Simulation model (mirrors ambermeta.simulation dataclasses) ----
+
+class TopologyModel(BaseModel):
+    id: str
+    path: str
+    kind: TopologyKind = TopologyKind.NORMAL
+
+    class Config:
+        use_enum_values = True
+
+
+class InputCoordsModel(BaseModel):
+    source: str = "starting_structure"   # starting_structure | step | path
+    ref: Optional[str] = None
+    path: Optional[str] = None
+
+
+class StepModel(BaseModel):
+    id: str
+    name: str
+    topology: Optional[str] = None
+    input_coords: InputCoordsModel = Field(default_factory=InputCoordsModel)
     mdin: Optional[str] = None
     mdout: Optional[str] = None
     mdcrd: Optional[str] = None
-    inpcrd: Optional[str] = None
-
-
-class StageCreate(BaseModel):
-    """Request model for creating a new stage."""
-    name: str
-    role: StageRole = StageRole.UNKNOWN
-    files: StageFiles = Field(default_factory=StageFiles)
     expected_gap_ps: Optional[float] = None
     gap_tolerance_ps: Optional[float] = None
     notes: List[str] = Field(default_factory=list)
 
 
-class StageUpdate(BaseModel):
-    """Request model for updating a stage."""
-    name: Optional[str] = None
-    role: Optional[StageRole] = None
-    files: Optional[StageFiles] = None
-    expected_gap_ps: Optional[float] = None
-    gap_tolerance_ps: Optional[float] = None
-    notes: Optional[List[str]] = None
+class PhaseModel(BaseModel):
+    id: str
+    name: str
+    role: StageRole = StageRole.UNKNOWN
+    steps: List[StepModel] = Field(default_factory=list)
+
+    class Config:
+        use_enum_values = True
 
 
-class GlobalSettings(BaseModel):
-    """Global protocol settings (runtime; only prmtop fields are persisted)."""
-    global_prmtop: Optional[str] = None
-    hmr_prmtop: Optional[str] = None
-    initial_coordinates: Optional[str] = None
+class SimulationModel(BaseModel):
+    version: int = 2
+    topologies: List[TopologyModel] = Field(default_factory=list)
+    starting_structure: Optional[str] = None
+    phases: List[PhaseModel] = Field(default_factory=list)
+
+
+class RuntimeSettings(BaseModel):
+    """Runtime-only flags (topology/coords now live in the Simulation)."""
     auto_link_restarts: bool = True
     strict_validation: bool = True
     allow_gaps: bool = False
@@ -83,65 +97,110 @@ class GlobalSettings(BaseModel):
 
 
 class SettingsPatch(BaseModel):
-    """Partial patch for GlobalSettings — all fields Optional."""
-    global_prmtop: Optional[str] = None
-    hmr_prmtop: Optional[str] = None
-    initial_coordinates: Optional[str] = None
     auto_link_restarts: Optional[bool] = None
     strict_validation: Optional[bool] = None
     allow_gaps: Optional[bool] = None
     use_relative_paths: Optional[bool] = None
 
 
-class StageModel(BaseModel):
-    """A protocol stage as edited in the GUI (flat gap fields)."""
-    id: str
-    name: str
-    role: StageRole = StageRole.UNKNOWN
-    prmtop: Optional[str] = None
-    mdin: Optional[str] = None
-    mdout: Optional[str] = None
-    mdcrd: Optional[str] = None
-    inpcrd: Optional[str] = None
-    expected_gap_ps: Optional[float] = None
-    gap_tolerance_ps: Optional[float] = None
-    notes: List[str] = Field(default_factory=list)
-
-    class Config:
-        use_enum_values = True
-
-
 class DocumentResponse(BaseModel):
-    """The whole server-authoritative document in one payload."""
     base_directory: str
     manifest_path: Optional[str] = None
     dirty: bool = False
     can_undo: bool = False
     can_redo: bool = False
-    settings: GlobalSettings = Field(default_factory=GlobalSettings)
-    stages: List[StageModel] = Field(default_factory=list)
+    settings: RuntimeSettings = Field(default_factory=RuntimeSettings)
+    simulation: SimulationModel = Field(default_factory=SimulationModel)
 
 
-class StageReorderRequest(BaseModel):
-    """Request model for reordering stages."""
-    stage_ids: List[str]
+# ---- request models ----
+
+class StageFiles(BaseModel):
+    """Per-step run files (topology/coords are handled separately)."""
+    mdin: Optional[str] = None
+    mdout: Optional[str] = None
+    mdcrd: Optional[str] = None
 
 
-class BulkStageUpdate(BaseModel):
-    """Request model for bulk-updating multiple stages at once."""
-    stage_ids: List[str]
-    update: StageUpdate
+class AddTopology(BaseModel):
+    path: str
+    kind: TopologyKind = TopologyKind.NORMAL
 
 
-class FileMetadata(BaseModel):
-    """Metadata extracted from a file."""
-    file_path: str
-    file_type: FileType
-    metadata: Dict[str, Any] = Field(default_factory=dict)
-    warnings: List[str] = Field(default_factory=list)
+class UpdateTopology(BaseModel):
+    path: Optional[str] = None
+    kind: Optional[TopologyKind] = None
 
-    class Config:
-        use_enum_values = True
+
+class SetStartingStructure(BaseModel):
+    path: Optional[str] = None
+
+
+class PhaseCreate(BaseModel):
+    name: str
+    role: StageRole = StageRole.UNKNOWN
+
+
+class PhaseUpdate(BaseModel):
+    name: Optional[str] = None
+    role: Optional[StageRole] = None
+
+
+class PhaseReorder(BaseModel):
+    phase_ids: List[str]
+
+
+class StepCreate(BaseModel):
+    name: str
+    topology: Optional[str] = None
+    input_coords: Optional[InputCoordsModel] = None
+    mdin: Optional[str] = None
+    mdout: Optional[str] = None
+    mdcrd: Optional[str] = None
+    expected_gap_ps: Optional[float] = None
+    gap_tolerance_ps: Optional[float] = None
+    notes: List[str] = Field(default_factory=list)
+
+
+class StepUpdate(BaseModel):
+    # `topology` uses model_fields_set in the route: absent = leave, null = clear.
+    name: Optional[str] = None
+    topology: Optional[str] = None
+    input_coords: Optional[InputCoordsModel] = None
+    files: Optional[StageFiles] = None
+    expected_gap_ps: Optional[float] = None
+    gap_tolerance_ps: Optional[float] = None
+    notes: Optional[List[str]] = None
+
+
+class StepMove(BaseModel):
+    phase_id: str
+    index: int = -1   # -1 appends
+
+
+class StepReorder(BaseModel):
+    step_ids: List[str]
+
+
+class AssignRequest(BaseModel):
+    path: str
+    target_type: str   # pool | starting_structure | phase_topology | step_topology | step_slot
+    target_id: Optional[str] = None
+    kind: Optional[TopologyKind] = None   # for pool / *_topology
+    slot: Optional[str] = None            # for step_slot: mdin|mdout|mdcrd
+
+
+class Suggestion(BaseModel):
+    id: str
+    kind: str        # missing_run|continuity_gap|topology_confirm|restart_link|role_guess|starting_structure
+    severity: str    # needs_you|applied|info
+    title: str
+    evidence: str
+    actions: List[str] = Field(default_factory=list)
+    step_id: Optional[str] = None       # the step a step-scoped suggestion (e.g. continuity_gap) refers to
+    phase_id: Optional[str] = None
+    base: Optional[str] = None          # missing_run: the numbered-sequence base
+    missing: Optional[List[int]] = None # missing_run: the absent indices
 
 
 class MissingFile(BaseModel):
@@ -164,10 +223,26 @@ class ValidationReport(BaseModel):
     totals: Dict[str, float] = Field(default_factory=dict)
     protocol_issues: List[str] = Field(default_factory=list)
     stage_issues: List[StageIssue] = Field(default_factory=list)
+    suggestions: List[Suggestion] = Field(default_factory=list)
+
+
+class FileMetadata(BaseModel):
+    file_path: str
+    file_type: FileType
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    warnings: List[str] = Field(default_factory=list)
+
+    class Config:
+        use_enum_values = True
+
+
+class RawFile(BaseModel):
+    path: str
+    content: str
+    truncated: bool = False
 
 
 class ApiError(BaseModel):
-    """Standard API error response."""
     detail: str
     code: Optional[str] = None
 
@@ -191,6 +266,12 @@ class DiscoverRequest(BaseModel):
     pattern: Optional[str] = None
 
 
+class DiscoverResult(BaseModel):
+    document: DocumentResponse
+    suggestions: List[Suggestion] = Field(default_factory=list)
+    warnings: List[str] = Field(default_factory=list)
+
+
 class PreviewRequest(BaseModel):
     format: str = "yaml"
 
@@ -201,5 +282,4 @@ class PreviewResponse(BaseModel):
     format: str
 
 
-# Forward reference resolution
 FileInfo.model_rebuild()

@@ -72,7 +72,10 @@ ION_RESNAMES = {
     "Mg+", "Mg2+", "Ca2+", "Zn2+",     # Divalent
     "Ba2+", "Sr2+", "Fe2+", "Mn2+",
     "Co2+", "Ni2+", "Cu2+", "Cd2+",
-    "Fe3+", "Cr3+", "Al3+"             # Trivalent
+    "Fe3+", "Cr3+", "Al3+",            # Trivalent
+    # Sign-less aliases (older / converted topologies)
+    "NA", "CL", "K", "RB", "CS", "LI", "F", "BR", "I",
+    "MG", "CA", "ZN", "MN", "FE", "CO", "NI", "CU", "CD", "BA", "SR", "IB",
 }
 
 # -------------------------------
@@ -236,13 +239,14 @@ class PrmtopMetadata:
     # Chemistry
     total_mass: float = 0.0
     total_charge: float = 0.0
-    is_neutral: bool = False
+    is_neutral: Optional[bool] = None
     
     # Box / Density
     box_dimensions: Optional[List[float]] = None 
     box_angles: Optional[List[float]] = None     
     box_volume: Optional[float] = None
     density: Optional[float] = None
+    box_is_topology_time: bool = True   # BOX_DIMENSIONS is the LEaP-time box, not the equilibrated one
     solvent_type: str = "Vacuum"
     simulation_category: str = "Vacuum"
 
@@ -303,7 +307,12 @@ def _classify_simulation(md: PrmtopMetadata):
     # If no major biomolecules found but we have other stuff (excluding water/ions)
     # calculate remainder
     known_solvents = WATER_RESNAMES | ORGANIC_SOLVENT_RESNAMES | ION_RESNAMES
-    unknown_residues = [r for r in md.residue_composition if r not in known_solvents and not (has_protein or has_dna or has_rna or has_lipid)]
+    biomol = PROTEIN_RESNAMES | DNA_RESNAMES | RNA_RESNAMES | LIPID_RESNAMES
+    unknown_residues = [
+        r for r in md.residue_composition
+        if r not in known_solvents and r not in biomol
+        and not (len(r) == 4 and r[1:] in PROTEIN_RESNAMES)
+    ]
     if unknown_residues and not solutes:
         solutes.append("Small Molecule / Ligand")
     elif unknown_residues:
@@ -313,8 +322,8 @@ def _classify_simulation(md: PrmtopMetadata):
 
     # 3. Build Solvent Description
     solvent_context = ""
-    if md.solvent_type == "Implicit Solvent":
-        solvent_context = "in Implicit Solvent"
+    if md.solvent_type == "Non-periodic":
+        solvent_context = "non-periodic (vacuum or implicit solvent — depends on mdin igb)"
     elif md.solvent_type == "Vacuum":
         solvent_context = "in Vacuum"
     else:
@@ -382,16 +391,16 @@ def extract_prmtop_metadata(filepath: str) -> PrmtopMetadata:
     charges = prmtop.get("CHARGE")
     if charges:
         valid_charges = [c for c in charges if c is not None]
-        if md.natom and len(valid_charges) != md.natom:
+        complete = not (md.natom and len(valid_charges) != md.natom)
+        if not complete:
             md.warnings.append(
                 f"CHARGE has {len(valid_charges)} valid of {md.natom} atoms; "
                 "neutrality verdict is uncertain."
             )
         if valid_charges:
-            raw_sum = sum(valid_charges)
-            md.total_charge = raw_sum / 18.2223
-            # Threshold set to 1e-2 as requested
-            md.is_neutral = abs(md.total_charge) < 1e-2
+            md.total_charge = sum(valid_charges) / 18.2223
+            # Only assert neutrality when the CHARGE section was fully read.
+            md.is_neutral = (abs(md.total_charge) < 1e-2) if complete else None
 
     masses = prmtop.get("MASS")
     if masses:
@@ -413,12 +422,21 @@ def extract_prmtop_metadata(filepath: str) -> PrmtopMetadata:
         md.hmr_detection_method = "atomic_number"
     elif masses and atom_names:
         n = min(len(masses), len(atom_names))
+        def _is_h_name(nm: str) -> bool:
+            nm = str(nm).strip()
+            # "H", "H1", "HA", "HG1" are hydrogen; "He"/"Hg"/"Ho"/"Hf" (2nd char lowercase) are not.
+            return bool(nm) and nm[0].upper() == "H" and not (len(nm) > 1 and nm[1].islower())
         hydrogen_masses = [masses[i] for i in range(n)
                            if masses[i] is not None
-                           and str(atom_names[i]).strip().upper().startswith("H")
+                           and _is_h_name(atom_names[i])
                            and masses[i] < 5.0]
         if hydrogen_masses:
             md.hmr_detection_method = "atom_name"
+            if any(1.9 <= m <= 2.2 for m in hydrogen_masses):
+                md.warnings.append(
+                    "Hydrogen masses ~2.0 amu on the atom-name path may be deuterium, "
+                    "not HMR; confirm via ATOMIC_NUMBER."
+                )
 
     if hydrogen_masses:
         min_mass, max_mass = min(hydrogen_masses), max(hydrogen_masses)
@@ -451,8 +469,12 @@ def extract_prmtop_metadata(filepath: str) -> PrmtopMetadata:
         else:
             md.force_field_features.append("Orthorhombic Box")
         md.solvent_type = "Explicit Solvent"
-    elif prmtop.get("RADIUS_SET"):
-        md.solvent_type = "Implicit Solvent"
+        md.force_field_features.append("Box/density are from the topology-time box (LEaP BOX_DIMENSIONS), not the equilibrated system")
+    else:
+        # Vacuum vs implicit solvent is a runtime mdin choice (igb), NOT encoded in
+        # the topology — LEaP writes RADIUS_SET/PBRadii into virtually every prmtop.
+        # From the topology alone we can only say the system is non-periodic.
+        md.solvent_type = "Non-periodic"
         rs = prmtop.get("RADIUS_SET")
         if rs:
             radius_str = "".join(str(x) for x in rs if x).strip()
@@ -505,7 +527,8 @@ def summarize_metadata(md: PrmtopMetadata) -> str:
     lines.append(f"  Atoms:    {natom_str}")
     lines.append(f"  Residues: {nres_str}")
     lines.append(f"  Mass:     {md.total_mass:,.2f} Da")
-    lines.append(f"  Charge:   {md.total_charge:.4f} e ({'Neutral' if md.is_neutral else 'Charged'})")
+    neutral_str = "Unknown" if md.is_neutral is None else ("Neutral" if md.is_neutral else "Charged")
+    lines.append(f"  Charge:   {md.total_charge:.4f} e ({neutral_str})")
     
     lines.append(f"\n[Simulation Environment]")
     lines.append(f"  Category: {md.simulation_category}")

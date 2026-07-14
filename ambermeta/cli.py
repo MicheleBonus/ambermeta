@@ -4,12 +4,12 @@ import argparse
 import csv
 import json
 import os
-import re
 import sys
 from typing import Any, Dict, List, Optional
 
 from ambermeta.errors import AmberMetaError
 from ambermeta.logging_config import configure_logging, get_logger
+from ambermeta.roles import classify_role
 from ambermeta.protocol import (
     SimulationProtocol,
     auto_discover,
@@ -201,19 +201,172 @@ def _scan_directory_files(directory: str) -> Dict[str, List[str]]:
 
 def _suggest_stage_role(name: str) -> str:
     """Suggest a stage role based on the stage name."""
-    name_lower = name.lower()
+    return classify_role(name)
 
-    if re.search(r'(?:^|[_.\-])(?:min|minim|em)(?:[_.\-]|$)', name_lower):
-        return "minimization"
-    if re.search(r'(?:^|[_.\-])(?:heat|warm|therm)(?:[_.\-]|$)', name_lower):
-        return "heating"
-    if re.search(r'(?:^|[_.\-])(?:equil|nvt|npt)(?:[_.\-]|$)', name_lower):
-        return "equilibration"
-    if re.search(r'(?:^|[_.\-])(?:prod|md|run)(?:[_.\-]|$)', name_lower):
-        return "production"
 
-    return ""
+def _topology_path(sim, topo_id: Optional[str]) -> str:
+    for t in sim.topologies:
+        if t.id == topo_id:
+            return t.path
+    return topo_id or "no topology"
 
+
+def _input_source_label(step) -> str:
+    ic = step.input_coords
+    if ic.source == "starting_structure":
+        return "starting structure"
+    if ic.source == "step":
+        return f"step {ic.ref}" if ic.ref else "previous step"
+    return ic.path or "?"
+
+
+def _print_simulation(sim, report=None) -> None:
+    """Print the three-level Simulation structure (pool, starting structure, phases→steps)."""
+    _out("\nSimulation summary")
+    _out("==================")
+    _out(f"Topologies (pool): {len(sim.topologies)}")
+    for t in sim.topologies:
+        _out(f"  - {t.id} [{t.kind}]  {t.path}")
+    _out(f"Starting structure: {sim.starting_structure or '(none)'}")
+    _out(f"Phases: {len(sim.phases)}")
+    for phase in sim.phases:
+        role = phase.role or "unclassified"
+        _out(f"\nPhase: {phase.name} [{role}]")
+        for step in phase.steps:
+            topo = _topology_path(sim, step.topology) if step.topology else "no topology"
+            files = ", ".join(
+                f"{k}={getattr(step, k)}" for k in ("mdin", "mdout", "mdcrd") if getattr(step, k)
+            )
+            line = f"  - {step.name}  topology={topo}  input={_input_source_label(step)}"
+            _out(line + (f"  ({files})" if files else ""))
+    if report is not None:
+        _sim_findings(report)
+
+
+def _sim_findings(report) -> None:
+    """Print continuity/sequence findings + protocol notes + an overall status line."""
+    suggestions = report.get("suggestions", []) or []
+    findings = [s for s in suggestions if s.get("kind") in ("continuity_gap", "missing_run")]
+    if findings:
+        _out("\nContinuity / sequence findings:")
+        for s in findings:
+            _out(f"  - {s.get('title')}: {s.get('evidence')}")
+    issues = report.get("protocol_issues", []) or []
+    if issues:
+        _out("\nProtocol notes:")
+        for note in issues:
+            _out(f"  - {note}")
+    _out(f"\nValidation: {'OK' if report.get('ok') else 'ISSUES FOUND'}")
+
+
+def _resolve_sim_format(path: str, requested: Optional[str]) -> str:
+    """Choose a v2 serialization format: explicit request, else by extension, else json."""
+    if requested:
+        return requested
+    ext = os.path.splitext(path)[1].lower().lstrip(".")
+    return "yaml" if ext in ("yaml", "yml") else "json"
+
+
+def _discover_command(args: argparse.Namespace) -> int:
+    """Discover-as-draft: scan a directory into a Simulation draft; optionally write v2."""
+    from ambermeta.gui.api.core_bridge import discover_draft
+
+    directory = os.path.abspath(args.directory)
+    if not os.path.isdir(directory):
+        print(Colors.error(f"ERROR: Directory not found: {directory}"), file=sys.stderr)
+        return 1
+
+    result = discover_draft(directory, recursive=args.recursive, pattern=args.pattern)
+    sim = result["simulation"]
+    if not sim.phases:
+        _out("No simulation files discovered; nothing to draft.")
+        return 1
+
+    _print_simulation(sim)
+    for w in result.get("warnings", []) or []:
+        _out(Colors.warning(f"WARNING: {w}"))
+    suggestions = result.get("suggestions", []) or []
+    if suggestions:
+        _out("\nSuggestions:")
+        for s in suggestions:
+            _out(f"  - [{s.get('severity')}] {s.get('title')}")
+
+    if getattr(args, "write", None):
+        from ambermeta.simulation import write_simulation
+        fmt = _resolve_sim_format(args.write, getattr(args, "format", None))
+        write_simulation(sim, args.write, fmt)
+        _out(Colors.success(f"\nWrote v2 draft manifest: {args.write} ({fmt})"))
+    return 0
+
+
+def _sim_to_legacy_payload(sim) -> Dict[str, Any]:
+    """Flatten a Simulation into a v1 flat-stages payload for downstream tools."""
+    topo_by_id = {t.id: t.path for t in sim.topologies}
+    normal = [t for t in sim.topologies if t.kind == "normal"]
+    hmr = [t for t in sim.topologies if t.kind == "hmr"]
+    payload: Dict[str, Any] = {}
+    if normal:
+        payload["global_prmtop"] = normal[0].path
+    if hmr:
+        payload["hmr_prmtop"] = hmr[0].path
+    stages: List[Dict[str, Any]] = []
+    for phase in sim.phases:
+        for step in phase.steps:
+            stage: Dict[str, Any] = {"name": step.name}
+            if phase.role:
+                stage["stage_role"] = phase.role
+            if step.topology:
+                stage["prmtop"] = topo_by_id.get(step.topology)
+            for k in ("mdin", "mdout", "mdcrd"):
+                if getattr(step, k):
+                    stage[k] = getattr(step, k)
+            ic = step.input_coords
+            if ic.path:
+                stage["inpcrd"] = ic.path
+            elif ic.source == "starting_structure" and sim.starting_structure:
+                stage["inpcrd"] = sim.starting_structure
+            if step.expected_gap_ps is not None or step.gap_tolerance_ps is not None:
+                stage["gaps"] = {"expected": step.expected_gap_ps, "tolerance": step.gap_tolerance_ps}
+            if step.notes:
+                stage["notes"] = list(step.notes)
+            stages.append(stage)
+    payload["stages"] = stages
+    return payload
+
+
+def _export_command(args: argparse.Namespace) -> int:
+    """Convert a manifest (v1 auto-migrated or v2) to canonical v2 or a legacy flat manifest."""
+    from ambermeta.simulation import load_simulation, write_simulation, simulation_to_payload
+
+    manifest = args.manifest
+    if not os.path.exists(manifest):
+        print(Colors.error(f"ERROR: Manifest not found: {manifest}"), file=sys.stderr)
+        return 1
+    try:
+        sim = load_simulation(manifest)
+    except (IOError, OSError, ValueError, RuntimeError) as e:
+        print(Colors.error(f"ERROR: Failed to load manifest: {e}"), file=sys.stderr)
+        return 1
+
+    if args.to == "legacy":
+        payload = _sim_to_legacy_payload(sim)
+        if args.output:
+            fmt = _resolve_manifest_format(args)      # yaml/json/toml/csv
+            from ambermeta import manifest as manifest_io
+            manifest_io.write_manifest(payload, args.output, fmt)
+            _out(Colors.success(f"Wrote legacy manifest: {args.output} ({fmt})"))
+        else:
+            print(json.dumps(payload, indent=2))
+        return 0
+
+    # default: canonical v2
+    if args.output:
+        fmt = _resolve_sim_format(args.output, getattr(args, "format", None))
+        write_simulation(sim, args.output, fmt)
+        _out(Colors.success(f"Wrote v2 manifest: {args.output} ({fmt})"))
+    else:
+        print(json.dumps(simulation_to_payload(sim), indent=2))
+    return 0
 
 
 def _print_protocol(protocol: SimulationProtocol, verbose: bool = False) -> None:
@@ -460,6 +613,12 @@ def _get_parser_for_file(filepath: str):
 
 def _validate_command(args: argparse.Namespace) -> int:
     """Validate simulation files and report issues."""
+    manifest = getattr(args, "manifest", None)
+    if manifest:
+        return _validate_manifest(args, manifest)
+    if not getattr(args, "files", None):
+        print("ERROR: provide files to validate or --manifest.", file=sys.stderr)
+        return 2
     result: Dict[str, Any] = {
         "status": "ok",
         "files": [],
@@ -560,6 +719,51 @@ def _validate_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def _validate_manifest(args: argparse.Namespace, manifest: str) -> int:
+    """Validate a whole Simulation manifest: continuity, sequence holes, suggestions."""
+    from ambermeta.simulation import load_simulation
+    from ambermeta.gui.api.core_bridge import validate_simulation
+
+    if not os.path.exists(manifest):
+        print(Colors.error(f"ERROR: Manifest not found: {manifest}"), file=sys.stderr)
+        return 1
+    try:
+        sim = load_simulation(manifest)
+    except (IOError, OSError, ValueError, RuntimeError) as e:
+        print(Colors.error(f"ERROR: Failed to load manifest: {e}"), file=sys.stderr)
+        return 1
+
+    base_dir = os.path.dirname(os.path.abspath(manifest)) or "."
+    settings = {
+        "strict_validation": True,
+        "allow_gaps": bool(getattr(args, "allow_gaps", False)),
+        "use_relative_paths": True,
+    }
+    report = validate_simulation(sim, settings, base_dir)
+
+    if args.format == "json":
+        print(json.dumps(report, indent=2))
+    elif args.format == "yaml":
+        if yaml is None:
+            print(Colors.error("ERROR: PyYAML is required for YAML output"), file=sys.stderr)
+            return 1
+        print(yaml.safe_dump(report, sort_keys=False))
+    else:
+        _out(Colors.header("\nSimulation validation"))
+        for stage in report.get("stage_issues", []):
+            for err in stage.get("errors", []):
+                _out(f"  {Colors.error('ERROR')} {stage['name']}: {err}")
+        _sim_findings(report)
+
+    ok = bool(report.get("ok", True))
+    findings = [s for s in report.get("suggestions", []) if s.get("kind") in ("continuity_gap", "missing_run")]
+    if not ok:
+        return 1
+    if args.strict and findings:
+        return 1
+    return 0
+
+
 def _info_command(args: argparse.Namespace) -> int:
     """Display detailed metadata for a single file."""
     filepath = args.file
@@ -624,7 +828,7 @@ _ambermeta_completion() {
     cur="${COMP_WORDS[COMP_CWORD]}"
     prev="${COMP_WORDS[COMP_CWORD-1]}"
 
-    local commands="plan validate info init gui completion"
+    local commands="plan discover validate info init export gui completion"
     local global_opts="--help --log-level --log-file --quiet -q"
 
     if [[ ${COMP_CWORD} -eq 1 ]]; then
@@ -636,14 +840,20 @@ _ambermeta_completion() {
         plan)
             COMPREPLY=( $(compgen -W "--help -m --manifest --skip-cross-stage-validation --strict --recursive --interactive -v --verbose --summary-path --summary-format --methods-summary-path --stats-csv --no-expand-env --pattern --auto-detect-restarts --prmtop" -- "$cur") )
             ;;
+        discover)
+            COMPREPLY=( $(compgen -W "--help --recursive --no-recursive --pattern --write --format" -- "$cur") )
+            ;;
         validate)
-            COMPREPLY=( $(compgen -W "--help --strict --format" -- "$cur") )
+            COMPREPLY=( $(compgen -W "--help --strict --format --manifest --allow-gaps" -- "$cur") )
             ;;
         info)
             COMPREPLY=( $(compgen -W "--help --format" -- "$cur") )
             ;;
         init)
             COMPREPLY=( $(compgen -W "--help -o --output --template --auto --format --validate --dry-run --force" -- "$cur") )
+            ;;
+        export)
+            COMPREPLY=( $(compgen -W "--help --to -o --output --format" -- "$cur") )
             ;;
         gui)
             COMPREPLY=( $(compgen -W "--help --host --port --no-browser" -- "$cur") )
@@ -666,6 +876,8 @@ _ambermeta() {
   local -a commands
   commands=(
     'plan:Build and summarize a SimulationProtocol'
+    'discover:Discover files into a Simulation draft (v2)'
+    'export:Convert a manifest to v2 or legacy flat'
     'validate:Validate simulation files'
     'info:Display metadata for a single file'
     'init:Generate example manifest templates'
@@ -689,8 +901,14 @@ _ambermeta() {
         plan)
           _arguments '--manifest[Path to manifest file]:file:_files' '--recursive[Auto-discover files]' '--interactive[Prompt for stages]' '--summary-path[Write protocol summary]:file:_files' '--summary-format[Summary format]:format:(json yaml)' '--methods-summary-path[Write methods summary]:file:_files' '--stats-csv[Write stats CSV]:file:_files' '--pattern[Regex file filter]:pattern:' '--prmtop[Global topology file]:file:_files' '--skip-cross-stage-validation[Skip continuity checks]' '--strict[Abort on first unreadable file]' '--no-expand-env[Disable env var expansion]' '--auto-detect-restarts[Link restarts automatically]' '(-v --verbose)'{-v,--verbose}'[Show detailed stage metadata]' '*:path:_files'
           ;;
+        discover)
+          _arguments '(--recursive --no-recursive)'{--recursive,--no-recursive}'[Recurse into subdirectories]' '--pattern[Regex file filter]:pattern:' '--write[Write v2 manifest to path]:file:_files' '--format[Format for --write]:format:(json yaml)' '*:path:_files'
+          ;;
+        export)
+          _arguments '--to[Target representation]:to:(v2 legacy)' '(-o --output)'{-o,--output}'[Output path]:file:_files' '--format[Output format]:format:(json yaml toml csv)' '1:manifest:_files'
+          ;;
         validate)
-          _arguments '--strict[Treat warnings as errors]' '--format[Output format]:format:(text json yaml)' '*:file:_files'
+          _arguments '--strict[Treat warnings as errors]' '--format[Output format]:format:(text json yaml)' '--manifest[Validate a whole simulation manifest]:file:_files' '--allow-gaps[Treat unexpected inter-step gaps as allowed]' '*:file:_files'
           ;;
         info)
           _arguments '--format[Output format]:format:(text json yaml)' '1:file:_files'
@@ -715,6 +933,8 @@ _ambermeta "$@"
 complete -c ambermeta -f
 
 complete -c ambermeta -n "__fish_use_subcommand" -a "plan" -d "Build and summarize a SimulationProtocol"
+complete -c ambermeta -n "__fish_use_subcommand" -a "discover" -d "Discover files into a Simulation draft (v2)"
+complete -c ambermeta -n "__fish_use_subcommand" -a "export" -d "Convert a manifest to v2 or legacy flat"
 complete -c ambermeta -n "__fish_use_subcommand" -a "validate" -d "Validate simulation files"
 complete -c ambermeta -n "__fish_use_subcommand" -a "info" -d "Display metadata for a single file"
 complete -c ambermeta -n "__fish_use_subcommand" -a "init" -d "Generate example manifest templates"
@@ -740,8 +960,20 @@ complete -c ambermeta -n "__fish_seen_subcommand_from plan" -l pattern -d "Regex
 complete -c ambermeta -n "__fish_seen_subcommand_from plan" -l auto-detect-restarts -d "Auto-link restart files"
 complete -c ambermeta -n "__fish_seen_subcommand_from plan" -l prmtop -d "Global prmtop file"
 
+complete -c ambermeta -n "__fish_seen_subcommand_from discover" -l recursive -d "Recurse into subdirectories"
+complete -c ambermeta -n "__fish_seen_subcommand_from discover" -l no-recursive -d "Do not recurse"
+complete -c ambermeta -n "__fish_seen_subcommand_from discover" -l pattern -d "Regex file filter"
+complete -c ambermeta -n "__fish_seen_subcommand_from discover" -l write -d "Write v2 manifest to path"
+complete -c ambermeta -n "__fish_seen_subcommand_from discover" -l format -d "Format for --write" -xa "json yaml"
+
+complete -c ambermeta -n "__fish_seen_subcommand_from export" -l to -d "Target representation" -xa "v2 legacy"
+complete -c ambermeta -n "__fish_seen_subcommand_from export" -s o -l output -d "Output path"
+complete -c ambermeta -n "__fish_seen_subcommand_from export" -l format -d "Output format" -xa "json yaml toml csv"
+
 complete -c ambermeta -n "__fish_seen_subcommand_from validate" -l strict -d "Treat warnings as errors"
 complete -c ambermeta -n "__fish_seen_subcommand_from validate" -l format -d "Output format" -xa "text json yaml"
+complete -c ambermeta -n "__fish_seen_subcommand_from validate" -l manifest -d "Validate a whole simulation manifest (v2)"
+complete -c ambermeta -n "__fish_seen_subcommand_from validate" -l allow-gaps -d "Treat unexpected inter-step gaps as allowed"
 
 complete -c ambermeta -n "__fish_seen_subcommand_from info" -l format -d "Output format" -xa "text json yaml"
 
@@ -786,6 +1018,12 @@ def _init_command(args: argparse.Namespace) -> int:
             if response != "y":
                 _out("Aborted.")
                 return 1
+
+    if getattr(args, "v2", False):
+        with open(output_path, "w", encoding="utf-8") as fh:
+            fh.write(_generate_v2_template())
+        _out(Colors.success(f"Created {args.output} (v2)"))
+        return 0
 
     # Scan directory for common file patterns
     discovered_files = {
@@ -1025,6 +1263,45 @@ def _render_candidate_stages(
     return lines
 
 
+def _generate_v2_template() -> str:
+    """A commented v2 (Simulation) template manifest a user can edit."""
+    return """\
+# AmberMeta Manifest - v2 (Simulation -> Phase -> Step)
+# Topologies live in a Simulation-owned pool; each step binds one by id.
+# input_coords.source is one of: starting_structure | step (ref: <step id>) | path
+version: 2
+simulation:
+  topologies:
+    - id: top_wt
+      path: system.prmtop
+      kind: normal          # "normal" or "hmr" (hydrogen-mass-repartitioned)
+    - id: top_wt_hmr
+      path: system_hmr.prmtop
+      kind: hmr
+  starting_structure: system.inpcrd
+phases:
+  - { id: ph_min,  name: Minimization,  role: minimization, order: 0 }
+  - { id: ph_prod, name: Production,     role: production,   order: 1 }
+steps:
+  - id: st_min
+    phase: ph_min
+    order: 0
+    topology: top_wt
+    input_coords: { source: starting_structure }
+    mdin: min.in
+    mdout: min.out
+  - id: st_prod_001
+    phase: ph_prod
+    order: 0
+    topology: top_wt_hmr
+    input_coords: { source: step, ref: st_min }
+    mdin: prod_001.in
+    mdout: prod_001.out
+    mdcrd: prod_001.nc
+    gaps: { expected: null, tolerance: null }
+"""
+
+
 def _generate_minimal_manifest(discovered: Dict[str, List[str]], stage_candidates: List[Dict[str, Any]]) -> str:
     """Generate a minimal manifest template."""
     if stage_candidates:
@@ -1229,6 +1506,22 @@ stages:
 """
 
 
+def _plan_v2(args: argparse.Namespace, directory: str) -> int:
+    """Summarize a v2 (Simulation) manifest: structure + continuity/sequence findings."""
+    from ambermeta.simulation import load_simulation
+    from ambermeta.gui.api.core_bridge import validate_simulation
+
+    sim = load_simulation(args.manifest)
+    settings = {
+        "strict_validation": not bool(getattr(args, "skip_cross_stage_validation", None)),
+        "allow_gaps": False,
+        "use_relative_paths": True,
+    }
+    report = validate_simulation(sim, settings, directory)
+    _print_simulation(sim, report)
+    return 0
+
+
 def _plan_command(args: argparse.Namespace) -> int:
     directory = os.path.abspath(args.directory)
 
@@ -1267,6 +1560,14 @@ def _plan_command(args: argparse.Namespace) -> int:
                 sys.stdout.write("\n")
 
     if args.manifest:
+        from ambermeta.manifest import _read_raw_manifest
+        from ambermeta.simulation import _is_v2
+        try:
+            _is_v2_manifest = _is_v2(_read_raw_manifest(args.manifest, expand_env=expand_env))
+        except Exception:
+            _is_v2_manifest = False
+        if _is_v2_manifest:
+            return _plan_v2(args, directory)
         _out(f"Loading manifest: {args.manifest}")
         protocol = load_protocol_from_manifest(
             args.manifest,
@@ -1493,9 +1794,11 @@ def build_parser() -> argparse.ArgumentParser:
         epilog="""
 Commands:
   plan      Build a simulation protocol from manifest or auto-discovery
+  discover  Discover files into a Simulation draft (v2) and optionally write a manifest
   validate  Quick validation of simulation files
   info      Display detailed metadata for a single file
   init      Generate example manifest templates
+  export    Convert a manifest to canonical v2 or a legacy flat manifest
 
 Examples:
   ambermeta plan -m manifest.yaml           Build protocol from manifest
@@ -1503,9 +1806,12 @@ Examples:
   ambermeta plan . --interactive            Prompt for stage definitions
   ambermeta plan -m manifest.yaml \\
     --methods-summary-path methods.json     Export publication-ready summary
+  ambermeta discover . --write sim.yaml       Draft a v2 manifest from a directory
   ambermeta validate system.prmtop *.mdout  Validate multiple files
+  ambermeta validate --manifest sim.yaml      Validate a whole simulation (continuity/gaps)
   ambermeta info --format json system.prmtop  Show metadata as JSON
   ambermeta init --template standard .      Generate manifest template
+  ambermeta export old.yaml -o sim.yaml       Upgrade a v1 manifest to v2
 
 File Types:
   prmtop:  .prmtop, .top, .parm7    (topology/parameters)
@@ -1632,6 +1938,22 @@ For documentation, visit: https://github.com/MicheleBonus/ambermeta
         help="Global prmtop file to use for all stages (avoids specifying it per stage)",
     )
 
+    discover_parser = subparsers.add_parser(
+        "discover",
+        help="Discover files into a Simulation draft (Sim→Phase→Step) and optionally write a v2 manifest",
+        description=(
+            "Scan a directory into a draft Simulation using the same discover-as-draft engine "
+            "as the GUI: a topology pool, phases inferred by role, and steps with per-step "
+            "topology binding and input-coordinate sources. Prints the draft and any suggestions; "
+            "with --write, saves a v2 manifest you can edit."
+        ),
+    )
+    discover_parser.add_argument("directory", nargs="?", default=".", help="Directory to scan (default: current directory)")
+    discover_parser.add_argument("--recursive", action=argparse.BooleanOptionalAction, default=True, help="Recurse into subdirectories (default: on; use --no-recursive to disable)")
+    discover_parser.add_argument("--pattern", help="Regex filter for discovered files")
+    discover_parser.add_argument("--write", help="Write the draft to this path as a v2 manifest")
+    discover_parser.add_argument("--format", choices=["json", "yaml"], help="Format for --write (default: inferred from extension, else json)")
+
     # UX-005: validate subcommand
     validate_parser = subparsers.add_parser(
         "validate",
@@ -1640,8 +1962,8 @@ For documentation, visit: https://github.com/MicheleBonus/ambermeta
     )
     validate_parser.add_argument(
         "files",
-        nargs="+",
-        help="Files to validate (prmtop, mdin, mdout, mdcrd, inpcrd)",
+        nargs="*",
+        help="Files to validate (prmtop, mdin, mdout, mdcrd, inpcrd). Omit when using --manifest.",
     )
     validate_parser.add_argument(
         "--strict",
@@ -1653,6 +1975,15 @@ For documentation, visit: https://github.com/MicheleBonus/ambermeta
         choices=["text", "json", "yaml"],
         default="text",
         help="Output format (default: text)",
+    )
+    validate_parser.add_argument(
+        "--manifest",
+        help="Validate a whole simulation manifest (v1 auto-migrated) — continuity, sequence holes, suggestions",
+    )
+    validate_parser.add_argument(
+        "--allow-gaps",
+        action="store_true",
+        help="With --manifest: treat unexpected inter-step gaps as allowed",
     )
 
     # UX-005: info subcommand
@@ -1671,6 +2002,21 @@ For documentation, visit: https://github.com/MicheleBonus/ambermeta
         default="text",
         help="Output format (default: text)",
     )
+
+    export_parser = subparsers.add_parser(
+        "export",
+        help="Convert a manifest to canonical v2 or a legacy flat manifest",
+        description=(
+            "Read any manifest (a v1 flat manifest is auto-migrated) and re-emit it. "
+            "--to v2 writes the canonical Simulation manifest (json/yaml); --to legacy writes "
+            "a flat stages: manifest (json/yaml/toml/csv) for downstream tools. Without --output, "
+            "prints JSON to stdout."
+        ),
+    )
+    export_parser.add_argument("manifest", help="Path to the manifest to convert")
+    export_parser.add_argument("--to", choices=["v2", "legacy"], default="v2", help="Target representation (default: v2)")
+    export_parser.add_argument("-o", "--output", help="Write to this path (default: print JSON to stdout)")
+    export_parser.add_argument("--format", choices=["json", "yaml", "toml", "csv"], help="Output format (default: inferred from --output extension)")
 
     # UX-009: init subcommand
     init_parser = subparsers.add_parser(
@@ -1719,6 +2065,11 @@ For documentation, visit: https://github.com/MicheleBonus/ambermeta
         "--force",
         action="store_true",
         help="Overwrite existing output file without prompting (required for non-interactive --auto mode)",
+    )
+    init_parser.add_argument(
+        "--v2",
+        action="store_true",
+        help="Emit a v2 (Simulation → Phase → Step) template manifest instead of the v1 flat template",
     )
 
     # GUI subcommand
@@ -1787,10 +2138,14 @@ def main(argv: List[str] | None = None) -> int:
     def _dispatch() -> int:
         if args.command == "plan":
             return _plan_command(args)
+        if args.command == "discover":
+            return _discover_command(args)
         if args.command == "validate":
             return _validate_command(args)
         if args.command == "info":
             return _info_command(args)
+        if args.command == "export":
+            return _export_command(args)
         if args.command == "init":
             return _init_command(args)
         if args.command == "gui":

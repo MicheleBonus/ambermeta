@@ -13,7 +13,6 @@ export function ExportModal({ open, onClose }: { open: boolean; onClose: () => v
           onChange={(e) => setFormat(e.target.value as ExportFormat)}
           className="px-2 py-1 border border-hairline rounded bg-app text-sm">
           <option value="yaml">yaml</option><option value="json">json</option>
-          <option value="toml">toml</option><option value="csv">csv</option>
         </select>
         <Button variant="primary" onClick={() => preview.mutate(format)}>Render</Button>
         {preview.data && (
@@ -27,7 +26,7 @@ export function ExportModal({ open, onClose }: { open: boolean; onClose: () => v
       )}
       {preview.data?.warnings && preview.data.warnings.length > 0 && (
         <div className="mt-2 space-y-0.5">
-          {preview.data.warnings.map((w, i) => (
+          {preview.data.warnings.map((w: string, i: number) => (
             <p key={i} className="text-warning text-xs">{w}</p>
           ))}
         </div>

@@ -122,14 +122,22 @@ def _get_nc_attr(obj, attr_name: str, default: str = "Unknown") -> str:
         return val.decode('utf-8', errors='ignore')
     return str(val)
 
+def _is_variable_dt(deltas, avg_dt) -> bool:
+    """Relative variance check: flag only if the frame-interval spread is a
+    meaningful fraction of the interval itself (avoids false-firing on float32
+    NetCDF times over long runs, where an absolute 0.01 ps floor is noise)."""
+    if np is None or len(deltas) < 2 or not avg_dt:
+        return False
+    return float(np.std(deltas)) > max(1e-4, abs(avg_dt) * 0.05)
+
 def _detect_format(filepath: str) -> str:
     try:
         with open(filepath, 'rb') as f:
-            header = f.read(4)
-            if header.startswith(b'CDF'):
-                return "NetCDF"
+            header = f.read(8)
     except (IOError, OSError):
-        pass
+        return "ASCII"
+    if header[:4] in (b'CDF\x01', b'CDF\x02') or header[:4] == b'\x89HDF':
+        return "NetCDF"
     return "ASCII"
 
 # -------------------------------
@@ -169,25 +177,29 @@ def _parse_netcdf_trajectory(filepath: str) -> TrajectoryMetadata:
             # --- 3. Variables & Time ---
             vars_keys = ds.variables.keys()
             
-            if 'time' in vars_keys:
+            if "AMBERRESTART" in md.conventions:
+                md.warnings.append("NetCDF AMBERRESTART (single-frame restart), not a trajectory.")
+                md.n_frames = 1
+                if 'time' in vars_keys:
+                    md.has_time = True
+                    tv = ds.variables['time']
+                    scalar = float(tv[...]) if tv.shape == () else float(tv[:][-1])
+                    md.time_start = md.time_end = scalar
+            elif 'time' in vars_keys:
                 md.has_time = True
                 t_var = ds.variables['time']
-                # Read all times (1D array, usually small memory footprint)
-                times = t_var[:]
+                times = np.atleast_1d(t_var[:])   # guard 0-d scalar
                 md.n_frames = len(times)
-                
+
                 if md.n_frames > 0:
                     md.time_start = float(times[0])
                     md.time_end = float(times[-1])
                     md.total_duration = md.time_end - md.time_start
-                    
+
                     if md.n_frames > 1:
-                        # Calculate dt steps
                         deltas = np.diff(times)
                         md.avg_dt = float(np.mean(deltas))
-                        
-                        # Check for internal consistency
-                        if np.std(deltas) > 0.01:
+                        if _is_variable_dt(deltas, md.avg_dt):
                             md.warnings.append("Variable timestep detected within file.")
             elif 'coordinates' in vars_keys:
                 # Fallback if no time variable: check coordinate shape
@@ -237,7 +249,7 @@ def _parse_netcdf_trajectory(filepath: str) -> TrajectoryMetadata:
         finally:
             ds.close()
 
-    except (IOError, OSError, ValueError, KeyError, IndexError, RuntimeError) as e:
+    except (IOError, OSError, ValueError, TypeError, KeyError, IndexError, RuntimeError) as e:
         md.warnings.append(f"NetCDF Error: {e}")
 
     return md
@@ -247,7 +259,10 @@ def _parse_ascii_trajectory(filepath: str) -> TrajectoryMetadata:
     try:
         with open(filepath, 'r') as f:
             md.title = f.readline().strip()
-        md.warnings.append("ASCII format: No detailed metadata (time, box, count) extractable without prmtop.")
+        md.warnings.append(
+            "ASCII trajectory: no per-frame time/box/atom-count metadata without the prmtop; "
+            "excluded from time-based sequence analysis."
+        )
     except (IOError, OSError, UnicodeDecodeError):
         md.warnings.append("File empty or unreadable.")
     return md

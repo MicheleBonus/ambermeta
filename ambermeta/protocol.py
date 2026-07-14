@@ -14,8 +14,10 @@ from ambermeta.parsers.mdin import MdinData, MdinParser
 from ambermeta.parsers.mdout import MdoutData, MdoutParser
 from ambermeta.parsers.prmtop import PrmtopData, PrmtopParser
 from ambermeta.legacy_extractors.prmtop import ION_RESNAMES, WATER_RESNAMES
+from ambermeta.topology_pool import implies_hmr
 from ambermeta.errors import AmberMetaError, FileLoadError, classify_exception
 from ambermeta.logging_config import get_logger
+from ambermeta.roles import classify_role
 from ambermeta.manifest import (
     load_manifest,
     validate_manifest,
@@ -350,91 +352,98 @@ class SimulationProtocol:
 
     def _check_continuity(self, allow_unexpected_gaps: bool = False) -> None:
         for prev, current in zip(self.stages, self.stages[1:]):
-            prev_mdcrd = prev.mdcrd and prev.mdcrd.details
-            curr_inpcrd = current.inpcrd and current.inpcrd.details
+            end_time = None
+            if prev.mdcrd and prev.mdcrd.details:
+                end_time = getattr(prev.mdcrd.details, "time_end", None)
+            if end_time is None and prev.mdout and prev.mdout.details:
+                stats = getattr(prev.mdout.details, "stats", None)
+                if stats is not None and getattr(stats, "count", 0):
+                    end_time = getattr(stats, "time_end", None)
 
-            if not prev_mdcrd or not curr_inpcrd:
+            start_time = None
+            if current.inpcrd and current.inpcrd.details:
+                start_time = getattr(current.inpcrd.details, "time", None)
+
+            if end_time is None or start_time is None:
                 # Add informational note when continuity check is skipped
                 missing = []
-                if not prev_mdcrd:
-                    missing.append(f"mdcrd from {prev.name}")
-                if not curr_inpcrd:
-                    missing.append(f"inpcrd from {current.name}")
+                if end_time is None:
+                    missing.append(f"end time from {prev.name} (no mdcrd/mdout)")
+                if start_time is None:
+                    missing.append(f"inpcrd time from {current.name}")
                 current._add_continuity_note(
                     f"INFO: Cannot verify continuity between {prev.name} and {current.name} "
                     f"(missing {', '.join(missing)})"
                 )
                 continue
 
-            if prev.mdcrd and prev.mdcrd.details and current.inpcrd and current.inpcrd.details:
-                end_time = getattr(prev.mdcrd.details, "time_end", None)
-                start_time = getattr(current.inpcrd.details, "time", None)
-                if end_time is None or start_time is None:
-                    if current.expected_gap_ps is not None:
-                        current._add_continuity_note(
-                            "Expected gap could not be verified because timing metadata is missing."
-                        )
-                    continue
+            gap = start_time - end_time
 
-                gap = start_time - end_time
+            # Tolerance is a small absolute floor plus half a frame interval —
+            # NOT scaled by elapsed time, which would hide real gaps in long runs.
+            prior_dt = (
+                getattr(prev.mdcrd.details, "avg_dt", None)
+                if (prev.mdcrd and prev.mdcrd.details)
+                else None
+            )
+            default_tolerance = 0.1
+            if isinstance(prior_dt, (int, float)) and prior_dt > 0:
+                default_tolerance = max(default_tolerance, float(prior_dt) * 0.5)
 
-                # Robust tolerance calculation for numerical precision and unit issues
-                # Use a tolerance that scales with the magnitude of the times involved
-                # Default: 1 ps or 0.01% of end_time, whichever is larger
-                default_tolerance = max(1.0, abs(end_time) * 1e-4) if end_time else 1.0
-                prior_dt = getattr(prev.mdcrd.details, "avg_dt", None)
-                if isinstance(prior_dt, (int, float)) and prior_dt > 0:
-                    # Also consider the frame interval as a tolerance factor
-                    default_tolerance = max(default_tolerance, float(prior_dt) * 0.5)
+            # When no explicit gap expectation is provided, treat small
+            # differences as numerical noise instead of real gaps/overlaps.
+            if current.expected_gap_ps is None:
+                if abs(gap) <= default_tolerance:
+                    gap = 0.0
 
-                # When no explicit gap expectation is provided, treat small
-                # differences as numerical noise instead of real gaps/overlaps.
-                if current.expected_gap_ps is None:
-                    if abs(gap) <= default_tolerance:
-                        gap = 0.0
+            # Sanity check: massive gaps (> 1e6 ps = 1 µs) are likely errors
+            # in unit conversion or file parsing, not real discontinuities
+            if abs(gap) > 1e6:
+                current._add_continuity_note(
+                    f"INFO: Implausible gap detected ({gap:g} ps); likely a unit or parsing error. "
+                    f"Continuity check skipped."
+                )
+                current.observed_gap_ps = None
+                continue
 
-                # Sanity check: massive gaps (> 1e6 ps = 1 µs) are likely errors
-                # in unit conversion or file parsing, not real discontinuities
-                if abs(gap) > 1e6:
+            current.observed_gap_ps = gap
+
+            if gap < 0:
+                # Small negative gaps within tolerance are likely floating-point noise
+                if abs(gap) > default_tolerance:
                     current._add_continuity_note(
-                        f"INFO: Implausible gap detected ({gap:g} ps); likely a unit or parsing error. "
-                        f"Continuity check skipped."
+                        f"Stage appears to overlap previous stage by {abs(gap):g} ps."
                     )
-                    current.observed_gap_ps = None
-                    continue
+            elif gap > 0:
+                # Informational: the raw observed gap. The actual judgement (within
+                # window / shorter / exceeds / unexpected) is emitted separately below,
+                # so this line is INFO-only and must not surface as a continuity problem.
+                current._add_continuity_note(f"INFO: Stage starts {gap:g} ps after previous ended.")
 
-                current.observed_gap_ps = gap
-
-                if gap < 0:
-                    # Small negative gaps within tolerance are likely floating-point noise
-                    if abs(gap) > default_tolerance:
-                        current._add_continuity_note(
-                            f"Stage appears to overlap previous stage by {abs(gap):g} ps."
-                        )
-                elif gap > 0:
-                    current._add_continuity_note(f"Stage starts {gap:g} ps after previous ended.")
-
-                if current.expected_gap_ps is not None:
-                    tolerance = current.gap_tolerance_ps or default_tolerance
-                    lower = current.expected_gap_ps - tolerance
-                    upper = current.expected_gap_ps + tolerance
-                    if gap < lower:
-                        current._add_continuity_note(
-                            f"Observed gap {gap:g} ps is shorter than expected {current.expected_gap_ps:g} ps."
-                        )
-                    elif gap > upper:
-                        current._add_continuity_note(
-                            f"Observed gap {gap:g} ps exceeds expected {current.expected_gap_ps:g} ps."
-                        )
-                    else:
-                        current._add_continuity_note(
-                            f"Observed gap {gap:g} ps is within expected window ({current.expected_gap_ps:g}±{tolerance:g} ps)."
-                        )
-                elif gap != 0:
-                    if allow_unexpected_gaps:
-                        current._add_continuity_note("INFO: Gap detected and allowed by manifest settings.allow_gaps.")
-                    else:
-                        current._add_continuity_note("Gap detected without stated expectation; verify continuity.")
+            if current.expected_gap_ps is not None:
+                tolerance = current.gap_tolerance_ps or default_tolerance
+                lower = current.expected_gap_ps - tolerance
+                upper = current.expected_gap_ps + tolerance
+                if gap < lower:
+                    current._add_continuity_note(
+                        f"Observed gap {gap:g} ps is shorter than expected {current.expected_gap_ps:g} ps."
+                    )
+                elif gap > upper:
+                    current._add_continuity_note(
+                        f"Observed gap {gap:g} ps exceeds expected {current.expected_gap_ps:g} ps."
+                    )
+                else:
+                    # Healthy: the observed gap matched the stated expectation. This is a
+                    # positive confirmation, not a problem — INFO so it is never surfaced
+                    # as a "needs you" continuity suggestion.
+                    current._add_continuity_note(
+                        f"INFO: Observed gap {gap:g} ps is within expected window ({current.expected_gap_ps:g}±{tolerance:g} ps)."
+                    )
+            elif gap != 0:
+                if allow_unexpected_gaps:
+                    current._add_continuity_note("INFO: Gap detected and allowed by manifest settings.allow_gaps.")
+                else:
+                    current._add_continuity_note("Gap detected without stated expectation; verify continuity.")
 
     def totals(self) -> Dict[str, float]:
         total_steps = 0.0
@@ -689,7 +698,7 @@ class SimulationProtocol:
             if dt is None and stage.mdout and stage.mdout.details:
                 dt = getattr(stage.mdout.details, "dt", None)
             if dt is not None and isinstance(dt, (int, float)):
-                if dt >= HMR_TIMESTEP_THRESHOLD_PS:
+                if implies_hmr(dt):
                     # Large timestep indicates HMR is active
                     if composition.get("hmr_active") is None or composition.get("hmr_active") is False:
                         composition["hmr_active"] = True
@@ -826,8 +835,8 @@ def _apply_global_and_hmr_prmtop(stages, directory, *, global_prmtop,
     """Apply global and/or HMR prmtop to stages.
 
     - global_prmtop: applied to every stage that has no prmtop yet.
-    - hmr_prmtop: applied to stages whose timestep (dt) meets or exceeds
-      HMR_TIMESTEP_THRESHOLD_PS; overrides any previously set prmtop.
+    - hmr_prmtop: applied to stages whose timestep implies HMR (dt > 0.002,
+      via implies_hmr); overrides any previously set prmtop.
     - Missing files: warn (or raise under strict).
     """
     def _load_topology(path, label):
@@ -859,7 +868,7 @@ def _apply_global_and_hmr_prmtop(stages, directory, *, global_prmtop,
                     dt = getattr(st.mdin.details, "dt", None)
                 if dt is None and st.mdout and st.mdout.details:
                     dt = getattr(st.mdout.details, "dt", None)
-                if isinstance(dt, (int, float)) and dt >= HMR_TIMESTEP_THRESHOLD_PS:
+                if implies_hmr(dt):
                     st.prmtop = data
                     st.validation.append(
                         f"INFO: using HMR prmtop (dt={dt} ps): {hmr_prmtop}")
@@ -973,10 +982,10 @@ def _manifest_to_stages(
             stage.prmtop = _safe_parse(PrmtopParser, resolved["prmtop"], "prmtop", stage, strict=strict)
         if "mdin" in resolved:
             stage.mdin = _safe_parse(MdinParser, resolved["mdin"], "mdin", stage, strict=strict)
-            inferred_role = getattr(getattr(stage.mdin, "details", None), "stage_role", None) if stage.mdin else None
+            inferred_role = classify_role(mdin_details=getattr(stage.mdin, "details", None)) if stage.mdin else ""
             if not stage.stage_role and inferred_role:
                 stage.stage_role = inferred_role
-                stage.validation.append(f"INFO: stage_role '{inferred_role}' inferred from mdin file")
+                stage.validation.append(f"INFO: stage_role '{inferred_role}' inferred from mdin content")
         if "mdout" in resolved:
             stage.mdout = _safe_parse(MdoutParser, resolved["mdout"], "mdout", stage, strict=strict)
         if "mdcrd" in resolved:
@@ -1112,45 +1121,41 @@ def detect_numeric_sequences(filenames: List[str]) -> Dict[str, List[str]]:
     return result
 
 
+def detect_sequence_gaps(names: List[str]) -> Dict[str, List[int]]:
+    """Return, per numbered-sequence base, the integer indices that are missing.
+
+    e.g. ['prod_0001', 'prod_0002', 'prod_0004'] -> {'prod': [3]}.
+    Only bases with 2+ present members are considered; pure-numeric bases skipped.
+    """
+    suffix_pattern = re.compile(r'^(.+?)[-_.]?(\d+)$')
+    present: Dict[str, set] = {}
+    for name in names:
+        stem = Path(name).stem
+        match = suffix_pattern.match(stem)
+        if not match:
+            continue
+        base = match.group(1)
+        if base.isdigit():
+            continue
+        present.setdefault(base, set()).add(int(match.group(2)))
+
+    gaps: Dict[str, List[int]] = {}
+    for base, nums in present.items():
+        if len(nums) < 2:
+            continue
+        missing = [i for i in range(min(nums), max(nums) + 1) if i not in nums]
+        if missing:
+            gaps[base] = missing
+    return gaps
+
+
 def infer_stage_role_from_path(path: str) -> Optional[str]:
     """Infer stage role from the directory or file path.
 
     Examines path components and filename to detect stage type patterns.
     Common directory names like 'equil', 'prod', 'min' are recognized.
     """
-    path_lower = path.lower()
-    parts = path_lower.replace("\\", "/").split("/")
-
-    # Check all path parts (directories and filename)
-    for part in parts:
-        # Minimization patterns
-        if part.startswith("min") or re.search(r'(?:^|_)min(?:$|_)', part) or part == "em":
-            return "minimization"
-
-        # Heating patterns
-        if re.search(r'(?:^|[_.\-])heat(?:[_.\-]|$|ing)', part) or re.search(r'(?:^|[_.\-])warm(?:[_.\-]|$)', part):
-            return "heating"
-
-        # Equilibration patterns
-        if part.startswith("equil") or part == "nvt" or part == "npt" or re.search(r'(?:^|_)equil(?:$|_)', part):
-            return "equilibration"
-
-        # Production patterns
-        if part.startswith("prod") or re.search(r'(?:^|_)prod(?:$|_)', part):
-            return "production"
-
-    # Check for common filename patterns
-    filename = parts[-1] if parts else ""
-    if re.search(r'(?:^|[_.\-/])(?:min|minim)(?:[_.\-/]|$)', filename) or re.search(r'(?:^|[_.\-/])em(?:[_.\-/]|$)', filename):
-        return "minimization"
-    if re.search(r'(?:^|[_.\-/])(?:heat|warm)(?:[_.\-/]|$)', filename):
-        return "heating"
-    if re.search(r'(?:^|[_.\-/])(?:equil|nvt|npt)(?:[_.\-/]|$)', filename):
-        return "equilibration"
-    if re.search(r'(?:^|[_.\-/])prod(?:[_.\-/]|$)', filename):
-        return "production"
-
-    return None
+    return classify_role(path) or None
 
 
 def infer_stage_role_from_content(
@@ -1161,44 +1166,9 @@ def infer_stage_role_from_content(
 
     Uses heuristics based on simulation parameters to determine the stage type.
     """
-    # Try mdin first
-    if mdin_data and mdin_data.details:
-        details = mdin_data.details
-        inferred = getattr(details, "stage_role", None)
-        if inferred:
-            return inferred
-
-        # Check for minimization indicators
-        cntrl = getattr(details, "cntrl_parameters", {}) or {}
-        imin = cntrl.get("imin")
-        if imin == 1:
-            return "minimization"
-
-        # Check for heating (increasing temperature)
-        tempi = cntrl.get("tempi", 0)
-        temp0 = cntrl.get("temp0", 300)
-        if isinstance(tempi, (int, float)) and isinstance(temp0, (int, float)):
-            if tempi < temp0 and tempi < 50:
-                return "heating"
-
-        # Check for equilibration vs production
-        ntr = cntrl.get("ntr")
-        ibelly = cntrl.get("ibelly")
-        if ntr == 1 or ibelly == 1:
-            return "equilibration"
-
-        # Check nstlim to distinguish short equilibration from long production
-        nstlim = cntrl.get("nstlim", 0)
-        if isinstance(nstlim, (int, float)) and nstlim > 500000:
-            return "production"
-
-    # Try mdout
-    if mdout_data and mdout_data.details:
-        details = mdout_data.details
-        if getattr(details, "imin", None) == 1:
-            return "minimization"
-
-    return None
+    mdin_details = getattr(mdin_data, "details", None)
+    mdout_details = getattr(mdout_data, "details", None)
+    return classify_role(mdin_details=mdin_details, mdout_details=mdout_details) or None
 
 
 def auto_detect_restart_chain(
@@ -1389,18 +1359,33 @@ def smart_group_files(
         ".nc": "mdcrd",
         ".crd": "mdcrd",
         ".x": "mdcrd",
+        ".trj": "mdcrd",
+    }
+    _DEFAULT_BASENAME_KIND = {
+        "prmtop": "prmtop", "parm7": "prmtop",
+        "mdin": "mdin", "mdout": "mdout", "mdcrd": "mdcrd",
+        "inpcrd": "inpcrd", "restrt": "inpcrd",
     }
 
     # Group by stem
     grouped: Dict[str, Dict[str, str]] = {}
 
-    for rel_path, full_path in discovered:
+    for rel_path, full_path in sorted(discovered):   # deterministic order
         stem = Path(rel_path).with_suffix("").as_posix()
         _, ext = os.path.splitext(rel_path)
         kind = ext_map.get(ext.lower())
+        if not kind and not ext:
+            # Extensionless canonical Amber default filenames.
+            kind = _DEFAULT_BASENAME_KIND.get(os.path.basename(rel_path).lower())
         if not kind:
             continue
-        grouped.setdefault(stem, {})[kind] = full_path
+        group = grouped.setdefault(stem, {})
+        if kind in group:
+            # Same stem + same kind (e.g. prod.nc and prod.mdcrd): keep the first
+            # (sorted) deterministically and record the collision.
+            group.setdefault(f"_collision_{kind}", os.path.basename(full_path))
+            continue
+        group[kind] = full_path
 
     # Detect and handle numeric sequences
     all_stems = list(grouped.keys())
@@ -1510,7 +1495,7 @@ def auto_discover(
         if "mdin" in file_kinds:
             stage.mdin = _safe_parse(MdinParser, file_kinds["mdin"], "mdin", stage, strict=strict)
             # Try mdin-based inference first
-            inferred_role = getattr(getattr(stage.mdin, "details", None), "stage_role", None) if stage.mdin else None
+            inferred_role = classify_role(mdin_details=getattr(stage.mdin, "details", None)) if stage.mdin else ""
             if not stage.stage_role and inferred_role:
                 stage.stage_role = inferred_role
                 stage.validation.append(f"INFO: stage_role '{inferred_role}' inferred from mdin file")
