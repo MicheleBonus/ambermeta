@@ -105,3 +105,26 @@ def _step(c, sid):
             if s["id"] == sid:
                 return s
     raise AssertionError("step not found")
+
+
+def test_assign_and_file_routes(tmp_path):
+    (tmp_path / "wt.prmtop").write_text("dummy")
+    (tmp_path / "min.in").write_text("&cntrl\nimin=1,\n/\n")
+    c = _client(tmp_path)
+    p = c.post("/api/phases", json={"name": "Min", "role": "minimization"}).json()["simulation"]["phases"][0]["id"]
+    s = c.post(f"/api/phases/{p}/steps", json={"name": "min"}).json()["simulation"]["phases"][0]["steps"][0]["id"]
+
+    r = c.post("/api/assign", json={"path": "wt.prmtop", "target_type": "step_topology", "target_id": s})
+    assert r.status_code == 200
+    assert c.get("/api/document").json()["simulation"]["topologies"][0]["path"] == "wt.prmtop"
+
+    r = c.post("/api/assign", json={"path": "min.in", "target_type": "step_slot", "target_id": s, "slot": "mdin"})
+    assert _step(c, s)["mdin"] == "min.in"
+
+    r = c.get("/api/files")
+    assert r.status_code == 200 and any(f["name"] == "wt.prmtop" for f in r.json())
+
+    r = c.get("/api/files/raw", params={"path": "min.in"})
+    assert r.status_code == 200 and "imin=1" in r.json()["content"]
+
+    assert c.post("/api/assign", json={"path": "x", "target_type": "bogus"}).status_code == 400

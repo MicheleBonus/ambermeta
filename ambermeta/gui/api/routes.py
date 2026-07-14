@@ -1,5 +1,6 @@
 """FastAPI routes for the AmberMeta GUI API (Simulation model)."""
 import os
+from pathlib import Path
 from typing import Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException, Query
@@ -292,3 +293,82 @@ def move_step(step_id: str, req: StepMove) -> DocumentResponse:
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=f"Not found: {exc}")
     return store.to_response()
+
+
+@router.post("/assign", response_model=DocumentResponse)
+def assign(req: AssignRequest) -> DocumentResponse:
+    store = get_store()
+    try:
+        store.assign_file(req.path, req.target_type, target_id=req.target_id,
+                          kind=_enum_value(req.kind), slot=req.slot)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=f"Target not found: {exc}")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return store.to_response()
+
+
+@router.get("/files", response_model=List[FileInfo])
+def list_files(path: Optional[str] = Query(None), recursive: bool = Query(True),
+               include_all: bool = Query(False)) -> List[FileInfo]:
+    doc = get_store().get()
+    directory = _within_base(path or doc.base_directory, doc.base_directory)
+    if not os.path.isdir(directory):
+        raise HTTPException(status_code=404, detail=f"Directory not found: {directory}")
+    return files.build_file_tree(directory, recursive=recursive, include_all=include_all)
+
+
+@router.get("/files/metadata", response_model=FileMetadata)
+def get_file_metadata(path: str = Query(...)) -> FileMetadata:
+    doc = get_store().get()
+    resolved = _within_base(path, doc.base_directory)
+    if not os.path.isfile(resolved):
+        raise HTTPException(status_code=404, detail=f"File not found: {path}")
+    meta = core_bridge.file_metadata(resolved)
+    return FileMetadata(file_path=resolved, file_type=files.detect_file_type(resolved),
+                        metadata=meta, warnings=meta["warnings"])
+
+
+@router.get("/files/raw", response_model=RawFile)
+def get_file_raw(path: str = Query(...), max_bytes: int = Query(4096)) -> RawFile:
+    doc = get_store().get()
+    resolved = _within_base(path, doc.base_directory)
+    if not os.path.isfile(resolved):
+        raise HTTPException(status_code=404, detail=f"File not found: {path}")
+    out = core_bridge.read_file_head(resolved, max_bytes=max_bytes)
+    return RawFile(path=resolved, content=out["content"], truncated=out["truncated"])
+
+
+@router.get("/files/related/{stem:path}")
+def get_related_files(stem: str) -> Dict[str, str]:
+    doc = get_store().get()
+    base_dir = doc.base_directory
+    stem_path = stem
+    suffixes = {".mdin", ".mdout", ".nc", ".rst", ".rst7", ".prmtop", ".in", ".out",
+                ".crd", ".x", ".ncrst", ".restrt", ".inpcrd", ".mdcrd", ".parm7", ".top"}
+    if Path(stem).suffix.lower() in suffixes:
+        stem_path = str(Path(stem).with_suffix(""))
+    if "/" in stem_path or os.sep in stem_path:
+        stem_dir = Path(base_dir) / Path(stem_path).parent
+        stem_name = Path(stem_path).name
+    else:
+        stem_dir = Path(base_dir)
+        stem_name = stem_path
+    file_type_extensions = {
+        "mdin": {".mdin", ".in"}, "mdout": {".mdout", ".out"},
+        "mdcrd": {".mdcrd", ".nc", ".crd", ".x"},
+        "inpcrd": {".rst", ".rst7", ".ncrst", ".restrt", ".inpcrd"},
+    }
+    _within_base(str(stem_dir), base_dir)
+    related: Dict[str, str] = {}
+    try:
+        if stem_dir.exists():
+            for entry in stem_dir.iterdir():
+                if entry.is_file() and entry.stem == stem_name:
+                    for ftype, exts in file_type_extensions.items():
+                        if entry.suffix.lower() in exts and ftype not in related:
+                            related[ftype] = str(entry)
+                            break
+    except OSError:
+        pass
+    return related
