@@ -828,7 +828,7 @@ _ambermeta_completion() {
     cur="${COMP_WORDS[COMP_CWORD]}"
     prev="${COMP_WORDS[COMP_CWORD-1]}"
 
-    local commands="plan validate info init gui completion"
+    local commands="plan discover validate info init export gui completion"
     local global_opts="--help --log-level --log-file --quiet -q"
 
     if [[ ${COMP_CWORD} -eq 1 ]]; then
@@ -840,14 +840,20 @@ _ambermeta_completion() {
         plan)
             COMPREPLY=( $(compgen -W "--help -m --manifest --skip-cross-stage-validation --strict --recursive --interactive -v --verbose --summary-path --summary-format --methods-summary-path --stats-csv --no-expand-env --pattern --auto-detect-restarts --prmtop" -- "$cur") )
             ;;
+        discover)
+            COMPREPLY=( $(compgen -W "--help --recursive --no-recursive --pattern --write --format" -- "$cur") )
+            ;;
         validate)
-            COMPREPLY=( $(compgen -W "--help --strict --format" -- "$cur") )
+            COMPREPLY=( $(compgen -W "--help --strict --format --manifest --allow-gaps" -- "$cur") )
             ;;
         info)
             COMPREPLY=( $(compgen -W "--help --format" -- "$cur") )
             ;;
         init)
             COMPREPLY=( $(compgen -W "--help -o --output --template --auto --format --validate --dry-run --force" -- "$cur") )
+            ;;
+        export)
+            COMPREPLY=( $(compgen -W "--help --to -o --output --format" -- "$cur") )
             ;;
         gui)
             COMPREPLY=( $(compgen -W "--help --host --port --no-browser" -- "$cur") )
@@ -870,6 +876,8 @@ _ambermeta() {
   local -a commands
   commands=(
     'plan:Build and summarize a SimulationProtocol'
+    'discover:Discover files into a Simulation draft (v2)'
+    'export:Convert a manifest to v2 or legacy flat'
     'validate:Validate simulation files'
     'info:Display metadata for a single file'
     'init:Generate example manifest templates'
@@ -893,8 +901,14 @@ _ambermeta() {
         plan)
           _arguments '--manifest[Path to manifest file]:file:_files' '--recursive[Auto-discover files]' '--interactive[Prompt for stages]' '--summary-path[Write protocol summary]:file:_files' '--summary-format[Summary format]:format:(json yaml)' '--methods-summary-path[Write methods summary]:file:_files' '--stats-csv[Write stats CSV]:file:_files' '--pattern[Regex file filter]:pattern:' '--prmtop[Global topology file]:file:_files' '--skip-cross-stage-validation[Skip continuity checks]' '--strict[Abort on first unreadable file]' '--no-expand-env[Disable env var expansion]' '--auto-detect-restarts[Link restarts automatically]' '(-v --verbose)'{-v,--verbose}'[Show detailed stage metadata]' '*:path:_files'
           ;;
+        discover)
+          _arguments '(--recursive --no-recursive)'{--recursive,--no-recursive}'[Recurse into subdirectories]' '--pattern[Regex file filter]:pattern:' '--write[Write v2 manifest to path]:file:_files' '--format[Format for --write]:format:(json yaml)' '*:path:_files'
+          ;;
+        export)
+          _arguments '--to[Target representation]:to:(v2 legacy)' '(-o --output)'{-o,--output}'[Output path]:file:_files' '--format[Output format]:format:(json yaml toml csv)' '1:manifest:_files'
+          ;;
         validate)
-          _arguments '--strict[Treat warnings as errors]' '--format[Output format]:format:(text json yaml)' '*:file:_files'
+          _arguments '--strict[Treat warnings as errors]' '--format[Output format]:format:(text json yaml)' '--manifest[Validate a whole simulation manifest]:file:_files' '--allow-gaps[Treat unexpected inter-step gaps as allowed]' '*:file:_files'
           ;;
         info)
           _arguments '--format[Output format]:format:(text json yaml)' '1:file:_files'
@@ -919,6 +933,8 @@ _ambermeta "$@"
 complete -c ambermeta -f
 
 complete -c ambermeta -n "__fish_use_subcommand" -a "plan" -d "Build and summarize a SimulationProtocol"
+complete -c ambermeta -n "__fish_use_subcommand" -a "discover" -d "Discover files into a Simulation draft (v2)"
+complete -c ambermeta -n "__fish_use_subcommand" -a "export" -d "Convert a manifest to v2 or legacy flat"
 complete -c ambermeta -n "__fish_use_subcommand" -a "validate" -d "Validate simulation files"
 complete -c ambermeta -n "__fish_use_subcommand" -a "info" -d "Display metadata for a single file"
 complete -c ambermeta -n "__fish_use_subcommand" -a "init" -d "Generate example manifest templates"
@@ -944,8 +960,20 @@ complete -c ambermeta -n "__fish_seen_subcommand_from plan" -l pattern -d "Regex
 complete -c ambermeta -n "__fish_seen_subcommand_from plan" -l auto-detect-restarts -d "Auto-link restart files"
 complete -c ambermeta -n "__fish_seen_subcommand_from plan" -l prmtop -d "Global prmtop file"
 
+complete -c ambermeta -n "__fish_seen_subcommand_from discover" -l recursive -d "Recurse into subdirectories"
+complete -c ambermeta -n "__fish_seen_subcommand_from discover" -l no-recursive -d "Do not recurse"
+complete -c ambermeta -n "__fish_seen_subcommand_from discover" -l pattern -d "Regex file filter"
+complete -c ambermeta -n "__fish_seen_subcommand_from discover" -l write -d "Write v2 manifest to path"
+complete -c ambermeta -n "__fish_seen_subcommand_from discover" -l format -d "Format for --write" -xa "json yaml"
+
+complete -c ambermeta -n "__fish_seen_subcommand_from export" -l to -d "Target representation" -xa "v2 legacy"
+complete -c ambermeta -n "__fish_seen_subcommand_from export" -s o -l output -d "Output path"
+complete -c ambermeta -n "__fish_seen_subcommand_from export" -l format -d "Output format" -xa "json yaml toml csv"
+
 complete -c ambermeta -n "__fish_seen_subcommand_from validate" -l strict -d "Treat warnings as errors"
 complete -c ambermeta -n "__fish_seen_subcommand_from validate" -l format -d "Output format" -xa "text json yaml"
+complete -c ambermeta -n "__fish_seen_subcommand_from validate" -l manifest -d "Validate a whole simulation manifest (v2)"
+complete -c ambermeta -n "__fish_seen_subcommand_from validate" -l allow-gaps -d "Treat unexpected inter-step gaps as allowed"
 
 complete -c ambermeta -n "__fish_seen_subcommand_from info" -l format -d "Output format" -xa "text json yaml"
 
@@ -1766,9 +1794,11 @@ def build_parser() -> argparse.ArgumentParser:
         epilog="""
 Commands:
   plan      Build a simulation protocol from manifest or auto-discovery
+  discover  Discover files into a Simulation draft (v2) and optionally write a manifest
   validate  Quick validation of simulation files
   info      Display detailed metadata for a single file
   init      Generate example manifest templates
+  export    Convert a manifest to canonical v2 or a legacy flat manifest
 
 Examples:
   ambermeta plan -m manifest.yaml           Build protocol from manifest
@@ -1776,9 +1806,12 @@ Examples:
   ambermeta plan . --interactive            Prompt for stage definitions
   ambermeta plan -m manifest.yaml \\
     --methods-summary-path methods.json     Export publication-ready summary
+  ambermeta discover . --write sim.yaml       Draft a v2 manifest from a directory
   ambermeta validate system.prmtop *.mdout  Validate multiple files
+  ambermeta validate --manifest sim.yaml      Validate a whole simulation (continuity/gaps)
   ambermeta info --format json system.prmtop  Show metadata as JSON
   ambermeta init --template standard .      Generate manifest template
+  ambermeta export old.yaml -o sim.yaml       Upgrade a v1 manifest to v2
 
 File Types:
   prmtop:  .prmtop, .top, .parm7    (topology/parameters)
