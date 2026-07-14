@@ -86,16 +86,6 @@ def document_to_payload(stages: List[Dict[str, Any]], settings: Dict[str, Any],
     return payload
 
 
-def _save_warnings(settings: Dict[str, Any], fmt: str) -> List[str]:
-    warnings: List[str] = []
-    if fmt == "csv" and settings.get("hmr_prmtop"):
-        warnings.append(
-            "CSV format cannot represent a separate HMR topology; hmr_prmtop "
-            "was folded into each stage's prmtop column."
-        )
-    return warnings
-
-
 # ---------------------------------------------------------------------------
 # Task 4: validation report, file metadata, restart chain
 # ---------------------------------------------------------------------------
