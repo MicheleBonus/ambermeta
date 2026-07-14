@@ -169,6 +169,52 @@ class DocumentStore:
             self._doc.manifest_path = manifest_path
             self._doc.dirty = False
 
+    # -- topology mutations -------------------------------------------------
+    def add_topology(self, path: str, kind: str) -> str:
+        with self.lock:
+            self._snapshot()
+            tid = _new_id()
+            self._doc.simulation.topologies.append(Topology(id=tid, path=path, kind=kind or "normal"))
+            self._doc.dirty = True
+            return tid
+
+    def update_topology(self, topology_id: str, patch: Dict[str, Any]) -> None:
+        with self.lock:
+            t = self._find_topology(topology_id)
+            self._snapshot()
+            if patch.get("path") is not None:
+                t.path = patch["path"]
+            if patch.get("kind") is not None:
+                t.kind = patch["kind"]
+            self._doc.dirty = True
+
+    def remove_topology(self, topology_id: str) -> None:
+        with self.lock:
+            t = self._find_topology(topology_id)
+            self._snapshot()
+            self._doc.simulation.topologies.remove(t)
+            for p in self._doc.simulation.phases:
+                for s in p.steps:
+                    if s.topology == topology_id:
+                        s.topology = None
+            self._doc.dirty = True
+
+    def set_starting_structure(self, path: Optional[str]) -> None:
+        with self.lock:
+            self._snapshot()
+            self._doc.simulation.starting_structure = path or None
+            self._doc.dirty = True
+
+    def _topology_id_for_path(self, path: str, kind: Optional[str]) -> str:
+        """Return the pool id for ``path``, adding a pool entry if absent.
+        Caller must already hold the lock and have snapshotted."""
+        for t in self._doc.simulation.topologies:
+            if t.path == path:
+                return t.id
+        tid = _new_id()
+        self._doc.simulation.topologies.append(Topology(id=tid, path=path, kind=kind or "normal"))
+        return tid
+
     def undo(self) -> None:
         with self.lock:
             if not self._undo:

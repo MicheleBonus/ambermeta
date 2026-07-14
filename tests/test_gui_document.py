@@ -36,3 +36,22 @@ def test_undo_redo_noop_when_empty():
     st = _store()
     st.undo(); st.redo()   # no error, no change
     assert st.to_response().can_undo is False
+
+
+def test_topology_pool_mutators_and_undo():
+    st = _store()
+    tid = st.add_topology("wt.prmtop", "normal")
+    hid = st.add_topology("wt_hmr.prmtop", "hmr")
+    st.set_starting_structure("wt.inpcrd")
+    sim = st.get().simulation
+    assert [t.path for t in sim.topologies] == ["wt.prmtop", "wt_hmr.prmtop"]
+    assert sim.starting_structure == "wt.inpcrd"
+
+    st.update_topology(hid, {"kind": "normal"})
+    assert st._find_topology(hid).kind == "normal"
+
+    st.remove_topology(tid)
+    assert [t.id for t in st.get().simulation.topologies] == [hid]
+
+    st.undo()   # undo the remove
+    assert len(st.get().simulation.topologies) == 2
