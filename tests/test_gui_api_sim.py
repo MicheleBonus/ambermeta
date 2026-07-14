@@ -57,3 +57,22 @@ def test_topology_routes(tmp_path):
     assert r.json()["simulation"]["topologies"] == []
 
     assert c.put("/api/topologies/bogus", json={"kind": "hmr"}).status_code == 404
+
+
+def test_phase_routes(tmp_path):
+    c = _client(tmp_path)
+    a = c.post("/api/phases", json={"name": "Min", "role": "minimization"}).json()
+    pa = a["simulation"]["phases"][0]["id"]
+    b = c.post("/api/phases", json={"name": "Prod", "role": "production"}).json()
+    pb = b["simulation"]["phases"][1]["id"]
+
+    r = c.post("/api/phases/reorder", json={"phase_ids": [pb, pa]})
+    assert [p["id"] for p in r.json()["simulation"]["phases"]] == [pb, pa]
+
+    r = c.put(f"/api/phases/{pa}", json={"name": "Minimization"})
+    names = {p["id"]: p["name"] for p in r.json()["simulation"]["phases"]}
+    assert names[pa] == "Minimization"
+
+    r = c.delete(f"/api/phases/{pa}")
+    assert [p["id"] for p in r.json()["simulation"]["phases"]] == [pb]
+    assert c.put("/api/phases/bogus", json={"name": "x"}).status_code == 404

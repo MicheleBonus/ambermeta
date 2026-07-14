@@ -176,3 +176,42 @@ def set_starting_structure(req: SetStartingStructure) -> DocumentResponse:
     store = get_store()
     store.set_starting_structure(req.path)
     return store.to_response()
+
+
+@router.post("/phases", response_model=DocumentResponse)
+def create_phase(req: PhaseCreate) -> DocumentResponse:
+    store = get_store()
+    store.add_phase(req.name, _enum_value(req.role) or "")
+    return store.to_response()
+
+
+# Static sub-path BEFORE the parameterised route.
+@router.post("/phases/reorder", response_model=DocumentResponse)
+def reorder_phases(req: PhaseReorder) -> DocumentResponse:
+    store = get_store()
+    try:
+        store.reorder_phases(req.phase_ids)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return store.to_response()
+
+
+@router.put("/phases/{phase_id}", response_model=DocumentResponse)
+def update_phase(phase_id: str, req: PhaseUpdate) -> DocumentResponse:
+    store = get_store()
+    patch = {"name": req.name, "role": _enum_value(req.role)}
+    try:
+        store.update_phase(phase_id, patch)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Phase not found: {phase_id}")
+    return store.to_response()
+
+
+@router.delete("/phases/{phase_id}", response_model=DocumentResponse)
+def delete_phase(phase_id: str, reassign_to: Optional[str] = Query(None)) -> DocumentResponse:
+    store = get_store()
+    try:
+        store.delete_phase(phase_id, reassign_to=reassign_to)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=f"Phase not found: {exc}")
+    return store.to_response()
