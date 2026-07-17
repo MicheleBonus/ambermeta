@@ -16,7 +16,24 @@ from ambermeta.cli import build_parser
 DOCS_PATH = Path("docs/cli.md")
 START = "<!-- BEGIN_CLI_HELP:{name} -->"
 END = "<!-- END_CLI_HELP:{name} -->"
-BLOCK_ORDER = ["root", "plan", "init", "validate", "info", "gui", "completion"]
+
+# argparse renders help differently across releases (3.10 renamed "optional
+# arguments:" to "options:"; 3.13 shortened "-o OUTPUT, --output OUTPUT" to
+# "-o, --output OUTPUT"). Since we embed that output verbatim, docs/cli.md is
+# only reproducible on one version. Keep in sync with the python-version pin
+# in .github/workflows/cli-docs-sync.yml.
+REQUIRED_PYTHON = (3, 11)
+BLOCK_ORDER = [
+    "root",
+    "plan",
+    "discover",
+    "validate",
+    "export",
+    "init",
+    "info",
+    "gui",
+    "completion",
+]
 
 
 def _get_subparsers(parser: argparse.ArgumentParser) -> dict[str, argparse.ArgumentParser]:
@@ -68,6 +85,18 @@ def main() -> int:
         help="Exit non-zero if docs/cli.md is out of date; do not modify files.",
     )
     args = parser.parse_args()
+
+    if sys.version_info[:2] != REQUIRED_PYTHON:
+        want = ".".join(str(p) for p in REQUIRED_PYTHON)
+        got = ".".join(str(p) for p in sys.version_info[:3])
+        print(
+            f"error: docs/cli.md must be generated with Python {want}, but this is {got}.\n"
+            f"argparse's help formatting is version-dependent, so running this on "
+            f"{got} would silently rewrite docs/cli.md into a form that fails the "
+            f"cli-docs-sync check on CI (which pins {want}).",
+            file=sys.stderr,
+        )
+        return 2
 
     existing = DOCS_PATH.read_text(encoding="utf-8")
     updated = generate_docs_content(existing)
