@@ -16,7 +16,17 @@ from ambermeta.cli import build_parser
 DOCS_PATH = Path("docs/cli.md")
 START = "<!-- BEGIN_CLI_HELP:{name} -->"
 END = "<!-- END_CLI_HELP:{name} -->"
-BLOCK_ORDER = ["root", "plan", "init", "validate", "info", "gui", "completion"]
+BLOCK_ORDER = [
+    "root",
+    "plan",
+    "discover",
+    "validate",
+    "export",
+    "init",
+    "info",
+    "gui",
+    "completion",
+]
 
 
 def _get_subparsers(parser: argparse.ArgumentParser) -> dict[str, argparse.ArgumentParser]:

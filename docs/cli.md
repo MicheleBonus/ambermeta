@@ -57,6 +57,7 @@ These apply before the subcommand:
 | `--log-file PATH` | Also write logs to a file |
 | `-q`, `--quiet` | Suppress stdout; errors/usage still go to stderr |
 
+<!-- BEGIN_CLI_HELP:root -->
 ```text
 usage: ambermeta [-h] [--log-level {DEBUG,INFO,WARNING,ERROR}]
                  [--log-file LOG_FILE] [-q]
@@ -120,6 +121,7 @@ File Types:
 
 For documentation, visit: https://github.com/MicheleBonus/ambermeta
 ```
+<!-- END_CLI_HELP:root -->
 
 ```bash
 ambermeta --log-level DEBUG plan . --recursive
@@ -136,6 +138,7 @@ Build and summarize a protocol from a manifest, recursive discovery, or interact
 ambermeta plan [directory] [options]
 ```
 
+<!-- BEGIN_CLI_HELP:plan -->
 ```text
 usage: ambermeta plan [-h] [-m MANIFEST] [--skip-cross-stage-validation]
                       [--strict] [--recursive] [--interactive] [-v]
@@ -199,6 +202,7 @@ options:
   --prmtop PRMTOP       Global prmtop file to use for all stages (avoids
                         specifying it per stage)
 ```
+<!-- END_CLI_HELP:plan -->
 
 ### Modes
 
@@ -323,6 +327,7 @@ Total simulated time (ps): 100000.000
 ambermeta discover [directory] [options]
 ```
 
+<!-- BEGIN_CLI_HELP:discover -->
 ```text
 usage: ambermeta discover [-h] [--recursive | --no-recursive]
                           [--pattern PATTERN] [--write WRITE]
@@ -347,6 +352,7 @@ options:
   --format {json,yaml}  Format for --write (default: inferred from extension,
                         else json)
 ```
+<!-- END_CLI_HELP:discover -->
 
 `--recursive`/`--no-recursive` is an `argparse.BooleanOptionalAction` pair (recursion is on by default).
 
@@ -443,6 +449,7 @@ ambermeta validate [options] files...
 ambermeta validate --manifest sim.yaml [options]
 ```
 
+<!-- BEGIN_CLI_HELP:validate -->
 ```text
 usage: ambermeta validate [-h] [--strict] [--format {text,json,yaml}]
                           [--manifest MANIFEST] [--allow-gaps]
@@ -464,6 +471,7 @@ options:
   --allow-gaps          With --manifest: treat unexpected inter-step gaps as
                         allowed
 ```
+<!-- END_CLI_HELP:validate -->
 
 ### Per-file mode
 
@@ -558,6 +566,7 @@ Exit codes: `0` ok; `1` if the manifest can't be found/loaded, or the report isn
 ambermeta export <manifest> [options]
 ```
 
+<!-- BEGIN_CLI_HELP:export -->
 ```text
 usage: ambermeta export [-h] [--to {v2,legacy}] [-o OUTPUT]
                         [--format {json,yaml,toml,csv}]
@@ -580,6 +589,7 @@ options:
                         Output format (default: inferred from --output
                         extension)
 ```
+<!-- END_CLI_HELP:export -->
 
 - `--to v2` (default): writes through `write_simulation` — **JSON or YAML only**.
 - `--to legacy`: flattens every phase's steps back into a `stages:` list (`global_prmtop`/`hmr_prmtop` from the topology pool's `normal`/`hmr` entries, `input_coords` resolved to an `inpcrd` path) — JSON/YAML/TOML/CSV.
@@ -658,6 +668,7 @@ Generate a manifest — a v1 template, `--auto` to bootstrap one from a director
 ambermeta init [directory] [options]
 ```
 
+<!-- BEGIN_CLI_HELP:init -->
 ```text
 usage: ambermeta init [-h] [-o OUTPUT]
                       [--template {minimal,standard,comprehensive}] [--auto]
@@ -691,6 +702,7 @@ options:
   --v2                  Emit a v2 (Simulation → Phase → Step) template
                         manifest instead of the v1 flat template
 ```
+<!-- END_CLI_HELP:init -->
 
 ### `--v2`
 
@@ -788,6 +800,7 @@ Print parsed metadata for a single file.
 ambermeta info [options] file
 ```
 
+<!-- BEGIN_CLI_HELP:info -->
 ```text
 usage: ambermeta info [-h] [--format {text,json,yaml}] file
 
@@ -801,6 +814,7 @@ options:
   --format {text,json,yaml}
                         Output format (default: text)
 ```
+<!-- END_CLI_HELP:info -->
 
 The field names printed here are the parser metadata fields documented in the [API reference §7](api.md#7-parser-metadata-fields). Use `--format json` to feed the metadata into other tools.
 
@@ -842,6 +856,7 @@ Launch the browser-based Simulation editor (requires the `gui` extra). See the [
 ambermeta gui [directory] [options]
 ```
 
+<!-- BEGIN_CLI_HELP:gui -->
 ```text
 usage: ambermeta gui [-h] [--port PORT] [--no-browser] [--host HOST]
                      [directory]
@@ -861,6 +876,7 @@ options:
   --no-browser  Don't automatically open the browser
   --host HOST   Server host (default: 127.0.0.1)
 ```
+<!-- END_CLI_HELP:gui -->
 
 ```bash
 ambermeta gui runs/                       # opens http://127.0.0.1:8765
@@ -879,6 +895,7 @@ Print a shell-completion script.
 ambermeta completion {bash|zsh|fish}
 ```
 
+<!-- BEGIN_CLI_HELP:completion -->
 ```text
 usage: ambermeta completion [-h] {bash,zsh,fish}
 
@@ -890,6 +907,7 @@ positional arguments:
 options:
   -h, --help       show this help message and exit
 ```
+<!-- END_CLI_HELP:completion -->
 
 The generated scripts complete all eight subcommands, including `discover` and `export`. See [Install & completion](#install--completion) for one-time setup per shell.
 
