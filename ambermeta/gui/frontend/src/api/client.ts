@@ -3,6 +3,7 @@ import type {
   RuntimeSettings, FileInfo, FileMetadata, RawFile, ExportFormat,
   AddTopology, UpdateTopology, PhaseCreate, PhaseUpdate,
   StepCreatePayload, StepUpdatePayload, StepMovePayload, AssignRequest,
+  PlanRequest, PlanResult,
 } from "@/types";
 // (SaveResult / PreviewResponse / SettingsPatch are client-response shapes, not part of @/types)
 export interface SaveResult { document: DocumentResponse; warnings: string[]; }
@@ -53,6 +54,7 @@ export const api = {
   previewDocument: (format: ExportFormat) => post<PreviewResponse>("/document/preview", { format }),
   discover: (a: { recursive: boolean; pattern?: string }) => post<DiscoverResult>("/document/discover", a),
   validate: () => post<ValidationReport>("/validate"),
+  plan: (b: PlanRequest) => post<PlanResult>("/plan", b),
   undo: () => post<DocumentResponse>("/undo"),
   redo: () => post<DocumentResponse>("/redo"),
   getSettings: () => request<RuntimeSettings>("/settings"),

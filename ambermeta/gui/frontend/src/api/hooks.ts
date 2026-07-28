@@ -5,6 +5,7 @@ import { pushToast } from "@/lib/toast";
 import type {
   DocumentResponse, AddTopology, UpdateTopology, PhaseCreate, PhaseUpdate,
   StepCreatePayload, StepUpdatePayload, StepMovePayload, AssignRequest, ExportFormat,
+  PlanRequest, PlanResult,
 } from "@/types";
 
 export function useDocument() { return useQuery({ queryKey: DOCUMENT_KEY, queryFn: api.getDocument }); }
@@ -46,7 +47,22 @@ export const useDiscover = () =>
 export const useSave = () =>
   useMutation({
     mutationFn: (a: { path?: string; format?: ExportFormat }) => api.saveDocument(a),
-    onSuccess: (res: SaveResult) => { setDocument(res.document); res.warnings.forEach((w) => pushToast(w, "warning")); },
+    onSuccess: (res: SaveResult) => {
+      setDocument(res.document);
+      res.warnings.forEach((w) => pushToast(w, "warning"));
+      // Saying where it went, because the only other evidence a save happened was the
+      // dirty dot going out — which reads as "nothing happened" if you were not watching
+      // it, and never told you which file was written.
+      if (res.document.manifest_path) pushToast(`Saved to ${res.document.manifest_path}`);
+    },
+  });
+export const usePlan = () =>
+  useMutation({
+    mutationFn: (b: PlanRequest) => api.plan(b),
+    onSuccess: (res: PlanResult) => {
+      setDocument(res.document);
+      res.warnings.forEach((w) => pushToast(w, "warning"));
+    },
   });
 export const useValidate = () => useMutation({ mutationFn: () => api.validate() });
 export const usePreview = () => useMutation({ mutationFn: (format: ExportFormat) => api.previewDocument(format) });

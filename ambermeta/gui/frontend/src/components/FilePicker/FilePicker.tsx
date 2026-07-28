@@ -53,6 +53,13 @@ export function FilePicker({ open, mode, title, filterType, onPick, onClose }: P
             {type ? `No ${type} files found.` : "No files found."}
           </p>
         )}
+        {mode === "save" && files.length > 0 && (
+          // Without this the list reads as "choose a file to open", and the field that
+          // actually names the new file sits below it looking optional.
+          <p className="px-2 py-1 text-xs text-ink-muted border-b border-hairline">
+            Existing files — pick one to overwrite, or name a new one below.
+          </p>
+        )}
         {files.map((f) => (
           <button key={f.path}
             onClick={() => (mode === "open" ? onPick({ path: f.path }) : setPath(f.path))}
@@ -66,25 +73,30 @@ export function FilePicker({ open, mode, title, filterType, onPick, onClose }: P
       {mode === "save" && (
         <div className="mt-3 space-y-2">
           <label className="block text-sm">
-            <span className="text-ink-secondary">Path</span>
+            <span className="text-ink-secondary">Save as</span>
             <input aria-label="Path" value={path} onChange={(e) => setPath(e.target.value)}
+              placeholder="ambermeta.yaml"
               className="w-full mt-1 px-2 py-1 border border-hairline rounded font-mono bg-app" />
+            <span className="block mt-1 text-xs text-ink-muted">
+              A new name writes a new file; pick one above to overwrite it.
+            </span>
           </label>
           <label className="block text-sm">
             <span className="text-ink-secondary">Format</span>
+            {/* yaml/json only: the v2 manifest writer rejects toml and csv, so offering
+                them here produced a 400 for a choice the dialog itself had presented.
+                Export covers the lossy flat views. */}
             <select aria-label="Format" value={format}
               onChange={(e) => setFormat(e.target.value as ExportFormat)}
               className="w-full mt-1 px-2 py-1 border border-hairline rounded bg-app">
               <option value="yaml">yaml</option>
               <option value="json">json</option>
-              <option value="toml">toml</option>
-              <option value="csv">csv</option>
             </select>
           </label>
           <div className="flex justify-end gap-2">
             <Button onClick={onClose}>Cancel</Button>
-            <Button variant="primary" disabled={!path}
-              onClick={() => onPick({ path, format })}>Save</Button>
+            <Button variant="primary" disabled={!path.trim()}
+              onClick={() => onPick({ path: path.trim(), format })}>Save</Button>
           </div>
         </div>
       )}

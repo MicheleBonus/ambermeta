@@ -40,7 +40,7 @@ The server (FastAPI + Uvicorn) binds the host/port, resolves `directory` to an a
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────────┐
-│ AmberMeta  [Open] [Save] ●          [Discover] [Validate] [Export] [↶] [↷]   │
+│ AmberMeta [Open] [Save] ●   [Discover] [Validate] [Plan] [Export] [↶] [↷]    │
 ├───────────────┬────────────────────────────────────┬─────────────────────────┤
 │               │  Simulation                        │                         │
 │  FILES        │  ┌ pool ───────────────────────┐   │  INSPECTOR              │
@@ -67,6 +67,7 @@ The server (FastAPI + Uvicorn) binds the host/port, resolves `directory` to an a
 | **Open / Save** | Load an existing manifest / write the current one to disk (dot = unsaved changes). |
 | **Discover** | Discover-as-draft: scan the launch directory into a Simulation draft. |
 | **Validate** | Run full validation and show the report. |
+| **Plan** | Write the manifest and the summaries `ambermeta plan` produces, in one action. |
 | **Export** | Preview the manifest as YAML or JSON and copy it. |
 | **↶ / ↷** | Undo / redo, resolved server-side. |
 
@@ -80,7 +81,7 @@ Each pane is resizable (drag the divider); widths persist across sessions.
 2. **Assign & adjust.** Drag a file from **Files** onto the topology pool, the starting-structure slot, a step's `mdin`/`mdout`/`mdcrd`/`rst` slot, or a phase's/step's topology target. Or select a file in **Files** and use the Inspector's **Assign** actions (§7) — the same mutations, without dragging.
 3. **Arrange.** In the **Canvas**, drag a step's grip handle to reorder it within a phase or drop it onto another phase to move it; drag a phase's grip handle to reorder phases.
 4. **Validate.** Click **Validate**. The panel lists per-step issues (missing files, continuity/sequence problems) and protocol-level notes, and lets you jump to a step. A simulation with continuity notes shows as *valid, with N protocol note(s)* — never a silent clean pass when something is worth a look.
-5. **Save / Export.** **Save** writes the canonical **v2 manifest** to disk (YAML or JSON, inferred from the extension); **Export** lets you preview and copy YAML or JSON first without writing.
+5. **Save / Plan / Export.** **Save** writes the canonical **v2 manifest** to disk (YAML or JSON) and reports the path it wrote. **Plan** is the step after that: it writes the manifest *and* the artifacts [`ambermeta plan`](cli.md) produces — `summary.json`, `methods_summary.json`, and optionally a statistics CSV — so the whole pipeline is one action rather than a save followed by a trip to a terminal. **Export** previews YAML or JSON for copying without writing anything.
 
 Undo/redo (**Ctrl+Z** / **Ctrl+Shift+Z**, **Ctrl+Y**) and a dirty-state dot live in the top bar; history is kept on the server (100 steps). **Open** resets it — a different manifest is a new editing session — while **Discover** does not, so a discovery run on the wrong directory is one undo away. Removing something (a step, a phase, a topology, the starting structure) reports itself with an **Undo** button; that offer disappears as soon as you make another change, because undo always reverses the most recent one.
 
@@ -304,6 +305,7 @@ The frontend talks to a small REST API under `/api` (`ambermeta/gui/api/routes.p
 | `POST` | `/api/assign` | `{ path, target_type, target_id?, kind?, slot? }` — `target_type` ∈ `pool \| starting_structure \| phase_topology \| step_topology \| step_slot` (`step_slot` also needs `slot` ∈ `mdin\|mdout\|mdcrd\|rst`) | Document (`404`/`400`) |
 | `GET` / `PUT` | `/api/settings` | _(GET)_ / `{ auto_link_restarts?, strict_validation?, allow_gaps?, use_relative_paths? }` | Settings / Document |
 | `POST` | `/api/undo` · `/api/redo` | — | Document |
+| `POST` | `/api/plan` | `{ save_manifest_path?, summary_path?, methods_summary_path?, stats_csv_path?, summary_format? }` — a `null` path skips that artifact; `summary_format` is `json`\|`yaml` and the methods summary is always JSON | `{ written[], warnings[], stage_count, totals, document }` (`400` if nothing was selected or a format is unsupported, `403` outside the launch directory) |
 | `POST` | `/api/validate` | — | Validation report (§9) |
 
 ### Files

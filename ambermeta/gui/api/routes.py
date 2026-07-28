@@ -12,7 +12,7 @@ from .schemas import (
     DiscoverRequest, DiscoverResult, PreviewRequest, PreviewResponse,
     AddTopology, UpdateTopology, SetStartingStructure, PhaseCreate, PhaseUpdate, PhaseReorder,
     StepCreate, StepUpdate, StepMove, StepReorder, AssignRequest, ValidationReport,
-    FileMetadata, FileInfo, RawFile, Suggestion,
+    FileMetadata, FileInfo, RawFile, Suggestion, PlanRequest, PlanResult,
 )
 
 router = APIRouter()
@@ -108,6 +108,65 @@ def discover_document(req: DiscoverRequest) -> DiscoverResult:
     return DiscoverResult(document=store.to_response(),
                           suggestions=[Suggestion(**s) for s in out["suggestions"]],
                           warnings=out["warnings"])
+
+
+@router.post("/plan", response_model=PlanResult)
+def plan_document(req: PlanRequest) -> PlanResult:
+    """Write the artifacts `ambermeta plan` writes, from the document held in memory.
+
+    Optionally saves the manifest in the same call, so "build it, then plan it" is one
+    action in the GUI rather than a save followed by a trip to a terminal.
+    """
+    store = get_store()
+    sim, settings, manifest_path, base_directory = store.snapshot()
+
+    # --- validate everything before writing anything --------------------------
+    targets: dict = {}
+    for artifact, raw in (("summary", req.summary_path),
+                          ("methods_summary", req.methods_summary_path),
+                          ("stats_csv", req.stats_csv_path)):
+        if raw:
+            targets[artifact] = _within_base(raw, base_directory)
+    resolved_manifest = (_within_base(req.save_manifest_path, base_directory)
+                         if req.save_manifest_path else None)
+    if not targets and resolved_manifest is None:
+        raise HTTPException(status_code=400, detail="Nothing to write: choose at least one output.")
+    if req.summary_format not in ("json", "yaml"):
+        # Checked here, not inside the writer: a bad format used to be discovered after
+        # the manifest had already been written and marked saved.
+        raise HTTPException(status_code=400,
+                            detail=f"summary format must be json or yaml, got: {req.summary_format}")
+
+    # Two artifacts aimed at one file silently destroyed each other, and the survivor was
+    # still reported as both. The manifest lost that race, leaving the document "saved" to
+    # a summary that cannot be reopened.
+    all_paths = list(targets.values()) + ([resolved_manifest] if resolved_manifest else [])
+    duplicates = {p for p in all_paths if all_paths.count(p) > 1}
+    if duplicates:
+        raise HTTPException(
+            status_code=400,
+            detail="Each output needs its own file; more than one is aimed at "
+                   + ", ".join(sorted(duplicates)))
+
+    # --- write ----------------------------------------------------------------
+    warnings: List[str] = []
+    written: List[dict] = []
+    if resolved_manifest:
+        fmt = core_bridge.resolve_format(resolved_manifest, None)
+        try:
+            warnings.extend(core_bridge.save_simulation(sim, base_directory, resolved_manifest, fmt))
+        except (RuntimeError, ValueError, OSError) as exc:
+            raise HTTPException(status_code=400, detail=f"Could not save manifest: {exc}")
+        store.mark_saved(resolved_manifest)
+        written.append({"artifact": "manifest", "path": resolved_manifest})
+
+    out = core_bridge.write_plan_outputs(sim, settings, base_directory, targets,
+                                         summary_format=req.summary_format)
+    written.extend(out["written"])
+    return PlanResult(written=written, failed=out["failed"],
+                      warnings=warnings + out["warnings"],
+                      stage_count=out["stage_count"], totals=out["totals"],
+                      document=store.to_response())
 
 
 @router.post("/validate", response_model=ValidationReport)

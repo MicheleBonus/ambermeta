@@ -30,15 +30,29 @@ export function Modal(
   { open: boolean; title: string; onClose: () => void; children: ReactNode }
 ) {
   const ref = useRef<HTMLDivElement>(null);
+  // Held in a ref so the effects below do not depend on `onClose`'s identity. Every call
+  // site passes an inline arrow, so it is a new function on every render.
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
+
   useEffect(() => {
     if (!open) return;
     setOpenModals(openModals + 1);
     return () => setOpenModals(openModals - 1);
   }, [open]);
+
+  // Focus the dialog ONCE per opening. This used to also depend on `onClose`, so a parent
+  // passing an inline arrow re-ran it on every render — and a render happens on every
+  // keystroke into a controlled field. The dialog stole focus back after the first
+  // character, so typing a filename into the save dialog produced a one-character name.
+  useEffect(() => {
+    if (open) ref.current?.focus();
+  }, [open]);
+
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") { onClose(); return; }
+      if (e.key === "Escape") { closeRef.current(); return; }
       if (e.key !== "Tab" || !ref.current) return;
       // Trap Tab focus within the dialog (a11y for modal dialogs).
       const f = ref.current.querySelectorAll<HTMLElement>(
@@ -50,9 +64,8 @@ export function Modal(
       else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
     };
     document.addEventListener("keydown", onKey);
-    ref.current?.focus();
     return () => document.removeEventListener("keydown", onKey);
-  }, [open, onClose]);
+  }, [open]);
   if (!open) return null;
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/20"
