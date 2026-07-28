@@ -206,6 +206,41 @@ class AssignRequest(BaseModel):
     slot: Optional[str] = None            # for step_slot: mdin|mdout|mdcrd|rst
 
 
+class PlanRequest(BaseModel):
+    """Which of `ambermeta plan`'s artifacts to write, and where.
+
+    A path of `None` means "do not write this one", so the GUI sends the same shape
+    whether one box or three are ticked.
+    """
+    summary_path: Optional[str] = None
+    methods_summary_path: Optional[str] = None
+    stats_csv_path: Optional[str] = None
+    summary_format: str = "json"          # json | yaml; the methods summary is always JSON
+    save_manifest_path: Optional[str] = None   # save the manifest in the same run
+
+
+class WrittenFile(BaseModel):
+    artifact: str
+    path: str
+
+
+class FailedFile(BaseModel):
+    artifact: str
+    path: str
+    error: str
+
+
+class PlanResult(BaseModel):
+    written: List[WrittenFile] = Field(default_factory=list)
+    # One unwritable path does not hide the artifacts that did land: the response names
+    # both, so the user is never told "it failed" about a run that wrote three files.
+    failed: List[FailedFile] = Field(default_factory=list)
+    warnings: List[str] = Field(default_factory=list)
+    stage_count: int = 0
+    totals: Dict[str, float] = Field(default_factory=dict)
+    document: DocumentResponse
+
+
 class Suggestion(BaseModel):
     id: str
     kind: str        # missing_run|continuity_gap|topology_confirm|restart_link|role_guess|starting_structure

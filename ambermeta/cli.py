@@ -1667,7 +1667,11 @@ def _plan_command(args: argparse.Namespace) -> int:
     _print_protocol(protocol, verbose=args.verbose)
 
     if args.summary_path:
-        payload = protocol.to_dict()
+        from ambermeta.protocol import to_plain
+
+        # Built-in types only: yaml.safe_dump rejects the numpy scalars the parsers
+        # produce, and used to die partway through leaving a truncated summary on disk.
+        payload = to_plain(protocol.to_dict())
         summary_format = args.summary_format
         if summary_format is None:
             _, ext = os.path.splitext(args.summary_path)
@@ -1687,8 +1691,10 @@ def _plan_command(args: argparse.Namespace) -> int:
         else:
             raise ValueError(f"Unsupported summary format: {summary_format}")
     if args.methods_summary_path:
+        from ambermeta.protocol import to_plain
+
         with open(args.methods_summary_path, "w", encoding="utf-8") as fh:
-            json.dump(protocol.to_methods_dict(), fh, indent=2)
+            json.dump(to_plain(protocol.to_methods_dict()), fh, indent=2)
 
     # UX-007: CSV export for statistics
     if getattr(args, "stats_csv", None):
@@ -1726,75 +1732,9 @@ def _gui_command(args: argparse.Namespace) -> int:
 
 def _export_stats_csv(protocol: SimulationProtocol, filepath: str) -> None:
     """Export per-stage statistics to a CSV file."""
-    import csv
+    from ambermeta.protocol import write_stats_csv
 
-    headers = [
-        "stage_name",
-        "stage_role",
-        "time_start_ps",
-        "time_end_ps",
-        "duration_ns",
-        "frame_count",
-        "temp_avg",
-        "temp_std",
-        "pressure_avg",
-        "pressure_std",
-        "density_avg",
-        "density_std",
-        "etot_avg",
-        "etot_std",
-    ]
-
-    rows = []
-    for stage in protocol.stages:
-        row = {
-            "stage_name": stage.name,
-            "stage_role": stage.stage_role or "",
-        }
-
-        # Extract stats from mdout if available
-        if stage.mdout and stage.mdout.details:
-            stats = getattr(stage.mdout.details, "stats", None)
-            if stats:
-                row["time_start_ps"] = getattr(stats, "time_start", "")
-                row["time_end_ps"] = getattr(stats, "time_end", "")
-                row["duration_ns"] = getattr(stats, "duration_ns", "")
-                row["frame_count"] = getattr(stats, "count", "")
-
-                # Get streaming stats if available
-                temp_stats = getattr(stats, "temp_stats", None)
-                if temp_stats:
-                    mean, std = temp_stats.get_stats()
-                    row["temp_avg"] = mean if mean is not None else ""
-                    row["temp_std"] = std if std is not None else ""
-
-                pressure_stats = getattr(stats, "pressure_stats", None)
-                if pressure_stats:
-                    mean, std = pressure_stats.get_stats()
-                    row["pressure_avg"] = mean if mean is not None else ""
-                    row["pressure_std"] = std if std is not None else ""
-
-                density_stats = getattr(stats, "density_stats", None)
-                if density_stats:
-                    mean, std = density_stats.get_stats()
-                    row["density_avg"] = mean if mean is not None else ""
-                    row["density_std"] = std if std is not None else ""
-
-                etot_stats = getattr(stats, "etot_stats", None)
-                if etot_stats:
-                    mean, std = etot_stats.get_stats()
-                    row["etot_avg"] = mean if mean is not None else ""
-                    row["etot_std"] = std if std is not None else ""
-
-        rows.append(row)
-
-    with open(filepath, "w", newline="", encoding="utf-8") as fh:
-        writer = csv.DictWriter(fh, fieldnames=headers)
-        writer.writeheader()
-        for row in rows:
-            # Fill missing columns with empty strings
-            writer.writerow({k: row.get(k, "") for k in headers})
-
+    write_stats_csv(protocol, filepath)
     _out(f"Statistics exported to: {filepath}")
 
 

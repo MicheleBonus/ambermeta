@@ -1,4 +1,6 @@
 import json
+import os
+
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from ambermeta.gui.api import routes
@@ -271,3 +273,163 @@ def test_reassigning_a_phase_to_itself_is_a_400_not_a_crash(tmp_path):
     r = c.request("DELETE", f"/api/phases/{p}", params={"reassign_to": p})
     assert r.status_code == 400
     assert len(_phase(c, p)["steps"]) == 1     # and nothing was lost on the way
+
+
+# --- plan outputs: the artifacts `ambermeta plan` writes, from the GUI --------
+
+def _planned(tmp_path):
+    """A discovered document over the real sample data."""
+    import shutil
+    src = os.path.join(os.path.dirname(__file__), "data", "amber", "md_test_files")
+    for name in os.listdir(src):
+        shutil.copy(os.path.join(src, name), tmp_path)
+    c = _client(tmp_path)
+    c.post("/api/document/discover", json={"recursive": False})
+    return c
+
+
+def test_plan_writes_the_manifest_and_both_summaries_in_one_call(tmp_path):
+    c = _planned(tmp_path)
+    r = c.post("/api/plan", json={
+        "save_manifest_path": "manifest.yaml",
+        "summary_path": "reports/summary.json",
+        "methods_summary_path": "reports/methods_summary.json",
+    })
+    assert r.status_code == 200
+    body = r.json()
+    assert [w["artifact"] for w in body["written"]] == \
+        ["manifest", "summary", "methods_summary"]
+    for w in body["written"]:
+        assert os.path.isfile(w["path"]), w
+    # Subdirectories are created rather than being an error the user has to pre-empt.
+    assert (tmp_path / "reports" / "summary.json").is_file()
+    assert body["stage_count"] == 5
+    assert body["totals"]["time_ps"] > 0
+    assert body["document"]["dirty"] is False       # saving the manifest marked it clean
+
+
+def test_the_summaries_match_what_the_cli_would_write(tmp_path):
+    """One protocol, one parse — the GUI must not produce a different summary."""
+    from ambermeta.gui.api import core_bridge
+    from ambermeta.protocol import to_plain
+    c = _planned(tmp_path)
+    c.post("/api/plan", json={"summary_path": "s.json",
+                              "methods_summary_path": "m.json"})
+    store = routes.get_store()
+    sim, settings, _, base = store.snapshot()
+    protocol = core_bridge.build_protocol(
+        core_bridge._flatten_simulation(sim), dict(settings), base)
+    # Compared through to_plain, which is what both writers apply: a JSON round trip
+    # turns tuples into lists, so the raw dict is not the right thing to compare against.
+    assert json.loads((tmp_path / "s.json").read_text(encoding="utf-8")) \
+        == to_plain(protocol.to_dict())
+    assert json.loads((tmp_path / "m.json").read_text(encoding="utf-8")) \
+        == to_plain(protocol.to_methods_dict())
+
+
+def test_plan_writes_a_stats_csv_with_the_shared_column_order(tmp_path):
+    from ambermeta.protocol import STATS_CSV_COLUMNS
+    c = _planned(tmp_path)
+    r = c.post("/api/plan", json={"stats_csv_path": "stats.csv"})
+    assert r.status_code == 200
+    header = (tmp_path / "stats.csv").read_text(encoding="utf-8").splitlines()[0]
+    assert header.split(",") == STATS_CSV_COLUMNS
+
+
+def test_plan_can_write_the_summary_as_yaml_while_methods_stays_json(tmp_path):
+    c = _planned(tmp_path)
+    c.post("/api/plan", json={"summary_path": "s.yaml", "summary_format": "yaml",
+                              "methods_summary_path": "m.json"})
+    assert not (tmp_path / "s.yaml").read_text(encoding="utf-8").lstrip().startswith("{")
+    json.loads((tmp_path / "m.json").read_text(encoding="utf-8"))   # still JSON
+
+
+def test_plan_refuses_to_write_nothing(tmp_path):
+    assert _client(tmp_path).post("/api/plan", json={}).status_code == 400
+
+
+def test_plan_rejects_a_path_outside_the_launch_directory(tmp_path):
+    c = _planned(tmp_path)
+    for key in ("summary_path", "methods_summary_path", "stats_csv_path",
+                "save_manifest_path"):
+        r = c.post("/api/plan", json={key: "../escaped.json"})
+        assert r.status_code == 403, key
+
+
+def test_plan_rejects_an_unsupported_summary_format(tmp_path):
+    c = _planned(tmp_path)
+    r = c.post("/api/plan", json={"summary_path": "s.toml", "summary_format": "toml"})
+    assert r.status_code == 400
+    assert not (tmp_path / "s.toml").exists()
+
+
+def test_plan_says_so_when_there_is_nothing_to_summarise(tmp_path):
+    c = _client(tmp_path)
+    r = c.post("/api/plan", json={"summary_path": "s.json"})
+    assert r.status_code == 200
+    assert any("no steps" in w.lower() for w in r.json()["warnings"])
+
+
+def test_a_yaml_summary_survives_the_numpy_scalars_the_parsers_produce(tmp_path):
+    """yaml.safe_dump rejects numpy types outright; it used to leave a truncated file."""
+    import yaml
+    c = _planned(tmp_path)
+    r = c.post("/api/plan", json={"summary_path": "s.yaml", "summary_format": "yaml"})
+    assert r.status_code == 200
+    loaded = yaml.safe_load((tmp_path / "s.yaml").read_text(encoding="utf-8"))
+    assert loaded["totals"]["time_ps"] > 0
+    assert len(loaded["stages"]) == 5
+
+
+def test_plan_refuses_two_outputs_aimed_at_one_file(tmp_path):
+    """The loser of the race was silently destroyed and still reported as written."""
+    c = _planned(tmp_path)
+    r = c.post("/api/plan", json={"save_manifest_path": "out.yaml",
+                                  "summary_path": "out.yaml", "summary_format": "yaml"})
+    assert r.status_code == 400
+    assert "own file" in r.json()["detail"]
+    assert not (tmp_path / "out.yaml").exists()      # nothing was written on the way
+
+    r = c.post("/api/plan", json={"summary_path": "b.json", "methods_summary_path": "b.json"})
+    assert r.status_code == 400
+
+
+def test_plan_validates_the_format_before_saving_the_manifest(tmp_path):
+    """A bad format used to be caught after the manifest had been written and marked saved."""
+    c = _planned(tmp_path)
+    r = c.post("/api/plan", json={"save_manifest_path": "m.yaml", "summary_path": "s.json",
+                                  "summary_format": "toml"})
+    assert r.status_code == 400
+    assert not (tmp_path / "m.yaml").exists()
+    assert c.get("/api/document").json()["manifest_path"] is None
+
+
+def test_plan_reports_what_landed_when_one_artifact_cannot_be_written(tmp_path):
+    c = _planned(tmp_path)
+    (tmp_path / "blocked").mkdir()                   # a directory where a file should go
+    r = c.post("/api/plan", json={"save_manifest_path": "m.yaml", "summary_path": "s.json",
+                                  "methods_summary_path": "blocked"})
+    assert r.status_code == 200                      # not a bare 400 that hides the rest
+    body = r.json()
+    assert [w["artifact"] for w in body["written"]] == ["manifest", "summary"]
+    assert [f["artifact"] for f in body["failed"]] == ["methods_summary"]
+    assert body["failed"][0]["error"]
+    assert (tmp_path / "m.yaml").is_file() and (tmp_path / "s.json").is_file()
+
+
+def test_plan_does_not_warn_about_summaries_nobody_asked_for(tmp_path):
+    c = _client(tmp_path)                            # empty document
+    r = c.post("/api/plan", json={"save_manifest_path": "m.yaml"})
+    assert r.status_code == 200 and r.json()["warnings"] == []
+
+
+def test_the_empty_stats_warning_describes_what_is_actually_in_the_file(tmp_path):
+    c = _client(tmp_path)
+    p = c.post("/api/phases", json={"name": "Prod", "role": "production"}) \
+         .json()["simulation"]["phases"][0]["id"]
+    (tmp_path / "prod.mdin").write_text("&cntrl\nimin=0, nstlim=10, dt=0.002,\n/\n")
+    c.post(f"/api/phases/{p}/steps", json={"name": "prod", "mdin": "prod.mdin"})
+    r = c.post("/api/plan", json={"stats_csv_path": "stats.csv"})
+    rows = (tmp_path / "stats.csv").read_text(encoding="utf-8").strip().splitlines()
+    assert len(rows) == 2                            # a header AND a row for the step
+    assert any("every row" in w for w in r.json()["warnings"])

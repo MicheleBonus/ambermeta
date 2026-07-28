@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from ambermeta.protocol import auto_discover
 import ambermeta.protocol as protocol
 
@@ -553,3 +555,20 @@ def test_methods_summary_prunes_stats_and_includes_reproducibility_metadata():
 
     methods_json = json.dumps(methods)
     assert "stats" not in methods_json
+
+
+def test_to_plain_converts_numpy_scalars_and_tuples_for_yaml():
+    """`plan --summary-format yaml` died on a numpy box dimension partway through a file."""
+    import yaml
+    from ambermeta.protocol import to_plain
+    np = pytest.importorskip("numpy")
+
+    payload = {"box": (np.float64(91.8), np.float64(91.8)),
+               "count": np.int64(7), "name": "prod", "nested": [{"x": np.float32(1.5)}],
+               "untouched": None}
+    plain = to_plain(payload)
+    assert plain["box"] == [91.8, 91.8] and isinstance(plain["box"], list)
+    assert plain["count"] == 7 and type(plain["count"]) is int
+    assert plain["name"] == "prod" and plain["untouched"] is None
+    # The point of the exercise: it now round-trips through safe_dump.
+    assert yaml.safe_load(yaml.safe_dump(plain))["nested"][0]["x"] == 1.5

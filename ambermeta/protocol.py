@@ -1967,8 +1967,74 @@ class ProtocolBuilder:
         return protocol
 
 
+def to_plain(obj: Any) -> Any:
+    """Recursively convert a summary payload to built-in Python types.
+
+    Parsers hand back numpy scalars (a box dimension, a mean), and `yaml.safe_dump`
+    refuses anything whose exact type it does not know — so `plan --summary-format yaml`
+    died with a RepresenterError partway through, leaving a truncated file behind. JSON
+    survived only because `numpy.float64` subclasses `float`. Tuples become lists for the
+    same reason, and so that the YAML and JSON forms of one summary agree.
+    """
+    if isinstance(obj, dict):
+        return {k: to_plain(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [to_plain(v) for v in obj]
+    if isinstance(obj, (str, bytes, bool)) or obj is None:
+        return obj
+    item = getattr(obj, "item", None)      # numpy scalars, and nothing built-in
+    if callable(item) and hasattr(obj, "dtype"):
+        return to_plain(item())
+    return obj
+
+
+STATS_CSV_COLUMNS = [
+    "stage_name", "stage_role", "time_start_ps", "time_end_ps", "duration_ns",
+    "frame_count", "temp_avg", "temp_std", "pressure_avg", "pressure_std",
+    "density_avg", "density_std", "etot_avg", "etot_std",
+]
+
+
+def write_stats_csv(protocol: "SimulationProtocol", filepath: str) -> None:
+    """Write one row of per-stage mdout statistics per stage.
+
+    Lives here rather than in the CLI because the GUI writes the same artifact: two
+    implementations of "the stats CSV" would drift, and a column order that differed
+    between the two would be a silent difference in a file people diff.
+    """
+    import csv
+
+    rows: List[Dict[str, Any]] = []
+    for stage in protocol.stages:
+        row: Dict[str, Any] = {"stage_name": stage.name, "stage_role": stage.stage_role or ""}
+        stats = getattr(stage.mdout.details, "stats", None) if (
+            stage.mdout and stage.mdout.details) else None
+        if stats:
+            row["time_start_ps"] = getattr(stats, "time_start", "")
+            row["time_end_ps"] = getattr(stats, "time_end", "")
+            row["duration_ns"] = getattr(stats, "duration_ns", "")
+            row["frame_count"] = getattr(stats, "count", "")
+            for prefix, attr in (("temp", "temp_stats"), ("pressure", "pressure_stats"),
+                                 ("density", "density_stats"), ("etot", "etot_stats")):
+                series = getattr(stats, attr, None)
+                if series:
+                    mean, std = series.get_stats()
+                    row[f"{prefix}_avg"] = mean if mean is not None else ""
+                    row[f"{prefix}_std"] = std if std is not None else ""
+        rows.append(row)
+
+    with open(filepath, "w", newline="", encoding="utf-8") as fh:
+        writer = csv.DictWriter(fh, fieldnames=STATS_CSV_COLUMNS)
+        writer.writeheader()
+        for row in rows:
+            writer.writerow({k: row.get(k, "") for k in STATS_CSV_COLUMNS})
+
+
 __all__ = [
     "SimulationProtocol",
+    "write_stats_csv",
+    "STATS_CSV_COLUMNS",
+    "to_plain",
     "SimulationStage",
     "ProtocolBuilder",
     "auto_discover",
