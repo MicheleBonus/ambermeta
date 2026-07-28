@@ -177,3 +177,14 @@ describe("resolveDrop — file-type aware routing", () => {
     expect(resolveDrop("step:s1", "canvas", "mdin")).toBeNull();
   });
 });
+
+it("fills the restart slot when a coordinate file is aimed straight at it", () => {
+  // A .rst is typed `inpcrd`, and an inpcrd on the step BODY sets what the step reads.
+  // Aiming at the rst chip is how you say "this is what the step writes" instead.
+  expect(resolveDrop("file:/w/equil/02_nvt.rst", "slot:s1:rst", "inpcrd")).toEqual({
+    type: "step_slot", stepId: "s1", kind: "rst", path: "/w/equil/02_nvt.rst",
+  });
+  expect(resolveDrop("file:/w/equil/02_nvt.rst", "step:s1", "inpcrd")).toEqual({
+    type: "step_input_coords", stepId: "s1", path: "/w/equil/02_nvt.rst",
+  });
+});

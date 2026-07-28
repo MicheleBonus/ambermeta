@@ -66,6 +66,10 @@ class StepModel(BaseModel):
     mdin: Optional[str] = None
     mdout: Optional[str] = None
     mdcrd: Optional[str] = None
+    rst: Optional[str] = None            # the restart this step writes; the next step reads it
+    # The coordinate file this step actually reads, resolved through the chain. Read-only:
+    # the GUI shows it without re-implementing the resolution rules.
+    resolved_input_coords: Optional[str] = None
     expected_gap_ps: Optional[float] = None
     gap_tolerance_ps: Optional[float] = None
     notes: List[str] = Field(default_factory=list)
@@ -116,10 +120,15 @@ class DocumentResponse(BaseModel):
 # ---- request models ----
 
 class StageFiles(BaseModel):
-    """Per-step run files (topology/coords are handled separately)."""
+    """Per-step run files (topology/input coords are handled separately).
+
+    ``rst`` is the restart the step writes, so it belongs with the run's other outputs.
+    The empty string clears a slot; absent leaves it alone.
+    """
     mdin: Optional[str] = None
     mdout: Optional[str] = None
     mdcrd: Optional[str] = None
+    rst: Optional[str] = None
 
 
 class AddTopology(BaseModel):
@@ -142,8 +151,12 @@ class PhaseCreate(BaseModel):
 
 
 class PhaseUpdate(BaseModel):
+    # `topology` uses model_fields_set in the route: absent = leave, null = clear it on
+    # every step of the phase. A phase has no topology of its own — it is the one control
+    # that sets (or unsets) the topology of all its steps at once.
     name: Optional[str] = None
     role: Optional[StageRole] = None
+    topology: Optional[str] = None
 
 
 class PhaseReorder(BaseModel):
@@ -157,13 +170,16 @@ class StepCreate(BaseModel):
     mdin: Optional[str] = None
     mdout: Optional[str] = None
     mdcrd: Optional[str] = None
+    rst: Optional[str] = None
     expected_gap_ps: Optional[float] = None
     gap_tolerance_ps: Optional[float] = None
     notes: List[str] = Field(default_factory=list)
 
 
 class StepUpdate(BaseModel):
-    # `topology` uses model_fields_set in the route: absent = leave, null = clear.
+    # `topology`, `expected_gap_ps` and `gap_tolerance_ps` use model_fields_set in the
+    # route: absent = leave, null = clear. Without that an explicit null was silently
+    # dropped, so a gap once set could never be removed — only overwritten with 0.
     name: Optional[str] = None
     topology: Optional[str] = None
     input_coords: Optional[InputCoordsModel] = None
@@ -187,7 +203,7 @@ class AssignRequest(BaseModel):
     target_type: str   # pool | starting_structure | phase_topology | step_topology | step_slot
     target_id: Optional[str] = None
     kind: Optional[TopologyKind] = None   # for pool / *_topology
-    slot: Optional[str] = None            # for step_slot: mdin|mdout|mdcrd
+    slot: Optional[str] = None            # for step_slot: mdin|mdout|mdcrd|rst
 
 
 class Suggestion(BaseModel):

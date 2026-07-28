@@ -1,10 +1,12 @@
 import { useState } from "react";
 import { useDraggable, useDroppable } from "@dnd-kit/core";
 import { useSelection } from "@/state/selection";
-import { useAssign, useCreateStep, useDeletePhase, useUpdatePhase } from "@/api/hooks";
+import { useCreateStep, useDeletePhase, useUpdatePhase } from "@/api/hooks";
 import { ChevronDown, ChevronRight, GripVertical, Plus, Trash2 } from "@/components/common";
 import { ROLE_OPTIONS } from "@/lib/roles";
+import { linkBetween, type StepIndex } from "@/lib/chain";
 import { useInlineRename } from "@/lib/useInlineRename";
+import { useUndoOffer } from "@/lib/useUndoOffer";
 import type { PhaseModel, StageRole, StepModel, Suggestion, TopologyModel } from "@/types";
 import { StepNode } from "./StepNode";
 import { ContinuityArrow, MissingRunGhost, parseGap } from "./ContinuityArrow";
@@ -74,21 +76,75 @@ type SequenceItem =
   | { kind: "step"; num: number; step: StepModel }
   | { kind: "ghost"; num: number; id: string; name: string };
 
+/** One group's render list, with the step that precedes each item anywhere in the phase. */
+interface RenderedGroup {
+  group: { id: string; base: string; steps: StepModel[] };
+  items: { item: SequenceItem; above: StepModel | null }[];
+}
+
+/**
+ * Lay the phase out as one sequence, then hand each item the step above it.
+ *
+ * `above` is threaded ACROSS group boundaries on purpose. Groups are formed by a shared
+ * numeric base, so `01_min`, `02_nvt`, `03_npt` are three groups of one — exactly what an
+ * equilibration folder looks like — and an arrow drawn only within a group would never
+ * appear there at all. A collapsed group still advances the sequence, so the arrow that
+ * follows it points at the right step.
+ */
+function layOutPhase(
+  groups: { id: string; base: string; steps: StepModel[] }[],
+  suggestions: Suggestion[],
+): RenderedGroup[] {
+  let previous: StepModel | null = null;
+  return groups.map((group) => {
+    const width = Math.max(0, ...group.steps.map((s) => numWidth(s.name)));
+    const ghosts = ghostsForBase(group.base, width, suggestions);
+    const ordered: SequenceItem[] = [
+      ...group.steps.map((step): SequenceItem => ({ kind: "step", num: stepNumber(step.name), step })),
+      ...ghosts.map((gh): SequenceItem => ({ kind: "ghost", num: gh.num, id: gh.id, name: gh.name })),
+    ].sort((a, b) => a.num - b.num);
+    const items = ordered.map((item) => {
+      const above = previous;
+      if (item.kind === "step") previous = item.step;
+      return { item, above };
+    });
+    return { group, items };
+  });
+}
+
+/** Sentinel for "the steps of this phase do not agree on a topology".
+ *  Topology ids are hex slices of a uuid4, so this can never collide with one. */
+const MIXED = "__mixed__";
+
+/**
+ * The topology every step of the phase holds, `null` if they all hold none, or MIXED if
+ * they disagree. A phase has no topology of its own — it is a way of setting all of its
+ * steps at once — so this is the only honest thing the phase-level control can display.
+ */
+function effectiveTopologyOf(phase: PhaseModel): string | null | typeof MIXED {
+  if (phase.steps.length === 0) return null;
+  const first = phase.steps[0].topology;
+  return phase.steps.every((s) => s.topology === first) ? first : MIXED;
+}
+
 export function PhaseSection({
   phase,
   topologies,
   base,
+  stepIndex,
 }: {
   phase: PhaseModel;
   topologies: TopologyModel[];
   /** Document base directory, drilled down so step labels can relativize paths. */
   base: string | null;
+  /** Every step in the document: the restart chain crosses phase boundaries. */
+  stepIndex: StepIndex;
 }) {
   const { sel, select } = useSelection();
-  const assign = useAssign();
   const updatePhase = useUpdatePhase();
   const createStep = useCreateStep();
   const deletePhase = useDeletePhase();
+  const offerUndo = useUndoOffer();
   // Drop target (files / steps land on it) AND drag source (grip) so phases can be reordered.
   const { setNodeRef, isOver } = useDroppable({ id: `phase:${phase.id}` });
   const drag = useDraggable({ id: `phase:${phase.id}` });
@@ -97,6 +153,7 @@ export function PhaseSection({
   const isSelected = sel.kind === "phase" && sel.id === phase.id;
   const groups = groupSteps(phase.steps);
   const suggestions = useSuggestions();
+  const effectiveTopology = effectiveTopologyOf(phase);
 
   return (
     // The droppable covers the whole section -- header AND step list -- so a file dropped
@@ -168,22 +225,35 @@ export function PhaseSection({
             ))}
           </select>
         </label>
+        {/* Controlled off the document, like the role select beside it. It used to be a
+            write-only action menu that reset itself to "Choose…" on every change, so the one
+            control that reports a phase's topology never showed the value it had just
+            applied. It now reads back what its steps hold, and clears them too. */}
         <label className="text-xs text-ink-muted flex items-center gap-1">
-          set topology ▾
+          topology
           <select
             aria-label={`set topology for ${phase.name}`}
-            defaultValue=""
-            className="px-1 py-0.5 border border-hairline rounded bg-app text-xs text-ink"
-            onChange={(e) => {
-              const topoId = e.target.value;
-              e.target.value = "";
-              const topo = topologies.find((t) => t.id === topoId);
-              if (topo) assign.mutate({ path: topo.path, target_type: "phase_topology", target_id: phase.id });
-            }}
+            value={effectiveTopology === MIXED ? MIXED : (effectiveTopology ?? "")}
+            // The control writes through to the steps, so with none to write to it would
+            // accept a choice, change nothing, and snap back — the same flicker in a new
+            // place. Saying why up front beats appearing to work.
+            disabled={phase.steps.length === 0}
+            title={phase.steps.length === 0
+              ? "Add a step first — a phase sets the topology of its steps"
+              : "Sets the topology of every step in this phase"}
+            className="max-w-[14rem] px-1 py-0.5 border border-hairline rounded bg-app text-xs text-ink disabled:opacity-50"
+            onChange={(e) =>
+              updatePhase.mutate({ id: phase.id, body: { topology: e.target.value || null } })
+            }
           >
-            <option value="" disabled>
-              Choose…
-            </option>
+            <option value="">— none —</option>
+            {effectiveTopology === MIXED && (
+              // Only reachable as a report, never as a choice: picking any real entry is what
+              // resolves the mix, and re-picking "Mixed" would mean nothing.
+              <option value={MIXED} disabled>
+                Mixed
+              </option>
+            )}
             {topologies.map((t) => (
               <option key={t.id} value={t.id}>
                 {t.path}
@@ -205,10 +275,20 @@ export function PhaseSection({
           type="button"
           aria-label={`delete phase ${phase.name}`}
           title="Delete this phase"
+          // A phase takes its steps down with it, so an occupied one still asks first —
+          // that is a lot of work to lose to a stray click. An empty phase just goes, with
+          // the same Undo offer every other removal gets.
           onClick={() => {
-            if (window.confirm(`Delete phase "${phase.name}" and its ${phase.steps.length} step(s)?`)) {
-              deletePhase.mutate({ id: phase.id });
+            if (phase.steps.length > 0 &&
+                !window.confirm(`Delete phase “${phase.name}” and its ${phase.steps.length} step(s)?`)) {
+              return;
             }
+            deletePhase.mutate({ id: phase.id }, {
+              onSuccess: () => {
+                if (isSelected) select(null, null);
+                offerUndo(`Deleted phase “${phase.name}”`);
+              },
+            });
           }}
           className="shrink-0 text-ink-muted hover:text-error"
         >
@@ -216,7 +296,7 @@ export function PhaseSection({
         </button>
       </header>
       <div className="px-3 pb-2 space-y-1.5">
-        {groups.map((g) =>
+        {layOutPhase(groups, suggestions).map(({ group: g, items }) =>
           g.steps.length >= COLLAPSE_THRESHOLD && !expanded.has(g.id) ? (
             <div
               key={g.id}
@@ -249,30 +329,29 @@ export function PhaseSection({
                   {g.base} × {g.steps.length} steps
                 </button>
               )}
-              {(() => {
-                const width = Math.max(0, ...g.steps.map((s) => numWidth(s.name)));
-                const ghosts = ghostsForBase(g.base, width, suggestions);
-                const items: SequenceItem[] = [
-                  ...g.steps.map((step): SequenceItem => ({ kind: "step", num: stepNumber(step.name), step })),
-                  ...ghosts.map((gh): SequenceItem => ({ kind: "ghost", num: gh.num, id: gh.id, name: gh.name })),
-                ].sort((a, b) => a.num - b.num);
-                return items.map((item, i) => (
-                  <div key={item.kind === "step" ? item.step.id : `ghost:${item.id}`}>
-                    {i > 0 && (
-                      <ContinuityArrow gap={item.kind === "step" ? gapForStep(item.step.id, suggestions) : null} />
-                    )}
-                    {item.kind === "step" ? (
-                      <StepNode
-                        step={item.step}
-                        topology={topologies.find((t) => t.id === item.step.topology)}
-                        base={base}
-                      />
-                    ) : (
-                      <MissingRunGhost name={item.name} />
-                    )}
-                  </div>
-                ));
-              })()}
+              {items.map(({ item, above }) => (
+                <div key={item.kind === "step" ? item.step.id : `ghost:${item.id}`}>
+                  {above && (
+                    <ContinuityArrow
+                      gap={item.kind === "step" ? gapForStep(item.step.id, suggestions) : null}
+                      // Labelled only when these two really are the producer and consumer of
+                      // one restart; a ghost or an unrelated neighbour gets a bare arrow.
+                      link={item.kind === "step" ? linkBetween(above, item.step, stepIndex) : null}
+                      base={base}
+                    />
+                  )}
+                  {item.kind === "step" ? (
+                    <StepNode
+                      step={item.step}
+                      topology={topologies.find((t) => t.id === item.step.topology)}
+                      base={base}
+                      stepIndex={stepIndex}
+                    />
+                  ) : (
+                    <MissingRunGhost name={item.name} />
+                  )}
+                </div>
+              ))}
             </div>
           ),
         )}

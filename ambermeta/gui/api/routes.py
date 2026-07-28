@@ -209,10 +209,12 @@ def reorder_phases(req: PhaseReorder) -> DocumentResponse:
 def update_phase(phase_id: str, req: PhaseUpdate) -> DocumentResponse:
     store = get_store()
     patch = {"name": req.name, "role": _enum_value(req.role)}
+    if "topology" in req.model_fields_set:      # present (incl. null) => set/clear on every step
+        patch["topology"] = req.topology
     try:
         store.update_phase(phase_id, patch)
-    except KeyError:
-        raise HTTPException(status_code=404, detail=f"Phase not found: {phase_id}")
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=f"Not found: {exc}")
     return store.to_response()
 
 
@@ -223,6 +225,8 @@ def delete_phase(phase_id: str, reassign_to: Optional[str] = Query(None)) -> Doc
         store.delete_phase(phase_id, reassign_to=reassign_to)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=f"Phase not found: {exc}")
+    except ValueError as exc:               # e.g. reassign_to == the phase being deleted
+        raise HTTPException(status_code=400, detail=str(exc))
     return store.to_response()
 
 
@@ -233,11 +237,12 @@ def create_step(phase_id: str, req: StepCreate) -> DocumentResponse:
     _guard_path(req.mdin, base_directory)
     _guard_path(req.mdout, base_directory)
     _guard_path(req.mdcrd, base_directory)
+    _guard_path(req.rst, base_directory)
     _guard_path(req.input_coords.path if req.input_coords else None, base_directory)
     fields = {
         "name": req.name, "topology": req.topology,
         "input_coords": req.input_coords.model_dump() if req.input_coords else None,
-        "mdin": req.mdin, "mdout": req.mdout, "mdcrd": req.mdcrd,
+        "mdin": req.mdin, "mdout": req.mdout, "mdcrd": req.mdcrd, "rst": req.rst,
         "expected_gap_ps": req.expected_gap_ps, "gap_tolerance_ps": req.gap_tolerance_ps,
         "notes": list(req.notes),
     }
@@ -268,6 +273,7 @@ def update_step(step_id: str, req: StepUpdate) -> DocumentResponse:
         _guard_path(req.files.mdin, base_directory)
         _guard_path(req.files.mdout, base_directory)
         _guard_path(req.files.mdcrd, base_directory)
+        _guard_path(req.files.rst, base_directory)
     if req.input_coords is not None:
         _guard_path(req.input_coords.path, base_directory)
     patch = {}
@@ -278,14 +284,13 @@ def update_step(step_id: str, req: StepUpdate) -> DocumentResponse:
     if req.input_coords is not None:
         patch["input_coords"] = req.input_coords.model_dump()
     if req.files is not None:
-        for slot in ("mdin", "mdout", "mdcrd"):
+        for slot in ("mdin", "mdout", "mdcrd", "rst"):
             val = getattr(req.files, slot, None)
             if val is not None:
                 patch[slot] = val
-    if req.expected_gap_ps is not None:
-        patch["expected_gap_ps"] = req.expected_gap_ps
-    if req.gap_tolerance_ps is not None:
-        patch["gap_tolerance_ps"] = req.gap_tolerance_ps
+    for gap in ("expected_gap_ps", "gap_tolerance_ps"):
+        if gap in req.model_fields_set:         # present (incl. null) => set/clear
+            patch[gap] = getattr(req, gap)
     if req.notes is not None:
         patch["notes"] = list(req.notes)
     try:

@@ -293,16 +293,16 @@ def build_suggestions(sim, base_directory):
 
 def _flatten_simulation(sim):
     """Flatten a Simulation into the flat stage dicts the validation engine expects."""
+    from ambermeta.simulation import resolve_input_coords
+
     topo_by_id = {t.id: t.path for t in sim.topologies}
     flat = []
     for p in sim.phases:
         for s in p.steps:
-            if s.input_coords.path:                # explicit path OR a resolved chained restart
-                inpcrd = s.input_coords.path
-            elif s.input_coords.source == "starting_structure":
-                inpcrd = sim.starting_structure
-            else:                                  # "step" with no resolved restart path
-                inpcrd = None
+            # One resolver for the whole codebase: a chained step reads the restart
+            # recorded on the step it continues from, so continuity still gets a real
+            # file to read the time out of.
+            inpcrd = resolve_input_coords(sim, s)
             flat.append({
                 "name": s.name, "role": p.role, "step_id": s.id,
                 "prmtop": topo_by_id.get(s.topology) if s.topology else None,
@@ -392,7 +392,6 @@ def discover_draft(base_directory, recursive=True, pattern=None):
     sim.starting_structure = starting
 
     prev_step_id = None
-    prev_restart = None   # previous run's output restart (its stem group's inpcrd/.rst)
     for stem in _ordered_stems(grouped):
         kinds = grouped[stem]
         if not (kinds.get("mdin") or kinds.get("mdout")):
@@ -408,24 +407,27 @@ def discover_draft(base_directory, recursive=True, pattern=None):
         role = classify_role(stem, mdin_details=mdin_details) or ""
         topology = hmr_topo if (hmr_topo and implies_hmr(dt)) else default_topo
         if prev_step_id is None:
+            # The first run reads what tLEaP wrote alongside the topology.
             ic = InputCoords(source="starting_structure")
         else:
-            # chained: input coords ARE the previous run's output restart —
-            # store the resolved path so continuity can read its time.
-            ic = InputCoords(source="step", ref=prev_step_id,
-                             path=_relativize(prev_restart, base_directory) if prev_restart else None)
+            # Chained: this run's input coords ARE the previous run's output restart.
+            # The path lives on that producing step's `rst`, so the link is the ref alone
+            # and the file is named once rather than copied onto every consumer.
+            ic = InputCoords(source="step", ref=prev_step_id)
         step = Step(
             id=uuid.uuid4().hex[:8], name=stem, topology=topology, input_coords=ic,
             mdin=_relativize(kinds.get("mdin"), base_directory),
             mdout=_relativize(kinds.get("mdout"), base_directory),
             mdcrd=_relativize(kinds.get("mdcrd"), base_directory),
+            # A run's single-frame coordinate sibling is the restart it wrote (-r restrt),
+            # which is exactly what the next run reads.
+            rst=_relativize(kinds.get("inpcrd"), base_directory),
         )
         if not sim.phases or sim.phases[-1].role != role:
             sim.phases.append(Phase(id=uuid.uuid4().hex[:8],
                                     name=(role.title() if role else "Stage"), role=role))
         sim.phases[-1].steps.append(step)
         prev_step_id = step.id
-        prev_restart = kinds.get("inpcrd")   # this run's output restart, for the next step
 
     warnings = []
     if len(sim.topologies) > 1:

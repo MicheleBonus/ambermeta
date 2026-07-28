@@ -9,6 +9,9 @@ import type {
 
 export function useDocument() { return useQuery({ queryKey: DOCUMENT_KEY, queryFn: api.getDocument }); }
 function docMutation<V>(fn: (v: V) => Promise<DocumentResponse>) {
+  // setDocument retires any outstanding "Undo" offer, for every writer of the document —
+  // see queryClient.ts. It runs before this mutation's own onSuccess callback, so a
+  // caller that raises a fresh offer there still gets to keep it.
   return useMutation({ mutationFn: fn, onSuccess: (doc) => setDocument(doc) });
 }
 

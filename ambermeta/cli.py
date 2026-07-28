@@ -211,12 +211,25 @@ def _topology_path(sim, topo_id: Optional[str]) -> str:
     return topo_id or "no topology"
 
 
-def _input_source_label(step) -> str:
+def _input_source_label(sim, step) -> str:
+    """Where this step's coordinates come from, in words.
+
+    Names the step it continues from, not that step's id: ids are uuid4 hex slices, so
+    printing the raw ref said the run started from something called "bd573ee9".
+    """
+    from ambermeta.simulation import iter_steps, resolve_input_coords
+
     ic = step.input_coords
     if ic.source == "starting_structure":
         return "starting structure"
     if ic.source == "step":
-        return f"step {ic.ref}" if ic.ref else "previous step"
+        if not ic.ref:
+            return "previous step"
+        name = next((s.name for _, s in iter_steps(sim) if s.id == ic.ref), None)
+        if name is None:
+            return f"step {ic.ref} (missing)"
+        resolved = resolve_input_coords(sim, step)
+        return f"restart of {name}" + (f" ({resolved})" if resolved else "")
     return ic.path or "?"
 
 
@@ -237,7 +250,7 @@ def _print_simulation(sim, report=None) -> None:
             files = ", ".join(
                 f"{k}={getattr(step, k)}" for k in ("mdin", "mdout", "mdcrd") if getattr(step, k)
             )
-            line = f"  - {step.name}  topology={topo}  input={_input_source_label(step)}"
+            line = f"  - {step.name}  topology={topo}  input={_input_source_label(sim, step)}"
             _out(line + (f"  ({files})" if files else ""))
     if report is not None:
         _sim_findings(report)
@@ -301,6 +314,8 @@ def _discover_command(args: argparse.Namespace) -> int:
 
 def _sim_to_legacy_payload(sim) -> Dict[str, Any]:
     """Flatten a Simulation into a v1 flat-stages payload for downstream tools."""
+    from ambermeta.simulation import resolve_input_coords
+
     topo_by_id = {t.id: t.path for t in sim.topologies}
     normal = [t for t in sim.topologies if t.kind == "normal"]
     hmr = [t for t in sim.topologies if t.kind == "hmr"]
@@ -320,11 +335,12 @@ def _sim_to_legacy_payload(sim) -> Dict[str, Any]:
             for k in ("mdin", "mdout", "mdcrd"):
                 if getattr(step, k):
                     stage[k] = getattr(step, k)
-            ic = step.input_coords
-            if ic.path:
-                stage["inpcrd"] = ic.path
-            elif ic.source == "starting_structure" and sim.starting_structure:
-                stage["inpcrd"] = sim.starting_structure
+            # v1 has no notion of an output restart, so a chained step is flattened by
+            # resolving the link: its inpcrd is whatever the step it continues from wrote.
+            # Reading input_coords.path alone would export nothing for a chained step.
+            inpcrd = resolve_input_coords(sim, step)
+            if inpcrd:
+                stage["inpcrd"] = inpcrd
             if step.expected_gap_ps is not None or step.gap_tolerance_ps is not None:
                 stage["gaps"] = {"expected": step.expected_gap_ps, "tolerance": step.gap_tolerance_ps}
             if step.notes:

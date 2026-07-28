@@ -58,3 +58,25 @@ def test_open_a_v1_json_file_yields_a_migrated_simulation(tmp_path):
     assert sim.version == 2
     assert [p.role for p in sim.phases] == ["minimization", "production"]
     assert sim.topologies[0].path == "wt.prmtop"
+
+
+def test_migration_keeps_a_v1_stage_inpcrd_as_the_previous_step_restart(tmp_path):
+    """v1 recorded the coordinates each stage READ; v2 records what each step WRITES."""
+    from ambermeta.simulation import load_simulation, resolve_input_coords
+    manifest = tmp_path / "v1.yaml"
+    manifest.write_text(
+        "global_prmtop: wt.prmtop\n"
+        "initial_coordinates: wt.inpcrd\n"
+        "stages:\n"
+        "  - { name: 01_min, mdin: 01_min.mdin }\n"
+        "  - { name: 02_nvt, mdin: 02_nvt.mdin, inpcrd: 01_min.rst }\n"
+        "  - { name: 03_npt, mdin: 03_npt.mdin, inpcrd: 02_nvt.rst }\n",
+        encoding="utf-8",
+    )
+    sim = load_simulation(str(manifest))
+    steps = [s for p in sim.phases for s in p.steps]
+    assert steps[0].rst == "01_min.rst"     # named by the stage that read it
+    assert steps[1].rst == "02_nvt.rst"
+    assert steps[2].rst is None             # nothing downstream named one
+    assert resolve_input_coords(sim, steps[1]) == "01_min.rst"
+    assert resolve_input_coords(sim, steps[0]) == "wt.inpcrd"

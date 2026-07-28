@@ -38,6 +38,8 @@ describe("top-bar workflows", () => {
                   mdin: "prod_001.in",
                   mdout: null,
                   mdcrd: null,
+                  rst: null,
+                  resolved_input_coords: null,
                   expected_gap_ps: null,
                   gap_tolerance_ps: null,
                   notes: [],

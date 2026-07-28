@@ -7,6 +7,10 @@ export interface InputCoordsModel { source: "starting_structure" | "step" | "pat
 export interface StepModel {
   id: string; name: string; topology: string | null; input_coords: InputCoordsModel;
   mdin: string | null; mdout: string | null; mdcrd: string | null;
+  /** The restart this step writes. The next step reads it — see `resolved_input_coords`. */
+  rst: string | null;
+  /** Server-resolved: the coordinate file this step actually reads, following the chain. */
+  resolved_input_coords: string | null;
   expected_gap_ps: number | null; gap_tolerance_ps: number | null; notes: string[];
 }
 export interface PhaseModel { id: string; name: string; role: StageRole; steps: StepModel[]; }
@@ -49,19 +53,22 @@ export interface AddTopology { path: string; kind: TopologyKind; }
 export interface UpdateTopology { path?: string; kind?: TopologyKind; }
 export interface SetStartingStructure { path: string | null; }
 export interface PhaseCreate { name: string; role: StageRole; }
-export interface PhaseUpdate { name?: string; role?: StageRole; }
-export interface StepFilesPatch { mdin?: string; mdout?: string; mdcrd?: string; }
+/** `topology` present (including null) sets or clears it on every step of the phase. */
+export interface PhaseUpdate { name?: string; role?: StageRole; topology?: string | null; }
+export interface StepFilesPatch { mdin?: string; mdout?: string; mdcrd?: string; rst?: string; }
 export interface StepCreatePayload {
   name: string; topology?: string | null; input_coords?: InputCoordsModel;
-  mdin?: string; mdout?: string; mdcrd?: string;
+  mdin?: string; mdout?: string; mdcrd?: string; rst?: string;
   expected_gap_ps?: number; gap_tolerance_ps?: number; notes?: string[];
 }
+/** A gap sent as null is cleared; omit the key to leave it alone. */
 export interface StepUpdatePayload {
   name?: string; topology?: string | null; input_coords?: InputCoordsModel; files?: StepFilesPatch;
-  expected_gap_ps?: number; gap_tolerance_ps?: number; notes?: string[];
+  expected_gap_ps?: number | null; gap_tolerance_ps?: number | null; notes?: string[];
 }
 export interface StepMovePayload { phase_id: string; index: number; }
 export type AssignTarget = "pool" | "starting_structure" | "phase_topology" | "step_topology" | "step_slot";
+export type SlotName = "mdin" | "mdout" | "mdcrd" | "rst";
 export interface AssignRequest {
-  path: string; target_type: AssignTarget; target_id?: string; kind?: TopologyKind; slot?: "mdin" | "mdout" | "mdcrd";
+  path: string; target_type: AssignTarget; target_id?: string; kind?: TopologyKind; slot?: SlotName;
 }

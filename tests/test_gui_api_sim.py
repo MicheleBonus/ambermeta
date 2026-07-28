@@ -149,3 +149,125 @@ def test_mutation_routes_reject_path_traversal(tmp_path):
     assert c.put(f"/api/steps/{sid}", json={"files": {"mdin": evil}}).status_code == 403
     # a legitimate relative path inside base must still WORK (not over-blocked)
     assert c.post("/api/topologies", json={"path": "sys.prmtop", "kind": "normal"}).status_code == 200
+
+
+# --- restart chain and clearing, over the wire -------------------------------
+
+def _phase(c, pid):
+    for ph in c.get("/api/document").json()["simulation"]["phases"]:
+        if ph["id"] == pid:
+            return ph
+    raise AssertionError("phase not found")
+
+
+def _two_steps(tmp_path):
+    for name in ("01_min.mdin", "02_nvt.mdin", "01_min.rst", "wt.prmtop", "wt_hmr.prmtop"):
+        (tmp_path / name).write_text("x")
+    c = _client(tmp_path)
+    p = c.post("/api/phases", json={"name": "Equil", "role": "equilibration"}) \
+         .json()["simulation"]["phases"][0]["id"]
+    a = c.post(f"/api/phases/{p}/steps",
+               json={"name": "01_min", "mdin": "01_min.mdin", "rst": "01_min.rst"}) \
+         .json()["simulation"]["phases"][0]["steps"][0]["id"]
+    c.post(f"/api/phases/{p}/steps", json={"name": "02_nvt", "mdin": "02_nvt.mdin"})
+    b = _phase(c, p)["steps"][1]["id"]
+    return c, p, a, b
+
+
+def test_a_new_step_chains_from_the_one_before_it_and_resolves_its_restart(tmp_path):
+    c, _, a, b = _two_steps(tmp_path)
+    step = _step(c, b)
+    assert step["input_coords"] == {"source": "step", "ref": a, "path": None}
+    # The path is not copied onto the consumer; it is resolved from the producer.
+    assert step["resolved_input_coords"] == "01_min.rst"
+    assert _step(c, a)["rst"] == "01_min.rst"
+
+
+def test_the_restart_slot_is_writable_and_clearable_over_the_wire(tmp_path):
+    c, _, a, b = _two_steps(tmp_path)
+    c.put(f"/api/steps/{a}", json={"files": {"rst": "01_min.rst"}})
+    assert _step(c, a)["rst"] == "01_min.rst"
+    c.put(f"/api/steps/{a}", json={"files": {"rst": ""}})
+    assert _step(c, a)["rst"] is None
+    assert _step(c, b)["resolved_input_coords"] is None   # link intact, file gone
+
+
+def test_assigning_a_restart_to_the_rst_slot(tmp_path):
+    c, _, a, _ = _two_steps(tmp_path)
+    r = c.post("/api/assign", json={"path": "01_min.rst", "target_type": "step_slot",
+                                    "target_id": a, "slot": "rst"})
+    assert r.status_code == 200
+    assert _step(c, a)["rst"] == "01_min.rst"
+
+
+def test_deleting_a_step_does_not_leave_its_successor_pointing_at_a_dead_id(tmp_path):
+    c, _, a, b = _two_steps(tmp_path)
+    c.request("DELETE", f"/api/steps/{a}")
+    assert _step(c, b)["input_coords"]["source"] == "starting_structure"
+
+
+def test_a_gap_is_cleared_by_an_explicit_null_and_zero_survives(tmp_path):
+    c, _, a, _ = _two_steps(tmp_path)
+    c.put(f"/api/steps/{a}", json={"expected_gap_ps": 20.0, "gap_tolerance_ps": 1.0})
+    assert _step(c, a)["expected_gap_ps"] == 20.0
+
+    c.put(f"/api/steps/{a}", json={"expected_gap_ps": 0.0})
+    assert _step(c, a)["expected_gap_ps"] == 0.0        # 0 is a value, not "unset"
+
+    c.put(f"/api/steps/{a}", json={"expected_gap_ps": None})
+    assert _step(c, a)["expected_gap_ps"] is None
+    assert _step(c, a)["gap_tolerance_ps"] == 1.0       # absent means leave alone
+
+
+def test_one_request_sets_or_clears_the_topology_of_every_step_in_a_phase(tmp_path):
+    c, p, a, b = _two_steps(tmp_path)
+    tid = c.post("/api/topologies", json={"path": "wt.prmtop", "kind": "normal"}) \
+           .json()["simulation"]["topologies"][0]["id"]
+
+    r = c.put(f"/api/phases/{p}", json={"topology": tid})
+    assert r.status_code == 200
+    assert [s["topology"] for s in _phase(c, p)["steps"]] == [tid, tid]
+
+    c.put(f"/api/phases/{p}", json={"topology": None})
+    assert [s["topology"] for s in _phase(c, p)["steps"]] == [None, None]
+
+    # Absent means leave alone — renaming a phase must not strip its topologies.
+    c.put(f"/api/phases/{p}", json={"topology": tid})
+    c.put(f"/api/phases/{p}", json={"name": "Equilibration"})
+    assert [s["topology"] for s in _phase(c, p)["steps"]] == [tid, tid]
+
+
+def test_setting_a_phase_topology_that_is_not_in_the_pool_is_a_404(tmp_path):
+    c, p, _, _ = _two_steps(tmp_path)
+    assert c.put(f"/api/phases/{p}", json={"topology": "nope"}).status_code == 404
+
+
+def test_the_starting_structure_can_be_cleared(tmp_path):
+    (tmp_path / "wt.inpcrd").write_text("x")
+    c = _client(tmp_path)
+    c.put("/api/simulation/starting-structure", json={"path": "wt.inpcrd"})
+    assert c.get("/api/document").json()["simulation"]["starting_structure"] == "wt.inpcrd"
+    r = c.put("/api/simulation/starting-structure", json={"path": None})
+    assert r.status_code == 200
+    assert r.json()["simulation"]["starting_structure"] is None
+
+
+def test_undo_after_a_save_leaves_the_save_target_alone(tmp_path):
+    c, _, a, _ = _two_steps(tmp_path)
+    c.post("/api/document/save", json={"path": "b.yaml"})
+    assert c.get("/api/document").json()["manifest_path"].endswith("b.yaml")
+    c.request("DELETE", f"/api/steps/{a}")
+    c.post("/api/undo")
+    doc = c.get("/api/document").json()
+    assert doc["manifest_path"].endswith("b.yaml")
+    assert doc["dirty"] is True      # in memory it no longer matches the file
+
+
+def test_reassigning_a_phase_to_itself_is_a_400_not_a_crash(tmp_path):
+    c = _client(tmp_path)
+    p = c.post("/api/phases", json={"name": "Prod", "role": "production"}) \
+         .json()["simulation"]["phases"][0]["id"]
+    c.post(f"/api/phases/{p}/steps", json={"name": "prod_001"})
+    r = c.request("DELETE", f"/api/phases/{p}", params={"reassign_to": p})
+    assert r.status_code == 400
+    assert len(_phase(c, p)["steps"]) == 1     # and nothing was lost on the way

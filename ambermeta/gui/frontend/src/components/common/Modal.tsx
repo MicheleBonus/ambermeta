@@ -1,10 +1,40 @@
-import { useEffect, useRef, type ReactNode } from "react";
+import { useEffect, useRef, useSyncExternalStore, type ReactNode } from "react";
+
+/**
+ * How many modals are on screen.
+ *
+ * Every dialog in the app is a Modal, so counting here is the one place that knows a modal
+ * owns the screen. Enumerating the flags of the modals one component happens to own missed
+ * the pickers raised by step cards and the simulation header, and a document-wide Ctrl+Z
+ * would then rewind the document behind an open dialog.
+ */
+let openModals = 0;
+const modalListeners = new Set<() => void>();
+function setOpenModals(n: number) {
+  openModals = n;
+  modalListeners.forEach((l) => l());
+}
+export function anyModalOpen(): boolean {
+  return openModals > 0;
+}
+export function subscribeModals(l: () => void): () => void {
+  modalListeners.add(l);
+  return () => { modalListeners.delete(l); };
+}
+export function useAnyModalOpen(): boolean {
+  return useSyncExternalStore(subscribeModals, anyModalOpen, () => false);
+}
 
 export function Modal(
   { open, title, onClose, children }:
   { open: boolean; title: string; onClose: () => void; children: ReactNode }
 ) {
   const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    setOpenModals(openModals + 1);
+    return () => setOpenModals(openModals - 1);
+  }, [open]);
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
