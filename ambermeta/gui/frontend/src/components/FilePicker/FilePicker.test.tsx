@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { http, HttpResponse } from "msw";
@@ -50,10 +50,30 @@ describe("FilePicker", () => {
     const onPick = setup("save");
     const pathInput = await screen.findByLabelText(/path/i);
     await userEvent.clear(pathInput);
-    await userEvent.type(pathInput, "/work/protocol.toml");
-    await userEvent.selectOptions(screen.getByLabelText(/format/i), "toml");
+    await userEvent.type(pathInput, "/work/protocol.json");
+    await userEvent.selectOptions(screen.getByLabelText(/format/i), "json");
     await userEvent.click(screen.getByRole("button", { name: "Save" }));
-    expect(onPick).toHaveBeenCalledWith({ path: "/work/protocol.toml", format: "toml" });
+    expect(onPick).toHaveBeenCalledWith({ path: "/work/protocol.json", format: "json" });
+  });
+
+  it("save mode offers only the formats the manifest writer accepts", async () => {
+    // toml and csv were selectable and always came back 400 — the dialog offered a
+    // choice the backend rejects. Export covers the lossy flat views.
+    setup("save");
+    const format = await screen.findByLabelText(/format/i);
+    expect(within(format).getByRole("option", { name: "yaml" })).toBeInTheDocument();
+    expect(within(format).getByRole("option", { name: "json" })).toBeInTheDocument();
+    expect(within(format).queryByRole("option", { name: "toml" })).not.toBeInTheDocument();
+    expect(within(format).queryByRole("option", { name: "csv" })).not.toBeInTheDocument();
+  });
+
+  it("save mode will not save a path of pure whitespace", async () => {
+    const onPick = setup("save");
+    const pathInput = await screen.findByLabelText(/path/i);
+    await userEvent.clear(pathInput);
+    await userEvent.type(pathInput, "   ");
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+    expect(onPick).not.toHaveBeenCalled();
   });
 
   it("without filterType every file is still listed", async () => {
@@ -96,4 +116,5 @@ describe("FilePicker", () => {
     await screen.findByText("system.prmtop");
     expect(screen.queryByLabelText(/show all file types/i)).not.toBeInTheDocument();
   });
+
 });

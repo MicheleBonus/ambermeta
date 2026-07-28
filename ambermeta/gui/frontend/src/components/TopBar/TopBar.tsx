@@ -7,9 +7,10 @@ interface Props {
   onDiscover: () => void;
   onExport: () => void;
   onValidate: () => void;
+  onPlan: () => void;
 }
 
-export function TopBar({ onOpen, onSave, onDiscover, onExport, onValidate }: Props) {
+export function TopBar({ onOpen, onSave, onDiscover, onExport, onValidate, onPlan }: Props) {
   const { data: doc } = useDocument();
   const undo = useUndo();
   const redo = useRedo();
@@ -26,6 +27,8 @@ export function TopBar({ onOpen, onSave, onDiscover, onExport, onValidate }: Pro
       <span className="flex-1" />
       <Button onClick={onDiscover}>Discover</Button>
       <Button onClick={onValidate}>Validate</Button>
+      {/* The step after the manifest: the summaries `ambermeta plan` writes. */}
+      <Button onClick={onPlan} title="Write the manifest and plan summaries to disk">Plan</Button>
       <Button onClick={onExport}>Export</Button>
       {/* Icon-only, so the shortcut goes in the tooltip — otherwise the only clue that
           Ctrl+Z works at all is trying it. */}

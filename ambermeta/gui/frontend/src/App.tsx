@@ -19,6 +19,7 @@ import {
 import { TopBar } from "@/components/TopBar/TopBar";
 import { DiscoverModal } from "@/components/TopBar/DiscoverModal";
 import { ExportModal } from "@/components/TopBar/ExportModal";
+import { PlanModal } from "@/components/TopBar/PlanModal";
 import { ValidationPanel } from "@/components/TopBar/ValidationPanel";
 import { FilePicker } from "@/components/FilePicker/FilePicker";
 import { FilePanel } from "@/components/FilePanel/FilePanel";
@@ -61,6 +62,7 @@ export default function App() {
   const [discoverOpen, setDiscoverOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
   const [validateOpen, setValidateOpen] = useState(false);
+  const [planOpen, setPlanOpen] = useState(false);
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
   const [drag, setDrag] = useState<ActiveDrag | null>(null);
   const modalOpen = useAnyModalOpen();
@@ -191,7 +193,8 @@ export default function App() {
         >
           <div className="flex flex-col h-full">
             <TopBar onOpen={onOpen} onSave={onSave} onDiscover={onDiscover}
-              onExport={() => setExportOpen(true)} onValidate={() => setValidateOpen(true)} />
+              onExport={() => setExportOpen(true)} onValidate={() => setValidateOpen(true)}
+              onPlan={() => setPlanOpen(true)} />
             <div className="flex flex-1 min-h-0">
               <div data-testid="pane-files" style={{ width: filesW }}
                 className="shrink-0 border-r border-hairline overflow-auto bg-surface"><FilePanel /></div>
@@ -212,6 +215,7 @@ export default function App() {
           <DiscoverModal open={discoverOpen} onClose={() => setDiscoverOpen(false)}
             onRun={(a) => discover.mutate(a, { onSuccess: (res) => setSuggestions(res.suggestions) })} />
           <ExportModal open={exportOpen} onClose={() => setExportOpen(false)} />
+          <PlanModal open={planOpen} onClose={() => setPlanOpen(false)} />
           <ValidationPanel open={validateOpen} onClose={() => setValidateOpen(false)}
             onSuggestions={setSuggestions} />
 

@@ -12,7 +12,7 @@ function renderTopBar() {
   return render(
     <QueryClientProvider client={queryClient}>
       <TopBar onOpen={vi.fn()} onSave={vi.fn()} onDiscover={vi.fn()}
-        onExport={vi.fn()} onValidate={vi.fn()} />
+        onExport={vi.fn()} onValidate={vi.fn()} onPlan={vi.fn()} />
     </QueryClientProvider>
   );
 }

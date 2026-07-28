@@ -40,6 +40,24 @@ export interface ValidationReport {
 }
 export interface DiscoverResult { document: DocumentResponse; suggestions: Suggestion[]; warnings: string[]; }
 
+/** The artifacts `ambermeta plan` writes. A null path means "do not write this one". */
+export interface PlanRequest {
+  summary_path?: string | null;
+  methods_summary_path?: string | null;
+  stats_csv_path?: string | null;
+  summary_format?: "json" | "yaml";
+  save_manifest_path?: string | null;
+}
+export interface WrittenFile { artifact: string; path: string; }
+export interface FailedFile { artifact: string; path: string; error: string; }
+export interface PlanResult {
+  written: WrittenFile[];
+  /** Artifacts whose path could not be written; the rest of the run still landed. */
+  failed: FailedFile[];
+  warnings: string[];
+  stage_count: number; totals: Record<string, number>; document: DocumentResponse;
+}
+
 export type FileType = "prmtop" | "mdin" | "mdout" | "mdcrd" | "inpcrd" | "folder" | "other";
 export interface FileInfo {
   path: string; name: string; file_type: FileType; is_directory: boolean;

@@ -105,3 +105,16 @@ it("suspends Ctrl+Z while a file picker raised by a step card is open", async ()
   await new Promise((r) => setTimeout(r, 20));
   expect(undo.calls).toBe(0);
 });
+
+it("says where the manifest was saved, instead of only dropping the dirty dot", async () => {
+  // The dirty dot going out is invisible unless you were watching it, and it never told
+  // you which file was written — which is why saving read as "there is no save".
+  const saved: DocumentResponse = { ...emptyDocument, manifest_path: "/work/runs/mine.yaml" };
+  server.use(http.post("/api/document/save", () =>
+    HttpResponse.json({ document: saved, warnings: [] })));
+  await renderApp({ ...REVERSIBLE, manifest_path: "/work/runs/mine.yaml", dirty: true });
+
+  await userEvent.click(screen.getByRole("button", { name: "Save" }));
+
+  expect(await screen.findByText("Saved to /work/runs/mine.yaml")).toBeInTheDocument();
+});
