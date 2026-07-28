@@ -1,11 +1,17 @@
 import { useEffect, useState } from "react";
-import { DndContext, PointerSensor, useSensor, useSensors, type DragEndEvent } from "@dnd-kit/core";
+import {
+  DndContext, DragOverlay, PointerSensor, useSensor, useSensors,
+  type DragEndEvent, type DragStartEvent,
+} from "@dnd-kit/core";
 import { SelectionProvider } from "@/state/selection";
 import { ResizeHandle, Toaster } from "@/components/common";
 import { usePersistentSize } from "@/lib/usePersistentSize";
 import { useUnsavedGuard } from "@/lib/useUnsavedGuard";
+import { stemName } from "@/lib/format";
+import { pushToast } from "@/lib/toast";
 import {
   useDocument, useAssign, useReorderSteps, useMoveStep, useReorderPhases,
+  useCreatePhase, useCreateStep, useUpdateStep,
   useOpen, useSave, useDiscover, useValidate,
 } from "@/api/hooks";
 import { TopBar } from "@/components/TopBar/TopBar";
@@ -17,9 +23,18 @@ import { FilePanel } from "@/components/FilePanel/FilePanel";
 import { Canvas } from "@/components/Canvas/Canvas";
 import { SuggestionsContext } from "@/components/Suggestions/suggestionsContext";
 import { Inspector } from "@/components/Inspector/Inspector";
-import { resolveDrop } from "@/components/Canvas/resolveDrop";
+import { resolveDrop, type SlotKind } from "@/components/Canvas/resolveDrop";
+import { canvasCollisionDetection } from "@/components/Canvas/dropSpecificity";
+import { DragChip, type ActiveDrag } from "@/components/Canvas/DragChip";
 import { reorderIds } from "@/components/Canvas/reorderIds";
-import type { Suggestion } from "@/types";
+import type { FileType, StepCreatePayload, Suggestion } from "@/types";
+
+/** A create-step body naming the step after the file that fills one of its slots. */
+function stepFromFile(path: string, slot: SlotKind): StepCreatePayload {
+  const body: StepCreatePayload = { name: stemName(path) };
+  body[slot] = path;
+  return body;
+}
 
 export default function App() {
   const [filesW, setFilesW] = usePersistentSize("files-w", 280);
@@ -30,6 +45,9 @@ export default function App() {
   const reorderSteps = useReorderSteps();
   const moveStep = useMoveStep();
   const reorderPhases = useReorderPhases();
+  const createPhase = useCreatePhase();
+  const createStep = useCreateStep();
+  const updateStep = useUpdateStep();
   const open = useOpen();
   const save = useSave();
   const discover = useDiscover();
@@ -40,6 +58,7 @@ export default function App() {
   const [exportOpen, setExportOpen] = useState(false);
   const [validateOpen, setValidateOpen] = useState(false);
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
+  const [drag, setDrag] = useState<ActiveDrag | null>(null);
 
   useEffect(() => {
     if (!doc) return;
@@ -51,9 +70,22 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [doc]);
 
+  const onDragStart = (e: DragStartEvent) => {
+    const data = e.active.data.current as { fileType?: FileType; path?: string } | undefined;
+    setDrag({ id: String(e.active.id), fileType: data?.fileType, path: data?.path });
+  };
+
   const onDragEnd = (e: DragEndEvent) => {
-    const a = resolveDrop(String(e.active.id), e.over ? String(e.over.id) : null);
-    if (!a || !doc) return;
+    setDrag(null);
+    // The dragged file's type decides where it lands: an .mdin dropped on a step fills that
+    // step's mdin slot rather than becoming its topology (see resolveDrop).
+    const fileType = e.active.data.current?.fileType as FileType | undefined;
+    const a = resolveDrop(String(e.active.id), e.over ? String(e.over.id) : null, fileType);
+    if (!a) return;
+    // The target lit up under the pointer, so a drop it cannot use owes the user a reason
+    // rather than the silence of an early return.
+    if (a.type === "rejected") return void pushToast(a.reason, "warning");
+    if (!doc) return;
     switch (a.type) {
       case "pool":
         return void assign.mutate({ path: a.path, target_type: "pool", kind: a.path.includes("hmr") ? "hmr" : "normal" });
@@ -65,8 +97,45 @@ export default function App() {
         return void assign.mutate({ path: a.path, target_type: "step_topology", target_id: a.stepId });
       case "phase_topology":
         return void assign.mutate({ path: a.path, target_type: "phase_topology", target_id: a.phaseId });
-      case "move_step":
+      case "step_input_coords":
+        return void updateStep.mutate({
+          id: a.stepId,
+          body: { input_coords: { source: "path", ref: null, path: a.path } },
+        });
+      case "create_step_in_phase":
+        return void createStep.mutate({ phaseId: a.phaseId, body: stepFromFile(a.path, a.slot) });
+      case "create_step_with_coords":
+        return void createStep.mutate({
+          phaseId: a.phaseId,
+          body: { name: stemName(a.path), input_coords: { source: "path", ref: null, path: a.path } },
+        });
+      case "create_phase_with_step": {
+        // Two round trips: the phase id only exists once the backend has answered. Failures are
+        // already surfaced as a toast by the shared mutation cache, so the promise is swallowed.
+        // Each call snapshots separately on the backend, so undoing this gesture takes two
+        // presses — the first leaves the (now empty) phase behind. Collapsing it into one undo
+        // unit needs a create-phase-with-first-step endpoint that does not exist yet.
+        void (async () => {
+          const created = await createPhase.mutateAsync({
+            name: `Phase ${doc.simulation.phases.length + 1}`,
+            role: "",
+          });
+          const phases = created.simulation.phases;
+          const phaseId = phases[phases.length - 1]?.id;
+          if (!phaseId) return;
+          await createStep.mutateAsync({ phaseId, body: stepFromFile(a.path, a.slot) });
+        })().catch(() => {});
+        return;
+      }
+      case "move_step": {
+        // The phase droppable covers the whole section, so the gaps between steps resolve to the
+        // phase. Moving a step into the phase it already lives in is a remove+append on the
+        // backend, which would silently send a mid-list reorder to the end of the list (and dirty
+        // the document for a no-op). Aiming at a gap does nothing instead.
+        const owner = doc.simulation.phases.find((p) => p.id === a.phaseId);
+        if (owner?.steps.some((s) => s.id === a.stepId)) return;
         return void moveStep.mutate({ id: a.stepId, body: { phase_id: a.phaseId, index: -1 } });
+      }
       case "reorder_phases": {
         const ids = doc.simulation.phases.map((p) => p.id);
         return void reorderPhases.mutate(reorderIds(ids, a.activePhaseId, a.overPhaseId));
@@ -97,7 +166,13 @@ export default function App() {
   return (
     <SelectionProvider>
       <SuggestionsContext.Provider value={suggestions}>
-        <DndContext sensors={sensors} onDragEnd={onDragEnd}>
+        <DndContext
+          sensors={sensors}
+          collisionDetection={canvasCollisionDetection}
+          onDragStart={onDragStart}
+          onDragEnd={onDragEnd}
+          onDragCancel={() => setDrag(null)}
+        >
           <div className="flex flex-col h-full">
             <TopBar onOpen={onOpen} onSave={onSave} onDiscover={onDiscover}
               onExport={() => setExportOpen(true)} onValidate={() => setValidateOpen(true)} />
@@ -123,6 +198,10 @@ export default function App() {
           <ExportModal open={exportOpen} onClose={() => setExportOpen(false)} />
           <ValidationPanel open={validateOpen} onClose={() => setValidateOpen(false)}
             onSuggestions={setSuggestions} />
+
+          <DragOverlay dropAnimation={null}>
+            {drag && <DragChip drag={drag} sim={doc?.simulation} base={doc?.base_directory ?? null} />}
+          </DragOverlay>
 
           <Toaster />
         </DndContext>

@@ -3,6 +3,8 @@ import { useFileMetadata } from "@/api/hooks";
 import { FilePeek } from "./FilePeek";
 import { FileDetails } from "./FileDetails";
 import { AssignActions } from "./AssignActions";
+import { StepInspector } from "./StepInspector";
+import { PhaseInspector } from "./PhaseInspector";
 import { SuggestionsTray } from "@/components/Suggestions/SuggestionsTray";
 
 function FileInspector({ path }: { path: string }) {
@@ -24,13 +26,11 @@ export function Inspector() {
   }
 
   if (sel.kind === "step" && sel.id) {
-    // Filled in by the step-editing task; a stub keeps the pane usable meanwhile.
-    return <div className="p-3 text-sm text-ink-muted">Step editor.</div>;
+    return <StepInspector stepId={sel.id} />;
   }
 
   if (sel.kind === "phase" && sel.id) {
-    // Filled in by the phase-editing task; a stub keeps the pane usable meanwhile.
-    return <div className="p-3 text-sm text-ink-muted">Phase editor.</div>;
+    return <PhaseInspector phaseId={sel.id} />;
   }
 
   if (sel.kind === "sim") {
