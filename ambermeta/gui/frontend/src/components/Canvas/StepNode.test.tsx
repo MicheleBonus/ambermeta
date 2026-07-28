@@ -7,6 +7,10 @@ import { http, HttpResponse } from "msw";
 import { server, emptyDocument } from "@/test/server";
 import { queryClient } from "@/api/queryClient";
 import { SelectionProvider } from "@/state/selection";
+import { buildStepIndex } from "@/lib/chain";
+import { makeStep } from "@/test/factories";
+import { _resetToasts } from "@/lib/toast";
+import { Toaster } from "@/components/common";
 import { StepNode } from "./StepNode";
 import type { FileInfo, StepModel, TopologyModel } from "@/types";
 
@@ -20,6 +24,8 @@ const step: StepModel = {
   mdin: "/w/equil/01_min.mdin",
   mdout: "/w/runs/01_min.mdout",
   mdcrd: null,
+  rst: null,
+  resolved_input_coords: null,
   expected_gap_ps: null,
   gap_tolerance_ps: null,
   notes: [],
@@ -51,13 +57,18 @@ function capture(method: "put" | "delete", path: string): Captured {
   return seen;
 }
 
-function renderStep(s: StepModel = step) {
+function renderStep(s: StepModel = step, others: StepModel[] = []) {
   queryClient.clear();
+  const stepIndex = buildStepIndex({
+    version: 2, topologies: [], starting_structure: null,
+    phases: [{ id: "p0", name: "Production", role: "production", steps: [...others, s] }],
+  });
   return render(
     <QueryClientProvider client={queryClient}>
       <SelectionProvider>
         <DndContext>
-          <StepNode step={s} topology={topology} base="/w" />
+          <StepNode step={s} topology={topology} base="/w" stepIndex={stepIndex} />
+          <Toaster />
         </DndContext>
       </SelectionProvider>
     </QueryClientProvider>,
@@ -66,6 +77,7 @@ function renderStep(s: StepModel = step) {
 
 afterEach(() => {
   vi.restoreAllMocks();
+  _resetToasts();
 });
 
 it("renders each filled slot as a folder-qualified label that keeps its extension", () => {
@@ -163,12 +175,42 @@ it("renders dropped input coordinates as a file label rather than a raw absolute
 });
 
 it("still shows the two non-path coordinate sources as plain text", () => {
-  const { unmount } = renderStep();
+  renderStep();
   expect(screen.getByText(/starting structure/)).toBeInTheDocument();
-  unmount();
+});
 
-  renderStep({ ...step, input_coords: { source: "step", ref: "s_prev", path: null } });
-  expect(screen.getByText(/s_prev/)).toBeInTheDocument();
+it("names the step it continues from, never the internal id", () => {
+  // The id is a uuid4 hex slice, so printing `input_coords.ref` verbatim told the user
+  // their run started from something called "s_prev".
+  const producer = makeStep({
+    id: "s_prev", name: "01_min", rst: "/w/equil/01_min.rst",
+  });
+  renderStep(
+    {
+      ...step,
+      input_coords: { source: "step", ref: "s_prev", path: null },
+      resolved_input_coords: "/w/equil/01_min.rst",
+    },
+    [producer],
+  );
+
+  expect(screen.getByText(/restart of 01_min/)).toBeInTheDocument();
+  expect(screen.getByText("01_min.rst")).toBeInTheDocument();
+  expect(screen.queryByText(/s_prev/)).not.toBeInTheDocument();
+});
+
+it("says so when the step it continues from names no restart", () => {
+  renderStep(
+    { ...step, input_coords: { source: "step", ref: "s_prev", path: null } },
+    [makeStep({ id: "s_prev", name: "01_min" })],
+  );
+  expect(screen.getByText(/restart of 01_min/)).toBeInTheDocument();
+  expect(screen.getByText(/no file yet/)).toBeInTheDocument();
+});
+
+it("does not pretend a deleted step is still there", () => {
+  renderStep({ ...step, input_coords: { source: "step", ref: "gone", path: null } });
+  expect(screen.getByText(/no longer here/)).toBeInTheDocument();
 });
 
 it("renames a step from the keyboard with F2, not only by double-click", async () => {
@@ -230,16 +272,61 @@ it("abandons an in-place rename on Escape without touching the document", async 
   expect(patch.calls).toBe(0);
 });
 
-it("deletes the step only once the confirm is accepted", async () => {
+it("deletes the step on one click and offers to undo it, without a confirm dialog", async () => {
+  // A confirm taxes every correct click to guard the rare wrong one, and stops guarding
+  // anything once the habit of dismissing it forms. The Undo offer is the trade.
   const del = capture("delete", "/api/steps/:stepId");
   const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
   renderStep();
 
   await userEvent.click(screen.getByRole("button", { name: "delete step prod_0001" }));
-  expect(confirm).toHaveBeenCalled();
-  expect(del.calls).toBe(0);
 
-  confirm.mockReturnValue(true);
-  await userEvent.click(screen.getByRole("button", { name: "delete step prod_0001" }));
   await waitFor(() => expect(del.calls).toBe(1));
+  expect(confirm).not.toHaveBeenCalled();
+  expect(await screen.findByRole("button", { name: "Undo" })).toBeInTheDocument();
+});
+
+it("retires the Undo offer as soon as another change lands on the document", async () => {
+  // Undo pops the newest snapshot, so an offer that outlived its edit would reverse
+  // somebody else's.
+  capture("delete", "/api/steps/:stepId");
+  const patch = capture("put", "/api/steps/:stepId");
+  renderStep();
+
+  await userEvent.click(screen.getByRole("button", { name: "delete step prod_0001" }));
+  expect(await screen.findByRole("button", { name: "Undo" })).toBeInTheDocument();
+
+  await userEvent.click(screen.getByRole("button", { name: "clear topology" }));
+  await waitFor(() => expect(patch.calls).toBe(1));
+  await waitFor(() =>
+    expect(screen.queryByRole("button", { name: "Undo" })).not.toBeInTheDocument());
+});
+
+it("clears a step's topology from the card, not only from the inspector", async () => {
+  const patch = capture("put", "/api/steps/:stepId");
+  renderStep();
+
+  await userEvent.click(screen.getByRole("button", { name: "clear topology" }));
+
+  await waitFor(() => expect(patch.calls).toBe(1));
+  expect(patch.body).toEqual({ topology: null });
+});
+
+it("carries a slot for the restart the run writes", async () => {
+  const patch = capture("put", "/api/steps/:stepId");
+  renderStep({ ...step, rst: "/w/equil/02_nvt.rst" });
+
+  expect(screen.getByText("02_nvt.rst")).toBeInTheDocument();
+  await userEvent.click(screen.getByRole("button", { name: "clear rst" }));
+
+  await waitFor(() => expect(patch.calls).toBe(1));
+  expect(patch.body).toEqual({ files: { rst: "" } });
+});
+
+it("does not claim a step vanished when none was ever chosen", () => {
+  // Switching the source to "the restart of another step" leaves ref null until a step is
+  // picked; reporting that as a deleted step announces data loss that never happened.
+  renderStep({ ...step, input_coords: { source: "step", ref: null, path: null } });
+  expect(screen.getByText(/no step chosen yet/)).toBeInTheDocument();
+  expect(screen.queryByText(/no longer here/)).not.toBeInTheDocument();
 });

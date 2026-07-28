@@ -5,6 +5,7 @@ import {
 import { Button } from "@/components/common";
 import { stemName } from "@/lib/format";
 import { ROLE_OPTIONS } from "@/lib/roles";
+import { guessTopologyKind } from "@/lib/topology";
 import type { FileType, StageRole, PhaseModel, StepModel } from "@/types";
 
 function flattenSteps(phases: PhaseModel[]): { phase: PhaseModel; step: StepModel }[] {
@@ -24,7 +25,7 @@ export function AssignActions({ path, fileType }: { path: string; fileType: File
   const steps = flattenSteps(phases);
 
   if (fileType === "prmtop") {
-    const looksHmr = path.toLowerCase().includes("hmr");
+    const looksHmr = guessTopologyKind(path) === "hmr";
     return (
       <div className="p-3 border-t border-hairline space-y-2">
         <div className="text-xs text-ink-muted uppercase tracking-wide">Assign</div>

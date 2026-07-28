@@ -4,15 +4,17 @@ import {
   type DragEndEvent, type DragStartEvent,
 } from "@dnd-kit/core";
 import { SelectionProvider } from "@/state/selection";
-import { ResizeHandle, Toaster } from "@/components/common";
+import { ResizeHandle, Toaster, useAnyModalOpen } from "@/components/common";
 import { usePersistentSize } from "@/lib/usePersistentSize";
 import { useUnsavedGuard } from "@/lib/useUnsavedGuard";
+import { useUndoShortcuts } from "@/lib/useUndoShortcuts";
+import { guessTopologyKind } from "@/lib/topology";
 import { stemName } from "@/lib/format";
 import { pushToast } from "@/lib/toast";
 import {
   useDocument, useAssign, useReorderSteps, useMoveStep, useReorderPhases,
   useCreatePhase, useCreateStep, useUpdateStep,
-  useOpen, useSave, useDiscover, useValidate,
+  useOpen, useSave, useDiscover, useValidate, useUndo, useRedo,
 } from "@/api/hooks";
 import { TopBar } from "@/components/TopBar/TopBar";
 import { DiscoverModal } from "@/components/TopBar/DiscoverModal";
@@ -48,6 +50,8 @@ export default function App() {
   const createPhase = useCreatePhase();
   const createStep = useCreateStep();
   const updateStep = useUpdateStep();
+  const undo = useUndo();
+  const redo = useRedo();
   const open = useOpen();
   const save = useSave();
   const discover = useDiscover();
@@ -59,6 +63,7 @@ export default function App() {
   const [validateOpen, setValidateOpen] = useState(false);
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
   const [drag, setDrag] = useState<ActiveDrag | null>(null);
+  const modalOpen = useAnyModalOpen();
 
   useEffect(() => {
     if (!doc) return;
@@ -88,7 +93,7 @@ export default function App() {
     if (!doc) return;
     switch (a.type) {
       case "pool":
-        return void assign.mutate({ path: a.path, target_type: "pool", kind: a.path.includes("hmr") ? "hmr" : "normal" });
+        return void assign.mutate({ path: a.path, target_type: "pool", kind: guessTopologyKind(a.path) });
       case "starting":
         return void assign.mutate({ path: a.path, target_type: "starting_structure" });
       case "step_slot":
@@ -154,6 +159,17 @@ export default function App() {
     }
   };
   useUnsavedGuard(!!doc?.dirty);
+  // Suspended while ANY modal owns the screen — including the file pickers raised by step
+  // cards and the simulation header, which this component knows nothing about. Rewinding
+  // the document behind an open picker would leave it writing into a document that no
+  // longer has the step it was opened for.
+  useUndoShortcuts({
+    onUndo: () => undo.mutate(),
+    onRedo: () => redo.mutate(),
+    canUndo: !!doc?.can_undo,
+    canRedo: !!doc?.can_redo,
+    enabled: !modalOpen,
+  });
   const confirmIfDirty = () => !doc?.dirty || window.confirm("Discard unsaved changes?");
 
   const onOpen = () => { if (confirmIfDirty()) setPicker("open"); };

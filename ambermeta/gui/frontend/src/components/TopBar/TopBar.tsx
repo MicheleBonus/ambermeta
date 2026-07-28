@@ -27,10 +27,14 @@ export function TopBar({ onOpen, onSave, onDiscover, onExport, onValidate }: Pro
       <Button onClick={onDiscover}>Discover</Button>
       <Button onClick={onValidate}>Validate</Button>
       <Button onClick={onExport}>Export</Button>
-      <Button aria-label="Undo" disabled={!doc?.can_undo} onClick={() => undo.mutate()}>
+      {/* Icon-only, so the shortcut goes in the tooltip — otherwise the only clue that
+          Ctrl+Z works at all is trying it. */}
+      <Button aria-label="Undo" title="Undo (Ctrl+Z)" aria-keyshortcuts="Control+Z"
+        disabled={!doc?.can_undo} onClick={() => undo.mutate()}>
         <Undo2 size={16} />
       </Button>
-      <Button aria-label="Redo" disabled={!doc?.can_redo} onClick={() => redo.mutate()}>
+      <Button aria-label="Redo" title="Redo (Ctrl+Shift+Z)" aria-keyshortcuts="Control+Shift+Z"
+        disabled={!doc?.can_redo} onClick={() => redo.mutate()}>
         <Redo2 size={16} />
       </Button>
     </header>

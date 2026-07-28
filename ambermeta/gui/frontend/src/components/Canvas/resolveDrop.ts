@@ -2,7 +2,7 @@ import { fileLabel } from "@/lib/format";
 import type { FileType } from "@/types";
 
 /** The three per-step file slots a run produces. */
-export type SlotKind = "mdin" | "mdout" | "mdcrd";
+export type SlotKind = "mdin" | "mdout" | "mdcrd" | "rst";
 
 export type DropAction =
   | { type: "pool"; path: string }
@@ -39,7 +39,8 @@ function rejected(path: string, reason: string): DropAction {
   return { type: "rejected", path, reason: `${fileLabel(path).name} ${reason}` };
 }
 
-const NOT_A_TOPOLOGY = "is not a topology — drop it on a step's mdin, mdout or mdcrd slot instead.";
+const NOT_A_TOPOLOGY =
+  "is not a topology — drop it on a step's mdin, mdout, mdcrd or rst slot instead.";
 
 /**
  * Pure router: maps a dnd-kit (activeId, overId) pair to a DropAction. No React, no side effects.

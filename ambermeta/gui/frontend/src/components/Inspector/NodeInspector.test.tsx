@@ -14,14 +14,16 @@ function makeStep(id: string, name: string, over: Partial<StepModel> = {}): Step
   return {
     id, name, topology: null,
     input_coords: { source: "starting_structure", ref: null, path: null },
-    mdin: null, mdout: null, mdcrd: null,
+    mdin: null, mdout: null, mdcrd: null, rst: null, resolved_input_coords: null,
     expected_gap_ps: null, gap_tolerance_ps: null, notes: [],
     ...over,
   };
 }
 
 const PHASES: PhaseModel[] = [
-  { id: "p0", name: "Production", role: "production", steps: [makeStep("s0", "prod_0001"), makeStep("s1", "prod_0002")] },
+  { id: "p0", name: "Production", role: "production",
+    steps: [makeStep("s0", "prod_0001"),
+            makeStep("s1", "prod_0002", { expected_gap_ps: 20 })] },
   { id: "p1", name: "Heating", role: "heating", steps: [] },
 ];
 
@@ -141,18 +143,38 @@ describe("selecting a step no longer lands on a placeholder pane", () => {
     expect(patch.calls).toBe(0);
   });
 
-  it("deletes the step behind a confirm", async () => {
+  it("deletes the step on one click, matching the canvas rather than asking again", async () => {
     const del = capture("delete", "/api/steps/:stepId");
     const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
     await renderInspector("step", "s0");
 
     await userEvent.click(screen.getByRole("button", { name: /delete this step/i }));
-    expect(confirm).toHaveBeenCalled();
-    expect(del.calls).toBe(0);
 
-    confirm.mockReturnValue(true);
-    await userEvent.click(screen.getByRole("button", { name: /delete this step/i }));
     await waitFor(() => expect(del.calls).toBe(1));
+    expect(confirm).not.toHaveBeenCalled();
+  });
+
+  it("clears a gap by blanking the field, instead of quietly restoring the old value", async () => {
+    const patch = capture("put", "/api/steps/:stepId");
+    await renderInspector("step", "s1");   // the fixture that carries expected_gap_ps
+
+    const field = screen.getByLabelText("Expected gap (ps)");
+    await userEvent.clear(field);
+    await userEvent.tab();
+
+    await waitFor(() => expect(patch.calls).toBe(1));
+    expect(patch.body).toEqual({ expected_gap_ps: null });
+  });
+
+  it("records the restart a step writes, on the step that writes it", async () => {
+    const patch = capture("put", "/api/steps/:stepId");
+    await renderInspector("step", "s0");
+
+    const field = screen.getByLabelText("Restart written (rst)");
+    await userEvent.type(field, "equil/02_nvt.rst{Enter}");
+
+    await waitFor(() => expect(patch.calls).toBe(1));
+    expect(patch.body).toEqual({ files: { rst: "equil/02_nvt.rst" } });
   });
 });
 

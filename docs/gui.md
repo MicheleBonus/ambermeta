@@ -44,16 +44,17 @@ The server (FastAPI + Uvicorn) binds the host/port, resolves `directory` to an a
 ├───────────────┬────────────────────────────────────┬─────────────────────────┤
 │               │  Simulation                        │                         │
 │  FILES        │  ┌ pool ───────────────────────┐   │  INSPECTOR              │
-│               │  │ CH3L1_HUMAN_6NAG.top normal │   │                         │
-│  [search…]    │  └──────────────────────────────┘   │  (file peek / details / │
-│  ⠿ system.top │  starting structure: …crd.crd       │   assign actions, or    │
-│  ⠿ prod_0001… │                                      │   the suggestions      │
-│  ⠿ prod_0002… │  ▎ Production  production  set topology ▾                    │
-│  ...          │  ┃ ┌ ⠿ ntp_prod_0001  ▸ …top  ◂ starting structure          │
+│               │  │ CH3L1…top [normal ▾] ×      │   │                         │
+│  [search…]    │  └────────────────────────────┘   │  (file peek / details / │
+│  ⠿ system.top │  starting structure: …6NAG.crd ×  │   assign actions, or    │
+│  ⠿ prod_0001… │                                    │   the suggestions      │
+│  ...          │  ▎ Production  role ▾  topology ▾  + ⌧                     │
+│               │  ┃ ┌ ⠿ ntp_prod_0001  ▸ …top ×  ◂ starting structure · …crd │
 │               │  ┃ │   mdin: …0001.mdin  mdout: …0001.mdout  mdcrd: —       │
+│               │  ┃ │   rst: ntp_prod_0001.rst ×                              │
 │               │  ┃ └───────────────────────────────┘                         │
-│               │  ┃      ↓ (continuity arrow)                                 │
-│               │  ┃ ┌ ⠿ ntp_prod_0002  ▸ …top  ◂ ntp_prod_0001                │
+│               │  ┃      ↓ ntp_prod_0001.rst                                  │
+│               │  ┃ ┌ ⠿ ntp_prod_0002  ▸ …top ×  ◂ restart of ntp_prod_0001  │
 │               │  ┃ └───────────────────────────────┘                         │
 └───────────────┴────────────────────────────────────┴─────────────────────────┘
 ```
@@ -76,12 +77,12 @@ Each pane is resizable (drag the divider); widths persist across sessions.
 ## 3. A typical session
 
 1. **Discover.** Click **Discover**, optionally uncheck "Search subdirectories" or set a filename pattern, then **Run discover**. The server scans the launch directory, groups files by stem, classifies the topology pool (normal vs. HMR), picks a starting structure, and chains later steps' input coordinates to the previous step's output restart. This **replaces** the current draft (a confirmation guards unsaved changes) and repopulates the suggestions tray.
-2. **Assign & adjust.** Drag a file from **Files** onto the topology pool, the starting-structure slot, a step's `mdin`/`mdout`/`mdcrd` slot, or a phase's/step's topology target. Or select a file in **Files** and use the Inspector's **Assign** actions (§7) — the same mutations, without dragging.
+2. **Assign & adjust.** Drag a file from **Files** onto the topology pool, the starting-structure slot, a step's `mdin`/`mdout`/`mdcrd`/`rst` slot, or a phase's/step's topology target. Or select a file in **Files** and use the Inspector's **Assign** actions (§7) — the same mutations, without dragging.
 3. **Arrange.** In the **Canvas**, drag a step's grip handle to reorder it within a phase or drop it onto another phase to move it; drag a phase's grip handle to reorder phases.
 4. **Validate.** Click **Validate**. The panel lists per-step issues (missing files, continuity/sequence problems) and protocol-level notes, and lets you jump to a step. A simulation with continuity notes shows as *valid, with N protocol note(s)* — never a silent clean pass when something is worth a look.
 5. **Save / Export.** **Save** writes the canonical **v2 manifest** to disk (YAML or JSON, inferred from the extension); **Export** lets you preview and copy YAML or JSON first without writing.
 
-Undo/redo and a dirty-state dot live in the top bar; history is kept on the server (100 steps), and Discover/Open reset it.
+Undo/redo (**Ctrl+Z** / **Ctrl+Shift+Z**, **Ctrl+Y**) and a dirty-state dot live in the top bar; history is kept on the server (100 steps). **Open** resets it — a different manifest is a new editing session — while **Discover** does not, so a discovery run on the wrong directory is one undo away. Removing something (a step, a phase, a topology, the starting structure) reports itself with an **Undo** button; that offer disappears as soon as you make another change, because undo always reverses the most recent one.
 
 ---
 
@@ -109,17 +110,18 @@ The canvas is a continuous vertical timeline, not a flat list of cards.
 
 **Simulation header** — click "Simulation" to select the Simulation itself (shows the suggestions tray). Below it:
 - **Topology pool** — a drop zone. Each entry shows its path and a `normal`/`HMR` badge. Drop a `prmtop` here to add it to the pool.
-- **Starting structure** — a drop zone for the single-frame coordinates that feed the first step.
+- **Starting structure** — the single-frame coordinates that feed the first step. Drop a file on it, click it to browse, or clear it with the ×.
+- Each pooled topology carries a `normal`/`HMR` selector (the kind is only guessed from the filename when the file is added) and a × that removes it from the pool; the tooltip names how many steps would be left without a topology.
 
-**Phase sections** — one per phase, in protocol order, with a left accent bar. Each header shows the phase name, its role badge (`minimization`/`heating`/`equilibration`/`production`, or none), and a **"set topology ▾"** dropdown that assigns a pool topology to every step currently in the phase (a one-shot cascade, not a stored per-phase default). The grip handle drags the whole phase to reorder it.
+**Phase sections** — one per phase, in protocol order, with a left accent bar. Each header shows the phase name, its role badge (`minimization`/`heating`/`equilibration`/`production`, or none), and a **topology** selector that sets — or, via `— none —`, clears — the topology of every step currently in the phase. A phase stores no topology of its own, so the selector reports what its steps hold: one shared entry, `Mixed` when they disagree, or none. The grip handle drags the whole phase to reorder it.
 
 **Step cards** — inside each phase, grouped by numeric base name (so `ntp_prod_0001..0005` group together) and shown in ascending numeric order:
 - `▸ <topology path>` — the step's bound topology; HMR-bound steps get an accent color and an `HMR` badge.
-- `◂ <source>` — the resolved input-coordinate source: `◂ starting structure`, `◂ <previous step id>` (chained), or `◂ <explicit path>`.
-- Three dashed drop-target slots: `mdin`, `mdout`, `mdcrd`, each showing its filename or `—`.
+- `◂ <source>` — where this run's coordinates come from: `◂ starting structure · wt.crd`, `◂ restart of 01_min · 01_min.rst` (chained — the **name** of the step it continues from, plus the file that link resolves to), or `◂ <explicit path>`.
+- Four dashed drop-target slots: `mdin`, `mdout`, `mdcrd` and `rst`, each showing its filename or `—` and a × to clear it. `rst` is the restart this run **writes**; the next step reads it.
 - A grip handle to drag the step within the phase or onto another phase.
 
-**Continuity arrows** sit between consecutive steps in a sequence: a plain downward arrow when the previous run's end and this run's start line up within tolerance, or an amber arrow annotated with the gap magnitude (e.g. `20 ps`) when a real continuity gap was found.
+**Continuity arrows** sit between consecutive steps in a sequence. When the lower step continues from the upper one, the arrow is labelled with the restart file that passes between them — that file belongs to neither card alone, so the edge is where it is shown. An amber arrow annotated with the gap magnitude (e.g. `20 ps`) marks a real continuity gap.
 
 **Missing-run ghosts** — a dashed, muted card labeled `<name> missing` is inserted at the correct position in a numbered sequence when a member is absent (e.g. `ntp_prod_0003` between `0002` and `0004`), driven by the same sequence-hole detection the CLI uses.
 
@@ -193,6 +195,7 @@ steps:
   mdin: ntp_prod_0001.mdin
   mdout: ntp_prod_0001.mdout
   mdcrd: null
+  rst: ntp_prod_0001.rst
   notes: []
 - id: c1e0498e
   name: ntp_prod_0002
@@ -202,7 +205,6 @@ steps:
   input_coords:
     source: step
     ref: b71986d7
-    path: ntp_prod_0001.rst
   mdin: ntp_prod_0002.mdin
   mdout: ntp_prod_0002.mdout
   mdcrd: null
@@ -287,11 +289,11 @@ The frontend talks to a small REST API under `/api` (`ambermeta/gui/api/routes.p
 |---|---|---|---|
 | `POST` | `/api/phases` | `{ name, role? }` | Document |
 | `POST` | `/api/phases/reorder` | `{ phase_ids[] }` | Document (`400` unless the id set matches exactly) |
-| `PUT` | `/api/phases/{id}` | `{ name?, role? }` | Document (`404`) |
-| `DELETE` | `/api/phases/{id}?reassign_to=<phase_id>` | — | Document (`404`); moves the deleted phase's steps to `reassign_to` if given |
-| `POST` | `/api/phases/{id}/steps` | `{ name, topology?, input_coords?, mdin?, mdout?, mdcrd?, expected_gap_ps?, gap_tolerance_ps?, notes? }` | Document (`404` if phase unknown) |
+| `PUT` | `/api/phases/{id}` | `{ name?, role?, topology? }` — `topology` present (including `null`) sets or clears it on **every step of the phase** in one undoable operation | Document (`404` if the phase or the topology id is unknown) |
+| `DELETE` | `/api/phases/{id}?reassign_to=<phase_id>` | — | Document (`404`; `400` if `reassign_to` is the phase being deleted); moves the deleted phase's steps to `reassign_to` if given |
+| `POST` | `/api/phases/{id}/steps` | `{ name, topology?, input_coords?, mdin?, mdout?, mdcrd?, rst?, expected_gap_ps?, gap_tolerance_ps?, notes? }` | Document (`404` if phase unknown) |
 | `POST` | `/api/phases/{id}/steps/reorder` | `{ step_ids[] }` | Document (`404`/`400`) |
-| `PUT` | `/api/steps/{id}` | `{ name?, topology?, input_coords?, files?: {mdin?,mdout?,mdcrd?}, expected_gap_ps?, gap_tolerance_ps?, notes? }` | Document (`404`) |
+| `PUT` | `/api/steps/{id}` | `{ name?, topology?, input_coords?, files?: {mdin?,mdout?,mdcrd?,rst?}, expected_gap_ps?, gap_tolerance_ps?, notes? }` — `topology`, `expected_gap_ps` and `gap_tolerance_ps` use present-vs-absent: sending `null` clears, omitting leaves alone | Document (`404`) |
 | `DELETE` | `/api/steps/{id}` | — | Document (`404`) |
 | `POST` | `/api/steps/{id}/move` | `{ phase_id, index? }` (`index` default `-1` = append) | Document (`404`) |
 
@@ -299,7 +301,7 @@ The frontend talks to a small REST API under `/api` (`ambermeta/gui/api/routes.p
 
 | Method | Path | Body | Returns |
 |---|---|---|---|
-| `POST` | `/api/assign` | `{ path, target_type, target_id?, kind?, slot? }` — `target_type` ∈ `pool \| starting_structure \| phase_topology \| step_topology \| step_slot` (`step_slot` also needs `slot` ∈ `mdin\|mdout\|mdcrd`) | Document (`404`/`400`) |
+| `POST` | `/api/assign` | `{ path, target_type, target_id?, kind?, slot? }` — `target_type` ∈ `pool \| starting_structure \| phase_topology \| step_topology \| step_slot` (`step_slot` also needs `slot` ∈ `mdin\|mdout\|mdcrd\|rst`) | Document (`404`/`400`) |
 | `GET` / `PUT` | `/api/settings` | _(GET)_ / `{ auto_link_restarts?, strict_validation?, allow_gaps?, use_relative_paths? }` | Settings / Document |
 | `POST` | `/api/undo` · `/api/redo` | — | Document |
 | `POST` | `/api/validate` | — | Validation report (§9) |

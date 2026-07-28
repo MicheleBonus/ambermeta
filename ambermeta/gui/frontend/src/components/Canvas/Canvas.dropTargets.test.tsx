@@ -63,6 +63,8 @@ const doc: DocumentResponse = {
             mdin: "/w/prod1.in",
             mdout: null,
             mdcrd: null,
+            rst: null,
+            resolved_input_coords: null,
             expected_gap_ps: null,
             gap_tolerance_ps: null,
             notes: [],

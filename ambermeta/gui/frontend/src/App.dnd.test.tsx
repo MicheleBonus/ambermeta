@@ -31,7 +31,7 @@ function step(id: string, name: string): StepModel {
   return {
     id, name, topology: null,
     input_coords: { source: "starting_structure", ref: null, path: null },
-    mdin: null, mdout: null, mdcrd: null,
+    mdin: null, mdout: null, mdcrd: null, rst: null, resolved_input_coords: null,
     expected_gap_ps: null, gap_tolerance_ps: null, notes: [],
   };
 }

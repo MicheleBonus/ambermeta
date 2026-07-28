@@ -17,5 +17,14 @@ export const apiHandlers = [
   http.get("/api/settings", () => HttpResponse.json(emptyDocument.settings)),
   http.get("/api/files", () => HttpResponse.json([])),
   http.post("/api/validate", () => HttpResponse.json(emptyValidationReport)),
+  // The canvas header now carries removal controls, so any test that renders it can fire
+  // these. setup.ts uses onUnhandledRequest:"error", which would otherwise turn a missing
+  // handler into an opaque failure in a test that is not about topologies at all.
+  http.post("/api/topologies", () => HttpResponse.json(emptyDocument)),
+  http.put("/api/topologies/:id", () => HttpResponse.json(emptyDocument)),
+  http.delete("/api/topologies/:id", () => HttpResponse.json(emptyDocument)),
+  http.put("/api/simulation/starting-structure", () => HttpResponse.json(emptyDocument)),
+  http.post("/api/undo", () => HttpResponse.json(emptyDocument)),
+  http.post("/api/redo", () => HttpResponse.json(emptyDocument)),
 ];
 export const server = setupServer(...apiHandlers);

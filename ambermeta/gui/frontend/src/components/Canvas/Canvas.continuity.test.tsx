@@ -7,6 +7,7 @@ import { server } from "@/test/server";
 import { queryClient } from "@/api/queryClient";
 import { SelectionProvider } from "@/state/selection";
 import { SuggestionsContext } from "@/components/Suggestions/suggestionsContext";
+import { makeStep } from "@/test/factories";
 import { Canvas } from "./Canvas";
 import type { DocumentResponse, Suggestion } from "@/types";
 
@@ -49,6 +50,8 @@ const docWithGap: DocumentResponse = {
             mdin: "/w/prod1.in",
             mdout: null,
             mdcrd: null,
+            rst: null,
+            resolved_input_coords: null,
             expected_gap_ps: null,
             gap_tolerance_ps: null,
             notes: [],
@@ -61,6 +64,8 @@ const docWithGap: DocumentResponse = {
             mdin: "/w/prod3.in",
             mdout: null,
             mdcrd: null,
+            rst: null,
+            resolved_input_coords: null,
             expected_gap_ps: null,
             gap_tolerance_ps: null,
             notes: [],
@@ -73,6 +78,8 @@ const docWithGap: DocumentResponse = {
             mdin: "/w/prod5.in",
             mdout: null,
             mdcrd: null,
+            rst: null,
+            resolved_input_coords: null,
             expected_gap_ps: null,
             gap_tolerance_ps: null,
             notes: [],
@@ -145,4 +152,84 @@ it("renders an amber continuity-gap marker scoped to the right arrow and a dashe
   const ghostNode = screen.getByText(/prod_0002/);
   expect(prod0001.compareDocumentPosition(ghostNode) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   expect(ghostNode.compareDocumentPosition(prod0003) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+});
+
+it("labels the arrow between two chained steps with the restart that passes between them", async () => {
+  // The file a run hands to the next belongs to neither card alone — it is written by one
+  // and read by the other — so the edge is where it becomes legible.
+  const chained: DocumentResponse = {
+    ...docWithGap,
+    simulation: {
+      ...docWithGap.simulation,
+      phases: [{
+        ...docWithGap.simulation.phases[0],
+        steps: [
+          { ...docWithGap.simulation.phases[0].steps[0], rst: "/w/prod/prod_0001.rst" },
+          {
+            ...docWithGap.simulation.phases[0].steps[1],
+            resolved_input_coords: "/w/prod/prod_0001.rst",
+          },
+          docWithGap.simulation.phases[0].steps[2],
+        ],
+      }],
+    },
+  };
+  queryClient.clear();
+  server.use(http.get("/api/document", () => HttpResponse.json(chained)));
+  render(wrap(<Canvas />));
+
+  await waitFor(() => expect(screen.getByText("prod_0003")).toBeInTheDocument());
+
+  // Once on the arrow, once in prod_0001's own rst slot — and never as a raw step id.
+  const onArrow = screen.getByTitle(/continues from the restart written above/);
+  expect(onArrow).toHaveTextContent("prod_0001.rst");
+  expect(screen.queryByText("s1")).not.toBeInTheDocument();
+});
+
+it("draws a bare arrow between steps that are not chained to each other", async () => {
+  queryClient.clear();
+  server.use(http.get("/api/document", () => HttpResponse.json(docWithGap)));
+  render(wrap(<Canvas />));
+
+  await waitFor(() => expect(screen.getByText("prod_0003")).toBeInTheDocument());
+  // No step names an rst, so there is no file to put on any edge.
+  expect(screen.queryByTitle(/continues from the restart written above/)).not.toBeInTheDocument();
+});
+
+it("draws the link between steps whose names share no numeric base", async () => {
+  // 01_min / 02_nvt / 03_npt each form their own group (the base is the whole name), which
+  // is exactly what an equilibration folder looks like. An arrow drawn only inside a group
+  // would never appear here at all.
+  const equil: DocumentResponse = {
+    ...docWithGap,
+    simulation: {
+      ...docWithGap.simulation,
+      phases: [{
+        id: "p0", name: "Equilibration", role: "equilibration",
+        steps: [
+          makeStep({ id: "e0", name: "01_min", rst: "/w/equil/01_min.rst" }),
+          makeStep({
+            id: "e1", name: "02_nvt", rst: "/w/equil/02_nvt.rst",
+            input_coords: { source: "step", ref: "e0", path: null },
+            resolved_input_coords: "/w/equil/01_min.rst",
+          }),
+          makeStep({
+            id: "e2", name: "03_npt",
+            input_coords: { source: "step", ref: "e1", path: null },
+            resolved_input_coords: "/w/equil/02_nvt.rst",
+          }),
+        ],
+      }],
+    },
+  };
+  queryClient.clear();
+  server.use(http.get("/api/document", () => HttpResponse.json(equil)));
+  render(wrap(<Canvas />));
+
+  await waitFor(() => expect(screen.getByText("03_npt")).toBeInTheDocument());
+
+  const links = screen.getAllByTitle(/continues from the restart written above/);
+  expect(links).toHaveLength(2);
+  expect(links[0]).toHaveTextContent("01_min.rst");
+  expect(links[1]).toHaveTextContent("02_nvt.rst");
 });

@@ -1,6 +1,7 @@
 import { useDocument, useDeleteStep, useUpdateStep } from "@/api/hooks";
 import { useSelection } from "@/state/selection";
 import { Button, FileLabel } from "@/components/common";
+import { useUndoOffer } from "@/lib/useUndoOffer";
 import type { InputCoordsModel, PhaseModel, StepModel } from "@/types";
 import { CommitField, CONTROL, Field } from "./NodeFields";
 
@@ -17,12 +18,15 @@ function allSteps(phases: PhaseModel[]): { id: string; label: string }[] {
   return phases.flatMap((p) => p.steps.map((s) => ({ id: s.id, label: `${p.name} / ${s.name}` })));
 }
 
-/** The parsed value of a gap field, or null when it is blank or not a number. */
-function parseGapField(raw: string): number | null {
+/**
+ * What a gap field's text means: a number to store, `null` to clear it, or "no opinion"
+ * for text that is not a number at all (so a half-typed "1e" does not wipe the value).
+ */
+function parseGapField(raw: string): { value: number | null } | null {
   const trimmed = raw.trim();
-  if (!trimmed) return null;
+  if (!trimmed) return { value: null };
   const n = Number(trimmed);
-  return Number.isFinite(n) ? n : null;
+  return Number.isFinite(n) ? { value: n } : null;
 }
 
 export function StepInspector({ stepId }: { stepId: string }) {
@@ -30,6 +34,7 @@ export function StepInspector({ stepId }: { stepId: string }) {
   const { select } = useSelection();
   const updateStep = useUpdateStep();
   const deleteStep = useDeleteStep();
+  const offerUndo = useUndoOffer();
 
   const phases = doc?.simulation.phases ?? [];
   const found = findStep(phases, stepId);
@@ -39,6 +44,10 @@ export function StepInspector({ stepId }: { stepId: string }) {
   const { phase, step } = found;
   const base = doc.base_directory;
   const ic = step.input_coords;
+  // Who would be affected by changing this step's restart — the other half of the link.
+  const consumers = phases
+    .flatMap((p) => p.steps)
+    .filter((s) => s.input_coords.source === "step" && s.input_coords.ref === step.id);
 
   const patch = (body: Parameters<typeof updateStep.mutate>[0]["body"]) =>
     updateStep.mutate({ id: step.id, body });
@@ -104,6 +113,16 @@ export function StepInspector({ stepId }: { stepId: string }) {
             </select>
           </Field>
         )}
+        {ic.source !== "path" && (
+          // Resolved by the server, so the panel says which file the choice above actually
+          // lands on rather than leaving the user to work it out from the chain.
+          <div className="flex min-w-0 items-baseline gap-1 font-mono text-xs text-ink-muted">
+            <span className="shrink-0">reads:</span>
+            {step.resolved_input_coords
+              ? <FileLabel path={step.resolved_input_coords} base={base} />
+              : <span className="text-warning">nothing yet</span>}
+          </div>
+        )}
         {ic.source === "path" && (
           <>
             <CommitField
@@ -120,23 +139,42 @@ export function StepInspector({ stepId }: { stepId: string }) {
       </div>
 
       <div className="p-3 border-b border-hairline space-y-3">
+        <div className="text-xs text-ink-muted uppercase tracking-wide">Output restart</div>
+        {/* Stored here, on the step that writes it, because this is the file the next step
+            reads. Blank it to say this run produces no restart. */}
+        <CommitField
+          label="Restart written (rst)"
+          placeholder="equil/02_nvt.rst"
+          value={step.rst ?? ""}
+          onCommit={(path) => patch({ files: { rst: path } })}
+        />
+        <div className="text-xs text-ink-muted">
+          {consumers.length === 0
+            ? "No step continues from this one."
+            : `Read by ${consumers.map((s) => s.name).join(", ")}.`}
+        </div>
+      </div>
+
+      <div className="p-3 border-b border-hairline space-y-3">
         <div className="text-xs text-ink-muted uppercase tracking-wide">Continuity</div>
-        {/* The backend reads a null gap as "leave as it was", so a blank field means unchanged
-            rather than cleared — the only way to drop a gap is to set it to 0. */}
+        {/* Blanking a field clears it. It used to send nothing at all, so the box looked
+            empty until the next document push put the old number back. */}
         <CommitField
           label="Expected gap (ps)"
+          placeholder="none"
           value={step.expected_gap_ps === null ? "" : String(step.expected_gap_ps)}
           onCommit={(raw) => {
-            const n = parseGapField(raw);
-            if (n !== null) patch({ expected_gap_ps: n });
+            const parsed = parseGapField(raw);
+            if (parsed) patch({ expected_gap_ps: parsed.value });
           }}
         />
         <CommitField
           label="Gap tolerance (ps)"
+          placeholder="none"
           value={step.gap_tolerance_ps === null ? "" : String(step.gap_tolerance_ps)}
           onCommit={(raw) => {
-            const n = parseGapField(raw);
-            if (n !== null) patch({ gap_tolerance_ps: n });
+            const parsed = parseGapField(raw);
+            if (parsed) patch({ gap_tolerance_ps: parsed.value });
           }}
         />
         <CommitField
@@ -148,14 +186,17 @@ export function StepInspector({ stepId }: { stepId: string }) {
       </div>
 
       <div className="p-3">
+        {/* Same bargain as the canvas trash button: no confirm, an Undo offer instead. */}
         <Button
           variant="danger"
-          onClick={() => {
-            if (window.confirm(`Delete step "${step.name}"?`)) {
-              deleteStep.mutate(step.id);
-              select(null, null);
-            }
-          }}
+          onClick={() =>
+            deleteStep.mutate(step.id, {
+              onSuccess: () => {
+                select(null, null);
+                offerUndo(`Deleted step “${step.name}”`);
+              },
+            })
+          }
         >
           Delete this step
         </Button>
