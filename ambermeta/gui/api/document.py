@@ -12,9 +12,12 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
-from ambermeta.simulation import Simulation, Phase, Step, Topology, InputCoords
+from ambermeta.simulation import (
+    Simulation, Phase, Step, Topology, InputCoords,
+    iter_steps, predecessors, relink_restarts, repair_dangling_refs, resolve_input_coords,
+)
 
-_STEP_SLOTS = ("mdin", "mdout", "mdcrd")
+_STEP_SLOTS = ("mdin", "mdout", "mdcrd", "rst")
 
 
 def _default_settings() -> Dict[str, Any]:
@@ -53,20 +56,28 @@ class DocumentStore:
 
     # -- internal -----------------------------------------------------------
     def _state(self) -> Any:
+        """The undoable content of the document.
+
+        Deliberately excludes ``manifest_path`` and ``dirty``. Those describe the document's
+        relationship to a file on disk, not its contents: rewinding the save target made
+        "Save As B, then undo one edit" write silently back to A, and rewinding ``dirty``
+        to a stale False disarmed the unsaved-changes guard over real unsaved work.
+        """
         d = self._doc
-        return copy.deepcopy((d.simulation, d.settings, d.manifest_path, d.dirty))
+        return copy.deepcopy((d.simulation, d.settings))
 
     def _restore(self, state: Any) -> None:
-        sim, settings, manifest_path, dirty = copy.deepcopy(state)
+        sim, settings = copy.deepcopy(state)
         self._doc.simulation = sim
         self._doc.settings = settings
-        self._doc.manifest_path = manifest_path
-        self._doc.dirty = dirty
+
+    def _push(self, stack: List[Any], state: Any) -> None:
+        stack.append(state)
+        if len(stack) > self._history_limit:
+            stack.pop(0)
 
     def _snapshot(self) -> None:
-        self._undo.append(self._state())
-        if len(self._undo) > self._history_limit:
-            self._undo.pop(0)
+        self._push(self._undo, self._state())
         self._redo.clear()
 
     def _find_phase(self, phase_id: str) -> Phase:
@@ -81,6 +92,27 @@ class DocumentStore:
                 if s.id == step_id:
                     return p, s
         raise KeyError(step_id)
+
+    def _step_before(self, step_id: str) -> Optional[Step]:
+        """The step immediately preceding ``step_id`` in document order, across phases."""
+        prev: Optional[Step] = None
+        for _, s in iter_steps(self._doc.simulation):
+            if s.id == step_id:
+                return prev
+            prev = s
+        return None
+
+    def _relink(self, before: Dict[str, Optional[str]]) -> None:
+        """Re-derive the restart chain after steps changed position, if the user wants it.
+
+        ``before`` must be captured with ``_order()`` BEFORE the mutation: it is the only
+        way to tell a link this tool inferred from one the user picked by hand.
+        """
+        if self._doc.settings.get("auto_link_restarts"):
+            relink_restarts(self._doc.simulation, before)
+
+    def _order(self) -> Dict[str, Optional[str]]:
+        return predecessors(self._doc.simulation)
 
     def _find_topology(self, topology_id: str) -> Topology:
         for t in self._doc.simulation.topologies:
@@ -103,7 +135,8 @@ class DocumentStore:
                     input_coords=InputCoordsModel(source=s.input_coords.source,
                                                   ref=s.input_coords.ref,
                                                   path=s.input_coords.path),
-                    mdin=s.mdin, mdout=s.mdout, mdcrd=s.mdcrd,
+                    mdin=s.mdin, mdout=s.mdout, mdcrd=s.mdcrd, rst=s.rst,
+                    resolved_input_coords=resolve_input_coords(sim, s),
                     expected_gap_ps=s.expected_gap_ps,
                     gap_tolerance_ps=s.gap_tolerance_ps, notes=list(s.notes),
                 ) for s in p.steps
@@ -172,6 +205,18 @@ class DocumentStore:
     # -- topology mutations -------------------------------------------------
     def add_topology(self, path: str, kind: str) -> str:
         with self.lock:
+            # Adding a path the pool already holds returns the entry it already has. Two
+            # entries for one file were indistinguishable on screen but only one of them
+            # was referenced by any step, so removing "the" topology removed the wrong one.
+            for t in self._doc.simulation.topologies:
+                if t.path == path:
+                    # An explicitly requested kind still applies: "add as HMR" on a file
+                    # already pooled as normal has to do what it says, not nothing.
+                    if kind and t.kind != kind:
+                        self._snapshot()
+                        t.kind = kind
+                        self._doc.dirty = True
+                    return t.id
             self._snapshot()
             tid = _new_id()
             self._doc.simulation.topologies.append(Topology(id=tid, path=path, kind=kind or "normal"))
@@ -227,11 +272,16 @@ class DocumentStore:
     def update_phase(self, phase_id: str, patch: Dict[str, Any]) -> None:
         with self.lock:
             p = self._find_phase(phase_id)
+            if "topology" in patch and patch["topology"]:
+                self._find_topology(patch["topology"])   # validate before mutating
             self._snapshot()
             if patch.get("name") is not None:
                 p.name = patch["name"]
             if "role" in patch and patch["role"] is not None:
                 p.role = patch["role"]
+            if "topology" in patch:                 # present => set on every step (None clears)
+                for s in p.steps:
+                    s.topology = patch["topology"] or None
             self._doc.dirty = True
 
     def reorder_phases(self, ordered_ids: List[str]) -> None:
@@ -240,18 +290,25 @@ class DocumentStore:
             if set(ordered_ids) != {p.id for p in phases} or len(ordered_ids) != len(phases):
                 raise ValueError("reorder id set does not match current phases")
             self._snapshot()
+            before = self._order()
             by_id = {p.id: p for p in phases}
             self._doc.simulation.phases = [by_id[i] for i in ordered_ids]
+            self._relink(before)
             self._doc.dirty = True
 
     def delete_phase(self, phase_id: str, reassign_to: Optional[str] = None) -> None:
         with self.lock:
             p = self._find_phase(phase_id)
+            if reassign_to == phase_id:
+                # Otherwise the steps are moved onto the very phase being removed and
+                # vanish with it — a "keep my steps" option that silently destroys them.
+                raise ValueError("cannot reassign a phase's steps to itself")
             target = self._find_phase(reassign_to) if reassign_to is not None else None
             self._snapshot()
             if target is not None:
                 target.steps.extend(p.steps)
             self._doc.simulation.phases.remove(p)
+            repair_dangling_refs(self._doc.simulation)
             self._doc.dirty = True
 
     # -- step mutations -----------------------------------------------------
@@ -266,11 +323,24 @@ class DocumentStore:
                 input_coords=InputCoords(source=ic.get("source", "starting_structure"),
                                          ref=ic.get("ref"), path=ic.get("path")),
                 mdin=fields.get("mdin"), mdout=fields.get("mdout"), mdcrd=fields.get("mdcrd"),
+                rst=fields.get("rst"),
                 expected_gap_ps=fields.get("expected_gap_ps"),
                 gap_tolerance_ps=fields.get("gap_tolerance_ps"),
                 notes=list(fields.get("notes") or []),
             )
+            before = self._order()
             p.steps.append(step)
+            # A step appended with no stated coordinates continues from whatever now
+            # precedes it, so building a run by dropping mdin files in order produces a
+            # linked chain rather than a row of steps that all read the starting structure.
+            if not ic and self._doc.settings.get("auto_link_restarts"):
+                prev = self._step_before(sid)
+                if prev is not None:
+                    step.input_coords = InputCoords(source="step", ref=prev.id)
+            # Whoever used to follow the insertion point is still chained to the step
+            # BEFORE it, so without this a step added to a non-final phase forks the
+            # chain: two steps claim the same producer and the new one feeds nobody.
+            self._relink(before)
             self._doc.dirty = True
             return sid
 
@@ -290,9 +360,11 @@ class DocumentStore:
                 if slot in patch:
                     val = patch[slot]
                     setattr(s, slot, val if val else None)   # "" clears
-            if patch.get("expected_gap_ps") is not None:
+            # Presence, not truthiness: an explicit null clears the gap, and 0.0 is a real
+            # value rather than "unset".
+            if "expected_gap_ps" in patch:
                 s.expected_gap_ps = patch["expected_gap_ps"]
-            if patch.get("gap_tolerance_ps") is not None:
+            if "gap_tolerance_ps" in patch:
                 s.gap_tolerance_ps = patch["gap_tolerance_ps"]
             if patch.get("notes") is not None:
                 s.notes = list(patch["notes"])
@@ -303,6 +375,8 @@ class DocumentStore:
             p, s = self._find_step(step_id)
             self._snapshot()
             p.steps.remove(s)
+            # Whoever continued from this step would otherwise be left holding a dead id.
+            repair_dangling_refs(self._doc.simulation)
             self._doc.dirty = True
 
     def move_step(self, step_id: str, phase_id: str, index: int) -> None:
@@ -310,11 +384,13 @@ class DocumentStore:
             src, s = self._find_step(step_id)
             dst = self._find_phase(phase_id)
             self._snapshot()
+            before = self._order()
             src.steps.remove(s)
             if index < 0 or index > len(dst.steps):
                 dst.steps.append(s)
             else:
                 dst.steps.insert(index, s)
+            self._relink(before)
             self._doc.dirty = True
 
     def reorder_steps(self, phase_id: str, ordered_ids: List[str]) -> None:
@@ -323,8 +399,10 @@ class DocumentStore:
             if set(ordered_ids) != {s.id for s in p.steps} or len(ordered_ids) != len(p.steps):
                 raise ValueError("reorder id set does not match phase steps")
             self._snapshot()
+            before = self._order()
             by_id = {s.id: s for s in p.steps}
             p.steps = [by_id[i] for i in ordered_ids]
+            self._relink(before)
             self._doc.dirty = True
 
     # -- unified assignment -------------------------------------------------
@@ -360,21 +438,30 @@ class DocumentStore:
             self._assign_step_topology(target_id, path, kind)
         elif target_type == "step_slot":
             if not target_id or slot not in _STEP_SLOTS:
-                raise ValueError("step_slot requires target_id (step id) and a slot in mdin/mdout/mdcrd")
+                raise ValueError(
+                    "step_slot requires target_id (step id) and a slot in "
+                    + "/".join(_STEP_SLOTS)
+                )
             self.update_step(target_id, {slot: path})
         else:
             raise ValueError(f"unknown target_type: {target_type}")
 
-    def undo(self) -> None:
+    def undo(self) -> bool:
         with self.lock:
             if not self._undo:
-                return
-            self._redo.append(self._state())
+                return False
+            self._push(self._redo, self._state())
             self._restore(self._undo.pop())
+            # The in-memory document no longer matches whatever was last written, whichever
+            # direction we moved in.
+            self._doc.dirty = True
+            return True
 
-    def redo(self) -> None:
+    def redo(self) -> bool:
         with self.lock:
             if not self._redo:
-                return
-            self._undo.append(self._state())
+                return False
+            self._push(self._undo, self._state())
             self._restore(self._redo.pop())
+            self._doc.dirty = True
+            return True

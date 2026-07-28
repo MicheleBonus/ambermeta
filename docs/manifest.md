@@ -177,6 +177,7 @@ steps:
 | `topology` | no | A `Topology.id` from the pool — the one prmtop this Step runs against. May be `null` if not yet assigned (a discover-draft gap). |
 | `input_coords` | no (default `{source: starting_structure}`) | Where this Step's initial coordinates come from — see §6. |
 | `mdin`, `mdout`, `mdcrd` | no | File paths for this run. Provide at least one parseable file for `plan`/`validate` to do anything useful with the Step. |
+| `rst` | no | The restart this run **writes** (`-r restrt`). It is what the next Step reads — see §6. Omitted entirely when unset, so a Step that records no restart round-trips as no key. |
 | `notes` | no (default `[]`) | List of free-text strings. |
 | `gaps` | no | `{expected, tolerance}` in ps — see below. Omitted entirely when both are unset (round-trips as no key, not as `null`s, unless you write it explicitly as in the template). |
 
@@ -214,15 +215,27 @@ input_coords: { source: path, path: "restarts/custom.rst7" }
 | `source` | Requires | Resolves to |
 |---|---|---|
 | `starting_structure` | — | The Simulation's `starting_structure`. Normally only the first Step in a chain uses this. |
-| `step` | `ref: <step id>` | The referenced Step's output restart file (its `mdout`-derived or `.rst`/`.rst7` restart). This is the continuity chain: Step *N*'s input is Step *N−1*'s output. |
+| `step` | `ref: <step id>` | The **`rst` of the referenced Step** — the restart that Step wrote. This is the continuity chain: Step *N*'s input is Step *N−1*'s output. |
 | `path` | `path: "..."` | An explicit coordinate file, bypassing both of the above (e.g. a restart from outside this Simulation). |
 
-`discover` and the GUI's continuity resolution store the *resolved* restart path alongside `ref` when the
-source is `step` — e.g. `input_coords: { source: step, ref: st_prod_0001, path: ntp_prod_0001.rst }` — so
-that continuity/gap checks can read the restart's end-time without re-deriving it from the referenced
-Step's `mdout` each time. `ref` is the authoritative link (it is what makes the Step a link in the chain);
-`path` there is a cache, not a second source of truth. When you hand-author a manifest you only need to set
-`ref`.
+The file that joins two Steps is written once, on the Step that **produces** it:
+
+```yaml
+- { id: st_min, name: 01_min, phase: ph_eq, order: 0, mdin: 01_min.mdin, rst: 01_min.rst,
+    input_coords: { source: starting_structure } }
+- { id: st_nvt, name: 02_nvt, phase: ph_eq, order: 1, mdin: 02_nvt.mdin, rst: 02_nvt.rst,
+    input_coords: { source: step, ref: st_min } }
+```
+
+`st_nvt` reads `01_min.rst` because that is `st_min`'s `rst`. Nothing repeats the path, so renaming the
+restart is a one-line edit, and reordering or deleting Steps cannot leave a stale copy pointing at the
+wrong neighbour. When you hand-author a manifest you only set `ref`.
+
+Manifests written before `rst` existed stored the resolved restart on the *consuming* Step, as a `path`
+beside the `ref`. Those are **normalised on load**: the filename is moved onto the producing Step's `rst`
+and dropped from the consumer, so the document you save back is in the current shape and no later edit can
+lose the filename. A `path` that cannot be normalised — the `ref` names a Step that is not in the document
+— is still honoured as a fallback when resolving.
 
 Real example — running `discover` on the sample production sequence in
 `tests/data/amber/md_test_files/` (five `ntp_prod_000N` runs chained off restarts, no phases/steps written

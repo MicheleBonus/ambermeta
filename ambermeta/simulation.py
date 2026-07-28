@@ -37,6 +37,11 @@ class Step:
     mdin: Optional[str] = None
     mdout: Optional[str] = None
     mdcrd: Optional[str] = None
+    # The restart this run WRITES (-r restrt). It is stored on the step that produces it,
+    # not on the step that reads it: a chained step's input_coords is `source="step"` and
+    # resolves through here, so the file is recorded once and the two steps stay linked
+    # even if either is renamed, reordered, or moved to another phase.
+    rst: Optional[str] = None
     expected_gap_ps: Optional[float] = None
     gap_tolerance_ps: Optional[float] = None
     notes: List[str] = field(default_factory=list)
@@ -70,6 +75,10 @@ def _step_payload(step: Step, phase_id: str, order: int) -> Dict[str, Any]:
         "mdin": step.mdin, "mdout": step.mdout, "mdcrd": step.mdcrd,
         "notes": list(step.notes),
     }
+    # Emitted only when known, like `gaps`: a document that records no restarts keeps the
+    # exact step block it had before this field existed.
+    if step.rst is not None:
+        data["rst"] = step.rst
     if step.expected_gap_ps is not None or step.gap_tolerance_ps is not None:
         data["gaps"] = {"expected": step.expected_gap_ps, "tolerance": step.gap_tolerance_ps}
     return data
@@ -114,13 +123,39 @@ def payload_to_simulation(payload: Dict[str, Any]) -> Simulation:
             input_coords=InputCoords(source=ic.get("source", "starting_structure"),
                                      ref=ic.get("ref"), path=ic.get("path")),
             mdin=s.get("mdin"), mdout=s.get("mdout"), mdcrd=s.get("mdcrd"),
+            rst=s.get("rst"),
             expected_gap_ps=gaps.get("expected"), gap_tolerance_ps=gaps.get("tolerance"),
             notes=list(s.get("notes", []) or []),
         )
         phase = phases_by_id.get(s.get("phase"))
         if phase is not None:
             phase.steps.append(step)
+    _adopt_legacy_restart_paths(sim)
     return sim
+
+
+def _adopt_legacy_restart_paths(sim: Simulation) -> None:
+    """Move a chained step's cached coordinate path onto the step that wrote it.
+
+    Manifests written before ``Step.rst`` existed stored the resolved restart on the
+    *consuming* step, as ``input_coords.path`` beside the ``ref``. Reading that as a
+    fallback is enough to open such a document, but it leaves the filename living on the
+    wrong step, where any edit that rewrites the link would drop it. Normalising once at
+    load puts it where it belongs and makes the fallback matter only for refs that cannot
+    be resolved at all.
+    """
+    by_id = {s.id: s for _, s in iter_steps(sim)}
+    for _, step in iter_steps(sim):
+        ic = step.input_coords
+        if ic.source != "step" or not ic.ref or not ic.path:
+            continue
+        producer = by_id.get(ic.ref)
+        if producer is None or producer is step:
+            continue
+        if producer.rst is None:
+            producer.rst = ic.path
+        if producer.rst == ic.path:
+            step.input_coords = InputCoords(source="step", ref=ic.ref)
 
 
 def _is_v2(raw: Any) -> bool:
@@ -185,7 +220,7 @@ def migrate_v1_manifest(container: Any) -> Simulation:
     _topref(hmr_prmtop, "hmr")
     sim.starting_structure = globals_.get("initial_coordinates")
 
-    prev_step_id: Optional[str] = None
+    prev_step: Optional[Step] = None
     for idx, entry in enumerate(_normalize_manifest(container)):
         name = entry.get("name") or f"step_{idx}"
         role = entry.get("stage_role") or classify_role(name) or ""
@@ -200,7 +235,7 @@ def migrate_v1_manifest(container: Any) -> Simulation:
         else:
             topology = topo_by_path.get(global_prmtop) if global_prmtop else None
 
-        if prev_step_id is None:
+        if prev_step is None:
             if sim.starting_structure:
                 ic = InputCoords(source="starting_structure")
             elif _f("inpcrd"):
@@ -208,7 +243,12 @@ def migrate_v1_manifest(container: Any) -> Simulation:
             else:
                 ic = InputCoords(source="starting_structure")
         else:
-            ic = InputCoords(source="step", ref=prev_step_id)
+            ic = InputCoords(source="step", ref=prev_step.id)
+            # A v1 stage's inpcrd is the file it READS, which for a chained stage is the
+            # restart the previous one wrote. Recording it on that producer keeps the
+            # coordinate file the v1 manifest named instead of discarding it.
+            if _f("inpcrd") and prev_step.rst is None:
+                prev_step.rst = _f("inpcrd")
 
         gaps = entry.get("gaps") or {}
         step = Step(
@@ -222,6 +262,105 @@ def migrate_v1_manifest(container: Any) -> Simulation:
             sim.phases.append(Phase(id=f"ph_{len(sim.phases)}",
                                     name=(role.title() if role else "Stage"), role=role))
         sim.phases[-1].steps.append(step)
-        prev_step_id = step.id
+        prev_step = step
 
     return sim
+
+
+# ---------------------------------------------------------------------------
+# Restart chain
+# ---------------------------------------------------------------------------
+
+def iter_steps(sim: Simulation):
+    """Every step in document order, paired with its owning phase."""
+    for phase in sim.phases:
+        for step in phase.steps:
+            yield phase, step
+
+
+def resolve_input_coords(sim: Simulation, step: Step) -> Optional[str]:
+    """The coordinate file ``step`` actually reads, or None if it cannot be resolved.
+
+    A chained step resolves through the restart recorded on the step it continues from.
+    ``input_coords.path`` stays honoured as an explicit override and as the fallback for
+    documents written before restarts moved to the producing step.
+    """
+    ic = step.input_coords
+    if ic.source == "starting_structure":
+        return sim.starting_structure
+    if ic.source == "path":
+        return ic.path
+    if ic.source == "step":
+        if ic.ref:
+            for _, other in iter_steps(sim):
+                if other.id == ic.ref and other.rst:
+                    return other.rst
+        return ic.path
+    return None
+
+
+def predecessors(sim: Simulation) -> Dict[str, Optional[str]]:
+    """Each step's immediate predecessor in document order (None for the first)."""
+    out: Dict[str, Optional[str]] = {}
+    prev: Optional[str] = None
+    for _, step in iter_steps(sim):
+        out[step.id] = prev
+        prev = step.id
+    return out
+
+
+def relink_restarts(sim: Simulation, before: Dict[str, Optional[str]]) -> None:
+    """Follow the order with the links the tool itself derived, and only those.
+
+    ``before`` is the predecessor map from *before* the reorder. It is what separates a
+    link this tool inferred from one the user chose, which is otherwise indistinguishable
+    — both are ``source="step"``:
+
+    * a step that continued from its immediate predecessor was auto-chained, so it now
+      continues from whatever precedes it (or reads the starting structure if it has
+      become the first step);
+    * a step that was the first and read the starting structure was the head of the chain,
+      so if it stops being first it chains onto its new predecessor;
+    * everything else is a deliberate choice — an explicit path, a mid-run starting
+      structure, or a "continues from" pointing at some step other than the neighbour —
+      and is left exactly as it is.
+
+    Steps absent from ``before`` are new and keep whatever they were created with.
+    """
+    prev_id: Optional[str] = None
+    for _, step in iter_steps(sim):
+        ic = step.input_coords
+        if step.id in before:
+            was = before[step.id]
+            if ic.source == "step" and ic.ref == was:
+                # Auto-chained. Follow the new order, keeping any legacy resolved path so
+                # a document written before `rst` existed does not lose its only record.
+                step.input_coords = (
+                    InputCoords(source="starting_structure") if prev_id is None
+                    else InputCoords(source="step", ref=prev_id, path=ic.path)
+                )
+            elif ic.source == "starting_structure" and was is None and prev_id is not None:
+                # It was the head of the chain and no longer is. Without this the demotion
+                # above would be one-way: drag a step to the front and back again and the
+                # link it used to have would be gone for good.
+                step.input_coords = InputCoords(source="step", ref=prev_id)
+        prev_id = step.id
+
+
+def repair_dangling_refs(sim: Simulation) -> None:
+    """Re-point steps whose ``input_coords.ref`` names a step that no longer exists.
+
+    Deleting a step used to leave its successor pointing at a dead id, which silently
+    resolved to no coordinates at all — the chain looked intact in the GUI while
+    validation saw a hole. Each orphan re-chains to whatever now precedes it.
+    """
+    known = {s.id for _, s in iter_steps(sim)}
+    prev_id: Optional[str] = None
+    for _, step in iter_steps(sim):
+        ic = step.input_coords
+        if ic.source == "step" and (not ic.ref or ic.ref not in known):
+            if prev_id is None:
+                step.input_coords = InputCoords(source="starting_structure")
+            else:
+                step.input_coords = InputCoords(source="step", ref=prev_id, path=ic.path)
+        prev_id = step.id

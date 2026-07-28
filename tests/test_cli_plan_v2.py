@@ -41,7 +41,10 @@ def test_plan_v2_manifest_prints_structure(tmp_path, capsys):
     assert "Phase: Minimization [minimization]" in out
     assert "Phase: Production [production]" in out
     assert "prod_001" in out                        # step name is printed
-    assert "input=step st_min" in out               # input_coords.ref is the source step id
+    # The chain is reported by the NAME of the step it continues from. Printing the raw
+    # input_coords.ref showed the reader an internal id instead.
+    assert "input=restart of minimize" in out
+    assert "st_min" not in out
 
 
 def test_plan_v1_manifest_still_uses_flat_path(tmp_path, capsys):

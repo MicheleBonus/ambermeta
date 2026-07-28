@@ -1,7 +1,7 @@
 # tests/test_gui_core_bridge_sim.py
 import json
 from ambermeta.gui.api import core_bridge
-from ambermeta.simulation import Simulation, Phase, Step, Topology
+from ambermeta.simulation import Simulation, Phase, Step, Topology, resolve_input_coords
 
 
 def _sim():
@@ -111,7 +111,12 @@ def test_discover_draft_on_real_fixtures(sample_md_data_dir):
     assert flat[0].input_coords.source == "starting_structure"
     if len(flat) > 1:
         assert flat[1].input_coords.source == "step"
-        assert flat[1].input_coords.path   # resolved previous-run restart, for continuity
+        assert flat[1].input_coords.ref == flat[0].id
+        # The restart lives on the step that WRITES it, not copied onto its consumer,
+        # and resolving the link still yields a real file for continuity to read.
+        assert flat[1].input_coords.path is None
+        assert flat[0].rst and flat[0].rst.endswith(".rst")
+        assert resolve_input_coords(sim, flat[1]) == flat[0].rst
     assert isinstance(out["suggestions"], list)
 
 
