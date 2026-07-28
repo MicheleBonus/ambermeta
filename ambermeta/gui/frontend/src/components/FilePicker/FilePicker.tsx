@@ -1,38 +1,58 @@
 import { useMemo, useState } from "react";
 import { Modal, Button, FileIcon } from "@/components/common";
 import { useFiles } from "@/api/hooks";
-import type { FileInfo, ExportFormat } from "@/types";
+import type { FileInfo, FileType, ExportFormat } from "@/types";
 
 interface Props {
   open: boolean;
   mode: "open" | "save";
   title: string;
+  /** Show only files of this kind — a picker whose title names a slot must not
+   *  offer everything else on disk. Omit it to list the whole tree. */
+  filterType?: FileType;
   onPick: (result: { path: string; format?: ExportFormat }) => void;
   onClose: () => void;
 }
 
-function flatten(nodes: FileInfo[], q: string): FileInfo[] {
+function flatten(nodes: FileInfo[], q: string, type?: FileType): FileInfo[] {
   const out: FileInfo[] = [];
   const walk = (n: FileInfo) => {
-    if (!n.is_directory && n.name.toLowerCase().includes(q)) out.push(n);
+    if (!n.is_directory && n.name.toLowerCase().includes(q) && (!type || n.file_type === type)) out.push(n);
     n.children?.forEach(walk);
   };
   nodes.forEach(walk);
   return out;
 }
 
-export function FilePicker({ open, mode, title, onPick, onClose }: Props) {
+export function FilePicker({ open, mode, title, filterType, onPick, onClose }: Props) {
   const { data: tree = [] } = useFiles({ recursive: true, include_all: true });
   const [q, setQ] = useState("");
   const [path, setPath] = useState("");
   const [format, setFormat] = useState<ExportFormat>("yaml");
-  const files = useMemo(() => flatten(tree, q.toLowerCase()), [tree, q]);
+  // The backend types anything it does not recognise as `other`, so a .log output or a .crd
+  // restart is invisible in a slot-filtered picker. Relaxing the filter is the way out that
+  // does not involve going back to the file tree and dragging.
+  const [ignoreFilter, setIgnoreFilter] = useState(false);
+  const type = ignoreFilter ? undefined : filterType;
+  const files = useMemo(() => flatten(tree, q.toLowerCase(), type), [tree, q, type]);
 
   return (
     <Modal open={open} title={title} onClose={onClose}>
       <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search files"
         className="w-full px-2 py-1 mb-2 text-sm border border-hairline rounded bg-app" />
+      {filterType && (
+        <label className="flex items-center gap-2 mb-2 text-xs text-ink-secondary">
+          <input type="checkbox" checked={ignoreFilter} className="accent-current"
+            onChange={(e) => setIgnoreFilter(e.target.checked)} />
+          Show all file types
+        </label>
+      )}
       <div className="max-h-64 overflow-auto border border-hairline rounded">
+        {files.length === 0 && (
+          <p className="p-2 text-xs text-ink-muted">
+            {type ? `No ${type} files found.` : "No files found."}
+          </p>
+        )}
         {files.map((f) => (
           <button key={f.path}
             onClick={() => (mode === "open" ? onPick({ path: f.path }) : setPath(f.path))}

@@ -3,20 +3,9 @@ import {
   useDocument, useAddTopology, useSetStartingStructure, useAssign, useCreatePhase, useCreateStep,
 } from "@/api/hooks";
 import { Button } from "@/components/common";
+import { stemName } from "@/lib/format";
+import { ROLE_OPTIONS } from "@/lib/roles";
 import type { FileType, StageRole, PhaseModel, StepModel } from "@/types";
-
-const ROLE_OPTIONS: { value: StageRole; label: string }[] = [
-  { value: "minimization", label: "Minimization" },
-  { value: "heating", label: "Heating" },
-  { value: "equilibration", label: "Equilibration" },
-  { value: "production", label: "Production" },
-  { value: "", label: "Unassigned" },
-];
-
-function stemName(path: string): string {
-  const base = path.split("/").pop() ?? path;
-  return base.replace(/\.[^./]+$/, "");
-}
 
 function flattenSteps(phases: PhaseModel[]): { phase: PhaseModel; step: StepModel }[] {
   return phases.flatMap((phase) => phase.steps.map((step) => ({ phase, step })));
