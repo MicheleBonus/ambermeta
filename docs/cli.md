@@ -80,7 +80,7 @@ positional arguments:
     info                Display detailed metadata for a single file
     export              Re-emit a v2 manifest, optionally converting its
                         format
-    init                Generate an example manifest file
+    init                Generate a starting v2 manifest file
     gui                 Launch web-based GUI for building protocol manifests
     completion          Print shell completion script for bash, zsh, or fish
 
@@ -164,8 +164,8 @@ options:
                         Path to a YAML or JSON manifest describing stages and
                         file paths
   --skip-cross-stage-validation
-                        Skip continuity checks between consecutive stages
-                        (overrides the manifest's settings.strict_validation)
+                        Skip the continuity checks between consecutive stages
+                        (they run by default)
   --strict              Abort on the first unreadable/malformed input file
                         instead of skipping it. Default is to skip the file
                         and continue.
@@ -208,7 +208,7 @@ options:
 
 | Mode | Flag | Behavior |
 |---|---|---|
-| Manifest | `-m/--manifest FILE` | Load a manifest; honors `settings.strict_validation` |
+| Manifest | `-m/--manifest FILE` | Load a v2 manifest and summarize it |
 | Discovery | `--recursive` | Group files by stem and infer roles; `--pattern REGEX` filters (this mode only) |
 | Interactive | `--interactive` | Prompt for each stage's files, role, restart, and gap/tolerance |
 
@@ -235,7 +235,7 @@ stage_name,stage_role,time_start_ps,time_end_ps,duration_ns,frame_count,temp_avg
 ### Behavior
 
 - **Fault-tolerant by default.** A missing/malformed/unreadable file is skipped, the error is recorded against its stage, a skip summary is printed, and the run exits `0`. `--strict` makes the first bad file a hard error (clean message, exit `1`, no traceback). A stage keeps every file that *did* parse.
-- **Cross-stage validation** runs unless `settings.strict_validation: false`; `--skip-cross-stage-validation` overrides the manifest and skips it unconditionally.
+- **Cross-stage validation** runs by default; `--skip-cross-stage-validation` turns it off. A manifest cannot switch it on or off — a v2 manifest has no `settings` block, so this is a CLI-flag decision only.
 
 #### `--recursive` (flat discovery, retained engine)
 
@@ -631,7 +631,8 @@ ambermeta init [directory] [options]
 ```text
 usage: ambermeta init [-h] [-o OUTPUT] [--force] [directory]
 
-Create a template manifest.yaml with example stages.
+Create a template manifest.yaml: a commented v2 (Simulation -> Phase -> Step)
+document to edit.
 
 positional arguments:
   directory             Directory to write the manifest into (default: current
@@ -690,7 +691,7 @@ steps:
     gaps: { expected: null, tolerance: null }
 ```
 
-`-o/--output` sets the filename (default `manifest.yaml`); `--force` overwrites an existing output file without the interactive confirmation prompt.
+`-o/--output` sets the filename (default `manifest.yaml`); `--force` overwrites an existing output file without the interactive confirmation prompt. With no terminal attached (piped or redirected stdin, CI) there is nobody to answer that prompt, so an existing output file is a clean error — `ERROR: manifest.yaml already exists. Use --force to overwrite.`, exit `1` — rather than a failed read.
 
 ---
 
