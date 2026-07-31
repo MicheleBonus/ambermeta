@@ -1,19 +1,9 @@
-"""
-AmberMeta GUI API - FastAPI routes and schemas.
-"""
+"""AmberMeta GUI API package.
 
-from .routes import router
-from .schemas import (
-    FileInfo,
-    PhaseCreate,
-    PhaseUpdate,
-    RuntimeSettings,
-)
+Deliberately imports nothing. ``core_bridge`` is the CLI's engine facade on the
+plan/discover/validate paths, and eagerly importing ``.routes`` here made every
+one of those commands require the ``gui`` extra. Import submodules directly:
 
-__all__ = [
-    "router",
-    "FileInfo",
-    "PhaseCreate",
-    "PhaseUpdate",
-    "RuntimeSettings",
-]
+    from ambermeta.gui.api import core_bridge
+    from ambermeta.gui.api.routes import router
+"""

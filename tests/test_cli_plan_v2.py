@@ -55,3 +55,34 @@ def test_plan_v1_manifest_still_uses_flat_path(tmp_path, capsys):
     out = capsys.readouterr().out
     assert "Simulation summary" not in out          # flat path prints "Protocol summary"
     assert rc in (0, 1)
+
+
+import subprocess
+import sys
+import textwrap
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_core_bridge_imports_without_the_gui_extra():
+    """`plan`, `discover` and `validate --manifest` all import core_bridge.
+
+    Eagerly importing .routes in the package __init__ made every one of those
+    commands require the `gui` extra, which the base install does not have.
+    """
+    script = textwrap.dedent("""
+        import sys, importlib.abc
+        class _NoFastAPI(importlib.abc.MetaPathFinder):
+            def find_spec(self, name, path=None, target=None):
+                if name == "fastapi" or name.startswith("fastapi."):
+                    raise ImportError("No module named 'fastapi'")
+                return None
+        sys.meta_path.insert(0, _NoFastAPI())
+        from ambermeta.gui.api import core_bridge
+        assert hasattr(core_bridge, "build_protocol")
+        print("ok")
+    """)
+    proc = subprocess.run([sys.executable, "-c", script],
+                          cwd=str(REPO_ROOT), capture_output=True, text=True)
+    assert proc.returncode == 0, proc.stderr
