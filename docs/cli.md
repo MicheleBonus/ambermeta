@@ -6,11 +6,11 @@ Eight commands sit under one entry point:
 
 | Command | Purpose |
 |---|---|
-| [`plan`](#plan) | Build and summarize a manifest (v2-aware) or a discovered/interactive protocol; export reproducibility artifacts |
+| [`plan`](#plan) | Build and summarize a v2 manifest, or a discovered/interactive protocol; export reproducibility artifacts |
 | [`discover`](#discover) | Scan a directory into a **Simulation draft** (topology pool + phases + steps) |
 | [`validate`](#validate) | Validate individual files, or a whole Simulation manifest with `--manifest` |
 | [`export`](#export) | Re-emit a **v2** manifest, optionally converting its format (JSON ⇄ YAML) |
-| [`init`](#init) | Generate a manifest — v1 templates, `--auto` discovery, or `--v2` |
+| [`init`](#init) | Write a starting v2 manifest template to hand-edit |
 | [`info`](#info) | Print parsed metadata for a single file |
 | [`gui`](#gui) | Launch the browser GUI |
 | [`completion`](#completion) | Emit a shell-completion script |
@@ -109,7 +109,7 @@ Examples:
   ambermeta validate system.prmtop *.mdout  Validate multiple files
   ambermeta validate --manifest sim.yaml      Validate a whole simulation (continuity/gaps)
   ambermeta info --format json system.prmtop  Show metadata as JSON
-  ambermeta init --template standard .      Generate manifest template
+  ambermeta init -o template.yaml           Write a starting v2 manifest template
   ambermeta export sim.yaml -o sim.json       Convert a v2 manifest to JSON
 
 File Types:
@@ -212,14 +212,11 @@ options:
 | Discovery | `--recursive` | Group files by stem and infer roles; `--pattern REGEX` filters (this mode only) |
 | Interactive | `--interactive` | Prompt for each stage's files, role, restart, and gap/tolerance |
 
-### `plan -m` is manifest-shape-aware
+### `plan -m` requires a v2 manifest
 
-`plan` inspects the **raw manifest shape**, not just its content, before deciding how to render it:
+`-m/--manifest` always loads the file through `ambermeta.simulation.load_simulation` — the same reader `discover --write`, `export`, and `validate --manifest` use — and prints the **Simulation → Phase → Step structure**, plus continuity/sequence-hole findings. A manifest without a top-level `steps` key (e.g. an old flat `stages:` file) isn't v2-shaped and fails to load; use `--recursive` (below) or [`discover`](#discover) to build a fresh v2 manifest from a directory instead.
 
-- **Actually v2-shaped** (`version: 2`, or a document with top-level `phases`/`simulation` keys) → loaded as a `Simulation` (`ambermeta.simulation.load_simulation`) and printed as the **Simulation → Phase → Step structure**, plus continuity/sequence-hole findings (the same engine `discover` and `validate --manifest` use).
-- **v1 flat** (`stages: [...]`, with or without `global_prmtop`/`hmr_prmtop`) → still goes through the **retained flat engine** (`load_protocol_from_manifest`) and prints the classic per-stage **Protocol summary**, exactly as in v1. It is *not* auto-promoted to the new view here — that only happens in `validate --manifest` and `export`, which explicitly load through `load_simulation`'s tolerant reader.
-
-`--recursive` discovery under `plan` also always uses the retained flat engine ("Protocol summary"); use [`discover`](#discover) for the new Simulation-draft view of a directory.
+`--recursive` discovery under `plan` is a separate, still-supported flat engine (auto-discovery straight from files on disk, no manifest involved) and always prints the classic per-stage **Protocol summary**; use [`discover`](#discover) for the new Simulation-draft view of a directory.
 
 ### Exports (manifest/recursive modes only)
 
@@ -295,26 +292,14 @@ Validation: OK
 
 (`input=step <id>` is the source step's id — the continuity chain. The healthy 20 ns inter-run gaps between the sample sequence's runs fall inside the expected window and are not flagged, so there are no continuity findings.)
 
-#### `-m` on a v1 flat manifest — unchanged
+#### `-m` on a pre-v2 manifest
+
+A manifest without a top-level `steps` key (e.g. an old flat `stages:`/`global_prmtop:` file) fails to load — the same "not a v2 manifest" error [`export`](#export) shows below:
 
 ```text
-$ ambermeta plan tests/data/amber/md_test_files -m v1_manifest.yaml
+$ ambermeta plan tests/data/amber/md_test_files -m old_manifest.yaml
 
-Loading manifest: v1_manifest.yaml
-
-Protocol summary
-================
-Stages: 7
-Total steps: 25000000
-Total simulated time (ps): 100000.000
-
-- CH3L1_HUMAN_6NAG
-  intent: Unknown
-  result: Unknown
-  prmtop: atoms=64528, box=98.34×76.05×81.23 Å, density=0.843 g/cc
-  mdcrd: parsed
-  evidence: INFO: using global prmtop: CH3L1_HUMAN_6NAG.top; Atom count mismatch across ['prmtop', 'mdcrd']: [64528, 0]
-  ...
+ERROR: old_manifest.yaml is not a v2 manifest (no 'steps' key). Rebuild it with `ambermeta discover <dir> --write <path>`.
 ```
 
 ---
@@ -505,7 +490,7 @@ $ ambermeta validate --format json tests/data/amber/md_test_files/ntp_prod_0001.
 
 ### `--manifest` mode (whole Simulation)
 
-Loads the manifest through `load_simulation` — **any v1 manifest is auto-migrated in memory first** — then runs the same continuity/sequence-hole/suggestion checks `discover` and the GUI's *Validate* panel use. File paths in the manifest resolve relative to the **manifest's own directory**, not the current working directory.
+Loads the manifest through `load_simulation` — the manifest must be v2-shaped (a top-level `steps` key) — then runs the same continuity/sequence-hole/suggestion checks `discover` and the GUI's *Validate* panel use. File paths in the manifest resolve relative to the **manifest's own directory**, not the current working directory.
 
 ```text
 $ ambermeta validate --manifest sim.yaml
@@ -544,14 +529,12 @@ $ ambermeta validate --manifest sim.yaml --format json
 
 `stage_issues[].errors` is where a missing file or bad continuity link surfaces (e.g. `missing prmtop: ...`); `suggestions[].kind` in `{"continuity_gap", "missing_run"}` is what drives the "Continuity / sequence findings" block in text mode, and what `--strict` promotes to a failing exit code. `--allow-gaps` relaxes unexpected-gap findings (`continuity_gap`) without touching sequence holes (`missing_run`).
 
-Running the same command against a v1 flat manifest (`global_prmtop`/`stages:`) works unchanged — the reader migrates it before validating:
+Running the same command against a pre-v2 flat manifest (`global_prmtop`/`stages:`, no `steps` key) fails to load — the same "not a v2 manifest" error [`export`](#export) shows below:
 
 ```text
-$ ambermeta validate --manifest v1_manifest.yaml
+$ ambermeta validate --manifest old_manifest.yaml
 
-Simulation validation
-
-Validation: OK
+ERROR: Failed to load manifest: old_manifest.yaml is not a v2 manifest (no 'steps' key). Rebuild it with `ambermeta discover <dir> --write <path>`.
 ```
 
 Exit codes: `0` ok; `1` if the manifest can't be found/loaded, or the report isn't ok, or `--strict` and there are continuity/sequence findings; `2` if neither `files` nor `--manifest` is given.
@@ -560,7 +543,7 @@ Exit codes: `0` ok; `1` if the manifest can't be found/loaded, or the report isn
 
 ## `export`
 
-**New.** Read a **v2** manifest and re-emit it as canonical v2, optionally converting between JSON and YAML. The v1 flat file format cannot be read at all — `export` (like `plan -m` and `validate --manifest`) requires a v2 document and fails cleanly if it isn't one. To build a fresh v2 manifest from a directory, use [`discover --write`](#discover) or `init --v2`.
+**New.** Read a **v2** manifest and re-emit it as canonical v2, optionally converting between JSON and YAML. The v1 flat file format cannot be read at all — `export` (like `plan -m` and `validate --manifest`) requires a v2 document and fails cleanly if it isn't one. To build a fresh v2 manifest from a directory, use [`discover --write`](#discover) or [`init`](#init).
 
 ```bash
 ambermeta export <manifest> [options]
@@ -638,7 +621,7 @@ ERROR: Failed to load manifest: old_v1_manifest.yaml is not a v2 manifest (no 's
 
 ## `init`
 
-Generate a manifest — a v1 template, `--auto` to bootstrap one from a directory, or `--v2` for a commented v2 template.
+Write a starting **v2 template** manifest — a static, commented example to hand-edit. `init` does **not** scan `directory` or the filesystem at all; `directory` only sets where the output file is written. To build a v2 manifest from files already on disk, use [`discover --write`](#discover) instead.
 
 ```bash
 ambermeta init [directory] [options]
@@ -646,46 +629,28 @@ ambermeta init [directory] [options]
 
 <!-- BEGIN_CLI_HELP:init -->
 ```text
-usage: ambermeta init [-h] [-o OUTPUT]
-                      [--template {minimal,standard,comprehensive}] [--auto]
-                      [--format {yaml,json,toml,csv}] [--validate] [--dry-run]
-                      [--force] [--v2]
-                      [directory]
+usage: ambermeta init [-h] [-o OUTPUT] [--force] [directory]
 
 Create a template manifest.yaml with example stages.
 
 positional arguments:
-  directory             Directory to scan for files (default: current
+  directory             Directory to write the manifest into (default: current
                         directory)
 
 options:
   -h, --help            show this help message and exit
   -o OUTPUT, --output OUTPUT
                         Output manifest filename (default: manifest.yaml)
-  --template {minimal,standard,comprehensive}
-                        Template complexity (default: standard)
-  --auto                Non-interactive bootstrap mode: recursively discover
-                        files and auto-generate grouped stages
-  --format {yaml,json,toml,csv}
-                        Manifest output format for --auto mode (default:
-                        inferred from output extension or yaml)
-  --validate            Run parsers against discovered files after writing the
-                        manifest and print a concise summary
-  --dry-run             Preview discovered stage grouping in --auto mode
-                        without writing output files
   --force               Overwrite existing output file without prompting
-                        (required for non-interactive --auto mode)
-  --v2                  Emit a v2 (Simulation → Phase → Step) template
-                        manifest instead of the v1 flat template
 ```
 <!-- END_CLI_HELP:init -->
 
-### `--v2`
+### The template
 
-Writes a static, commented **v2 template** (`version: 2`, a two-entry topology pool, minimization + production phases, `input_coords` shown for both `starting_structure` and `step` sources) — it does **not** scan `directory`; it's a starting point to hand-edit, the v2 counterpart of the v1 `--template` modes. Takes priority over `--auto`/`--template` if both are passed.
+`init` always writes the same static, commented **v2 template**: `version: 2`, a two-entry topology pool (`normal` and `hmr`), minimization + production phases, and `input_coords` shown for both `starting_structure` and `step` sources.
 
 ```text
-$ ambermeta init --v2 -o template.yaml --format yaml
+$ ambermeta init -o template.yaml
 Created template.yaml (v2)
 ```
 
@@ -725,46 +690,7 @@ steps:
     gaps: { expected: null, tolerance: null }
 ```
 
-### `--auto` (v1 flat, unchanged)
-
-`--auto` discovers files recursively and writes **one stage per file-group stem** — numbered sequences (`prod_0001`, `prod_0002`, …) stay separate, not collapsed. Topology is classified automatically: an HMR-scaled prmtop becomes top-level `hmr_prmtop`, others `global_prmtop` (HMR detection checks the `ATOMIC_NUMBER` section, falling back to atom-name patterns). Use `--dry-run` to preview without writing.
-
-```text
-$ ambermeta init tests/data/amber/md_test_files --auto --dry-run
-
-Auto-grouped stages:
-  global_prmtop: CH3L1_HUMAN_6NAG.top
-  1. CH3L1_HUMAN_6NAG [unclassified]
-     mdcrd: CH3L1_HUMAN_6NAG.crd
-  2. ntp_prod_0000 [production]
-     inpcrd: ntp_prod_0000.rst
-  3. ntp_prod_0001 [production]
-     mdin: ntp_prod_0001.mdin
-     mdout: ntp_prod_0001.mdout
-     inpcrd: ntp_prod_0001.rst
-  4. ntp_prod_0002 [production]
-     mdin: ntp_prod_0002.mdin
-     mdout: ntp_prod_0002.mdout
-     inpcrd: ntp_prod_0002.rst
-  5. ntp_prod_0003 [production]
-     mdin: ntp_prod_0003.mdin
-     mdout: ntp_prod_0003.mdout
-     inpcrd: ntp_prod_0003.rst
-  6. ntp_prod_0004 [production]
-     mdin: ntp_prod_0004.mdin
-     mdout: ntp_prod_0004.mdout
-     inpcrd: ntp_prod_0004.rst
-  7. ntp_prod_0005 [production]
-     mdin: ntp_prod_0005.mdin
-     mdout: ntp_prod_0005.mdout
-     inpcrd: ntp_prod_0005.rst
-
-Dry run complete; no files were written.
-```
-
-The v1 flat manifest this writes (without `--dry-run`) uses the flat `stages:` shape that [`export`](#export), `plan -m`, and `validate --manifest` can no longer read — those commands now require a v2 manifest (see [`discover --write`](#discover) or `init --v2` for producing one).
-
-> ⚠️ `--auto` is non-interactive and needs `--force` to overwrite an existing output file. `--format` only applies in `--auto` mode (it warns otherwise).
+`-o/--output` sets the filename (default `manifest.yaml`); `--force` overwrites an existing output file without the interactive confirmation prompt.
 
 ---
 
@@ -901,7 +827,7 @@ The generated scripts complete all eight subcommands, including `discover` and `
 
 ## Environment variables
 
-Manifest paths support `${VAR}`/`$VAR` expansion by default (this applies to `plan -m` and `init`'s legacy manifest-reading path; `discover`/`export`/`validate --manifest` load through `ambermeta.simulation.load_simulation`, which shares the same underlying reader):
+Manifest paths support `${VAR}`/`$VAR` expansion by default. Every manifest-reading command — `plan -m`, `export`, `validate --manifest` — loads through `ambermeta.simulation.load_simulation`, which shares the same underlying reader, so expansion behaves identically everywhere (`init` never reads a manifest, only writes a template):
 
 ```yaml
 stages:

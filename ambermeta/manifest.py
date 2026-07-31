@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import csv
 import json
 import os
 import re
@@ -19,11 +18,6 @@ except ImportError:  # pragma: no cover
 # ---------------------------------------------------------------------------
 
 STAGE_FILE_KINDS = ("prmtop", "mdin", "mdout", "mdcrd", "inpcrd")
-
-CSV_COLUMNS = [
-    "name", "stage_role", "prmtop", "mdin", "mdout", "mdcrd",
-    "inpcrd", "expected_gap_ps", "gap_tolerance_ps", "notes",
-]
 
 
 # ---------------------------------------------------------------------------
@@ -132,76 +126,6 @@ def validate_manifest(
 
 
 # ---------------------------------------------------------------------------
-# Canonical writer
-# ---------------------------------------------------------------------------
-
-def _toml_escape(value: Any) -> str:
-    s = str(value)
-    return s.replace("\\", "\\\\").replace('"', '\\"')
-
-
-def write_manifest(payload: Dict[str, Any], path: str, fmt: str) -> None:
-    """Write a manifest payload ({'stages': [...]}, optional globals) canonically."""
-    stages = payload.get("stages", [])
-    if fmt == "json":
-        with open(path, "w", encoding="utf-8") as fh:
-            json.dump(payload, fh, indent=2)
-        return
-    if fmt == "yaml":
-        if yaml is None:
-            raise RuntimeError("PyYAML is required for YAML output")
-        with open(path, "w", encoding="utf-8") as fh:
-            yaml.safe_dump(payload, fh, sort_keys=False)
-        return
-    if fmt == "toml":
-        lines: List[str] = []
-        for key in ("global_prmtop", "hmr_prmtop"):
-            if payload.get(key):
-                lines.append(f'{key} = "{_toml_escape(payload[key])}"')
-        if lines:
-            lines.append("")
-        for stage in stages:
-            lines.append("[[stages]]")
-            for k, v in stage.items():
-                if isinstance(v, dict):  # gaps
-                    for gk, gv in v.items():
-                        lines.append(f"{k}_{gk} = {gv}")
-                elif isinstance(v, list):  # notes
-                    lines.append(f"{k} = {json.dumps(v)}")
-                elif isinstance(v, bool):
-                    lines.append(f"{k} = {str(v).lower()}")
-                elif isinstance(v, (int, float)):
-                    lines.append(f"{k} = {v}")
-                else:
-                    lines.append(f'{k} = "{_toml_escape(v)}"')
-            lines.append("")
-        with open(path, "w", encoding="utf-8") as fh:
-            fh.write("\n".join(lines).rstrip() + "\n")
-        return
-    if fmt == "csv":
-        with open(path, "w", newline="", encoding="utf-8") as fh:
-            writer = csv.DictWriter(fh, fieldnames=CSV_COLUMNS)
-            writer.writeheader()
-            for stage in stages:
-                gaps = stage.get("gaps", {}) or {}
-                notes = stage.get("notes", []) or []
-                writer.writerow({
-                    "name": stage.get("name", ""),
-                    "stage_role": stage.get("stage_role", ""),
-                    "prmtop": stage.get("prmtop") or payload.get("global_prmtop", ""),
-                    "mdin": stage.get("mdin", ""),
-                    "mdout": stage.get("mdout", ""),
-                    "mdcrd": stage.get("mdcrd", ""),
-                    "inpcrd": stage.get("inpcrd", ""),
-                    "expected_gap_ps": gaps.get("expected", ""),
-                    "gap_tolerance_ps": gaps.get("tolerance", ""),
-                    "notes": "; ".join(str(n) for n in notes),
-                })
-        return
-    raise ValueError(f"Unsupported manifest format: {fmt}")
-
-
-# ---------------------------------------------------------------------------
 # Tolerant reader
 # ---------------------------------------------------------------------------
 
@@ -238,8 +162,6 @@ def _read_raw_manifest(manifest_path: Any, expand_env: bool = True) -> Any:
 
 __all__ = [
     "STAGE_FILE_KINDS",
-    "CSV_COLUMNS",
-    "write_manifest",
     "validate_manifest",
     "_expand_env_vars",
     "_normalize_manifest",

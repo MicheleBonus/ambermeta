@@ -821,7 +821,7 @@ _ambermeta_completion() {
             COMPREPLY=( $(compgen -W "--help --format" -- "$cur") )
             ;;
         init)
-            COMPREPLY=( $(compgen -W "--help -o --output --template --auto --format --validate --dry-run --force" -- "$cur") )
+            COMPREPLY=( $(compgen -W "--help -o --output --force" -- "$cur") )
             ;;
         export)
             COMPREPLY=( $(compgen -W "--help -o --output --format" -- "$cur") )
@@ -885,7 +885,7 @@ _ambermeta() {
           _arguments '--format[Output format]:format:(text json yaml)' '1:file:_files'
           ;;
         init)
-          _arguments '--output[Manifest output filename]:file:_files' '--template[Template complexity]:template:(minimal standard comprehensive)' '--auto[Auto-generate grouped stages]' '--format[Manifest format]:format:(yaml json toml csv)' '--validate[Validate discovered files after writing manifest]' '--dry-run[Preview discovery without writing]' '--force[Overwrite existing output]' '*:path:_files'
+          _arguments '(-o --output)'{-o,--output}'[Manifest output filename]:file:_files' '--force[Overwrite existing output]' '*:path:_files'
           ;;
         gui)
           _arguments '--host[Host interface]' '--port[Port number]' '--no-browser[Do not open browser after server starts]' '*:path:_files'
@@ -948,11 +948,6 @@ complete -c ambermeta -n "__fish_seen_subcommand_from validate" -l allow-gaps -d
 complete -c ambermeta -n "__fish_seen_subcommand_from info" -l format -d "Output format" -xa "text json yaml"
 
 complete -c ambermeta -n "__fish_seen_subcommand_from init" -s o -l output -d "Output manifest filename"
-complete -c ambermeta -n "__fish_seen_subcommand_from init" -l template -d "Template complexity" -xa "minimal standard comprehensive"
-complete -c ambermeta -n "__fish_seen_subcommand_from init" -l auto -d "Auto-discover and group stages"
-complete -c ambermeta -n "__fish_seen_subcommand_from init" -l format -d "Manifest output format" -xa "yaml json toml csv"
-complete -c ambermeta -n "__fish_seen_subcommand_from init" -l validate -d "Run parsers after writing manifest"
-complete -c ambermeta -n "__fish_seen_subcommand_from init" -l dry-run -d "Preview stage grouping only"
 complete -c ambermeta -n "__fish_seen_subcommand_from init" -l force -d "Overwrite output without prompting"
 
 complete -c ambermeta -n "__fish_seen_subcommand_from gui" -l host -d "Host interface"
@@ -971,266 +966,21 @@ def _completion_command(args: argparse.Namespace) -> int:
 
 
 def _init_command(args: argparse.Namespace) -> int:
-    """Generate an example manifest file."""
+    """Write a starting v2 (Simulation -> Phase -> Step) manifest template."""
     directory = os.path.abspath(args.directory)
     output_path = os.path.join(directory, args.output)
-    auto_mode = getattr(args, "auto", False)
 
-    if os.path.exists(output_path) and not getattr(args, "dry_run", False):
-        if getattr(args, "force", False):
-            pass
-        elif auto_mode:
-            _out(Colors.error(f"ERROR: {args.output} already exists. Use --force to overwrite."))
+    if os.path.exists(output_path) and not getattr(args, "force", False):
+        _out(Colors.warning(f"WARNING: {args.output} already exists"))
+        response = input("Overwrite? [y/N]: ").strip().lower()
+        if response != "y":
+            _out("Aborted.")
             return 1
-        else:
-            _out(Colors.warning(f"WARNING: {args.output} already exists"))
-            response = input("Overwrite? [y/N]: ").strip().lower()
-            if response != "y":
-                _out("Aborted.")
-                return 1
-
-    if getattr(args, "v2", False):
-        with open(output_path, "w", encoding="utf-8") as fh:
-            fh.write(_generate_v2_template())
-        _out(Colors.success(f"Created {args.output} (v2)"))
-        return 0
-
-    # Scan directory for common file patterns
-    discovered_files = {
-        "prmtop": [],
-        "mdin": [],
-        "mdout": [],
-        "mdcrd": [],
-        "inpcrd": [],
-    }
-
-    for root, dirs, files in os.walk(directory):
-        rel_root = os.path.relpath(root, directory)
-        for f in files:
-            rel_path = os.path.join(rel_root, f) if rel_root != "." else f
-            ext = os.path.splitext(f)[1].lower()
-            fl = f.lower()
-
-            if ext in (".in", ".mdin") or "mdin" in fl:
-                discovered_files["mdin"].append(rel_path)
-            elif ext in (".out", ".mdout") or "mdout" in fl:
-                discovered_files["mdout"].append(rel_path)
-            elif ext in (".nc",) or "mdcrd" in fl:
-                discovered_files["mdcrd"].append(rel_path)
-            elif ext in (".rst", ".rst7", ".ncrst", ".inpcrd"):
-                discovered_files["inpcrd"].append(rel_path)
-            elif ext in (".prmtop", ".parm7", ".top") or "prmtop" in fl:
-                discovered_files["prmtop"].append(rel_path)
-
-    stage_candidates = _build_stage_candidates(directory)
-
-    if auto_mode:
-        if not stage_candidates:
-            print(Colors.warning(
-                "WARNING: no mdin/mdout/mdcrd/inpcrd files found; "
-                "no stages generated."), file=sys.stderr)
-            return 1
-
-        manifest_payload = _build_auto_manifest_payload(directory, discovered_files, stage_candidates)
-        if getattr(args, "dry_run", False):
-            _print_auto_stage_preview(stage_candidates, manifest_payload)
-            _out("\nDry run complete; no files were written.")
-            return 0
-
-        manifest_format = _resolve_manifest_format(args)
-        if manifest_format == "csv" and manifest_payload.get("hmr_prmtop"):
-            print(
-                Colors.warning(
-                    "WARNING: CSV format cannot represent a separate HMR topology; "
-                    "only the standard topology is written. "
-                    "Use yaml/json/toml to preserve HMR."
-                ),
-                file=sys.stderr,
-            )
-        from ambermeta import manifest as manifest_io
-        manifest_io.write_manifest(manifest_payload, output_path, manifest_format)
-        _out(Colors.success(f"Created {args.output} ({manifest_format})"))
-        _print_auto_stage_preview(stage_candidates, manifest_payload)
-        if getattr(args, "validate", False):
-            _run_init_validation_summary(directory, stage_candidates, manifest_payload)
-        return 0
-
-    if hasattr(args, 'format') and args.format and args.format != "yaml" and not args.auto:
-        _out(Colors.warning("WARNING: --format is only applied in --auto mode. Output will be YAML."))
-
-    # Generate manifest content
-    if args.template == "minimal":
-        manifest_content = _generate_minimal_manifest(discovered_files, stage_candidates)
-    elif args.template == "comprehensive":
-        manifest_content = _generate_comprehensive_manifest(discovered_files, stage_candidates)
-    else:
-        manifest_content = _generate_standard_manifest(discovered_files, stage_candidates)
 
     with open(output_path, "w", encoding="utf-8") as fh:
-        fh.write(manifest_content)
-
-    _out(Colors.success(f"Created {args.output}"))
-    _out(f"\nDiscovered files:")
-    for kind, files in discovered_files.items():
-        if files:
-            _out(f"  {kind}: {len(files)} file(s)")
-
-    _out(f"\nEdit {args.output} to customize your protocol stages.")
+        fh.write(_generate_v2_template())
+    _out(Colors.success(f"Created {args.output} (v2)"))
     return 0
-
-
-def _build_stage_candidates(directory: str) -> List[Dict[str, Any]]:
-    """Build ordered stage candidates using the engine's discovery (one stage
-    per discovered file group, identical for every role)."""
-    from ambermeta.protocol import smart_group_files, _ordered_stems
-
-    grouped = smart_group_files(directory, recursive=True)
-    candidates: List[Dict[str, Any]] = []
-    for stem in _ordered_stems(grouped):
-        kinds = grouped[stem]
-        files = {k: os.path.relpath(v, directory)
-                 for k, v in kinds.items()
-                 if k in ("mdin", "mdout", "mdcrd", "inpcrd")}
-        if not files:
-            continue  # prmtop-only groups are not stages
-        candidates.append({
-            "name": stem,
-            "stage_role": _suggest_stage_role(stem),
-            "files": files,
-        })
-    return candidates
-
-
-def _classify_topologies(directory: str, prmtops: List[str]):
-    """Return (global_prmtop, hmr_prmtop) chosen deterministically from the
-    discovered topology files using HMR detection. Warns on ambiguity."""
-    from ambermeta.legacy_extractors.prmtop import extract_prmtop_metadata
-    prmtops = sorted(prmtops)
-    normal, hmr = [], []
-    for rel in prmtops:
-        try:
-            md = extract_prmtop_metadata(os.path.join(directory, rel))
-            (hmr if md.hmr_active else normal).append(rel)
-        except (IOError, OSError, ValueError, LookupError):
-            normal.append(rel)
-    if len(prmtops) > 1:
-        _out(Colors.warning(
-            f"WARNING: {len(prmtops)} topology files found; "
-            f"normal={normal or '-'}, HMR={hmr or '-'}."))
-    global_prmtop = normal[0] if normal else (prmtops[0] if prmtops else None)
-    hmr_prmtop = hmr[0] if hmr else None
-    return global_prmtop, hmr_prmtop
-
-
-def _build_auto_manifest_payload(
-    directory: str, discovered: Dict[str, List[str]], stage_candidates: List[Dict[str, Any]]
-) -> Dict[str, Any]:
-    global_prmtop, hmr_prmtop = _classify_topologies(
-        directory, sorted(discovered.get("prmtop", [])))
-    payload: Dict[str, Any] = {}
-    if global_prmtop:
-        payload["global_prmtop"] = global_prmtop
-    if hmr_prmtop:
-        payload["hmr_prmtop"] = hmr_prmtop
-    stages: List[Dict[str, Any]] = []
-    for c in stage_candidates:
-        stage: Dict[str, Any] = {"name": c["name"]}
-        if c.get("stage_role"):
-            stage["stage_role"] = c["stage_role"]
-        for k in ("mdin", "mdout", "mdcrd", "inpcrd"):
-            if c.get("files", {}).get(k):
-                stage[k] = c["files"][k]
-        stages.append(stage)
-    payload["stages"] = stages
-    return payload
-
-
-def _resolve_manifest_format(args: argparse.Namespace) -> str:
-    requested = getattr(args, "format", None)
-    if requested:
-        return requested
-
-    ext = os.path.splitext(getattr(args, "output", ""))[1].lower().lstrip(".")
-    ext_map = {"yml": "yaml", "yaml": "yaml", "json": "json", "toml": "toml", "csv": "csv"}
-    return ext_map.get(ext, "yaml")
-
-
-def _print_auto_stage_preview(stage_candidates: List[Dict[str, Any]], payload: Dict[str, Any]) -> None:
-    _out("\nAuto-grouped stages:")
-    if not stage_candidates:
-        _out("  (no stages discovered)")
-        return
-
-    global_prmtop = payload.get("global_prmtop")
-    hmr_prmtop = payload.get("hmr_prmtop")
-    if global_prmtop:
-        _out(f"  global_prmtop: {global_prmtop}")
-    if hmr_prmtop:
-        _out(f"  hmr_prmtop: {hmr_prmtop}")
-    for idx, candidate in enumerate(stage_candidates, start=1):
-        role = candidate.get("stage_role") or "unclassified"
-        _out(f"  {idx}. {candidate['name']} [{role}]")
-        for kind in ("mdin", "mdout", "mdcrd", "inpcrd"):
-            value = candidate.get("files", {}).get(kind)
-            if value:
-                _out(f"     {kind}: {value}")
-
-
-
-def _run_init_validation_summary(
-    directory: str, stage_candidates: List[Dict[str, Any]], payload: Dict[str, Any]
-) -> None:
-    checked = 0
-    warnings = 0
-    errors = 0
-    unique_files = set()
-    for key in ("global_prmtop", "hmr_prmtop"):
-        if payload.get(key):
-            unique_files.add(payload[key])
-    for candidate in stage_candidates:
-        for path in candidate.get("files", {}).values():
-            unique_files.add(path)
-
-    for rel_path in sorted(unique_files):
-        parser = _get_parser_for_file(os.path.join(directory, rel_path))
-        if parser is None:
-            warnings += 1
-            continue
-        checked += 1
-        try:
-            result = parser.parse()
-            file_warnings = getattr(result, "warnings", []) or []
-            warnings += len(file_warnings)
-        except (IOError, OSError, ValueError):
-            errors += 1
-
-    status = "OK" if errors == 0 else "FAILED"
-    _out(f"\nValidation summary: {status} (files={checked}, warnings={warnings}, errors={errors})")
-
-
-def _render_candidate_stages(
-    discovered: Dict[str, List[str]],
-    stage_candidates: List[Dict[str, Any]],
-    include_role: bool = True,
-) -> List[str]:
-    """Render candidate stages as YAML lines."""
-    prmtop = sorted(discovered["prmtop"])[0] if discovered["prmtop"] else "system.prmtop"
-    lines: List[str] = []
-
-    for candidate in stage_candidates:
-        lines.append(f"  - name: {candidate['name']}")
-        if include_role and candidate.get("stage_role"):
-            lines.append(f"    stage_role: {candidate['stage_role']}")
-        lines.append(f"    prmtop: {prmtop}")
-
-        files = candidate.get("files", {})
-        for key in ("mdin", "mdout", "mdcrd", "inpcrd"):
-            value = files.get(key)
-            if value:
-                lines.append(f"    {key}: {value}")
-        lines.append("")
-
-    return lines
 
 
 def _generate_v2_template() -> str:
@@ -1269,210 +1019,6 @@ steps:
     mdout: prod_001.out
     mdcrd: prod_001.nc
     gaps: { expected: null, tolerance: null }
-"""
-
-
-def _generate_minimal_manifest(discovered: Dict[str, List[str]], stage_candidates: List[Dict[str, Any]]) -> str:
-    """Generate a minimal manifest template."""
-    if stage_candidates:
-        rendered = _render_candidate_stages(discovered, stage_candidates, include_role=False)
-        body = "\n".join(rendered).rstrip()
-        return (
-            "# AmberMeta Manifest - Minimal Template\n"
-            "# Edit this file to define your simulation protocol stages\n\n"
-            "stages:\n"
-            f"{body}\n"
-        )
-
-    return """# AmberMeta Manifest - Minimal Template
-# Edit this file to define your simulation protocol stages
-
-stages:
-  - name: production
-    prmtop: system.prmtop
-    mdin: prod.in
-    mdout: prod.out
-    mdcrd: prod.nc
-"""
-
-
-def _generate_standard_manifest(discovered: Dict[str, List[str]], stage_candidates: List[Dict[str, Any]]) -> str:
-    """Generate a standard manifest template."""
-    if stage_candidates:
-        rendered = _render_candidate_stages(discovered, stage_candidates, include_role=True)
-        body = "\n".join(rendered).rstrip()
-        return (
-            "# AmberMeta Manifest - Standard Template\n"
-            "# Edit this file to define your simulation protocol stages\n"
-            "#\n"
-            "# Each stage can include:\n"
-            "#   - name: Stage identifier (required)\n"
-            "#   - stage_role: minimization, heating, equilibration, production\n"
-            "#   - prmtop, mdin, mdout, mdcrd, inpcrd: File paths (relative to manifest)\n"
-            "#   - notes: Optional annotations\n\n"
-            "stages:\n"
-            f"{body}\n"
-        )
-
-    prmtop = sorted(discovered["prmtop"])[0] if discovered["prmtop"] else "system.prmtop"
-
-    return f"""# AmberMeta Manifest - Standard Template
-# Edit this file to define your simulation protocol stages
-#
-# Each stage can include:
-#   - name: Stage identifier (required)
-#   - stage_role: minimization, heating, equilibration, production
-#   - prmtop, mdin, mdout, mdcrd, inpcrd: File paths (relative to manifest)
-#   - notes: Optional annotations
-
-stages:
-  - name: minimize
-    stage_role: minimization
-    prmtop: {prmtop}
-    mdin: min.in
-    mdout: min.out
-
-  - name: heat
-    stage_role: heating
-    prmtop: {prmtop}
-    mdin: heat.in
-    mdout: heat.out
-    inpcrd: min.rst7  # Restart from minimization
-
-  - name: equilibrate
-    stage_role: equilibration
-    prmtop: {prmtop}
-    mdin: equil.in
-    mdout: equil.out
-    mdcrd: equil.nc
-    inpcrd: heat.rst7
-
-  - name: production
-    stage_role: production
-    prmtop: {prmtop}
-    mdin: prod.in
-    mdout: prod.out
-    mdcrd: prod.nc
-    inpcrd: equil.rst7
-"""
-
-
-def _generate_comprehensive_manifest(discovered: Dict[str, List[str]], stage_candidates: List[Dict[str, Any]]) -> str:
-    """Generate a comprehensive manifest template with all options."""
-    if stage_candidates:
-        rendered = _render_candidate_stages(discovered, stage_candidates, include_role=True)
-        body = "\n".join(rendered).rstrip()
-        return (
-            "# AmberMeta Manifest - Comprehensive Template\n"
-            "# This template shows all available options for protocol definition\n"
-            "#\n"
-            "# Documentation: https://github.com/your-org/ambermeta\n\n"
-            "# Optional: Global settings\n"
-            "settings:\n"
-            "  strict_validation: false\n"
-            "  allow_gaps: false\n\n"
-            "# Optional: Stage role inference rules (regex patterns)\n"
-            "# Used when stage_role is not explicitly specified\n"
-            "stage_role_rules:\n"
-            "  - pattern: \"min.*\"\n"
-            "    role: minimization\n"
-            "  - pattern: \"heat.*\"\n"
-            "    role: heating\n"
-            "  - pattern: \"equil.*\"\n"
-            "    role: equilibration\n"
-            "  - pattern: \"prod.*\"\n"
-            "    role: production\n\n"
-            "stages:\n"
-            f"{body}\n"
-        )
-
-    prmtop = sorted(discovered["prmtop"])[0] if discovered["prmtop"] else "system.prmtop"
-
-    return f"""# AmberMeta Manifest - Comprehensive Template
-# This template shows all available options for protocol definition
-#
-# Documentation: https://github.com/your-org/ambermeta
-
-# Optional: Global settings
-settings:
-  strict_validation: false
-  allow_gaps: false
-
-# Optional: Stage role inference rules (regex patterns)
-# Used when stage_role is not explicitly specified
-stage_role_rules:
-  - pattern: "min.*"
-    role: minimization
-  - pattern: "heat.*"
-    role: heating
-  - pattern: "equil.*"
-    role: equilibration
-  - pattern: "prod.*"
-    role: production
-
-stages:
-  - name: minimize_1
-    stage_role: minimization
-    prmtop: {prmtop}
-    mdin: min1.in
-    mdout: min1.out
-    notes:
-      - "Initial minimization with restraints"
-
-  - name: minimize_2
-    stage_role: minimization
-    prmtop: {prmtop}
-    mdin: min2.in
-    mdout: min2.out
-    inpcrd: min1.rst7
-    notes:
-      - "Unrestrained minimization"
-
-  - name: heat
-    stage_role: heating
-    prmtop: {prmtop}
-    mdin: heat.in
-    mdout: heat.out
-    inpcrd: min2.rst7
-    gaps:
-      expected: 0.0
-      tolerance: 0.1
-    notes:
-      - "Heat from 0K to 300K over 100ps"
-
-  - name: equilibrate_nvt
-    stage_role: equilibration
-    prmtop: {prmtop}
-    mdin: equil_nvt.in
-    mdout: equil_nvt.out
-    mdcrd: equil_nvt.nc
-    inpcrd: heat.rst7
-    notes:
-      - "NVT equilibration at 300K"
-
-  - name: equilibrate_npt
-    stage_role: equilibration
-    prmtop: {prmtop}
-    mdin: equil_npt.in
-    mdout: equil_npt.out
-    mdcrd: equil_npt.nc
-    inpcrd: equil_nvt.rst7
-    notes:
-      - "NPT equilibration at 300K, 1bar"
-
-  - name: production
-    stage_role: production
-    prmtop: {prmtop}
-    mdin: prod.in
-    mdout: prod.out
-    mdcrd: prod.nc
-    inpcrd: equil_npt.rst7
-    gaps:
-      expected: 2.0  # Expected gap in ps (dt * ntwx)
-      tolerance: 0.1
-    notes:
-      - "Production run at 300K, 1bar"
-      - "10ns total simulation time"
 """
 
 
@@ -1698,7 +1244,7 @@ Examples:
   ambermeta validate system.prmtop *.mdout  Validate multiple files
   ambermeta validate --manifest sim.yaml      Validate a whole simulation (continuity/gaps)
   ambermeta info --format json system.prmtop  Show metadata as JSON
-  ambermeta init --template standard .      Generate manifest template
+  ambermeta init -o template.yaml           Write a starting v2 manifest template
   ambermeta export sim.yaml -o sim.json       Convert a v2 manifest to JSON
 
 File Types:
@@ -1914,7 +1460,7 @@ For documentation, visit: https://github.com/MicheleBonus/ambermeta
         "directory",
         nargs="?",
         default=".",
-        help="Directory to scan for files (default: current directory)",
+        help="Directory to write the manifest into (default: current directory)",
     )
     init_parser.add_argument(
         "-o", "--output",
@@ -1922,40 +1468,9 @@ For documentation, visit: https://github.com/MicheleBonus/ambermeta
         help="Output manifest filename (default: manifest.yaml)",
     )
     init_parser.add_argument(
-        "--template",
-        choices=["minimal", "standard", "comprehensive"],
-        default="standard",
-        help="Template complexity (default: standard)",
-    )
-    init_parser.add_argument(
-        "--auto",
-        action="store_true",
-        help="Non-interactive bootstrap mode: recursively discover files and auto-generate grouped stages",
-    )
-    init_parser.add_argument(
-        "--format",
-        choices=["yaml", "json", "toml", "csv"],
-        help="Manifest output format for --auto mode (default: inferred from output extension or yaml)",
-    )
-    init_parser.add_argument(
-        "--validate",
-        action="store_true",
-        help="Run parsers against discovered files after writing the manifest and print a concise summary",
-    )
-    init_parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Preview discovered stage grouping in --auto mode without writing output files",
-    )
-    init_parser.add_argument(
         "--force",
         action="store_true",
-        help="Overwrite existing output file without prompting (required for non-interactive --auto mode)",
-    )
-    init_parser.add_argument(
-        "--v2",
-        action="store_true",
-        help="Emit a v2 (Simulation → Phase → Step) template manifest instead of the v1 flat template",
+        help="Overwrite existing output file without prompting",
     )
 
     # GUI subcommand
