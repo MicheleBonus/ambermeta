@@ -54,16 +54,6 @@ def test_plan_v2_manifest_prints_structure(tmp_path, capsys):
     assert "st_min" not in out
 
 
-def test_plan_v1_manifest_still_uses_flat_path(tmp_path, capsys):
-    # a v1 flat manifest must NOT be routed to the v2 presenter
-    m = tmp_path / "v1.yaml"
-    m.write_text("stages:\n  - name: prod\n    stage_role: production\n", encoding="utf-8")
-    rc = main(["plan", str(tmp_path), "--manifest", str(m)])
-    out = capsys.readouterr().out
-    assert "Simulation summary" not in out          # flat path prints "Protocol summary"
-    assert rc in (0, 1)
-
-
 import subprocess
 import sys
 import textwrap

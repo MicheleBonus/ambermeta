@@ -1,4 +1,3 @@
-import json
 import os
 
 import pytest
@@ -8,7 +7,6 @@ from ambermeta.errors import AmberMetaError, FileLoadError, classify_exception
 from ambermeta.protocol import (
     SimulationStage,
     auto_discover,
-    load_protocol_from_manifest,
 )
 
 
@@ -49,10 +47,8 @@ def test_manifest_bad_mdout_keeps_stage(tmp_path):
     with open(mdout, "wb") as fh:
         fh.write(b"\x00\x01\x02not a real mdout")
     manifest = {"prod": {"prmtop": str(prmtop), "mdin": str(mdin), "mdout": str(mdout)}}
-    mpath = tmp_path / "manifest.json"
-    _write(mpath, json.dumps(manifest))
 
-    protocol = load_protocol_from_manifest(str(mpath), directory=str(tmp_path))
+    protocol = auto_discover(str(tmp_path), manifest=manifest)
     assert len(protocol.stages) == 1
     stage = protocol.stages[0]
     # The mdout parser is intentionally lenient (it returns an object with
@@ -68,10 +64,8 @@ def test_manifest_missing_file_graceful(tmp_path):
     # per-file load error and must NOT abort building the stage.
     mdin = tmp_path / "s.mdin"; _write(mdin, "&cntrl\n nstlim=10, dt=0.002,\n/\n")
     manifest = {"prod": {"mdin": str(mdin), "prmtop": str(tmp_path / "absent.prmtop")}}
-    mpath = tmp_path / "manifest.json"
-    _write(mpath, json.dumps(manifest))
 
-    protocol = load_protocol_from_manifest(str(mpath), directory=str(tmp_path))
+    protocol = auto_discover(str(tmp_path), manifest=manifest)
     assert len(protocol.stages) == 1
     stage = protocol.stages[0]
     assert stage.mdin is not None  # readable file survived
@@ -82,11 +76,9 @@ def test_manifest_missing_file_graceful(tmp_path):
 def test_manifest_strict_raises_on_missing(tmp_path):
     prmtop = tmp_path / "s.prmtop"; _write(prmtop, "%VERSION\n")
     manifest = {"prod": {"prmtop": str(prmtop), "mdout": str(tmp_path / "absent.mdout")}}
-    mpath = tmp_path / "manifest.json"
-    _write(mpath, json.dumps(manifest))
 
     with pytest.raises(AmberMetaError):
-        load_protocol_from_manifest(str(mpath), directory=str(tmp_path), strict=True)
+        auto_discover(str(tmp_path), manifest=manifest, strict=True)
 
 
 def test_discovery_bad_file_keeps_going(tmp_path):

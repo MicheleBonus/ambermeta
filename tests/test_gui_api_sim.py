@@ -21,16 +21,16 @@ def test_get_document_empty(tmp_path):
     assert body["simulation"]["version"] == 2 and body["simulation"]["phases"] == []
 
 
-def test_open_v1_migrates_and_undo_redo(tmp_path):
+def test_open_v1_manifest_returns_a_clean_400(tmp_path):
+    """The v1 file format is gone; opening one must surface a clean error, not a 500."""
     v1 = {"global_prmtop": "wt.prmtop",
           "stages": [{"name": "min", "stage_role": "minimization", "mdin": "min.in"},
                      {"name": "prod_001", "stage_role": "production", "mdin": "prod_001.in"}]}
     (tmp_path / "legacy.json").write_text(json.dumps(v1))
     c = _client(tmp_path)
     r = c.post("/api/document/open", json={"path": "legacy.json"})
-    assert r.status_code == 200
-    roles = [p["role"] for p in r.json()["simulation"]["phases"]]
-    assert roles == ["minimization", "production"]
+    assert r.status_code == 400
+    assert "not a v2 manifest" in r.json()["detail"]
 
 
 def test_discover_returns_result_with_suggestions(sample_md_data_dir):

@@ -19,12 +19,8 @@ from ambermeta.errors import AmberMetaError, FileLoadError, classify_exception
 from ambermeta.logging_config import get_logger
 from ambermeta.roles import classify_role
 from ambermeta.manifest import (
-    load_manifest,
     validate_manifest,
-    _expand_env_vars,
     _normalize_manifest,
-    normalize_stage_keys,
-    STAGE_FILE_KINDS,
 )
 
 logger = get_logger(__name__)
@@ -1565,132 +1561,6 @@ def auto_discover(
     return protocol
 
 
-def load_protocol_from_manifest(
-    manifest_path: str | os.PathLike[str],
-    *,
-    directory: Optional[str] = None,
-    include_roles: Optional[List[str]] = None,
-    include_stems: Optional[List[str]] = None,
-    restart_files: Optional[Dict[str, str]] = None,
-    skip_cross_stage_validation: Optional[bool] = None,
-    recursive: bool = False,
-    expand_env: bool = True,
-    global_prmtop: Optional[str] = None,
-    hmr_prmtop: Optional[str] = None,
-    progress_callback: Optional[Callable[[str, int, int], None]] = None,
-    strict: bool = False,
-) -> SimulationProtocol:
-    """Build a protocol using a manifest file.
-
-    The manifest can be YAML, JSON, TOML, or CSV. Relative file paths are
-    resolved against the provided ``directory`` or the manifest's parent
-    directory when omitted.
-
-    Parameters
-    ----------
-    manifest_path:
-        Path to the manifest file.
-    directory:
-        Base directory for resolving relative paths in the manifest.
-    include_roles:
-        Only include stages with these roles.
-    include_stems:
-        Only include stages with these names.
-    restart_files:
-        Mapping of stage name/role to restart file paths.
-    skip_cross_stage_validation:
-        If True, skip continuity checks between stages.
-    recursive:
-        If True, search subdirectories for files.
-    expand_env:
-        If True, expand environment variables in file paths.
-    global_prmtop:
-        Global prmtop file to use for stages without their own prmtop.
-    hmr_prmtop:
-        HMR prmtop file to use for stages with large timesteps (dt >= 0.004).
-    progress_callback:
-        Optional callback function(stage_name, current, total) for progress reporting.
-    """
-
-    manifest_data = load_manifest(manifest_path, expand_env=expand_env)
-    base_dir = directory or str(Path(manifest_path).parent)
-
-    # Extract global settings from manifest if present
-    manifest_global_prmtop = None
-    manifest_hmr_prmtop = None
-    manifest_stage_role_rules: Optional[Dict[str, str]] = None
-    manifest_skip_cross_stage_validation: Optional[bool] = None
-    manifest_allow_unexpected_gaps = False
-    stages_list = manifest_data
-
-    if isinstance(manifest_data, dict):
-        # Manifest may contain global settings
-        manifest_global_prmtop = manifest_data.get("global_prmtop")
-        if manifest_global_prmtop is None:
-            # Backward compatibility for older GUI exports.
-            manifest_global_prmtop = manifest_data.get("prmtop")
-        manifest_hmr_prmtop = manifest_data.get("hmr_prmtop")
-
-        settings = manifest_data.get("settings")
-        if isinstance(settings, dict):
-            if "strict_validation" in settings:
-                strict_validation = bool(settings.get("strict_validation"))
-                manifest_skip_cross_stage_validation = not strict_validation
-            if "allow_gaps" in settings:
-                manifest_allow_unexpected_gaps = bool(settings.get("allow_gaps"))
-
-        stage_role_rules = manifest_data.get("stage_role_rules")
-        if isinstance(stage_role_rules, list):
-            parsed_rules: Dict[str, str] = {}
-            for rule in stage_role_rules:
-                if not isinstance(rule, dict):
-                    continue
-                pattern = rule.get("pattern")
-                role = rule.get("role")
-                if isinstance(pattern, str) and isinstance(role, str):
-                    parsed_rules[pattern] = role
-            manifest_stage_role_rules = parsed_rules or None
-        elif isinstance(stage_role_rules, dict):
-            parsed_rules = {
-                str(pattern): str(role)
-                for pattern, role in stage_role_rules.items()
-                if pattern is not None and role is not None
-            }
-            manifest_stage_role_rules = parsed_rules or None
-
-        # Extract stages list
-        if "stages" in manifest_data and isinstance(manifest_data["stages"], list):
-            stages_list = manifest_data["stages"]
-        else:
-            # It's a dict with stage names as keys
-            stages_list = manifest_data
-
-    # CLI parameters override manifest settings
-    effective_global_prmtop = global_prmtop or manifest_global_prmtop
-    effective_hmr_prmtop = hmr_prmtop or manifest_hmr_prmtop
-    effective_skip_cross_stage_validation = (
-        skip_cross_stage_validation
-        if skip_cross_stage_validation is not None
-        else bool(manifest_skip_cross_stage_validation)
-    )
-
-    return auto_discover(
-        base_dir,
-        manifest=stages_list,
-        grouping_rules=manifest_stage_role_rules,
-        include_roles=include_roles,
-        include_stems=include_stems,
-        restart_files=restart_files,
-        skip_cross_stage_validation=effective_skip_cross_stage_validation,
-        recursive=recursive,
-        global_prmtop=effective_global_prmtop,
-        hmr_prmtop=effective_hmr_prmtop,
-        allow_unexpected_gaps=manifest_allow_unexpected_gaps,
-        progress_callback=progress_callback,
-        strict=strict,
-    )
-
-
 class ProtocolBuilder:
     """Fluent builder for constructing SimulationProtocol objects.
 
@@ -1737,29 +1607,6 @@ class ProtocolBuilder:
         """
         self._directory = os.path.abspath(directory)
         self._recursive = recursive
-        return self
-
-    def from_manifest(
-        self,
-        manifest_path: str,
-        directory: Optional[str] = None,
-        expand_env: bool = True,
-    ) -> "ProtocolBuilder":
-        """Load stages from a manifest file.
-
-        Parameters
-        ----------
-        manifest_path:
-            Path to YAML, JSON, TOML, or CSV manifest.
-        directory:
-            Base directory for relative paths (defaults to manifest location).
-        expand_env:
-            If True, expand environment variables in paths.
-        """
-        self._manifest_path = manifest_path
-        self._manifest = load_manifest(manifest_path, expand_env=expand_env)
-        self._directory = directory or str(Path(manifest_path).parent)
-        self._expand_env = expand_env
         return self
 
     def with_grouping_rules(self, rules: Dict[str, str]) -> "ProtocolBuilder":
@@ -1951,7 +1798,7 @@ class ProtocolBuilder:
                 pattern_filter=self._pattern_filter,
             )
         else:
-            raise ValueError("No directory or manifest specified. Use from_directory() or from_manifest().")
+            raise ValueError("No directory or manifest specified. Use from_directory().")
 
         # Apply per-stage tolerances
         for stage in protocol.stages:
@@ -2106,7 +1953,5 @@ __all__ = [
     "infer_stage_role_from_content",
     "auto_detect_restart_chain",
     "smart_group_files",
-    "load_manifest",
-    "load_protocol_from_manifest",
     "HMR_TIMESTEP_THRESHOLD_PS",
 ]

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import csv
 import json
 from types import SimpleNamespace
 
-from ambermeta import manifest as m
+import yaml
+
 from ambermeta.cli import _init_command, main
 
 
@@ -109,7 +111,6 @@ def test_init_auto_mode_json_output_structure(tmp_path):
 
 
 def test_init_auto_splits_normal_and_hmr_topology(tmp_path):
-    from ambermeta import manifest as m
     from ambermeta.cli import main
     d = tmp_path
     # normal + HMR topologies, distinguishable by H masses
@@ -119,7 +120,7 @@ def test_init_auto_splits_normal_and_hmr_topology(tmp_path):
     (d / "prod.in").write_text("&cntrl\n imin=0, dt=0.004, nstlim=10,\n/\n")
     (d / "prod.out").write_text("Final Performance Info\n")
     main(["init", str(d), "--auto", "-o", "manifest.yaml", "--force"])
-    loaded = m.load_manifest(str(d / "manifest.yaml"), expand_env=False)
+    loaded = yaml.safe_load((d / "manifest.yaml").read_text(encoding="utf-8"))
     assert loaded.get("global_prmtop", "").endswith("system.prmtop")
     assert loaded.get("hmr_prmtop", "").endswith("system.hmr.prmtop")
 
@@ -151,8 +152,8 @@ def test_init_auto_csv_roundtrips(tmp_path):
     rc = main(["init", str(d), "--auto", "--format", "csv",
                "-o", "manifest.csv", "--force"])
     assert rc == 0
-    loaded = m.load_manifest(str(d / "manifest.csv"), expand_env=False)
-    stages = loaded if isinstance(loaded, list) else loaded["stages"]
+    with open(d / "manifest.csv", newline="", encoding="utf-8") as fh:
+        stages = list(csv.DictReader(fh))
     # After fix: full stem is kept, no numeric suffix stripped
     assert [s["name"] for s in stages] == ["prod_001"]
 
@@ -174,7 +175,7 @@ def test_init_auto_keeps_every_numbered_file(tmp_path):
         (d / f"ntp_prod_{i:04d}.rst").write_text("title\n 1\n")
     rc = main(["init", str(d), "--auto", "-o", "manifest.yaml", "--force"])
     assert rc == 0
-    loaded = m.load_manifest(str(d / "manifest.yaml"), expand_env=False)
+    loaded = yaml.safe_load((d / "manifest.yaml").read_text(encoding="utf-8"))
     stages = loaded["stages"] if isinstance(loaded, dict) else loaded
     names = sorted(s["name"] for s in stages)
     assert names == [f"ntp_prod_{i:04d}" for i in range(1, 6)]
@@ -191,7 +192,7 @@ def test_init_auto_empty_warns_nonzero(tmp_path):
 
 
 def test_init_auto_csv_preserves_topology(tmp_path):
-    """CSV round-trip: global_prmtop must survive write_manifest -> load_manifest."""
+    """CSV round-trip: global_prmtop must survive write_manifest and be readable back."""
     d = tmp_path
     (d / "system.prmtop").write_text("dummy")
     (d / "prod.in").write_text("&cntrl\n/\n")
@@ -199,8 +200,8 @@ def test_init_auto_csv_preserves_topology(tmp_path):
     rc = main(["init", str(d), "--auto", "--format", "csv",
                "-o", "manifest.csv", "--force"])
     assert rc == 0
-    loaded = m.load_manifest(str(d / "manifest.csv"), expand_env=False)
-    stages = loaded if isinstance(loaded, list) else loaded.get("stages", [])
+    with open(d / "manifest.csv", newline="", encoding="utf-8") as fh:
+        stages = list(csv.DictReader(fh))
     assert stages, "expected at least one stage"
     # The topology path must survive the CSV round-trip
     assert stages[0].get("prmtop", "").endswith("system.prmtop"), (

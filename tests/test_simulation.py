@@ -1,4 +1,6 @@
 # tests/test_simulation.py
+import pytest
+
 from ambermeta.simulation import Topology, InputCoords, Step, Phase, Simulation
 
 
@@ -214,3 +216,20 @@ def test_a_step_with_no_restart_keeps_the_payload_it_always_had():
     sim = Simulation(phases=[Phase(id="ph_0", name="Min", role="", steps=[
         Step(id="st_0", name="min", mdin="min.in")])])
     assert "rst" not in simulation_to_payload(sim)["steps"][0]
+
+
+def test_loading_a_flat_manifest_says_so_instead_of_returning_nothing(tmp_path):
+    """A v1 file used to migrate silently; now it must be a clear error.
+
+    Without this guard payload_to_simulation reads no "phases"/"steps" key and
+    returns an EMPTY Simulation, so every caller reports "0 steps" for a file
+    that is simply the wrong format.
+    """
+    from ambermeta.errors import AmberMetaError
+    from ambermeta.simulation import load_simulation
+
+    flat = tmp_path / "old.yaml"
+    flat.write_text("stages:\n  - name: prod\n    mdin: prod.in\n", encoding="utf-8")
+
+    with pytest.raises(AmberMetaError, match="not a v2 manifest"):
+        load_simulation(str(flat))

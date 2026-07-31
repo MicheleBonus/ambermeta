@@ -13,7 +13,6 @@ from ambermeta.roles import classify_role
 from ambermeta.protocol import (
     SimulationProtocol,
     auto_discover,
-    load_protocol_from_manifest,
 )
 
 try:  # pragma: no cover - optional dependency
@@ -357,7 +356,7 @@ def _sim_to_legacy_payload(sim) -> Dict[str, Any]:
 
 
 def _export_command(args: argparse.Namespace) -> int:
-    """Convert a manifest (v1 auto-migrated or v2) to canonical v2 or a legacy flat manifest."""
+    """Convert a v2 manifest to canonical v2 (a different format) or a legacy flat manifest."""
     from ambermeta.simulation import load_simulation, write_simulation, simulation_to_payload
 
     manifest = args.manifest
@@ -366,7 +365,7 @@ def _export_command(args: argparse.Namespace) -> int:
         return 1
     try:
         sim = load_simulation(manifest)
-    except (IOError, OSError, ValueError, RuntimeError) as e:
+    except (IOError, OSError, ValueError, RuntimeError, AmberMetaError) as e:
         print(Colors.error(f"ERROR: Failed to load manifest: {e}"), file=sys.stderr)
         return 1
 
@@ -751,7 +750,7 @@ def _validate_manifest(args: argparse.Namespace, manifest: str) -> int:
         return 1
     try:
         sim = load_simulation(manifest)
-    except (IOError, OSError, ValueError, RuntimeError) as e:
+    except (IOError, OSError, ValueError, RuntimeError, AmberMetaError) as e:
         print(Colors.error(f"ERROR: Failed to load manifest: {e}"), file=sys.stderr)
         return 1
 
@@ -1609,7 +1608,6 @@ def _plan_command(args: argparse.Namespace) -> int:
     directory = os.path.abspath(args.directory)
 
     # Get new feature flags with defaults
-    expand_env = not getattr(args, "no_expand_env", False)
     pattern_filter = getattr(args, "pattern", None)
     auto_detect_restarts = getattr(args, "auto_detect_restarts", False)
     global_prmtop = getattr(args, "prmtop", None)
@@ -1632,48 +1630,8 @@ def _plan_command(args: argparse.Namespace) -> int:
             "WARNING: --pattern only applies to --recursive discovery; ignored."),
             file=sys.stderr)
 
-    # Progress callback for reporting
-    def progress_reporter(stage_name: str, current: int, total: int) -> None:
-        if sys.stdout.isatty():
-            # Truncate long stage names
-            name = stage_name[:40] + "..." if len(stage_name) > 40 else stage_name
-            sys.stdout.write(f"\rProcessing: {current}/{total} [{name}]" + " " * 20)
-            sys.stdout.flush()
-            if current == total:
-                sys.stdout.write("\n")
-
     if args.manifest:
-        from ambermeta.manifest import _read_raw_manifest
-        from ambermeta.simulation import _is_v2
-        try:
-            _is_v2_manifest = _is_v2(_read_raw_manifest(args.manifest, expand_env=expand_env))
-        except Exception:
-            _is_v2_manifest = False
-        if _is_v2_manifest:
-            return _plan_v2(args, directory)
-        _out(f"Loading manifest: {args.manifest}")
-        protocol = load_protocol_from_manifest(
-            args.manifest,
-            directory=directory,
-            skip_cross_stage_validation=args.skip_cross_stage_validation,
-            recursive=args.recursive,
-            expand_env=expand_env,
-            global_prmtop=global_prmtop,
-            progress_callback=progress_reporter,
-            strict=strict,
-        )
-        # Apply auto-detect restarts if requested (after manifest loading)
-        if auto_detect_restarts:
-            from ambermeta.protocol import auto_detect_restart_chain, _safe_parse
-            from ambermeta.parsers.inpcrd import InpcrdParser
-            auto_restarts = auto_detect_restart_chain(protocol.stages, directory, recursive=args.recursive)
-            for stage in protocol.stages:
-                if stage.name in auto_restarts and not stage.restart_path:
-                    rst_path = auto_restarts[stage.name]
-                    stage.inpcrd = _safe_parse(InpcrdParser, rst_path, "inpcrd", stage, strict=strict)
-                    if stage.inpcrd is not None:
-                        stage.restart_path = rst_path
-                        stage.validation.append(f"INFO: restart file auto-detected: {rst_path}")
+        return _plan_v2(args, directory)
     elif args.recursive:
         # Recursive mode: auto-discover files without interactive prompts
         _out(f"\nScanning {directory} recursively for simulation files...")

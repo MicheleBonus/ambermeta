@@ -52,7 +52,7 @@ def test_plan_interactive_mode_runs_only_with_opt_in(monkeypatch, tmp_path):
 def test_quiet_suppresses_stdout(tmp_path, capsys, monkeypatch):
     import ambermeta.cli as _cli
     from ambermeta.cli import main
-    (tmp_path / "manifest.yaml").write_text("stages: []\n")
+    (tmp_path / "manifest.yaml").write_text("version: 2\nsteps: []\n")
     # monkeypatch ensures _QUIET is restored to False after this test
     monkeypatch.setattr(_cli, "_QUIET", False)
     main(["-q", "plan", str(tmp_path), "--manifest",
@@ -99,7 +99,7 @@ def test_plan_no_mode_errors_to_stderr_under_quiet(tmp_path, capsys, monkeypatch
 
 def test_pattern_warns_in_manifest_mode(tmp_path, capsys):
     from ambermeta.cli import main
-    (tmp_path / "manifest.yaml").write_text("stages: []\n", encoding="utf-8")
+    (tmp_path / "manifest.yaml").write_text("version: 2\nsteps: []\n", encoding="utf-8")
     main(["plan", str(tmp_path), "--manifest", str(tmp_path / "manifest.yaml"),
           "--pattern", "prod_.*"])
     out = capsys.readouterr()              # call ONCE
@@ -113,9 +113,9 @@ def test_skip_flag_defaults_to_none():
 
 
 def test_plan_empty_manifest_nonzero(tmp_path):
-    """plan --manifest with stages: [] should warn and return 1."""
+    """plan --manifest with an empty v2 manifest should warn and return 1."""
     from ambermeta.cli import main
-    (tmp_path / "m.yaml").write_text("stages: []\n")
+    (tmp_path / "m.yaml").write_text("version: 2\nsteps: []\n")
     rc = main(["plan", str(tmp_path), "--manifest", str(tmp_path / "m.yaml")])
     assert rc == 1
 

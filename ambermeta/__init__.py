@@ -11,8 +11,6 @@ from ambermeta.protocol import (
     infer_stage_role_from_content,
     auto_detect_restart_chain,
     smart_group_files,
-    load_manifest,
-    load_protocol_from_manifest,
 )
 from ambermeta.errors import AmberMetaError, FileLoadError
 
@@ -28,6 +26,4 @@ __all__ = [
     "infer_stage_role_from_content",
     "auto_detect_restart_chain",
     "smart_group_files",
-    "load_manifest",
-    "load_protocol_from_manifest",
 ]

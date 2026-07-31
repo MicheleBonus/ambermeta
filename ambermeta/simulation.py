@@ -5,8 +5,8 @@ import json
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
-from ambermeta.manifest import _read_raw_manifest, _normalize_container, _normalize_manifest
-from ambermeta.roles import classify_role
+from ambermeta.errors import AmberMetaError
+from ambermeta.manifest import _read_raw_manifest
 
 try:  # optional dependency, mirrors manifest.py
     import yaml
@@ -158,10 +158,6 @@ def _adopt_legacy_restart_paths(sim: Simulation) -> None:
             step.input_coords = InputCoords(source="step", ref=ic.ref)
 
 
-def _is_v2(raw: Any) -> bool:
-    return isinstance(raw, dict) and (raw.get("version") == 2 or "phases" in raw or "simulation" in raw)
-
-
 def write_simulation(sim: Simulation, path: str, fmt: str) -> None:
     """Write a Simulation as a v2 manifest. JSON and YAML are lossless; TOML/CSV
     flat export is deferred (documented lossy view, a later task)."""
@@ -180,91 +176,14 @@ def write_simulation(sim: Simulation, path: str, fmt: str) -> None:
 
 
 def load_simulation(path: str, expand_env: bool = True) -> Simulation:
-    """Load a Simulation from a manifest file, auto-migrating v1 manifests."""
+    """Load a Simulation from a v2 manifest file."""
     raw = _read_raw_manifest(path, expand_env=expand_env)
-    if _is_v2(raw):
-        return payload_to_simulation(raw)
-    return migrate_v1_manifest(_normalize_container(raw))
-
-
-def _v1_globals(container: Any) -> Dict[str, Any]:
-    return container if isinstance(container, dict) and "stages" in container else {}
-
-
-def migrate_v1_manifest(container: Any) -> Simulation:
-    """Convert a v1 manifest container (flat stages) into a v2 Simulation.
-
-    - global_prmtop -> normal pool entry; hmr_prmtop -> hmr pool entry.
-    - initial_coordinates -> starting_structure.
-    - each stage -> a Step; contiguous same-role stages -> one Phase.
-    - first step reads the starting structure; each later step chains from the
-      previous step's restart (the explicit input-coords source).
-    """
-    globals_ = _v1_globals(container)
-    sim = Simulation()
-
-    topo_by_path: Dict[str, str] = {}
-
-    def _topref(path: Optional[str], kind: str) -> Optional[str]:
-        if not path:
-            return None
-        if path not in topo_by_path:
-            tid = f"top_{len(sim.topologies)}"
-            sim.topologies.append(Topology(id=tid, path=path, kind=kind))
-            topo_by_path[path] = tid
-        return topo_by_path[path]
-
-    global_prmtop = globals_.get("global_prmtop")
-    hmr_prmtop = globals_.get("hmr_prmtop")
-    _topref(global_prmtop, "normal")
-    _topref(hmr_prmtop, "hmr")
-    sim.starting_structure = globals_.get("initial_coordinates")
-
-    prev_step: Optional[Step] = None
-    for idx, entry in enumerate(_normalize_manifest(container)):
-        name = entry.get("name") or f"step_{idx}"
-        role = entry.get("stage_role") or classify_role(name) or ""
-        files = entry.get("files", {}) if isinstance(entry.get("files"), dict) else {}
-
-        def _f(kind: str) -> Optional[str]:
-            return entry.get(kind) or files.get(kind)
-
-        stage_prmtop = _f("prmtop")
-        if stage_prmtop:
-            topology = _topref(stage_prmtop, "normal")
-        else:
-            topology = topo_by_path.get(global_prmtop) if global_prmtop else None
-
-        if prev_step is None:
-            if sim.starting_structure:
-                ic = InputCoords(source="starting_structure")
-            elif _f("inpcrd"):
-                ic = InputCoords(source="path", path=_f("inpcrd"))
-            else:
-                ic = InputCoords(source="starting_structure")
-        else:
-            ic = InputCoords(source="step", ref=prev_step.id)
-            # A v1 stage's inpcrd is the file it READS, which for a chained stage is the
-            # restart the previous one wrote. Recording it on that producer keeps the
-            # coordinate file the v1 manifest named instead of discarding it.
-            if _f("inpcrd") and prev_step.rst is None:
-                prev_step.rst = _f("inpcrd")
-
-        gaps = entry.get("gaps") or {}
-        step = Step(
-            id=f"st_{idx}", name=name, topology=topology, input_coords=ic,
-            mdin=_f("mdin"), mdout=_f("mdout"), mdcrd=_f("mdcrd"),
-            expected_gap_ps=gaps.get("expected"), gap_tolerance_ps=gaps.get("tolerance"),
-            notes=list(entry.get("notes") or []),
+    if not isinstance(raw, dict) or "steps" not in raw:
+        raise AmberMetaError(
+            f"{path} is not a v2 manifest (no 'steps' key). "
+            "Rebuild it with `ambermeta discover <dir> --write <path>`."
         )
-
-        if not sim.phases or sim.phases[-1].role != role:
-            sim.phases.append(Phase(id=f"ph_{len(sim.phases)}",
-                                    name=(role.title() if role else "Stage"), role=role))
-        sim.phases[-1].steps.append(step)
-        prev_step = step
-
-    return sim
+    return payload_to_simulation(raw)
 
 
 # ---------------------------------------------------------------------------

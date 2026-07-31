@@ -5,6 +5,8 @@ from typing import Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException, Query
 
+from ambermeta.errors import AmberMetaError
+
 from . import core_bridge, files
 from .document import DocumentStore
 from .schemas import (
@@ -63,7 +65,7 @@ def open_document(req: OpenRequest) -> DocumentResponse:
         raise HTTPException(status_code=404, detail=f"Manifest not found: {req.path}")
     try:
         sim = core_bridge.open_simulation(resolved, doc.base_directory)
-    except (FileNotFoundError, ValueError, TypeError, ImportError) as exc:
+    except (FileNotFoundError, ValueError, TypeError, ImportError, AmberMetaError) as exc:
         raise HTTPException(status_code=400, detail=f"Could not read manifest: {exc}")
     store.replace(simulation=sim, settings=store.get().settings,
                   manifest_path=resolved, dirty=False, reset_history=True)
