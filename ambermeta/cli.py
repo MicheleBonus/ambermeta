@@ -1566,7 +1566,13 @@ def _plan_v2(args: argparse.Namespace, directory: str) -> int:
         return 0
 
     paths = list(targets.values())
-    dupes = sorted({p for p in paths if paths.count(p) > 1})
+    # normcase: a no-op on POSIX, lowercases (and normalizes slashes) on Windows, where
+    # S.json and s.json name the same NTFS file — two artifacts "landing" on distinct
+    # strings but one physical file, one silently overwriting the other while both
+    # report success.
+    normed = [os.path.normcase(p) for p in paths]
+    dupe_keys = {k for k in normed if normed.count(k) > 1}
+    dupes = sorted({p for p in paths if os.path.normcase(p) in dupe_keys})
     if dupes:
         print(Colors.error("ERROR: each output needs its own file; more than one is "
                            "aimed at " + ", ".join(dupes)), file=sys.stderr)

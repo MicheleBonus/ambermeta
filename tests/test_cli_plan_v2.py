@@ -216,3 +216,15 @@ def test_plan_refuses_two_outputs_aimed_at_one_file(v2_run, capsys):
     assert rc == 2
     assert "own file" in capsys.readouterr().err
     assert not (v2_run / "same.json").exists()
+
+
+def test_plan_refuses_two_outputs_aimed_at_one_file_case_insensitively(v2_run, capsys):
+    """On Windows/NTFS, S.json and s.json are the same file: two artifacts writing to
+    it in sequence would leave one silently clobbered while rc stayed 0."""
+    rc = main(["plan", str(v2_run), "--manifest", str(v2_run / "sim.yaml"),
+               "--summary-path", str(v2_run / "S.json"),
+               "--methods-summary-path", str(v2_run / "s.json")])
+    assert rc == 2
+    assert "own file" in capsys.readouterr().err
+    assert not (v2_run / "S.json").exists()
+    assert not (v2_run / "s.json").exists()
