@@ -142,8 +142,8 @@ def _read_raw_manifest(manifest_path: Any, expand_env: bool = True) -> Any:
         manifest = yaml.safe_load(text)
     elif suffix in (".toml", ".csv"):
         raise AmberMetaError(
-            f"{path}: TOML and CSV are export-only formats and cannot be read back. "
-            "Manifests are YAML or JSON."
+            f"{path}: AmberMeta reads and writes manifests as YAML or JSON only; "
+            "TOML and CSV are not manifest formats."
         )
     else:
         manifest = json.loads(text)

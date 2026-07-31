@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import csv
 import json
 import os
 import sys
@@ -970,9 +969,25 @@ def _init_command(args: argparse.Namespace) -> int:
     directory = os.path.abspath(args.directory)
     output_path = os.path.join(directory, args.output)
 
-    if os.path.exists(output_path) and not getattr(args, "force", False):
+    if os.path.exists(output_path) and not args.force:
+        refuse = Colors.error(f"ERROR: {args.output} already exists. "
+                              "Use --force to overwrite.")
+        # With no terminal there is nobody to answer the prompt. Scripted and piped
+        # runs (`ambermeta init . -o m.yaml < /dev/null`, CI) used to reach input()
+        # and die on the EOF; say what to do instead, at the exit code the old
+        # non-interactive path used.
+        stdin = getattr(sys, "stdin", None)
+        if stdin is None or not stdin.isatty():
+            print(refuse, file=sys.stderr)
+            return 1
         _out(Colors.warning(f"WARNING: {args.output} already exists"))
-        response = input("Overwrite? [y/N]: ").strip().lower()
+        try:
+            response = input("Overwrite? [y/N]: ").strip().lower()
+        except (EOFError, OSError):
+            # isatty() can still lie: a pty whose input end has been closed, a
+            # harness that swaps stdin for an object that refuses to be read.
+            print(refuse, file=sys.stderr)
+            return 1
         if response != "y":
             _out("Aborted.")
             return 1
@@ -1090,7 +1105,7 @@ def _plan_v2(args: argparse.Namespace, directory: str) -> int:
 
     # An empty manifest was an error on the old flat path; keep that contract.
     if not protocol.stages:
-        print("ERROR: manifest produced 0 stages.", file=sys.stderr)
+        print(Colors.error("ERROR: nothing to plan: 0 stages."), file=sys.stderr)
         return 1
 
     report = validate_simulation(sim, settings, directory, protocol=protocol)
@@ -1168,9 +1183,7 @@ def _plan_command(args: argparse.Namespace) -> int:
         )
 
     if not protocol.stages:
-        print(Colors.warning(
-            "WARNING: manifest produced 0 stages; check format/column names."),
-            file=sys.stderr)
+        print(Colors.error("ERROR: nothing to plan: 0 stages."), file=sys.stderr)
         return 1
 
     degraded = [s for s in protocol.stages if s.degraded]
@@ -1300,8 +1313,8 @@ For documentation, visit: https://github.com/MicheleBonus/ambermeta
     plan_parser.add_argument(
         "--skip-cross-stage-validation",
         action="store_const", const=True, default=None,
-        help="Skip continuity checks between consecutive stages "
-             "(overrides the manifest's settings.strict_validation)",
+        help="Skip the continuity checks between consecutive stages "
+             "(they run by default)",
     )
     plan_parser.add_argument(
         "--strict",
@@ -1453,8 +1466,9 @@ For documentation, visit: https://github.com/MicheleBonus/ambermeta
     # UX-009: init subcommand
     init_parser = subparsers.add_parser(
         "init",
-        help="Generate an example manifest file",
-        description="Create a template manifest.yaml with example stages.",
+        help="Generate a starting v2 manifest file",
+        description=("Create a template manifest.yaml: a commented v2 "
+                     "(Simulation -> Phase -> Step) document to edit."),
     )
     init_parser.add_argument(
         "directory",

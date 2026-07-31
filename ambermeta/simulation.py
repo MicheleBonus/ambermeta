@@ -159,8 +159,8 @@ def _adopt_legacy_restart_paths(sim: Simulation) -> None:
 
 
 def write_simulation(sim: Simulation, path: str, fmt: str) -> None:
-    """Write a Simulation as a v2 manifest. JSON and YAML are lossless; TOML/CSV
-    flat export is deferred (documented lossy view, a later task)."""
+    """Write a Simulation as a v2 manifest. JSON and YAML are the only manifest
+    formats AmberMeta writes, and both are lossless."""
     payload = simulation_to_payload(sim)
     if fmt == "json":
         with open(path, "w", encoding="utf-8") as fh:
@@ -179,6 +179,17 @@ def load_simulation(path: str, expand_env: bool = True) -> Simulation:
     """Load a Simulation from a v2 manifest file."""
     raw = _read_raw_manifest(path, expand_env=expand_env)
     if not isinstance(raw, dict) or "steps" not in raw:
+        # A document that announces itself as v2, or carries a v2-only key, is a v2
+        # manifest with a hole in it rather than a foreign format — say which key is
+        # missing. Sending its owner off to rebuild from the directory would silently
+        # discard the phases and topology pool the file still has.
+        if isinstance(raw, dict) and (raw.get("version") == 2
+                                      or "simulation" in raw or "phases" in raw):
+            raise AmberMetaError(
+                f"{path} is a v2 manifest but is missing its 'steps' list. "
+                "Restore the steps, or rebuild the file with "
+                "`ambermeta discover <dir> --write <path>`."
+            )
         raise AmberMetaError(
             f"{path} is not a v2 manifest (no 'steps' key). "
             "Rebuild it with `ambermeta discover <dir> --write <path>`."

@@ -142,13 +142,19 @@ def plan_document(req: PlanRequest) -> PlanResult:
     # Two artifacts aimed at one file silently destroyed each other, and the survivor was
     # still reported as both. The manifest lost that race, leaving the document "saved" to
     # a summary that cannot be reopened.
+    # normcase: a no-op on POSIX, lowercases (and normalizes slashes) on Windows, where
+    # S.json and s.json name the same NTFS file — comparing the raw strings let two
+    # artifacts "land" on distinct strings but one physical file. The message still names
+    # the paths the caller actually asked for.
     all_paths = list(targets.values()) + ([resolved_manifest] if resolved_manifest else [])
-    duplicates = {p for p in all_paths if all_paths.count(p) > 1}
+    normed = [os.path.normcase(p) for p in all_paths]
+    dupe_keys = {k for k in normed if normed.count(k) > 1}
+    duplicates = sorted({p for p in all_paths if os.path.normcase(p) in dupe_keys})
     if duplicates:
         raise HTTPException(
             status_code=400,
             detail="Each output needs its own file; more than one is aimed at "
-                   + ", ".join(sorted(duplicates)))
+                   + ", ".join(duplicates))
 
     # --- write ----------------------------------------------------------------
     warnings: List[str] = []

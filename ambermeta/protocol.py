@@ -1581,8 +1581,6 @@ class ProtocolBuilder:
 
     def __init__(self) -> None:
         self._directory: Optional[str] = None
-        self._manifest: Optional[Dict[str, Any] | List[Dict[str, Any]]] = None
-        self._manifest_path: Optional[str] = None
         self._grouping_rules: Optional[Dict[str, str]] = None
         self._include_roles: Optional[List[str]] = None
         self._include_stems: Optional[List[str]] = None
@@ -1591,7 +1589,6 @@ class ProtocolBuilder:
         self._recursive: bool = False
         self._auto_detect_restarts: bool = False
         self._pattern_filter: Optional[str] = None
-        self._expand_env: bool = True
         self._stages: List[SimulationStage] = []
         self._stage_tolerances: Dict[str, tuple[float, float]] = {}
 
@@ -1770,20 +1767,6 @@ class ProtocolBuilder:
         if self._stages:
             # Manual stages were added
             protocol = SimulationProtocol(stages=list(self._stages))
-        elif self._manifest is not None and self._directory:
-            # Use manifest
-            protocol = auto_discover(
-                self._directory,
-                manifest=self._manifest,
-                grouping_rules=self._grouping_rules,
-                include_roles=self._include_roles,
-                include_stems=self._include_stems,
-                restart_files=self._restart_files,
-                skip_cross_stage_validation=True,  # We'll validate after applying tolerances
-                recursive=self._recursive,
-                auto_detect_restarts=self._auto_detect_restarts,
-                pattern_filter=self._pattern_filter,
-            )
         elif self._directory:
             # Discover from directory
             protocol = auto_discover(
@@ -1798,7 +1781,7 @@ class ProtocolBuilder:
                 pattern_filter=self._pattern_filter,
             )
         else:
-            raise ValueError("No directory or manifest specified. Use from_directory().")
+            raise ValueError("No directory specified. Use from_directory().")
 
         # Apply per-stage tolerances
         for stage in protocol.stages:

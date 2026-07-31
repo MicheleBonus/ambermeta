@@ -233,3 +233,25 @@ def test_loading_a_flat_manifest_says_so_instead_of_returning_nothing(tmp_path):
 
     with pytest.raises(AmberMetaError, match="not a v2 manifest"):
         load_simulation(str(flat))
+
+
+def test_a_v2_manifest_without_steps_is_reported_as_incomplete_not_foreign(tmp_path):
+    """Keying only on "steps" told the owner of a real v2 document — version, topology
+    pool, phases and all — that it "is not a v2 manifest" and to rebuild it from the
+    directory, which would throw away exactly those phases."""
+    from ambermeta.errors import AmberMetaError
+    from ambermeta.simulation import load_simulation
+
+    holed = tmp_path / "sim.yaml"
+    holed.write_text(
+        "version: 2\n"
+        "simulation:\n"
+        "  topologies:\n"
+        "    - {id: top_wt, path: wt.prmtop, kind: normal}\n"
+        "  starting_structure: wt.inpcrd\n"
+        "phases:\n"
+        "  - {id: ph_prod, name: Production, role: production, order: 0}\n",
+        encoding="utf-8")
+
+    with pytest.raises(AmberMetaError, match=r"missing its 'steps' list"):
+        load_simulation(str(holed))

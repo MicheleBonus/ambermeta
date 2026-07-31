@@ -18,7 +18,6 @@ from ambermeta.manifest import (
 from ambermeta.protocol import (
     _serialize_metadata,
     auto_discover,
-    PLAN_ARTIFACTS,  # noqa: F401  # re-exported: routes.py imports it from here
 )
 from ambermeta.parsers import (
     PrmtopParser, MdinParser, MdoutParser, MdcrdParser, InpcrdParser,
