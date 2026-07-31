@@ -1,6 +1,6 @@
 # Recipes
 
-Short, copy-paste CLI one-liners for common jobs. All examples run from inside the sample data directory `tests/data/amber/md_test_files/` (a 64,528-atom glycoprotein system with a six-member `ntp_prod_0001..0005` production sequence):
+Short, copy-paste CLI one-liners for common jobs. All examples run from inside the sample data directory `tests/data/amber/md_test_files/` (a 64,528-atom glycoprotein system with a five-step `ntp_prod_0001..0005` production sequence):
 
 ```bash
 cd tests/data/amber/md_test_files
@@ -26,10 +26,10 @@ Phases: 1
 
 Phase: Production [production]
   - ntp_prod_0001  topology=CH3L1_HUMAN_6NAG.top  input=starting structure  (mdin=ntp_prod_0001.mdin, mdout=ntp_prod_0001.mdout)
-  - ntp_prod_0002  topology=CH3L1_HUMAN_6NAG.top  input=step b2b649c0  (mdin=ntp_prod_0002.mdin, mdout=ntp_prod_0002.mdout)
-  - ntp_prod_0003  topology=CH3L1_HUMAN_6NAG.top  input=step abe19957  (mdin=ntp_prod_0003.mdin, mdout=ntp_prod_0003.mdout)
-  - ntp_prod_0004  topology=CH3L1_HUMAN_6NAG.top  input=step 4aa9b53f  (mdin=ntp_prod_0004.mdin, mdout=ntp_prod_0004.mdout)
-  - ntp_prod_0005  topology=CH3L1_HUMAN_6NAG.top  input=step e50d2b7d  (mdin=ntp_prod_0005.mdin, mdout=ntp_prod_0005.mdout)
+  - ntp_prod_0002  topology=CH3L1_HUMAN_6NAG.top  input=restart of ntp_prod_0001 (ntp_prod_0001.rst)  (mdin=ntp_prod_0002.mdin, mdout=ntp_prod_0002.mdout)
+  - ntp_prod_0003  topology=CH3L1_HUMAN_6NAG.top  input=restart of ntp_prod_0002 (ntp_prod_0002.rst)  (mdin=ntp_prod_0003.mdin, mdout=ntp_prod_0003.mdout)
+  - ntp_prod_0004  topology=CH3L1_HUMAN_6NAG.top  input=restart of ntp_prod_0003 (ntp_prod_0003.rst)  (mdin=ntp_prod_0004.mdin, mdout=ntp_prod_0004.mdout)
+  - ntp_prod_0005  topology=CH3L1_HUMAN_6NAG.top  input=restart of ntp_prod_0004 (ntp_prod_0004.rst)  (mdin=ntp_prod_0005.mdin, mdout=ntp_prod_0005.mdout)
 
 Suggestions:
   - [applied] CH3L1_HUMAN_6NAG.crd set as the starting structure
@@ -38,7 +38,7 @@ Suggestions:
 Wrote v2 draft manifest: sim.yaml (yaml)
 ```
 
-Builds a topology pool, infers phase roles, and chains each step's input coordinates off the previous step's restart (`input=step <id>`). The `<id>` values are freshly generated each run — don't expect them to be stable across runs. Edit `sim.yaml` by hand, or refine it in the GUI, before committing to it.
+Builds a topology pool, infers phase roles, and chains each step's input coordinates off the previous step's restart (`input=restart of <step name>`). In the file itself that chain is stored as a step id reference; the ids are freshly generated each run, so don't expect them to be stable across runs. Edit `sim.yaml` by hand, or refine it in the GUI, before committing to it.
 
 ### Preview the draft without writing anything
 
@@ -60,38 +60,37 @@ Simulation validation
 Validation: OK
 ```
 
-Checks the whole Simulation (a v1 flat manifest auto-migrates first): restart-to-input-coordinate continuity between consecutive steps, gaps in a numbered run sequence, and missing files. Add `--strict` to fail on warnings too, or `--format json` for CI parsing.
+Checks the whole Simulation: restart-to-input-coordinate continuity between consecutive steps, gaps in a numbered run sequence, and missing files. Add `--strict` to fail on warnings too, or `--format json` for CI parsing.
 
-### Upgrade a v1 manifest to canonical v2
-
-```bash
-ambermeta export old_manifest.yaml --to v2 -o sim.yaml
-```
-
-Reads any manifest — including a legacy flat `stages:` list with `global_prmtop`/`hmr_prmtop` — and re-emits it as a v2 `Simulation` document (`global_prmtop` becomes a `normal` pool entry, `hmr_prmtop` an `hmr` entry, `initial_coordinates` becomes the starting structure). Add `--format yaml` (or `json`) to control the output syntax — v2 writes JSON/YAML only; omit `-o` to print JSON to stdout instead.
-
-### Convert a v2 manifest to legacy flat (for downstream tooling)
+### Convert a manifest between YAML and JSON
 
 ```bash
-ambermeta export sim.yaml --to legacy -o legacy.yaml
+ambermeta export sim.yaml -o sim.json
 ```
 
 ```
-Wrote legacy manifest: legacy.yaml (yaml)
+Wrote v2 manifest: sim.json (json)
 ```
 
-`--to legacy` also accepts `--format toml` or `--format csv`, which v2 itself does not support (`write_simulation` writes JSON/YAML only). Useful for scripts still built on the old flat shape, or as the input to `plan --manifest` below.
+Re-emits the manifest as canonical v2 in the format implied by the `-o` extension; add `--format json` or `--format yaml` to force it. Omit `-o` to pretty-print the JSON to stdout instead. YAML and JSON are the only manifest formats.
 
 ### Export all publication artifacts in one run
 
 ```bash
-ambermeta plan . --manifest legacy.yaml \
+ambermeta plan . --manifest sim.yaml \
   --summary-path protocol.json \
   --methods-summary-path methods.json \
   --stats-csv stats.csv
 ```
 
-`methods.json` is the Materials-&-Methods summary; `stats.csv` is one row per step (temperature/pressure/density/energy as mean ± σ); `protocol.json` is the full record. This publication-export path (`--summary-path`/`--methods-summary-path`/`--stats-csv`) reads the flat protocol engine, so point `--manifest` at a legacy manifest — as produced by `export --to legacy` above, or `init --auto` below — rather than a v2 one.
+```
+...
+Wrote summary: /abs/path/protocol.json
+Wrote methods_summary: /abs/path/methods.json
+Wrote stats_csv: /abs/path/stats.csv
+```
+
+`methods.json` is the Materials-&-Methods summary; `stats.csv` is one row per step (temperature/pressure/density/energy as mean ± σ); `protocol.json` is the full record. The command first prints the same `Simulation summary` block as `discover`, then writes the three artifacts. Each one needs its own path — aiming two at the same file is a hard error (exit `2`).
 
 ### Reconstruct and summarize a directory — no manifest needed
 
@@ -111,7 +110,7 @@ Total simulated time (ps): 100000.000
 ...
 ```
 
-The retained flat-discovery engine: groups files by stem, infers stage roles from path/content, and prints the classic per-stage "Protocol summary" without ever writing a manifest.
+The flat-discovery engine: groups files by stem, infers stage roles from path/content, and prints the classic per-stage "Protocol summary" without ever writing a manifest.
 
 ### Validate a tree as a CI gate (non-zero exit on problems)
 
@@ -147,7 +146,7 @@ ambermeta info --format json ntp_prod_0001.mdout | jq '.stats'
 ambermeta plan . --recursive --prmtop CH3L1_HUMAN_6NAG.top
 ```
 
-Avoids repeating a topology on each stage in the retained flat-discovery path. In a v2 manifest the equivalent is a single entry in the Simulation's `topologies:` pool, referenced by id from every step (see the [manifest schema](manifest.md)).
+Avoids repeating a topology on each stage in the flat-discovery path. In a v2 manifest the equivalent is a single entry in the Simulation's `topologies:` pool, referenced by id from every step (see the [manifest schema](manifest.md)).
 
 ### Filter discovery to production runs only
 
@@ -176,14 +175,14 @@ ambermeta --quiet --log-file run.log plan . --recursive --summary-path out.json
 ### Generate a commented v2 template to hand-edit
 
 ```bash
-ambermeta init . --v2 --output template.yaml
+ambermeta init . --output template.yaml
 ```
 
 ```
 Created template.yaml (v2)
 ```
 
-Emits a Simulation → Phase → Step skeleton with inline comments instead of the v1 flat template; drop `--v2` for the classic `--template {minimal,standard,comprehensive}` manifests.
+Emits a Simulation → Phase → Step skeleton with inline comments — `init` writes nothing else, and never scans the directory. Add `--force` to overwrite an existing file without the confirmation prompt. To draft a manifest from real files, use `discover` above.
 
 ---
 

@@ -837,7 +837,7 @@ stages:
     mdout: ${PROJECT_DIR}/output/prod.mdout
 ```
 
-Disable with `--no-expand-env` (`plan` only). Full rules in the [manifest reference §10](manifest.md#10-environment-variable-expansion).
+Disable with `--no-expand-env` (`plan` only). Full rules in the [manifest reference §8](manifest.md#8-environment-variable-expansion).
 
 ---
 

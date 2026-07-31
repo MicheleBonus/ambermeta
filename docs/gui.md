@@ -137,7 +137,7 @@ If the Simulation has no phases yet, the canvas shows "Discover or drop files to
 The Inspector's content depends on what's selected:
 
 - **A file** (from the Files pane, or a step's bound topology) — a **peek** header (filename plus a few curated fields: atoms, residues, frames, steps, `hmr_active`, box), an **Assign** section (below), and a tabbed detail view: **Overview** (parsed-field count, warning count), **Full details** (every parsed field), **Raw file** (a byte-capped prefix of the file), **Warnings**.
-- **A step or a phase** — a placeholder (`Step editor.` / `Phase editor.`). **These inline editors are stubs today**: selecting a step or phase does highlight it and lets Validate jump to it, but editing its name, role, gap tolerance, or notes from the Inspector is not yet wired up. Use drag-and-drop assignment, the Inspector's file-side Assign actions, or the [HTTP API](#8-http-api)/CLI to change those fields in the meantime.
+- **A step or a phase** — a placeholder (`Step editor.` / `Phase editor.`). **These inline editors are stubs today**: selecting a step or phase does highlight it and lets Validate jump to it, but editing its name, role, gap tolerance, or notes from the Inspector is not yet wired up. Use drag-and-drop assignment, the Inspector's file-side Assign actions, or the [HTTP API](#11-http-api)/CLI to change those fields in the meantime.
 - **The Simulation, or nothing** — the **suggestions tray** (§7).
 
 ### Assign actions (per selected file type)
@@ -166,8 +166,15 @@ The tray re-runs validation (and refills itself) after every document mutation, 
 
 ## 8. Open, Save, Export
 
-- **Open** loads a manifest — **v1 or v2**, YAML/JSON/TOML/CSV — and resets undo history. A v1 flat manifest (`stages:` + optional `global_prmtop`/`hmr_prmtop`/`initial_coordinates`) is **auto-migrated in memory** into the Simulation → Phase → Step model: each stage becomes a step, contiguous same-role stages coalesce into a phase, `global_prmtop`/`hmr_prmtop` seed the topology pool, `initial_coordinates` becomes the starting structure. See [manifest §migration](manifest.md) for the full mapping.
-- **Save** always writes the canonical **v2 manifest** — YAML or JSON only, chosen by the target's extension (or an explicit format). There is no GUI path to write a v1 flat manifest or TOML/CSV; use `ambermeta export --to legacy` for that.
+- **Open** loads a **v2 manifest** — YAML or JSON — and resets undo history. There is no other reader. An old flat `stages:` document and a `.toml`/`.csv` path are each rejected with `400` and the core reader's own message (respectively):
+
+  ```
+  Could not read manifest: old.yaml is not a v2 manifest (no 'steps' key). Rebuild it with `ambermeta discover <dir> --write <path>`.
+  Could not read manifest: old.toml: AmberMeta reads and writes manifests as YAML or JSON only; TOML and CSV are not manifest formats.
+  ```
+
+  Rebuild such a file with `ambermeta discover <dir> --write <path>` and open the result.
+- **Save** always writes the canonical **v2 manifest** — YAML or JSON only, chosen by the target's extension or by the Save dialog's format selector, which offers exactly those two.
 - **Export** renders a preview (YAML or JSON) in a modal without touching disk, with a **Copy** button; any writer warnings are listed underneath.
 
 The manifest the GUI writes (real output — `Save` after `Discover` on the sample glycoprotein sequence, path `manifest_test.yaml`):
@@ -270,7 +277,7 @@ The frontend talks to a small REST API under `/api` (`ambermeta/gui/api/routes.p
 | Method | Path | Body | Returns |
 |---|---|---|---|
 | `GET` | `/api/document` | — | Current document |
-| `POST` | `/api/document/open` | `{ path }` | Document (history reset); `404` if the file doesn't exist |
+| `POST` | `/api/document/open` | `{ path }` | Document (history reset); `404` if the file doesn't exist, `400` if it isn't a v2 YAML/JSON manifest |
 | `POST` | `/api/document/save` | `{ path?, format? }` | `{ document, warnings[] }`; `400` if no path is known and none is given |
 | `POST` | `/api/document/preview` | `{ format }` | `{ content, warnings[], format }` |
 | `POST` | `/api/document/discover` | `{ recursive, pattern? }` | `{ document, suggestions[], warnings[] }` |
@@ -375,7 +382,6 @@ This is `ambermeta.gui.api.schemas.DocumentResponse` — the same shape the fron
 ## 12. Known limitations
 
 - **Step and phase inline editing is stubbed.** The Inspector shows a placeholder (`Step editor.` / `Phase editor.`) when a step or phase is selected — you cannot yet rename a step, change its role, or set its gap tolerance/notes from there. Reach those fields via drag-and-drop assignment, the file-side Assign actions (§6), the HTTP API (§11), or by editing the saved manifest and reopening it.
-- **Save/Preview only write v2** (YAML/JSON). To produce a legacy flat manifest or TOML/CSV, use `ambermeta export --to legacy` after saving from the GUI.
 - **Suggestion cards are advisory**, not bound to their nominal actions beyond Dismiss/Undo — "Accept"/"Adjust"/"Ignore" currently just dismiss the card in the browser; the underlying condition (e.g. a sequence hole) still needs to be fixed via assignment or by adding the missing run's files.
 
 ---
@@ -389,7 +395,7 @@ This is `ambermeta.gui.api.schemas.DocumentResponse` — the same shape the fron
 | `Address already in use` | Pick another port: `--port 9000` |
 | A file is missing from the Files pane | Check the extension is recognized (§4), the file is readable, and it's under the launch directory (hidden `.`-files are excluded) |
 | A path is rejected (`403`) | The path is outside the launch directory; restart the GUI rooted higher up |
-| Opened an old manifest and the model looks different | That's the v1→v2 auto-migration (§8) — it's read-only in memory until you Save, which writes v2 |
+| Open fails with `is not a v2 manifest (no 'steps' key)` | Open reads v2 YAML/JSON only (§8). Rebuild the file with `ambermeta discover <dir> --write <path>` and open that |
 
 ---
 
@@ -397,4 +403,4 @@ This is `ambermeta.gui.api.schemas.DocumentResponse` — the same shape the fron
 
 - [Architecture §9](architecture.md#9-the-gui-bridge--one-engine-enforced) — how the GUI maps onto the core (`core_bridge`)
 - [CLI reference](cli.md) — `discover`/`validate --manifest`/`export` are the headless equivalents of Discover/Validate/Export
-- [Manifest schema](manifest.md) — the v2 format Open/Save read and write, and the v1→v2 migration table
+- [Manifest schema](manifest.md) — the v2 format Open/Save read and write

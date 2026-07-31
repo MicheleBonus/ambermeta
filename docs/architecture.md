@@ -1,6 +1,6 @@
 # Architecture
 
-**AmberMeta is one engine with two faces.** A single core — parsers, a role classifier, a manifest contract, simulation assembly, and a validation model — does all the work. The CLI and the GUI are thin presentation layers over that core; neither contains domain logic the other lacks. This document is the map of that core: the three-level model it builds, how a manifest round-trips through it (including the auto-migrating v1 reader), and the contracts that hold the CLI and GUI together.
+**AmberMeta is one engine with two faces.** A single core — parsers, a role classifier, a manifest contract, simulation assembly, and a validation model — does all the work. The CLI and the GUI are thin presentation layers over that core; neither contains domain logic the other lacks. This document is the map of that core: the three-level model it builds, how a manifest round-trips through it, and the contracts that hold the CLI and GUI together.
 
 > **Audience:** contributors, and users who want to understand *why* a result looks the way it does. For task-oriented usage, start with the [tutorials](tutorials.md); for exact signatures, the [API reference](api.md); for the full manifest schema, the [manifest reference](manifest.md).
 
@@ -13,13 +13,13 @@ ambermeta/
   __init__.py            # public re-exports of the retained engine (the classic import surface)
   cli.py                 # argparse front end: plan / discover / validate / export / init / info / gui / completion
   errors.py              # AmberMetaError, FileLoadError, classify_exception
-  simulation.py          # the v2 model: Simulation/Phase/Step/Topology/InputCoords + load/write/migrate
+  simulation.py          # the v2 model: Simulation/Phase/Step/Topology/InputCoords + load/write
   roles.py               # classify_role() — the ONE role classifier, shared by CLI and GUI
   topology_pool.py       # TopologyPool + classify_topology_pool() — HMR detection over a set of prmtops
   coords.py              # sniff_coordinate_kind() — inpcrd vs mdcrd by content, not extension
   protocol.py            # SimulationStage, SimulationProtocol, ProtocolBuilder — discovery, assembly,
                           # continuity/sequence-gap detection; still the shared validation machinery
-  manifest.py            # tolerant raw reader + canonical flat writer; STAGE_FILE_KINDS, CSV_COLUMNS
+  manifest.py            # tolerant YAML/JSON reader + in-memory stage-dict helpers; STAGE_FILE_KINDS
   utils.py               # MetadataBase, shared helpers
   parsers/               # thin per-file wrappers (PrmtopParser, MdinParser, ...)
   legacy_extractors/     # the actual byte-level parsing → *Metadata dataclasses
@@ -39,8 +39,8 @@ The dependency arrows still point one way: `cli` and `gui` depend on the core (`
 
 Two engine layers live side by side, deliberately:
 
-- **`ambermeta.simulation`** — the new Simulation → Phase → Step model: plain dataclasses plus `load_simulation`/`write_simulation`/`migrate_v1_manifest`. This is what `discover`, `export`, `validate --manifest`, `plan -m <v2 manifest>`, and every GUI operation build and hand around.
-- **`ambermeta.protocol`** — the retained flat `SimulationProtocol`/`SimulationStage` engine. It still does the actual file grouping, parsing orchestration, role inference, and continuity math; the v2 layer *flattens into it* rather than reimplementing validation (§6). It also remains the whole path for `plan --recursive` and v1 manifests loaded without going through `ambermeta.simulation`.
+- **`ambermeta.simulation`** — the Simulation → Phase → Step model: plain dataclasses plus `load_simulation`/`write_simulation`. This is what `discover`, `export`, `validate --manifest`, `plan -m <manifest>`, and every GUI operation build and hand around.
+- **`ambermeta.protocol`** — the flat `SimulationProtocol`/`SimulationStage` engine. It still does the actual file grouping, parsing orchestration, role inference, and continuity math; the v2 layer *flattens into it* rather than reimplementing validation (§6). It also remains the whole path for `plan --recursive` and `plan --interactive`, which build a protocol straight from the directory (or from prompted stage dicts) without ever constructing a `Simulation`.
 
 Neither layer duplicates parsing, role classification, or continuity logic — see §6 for exactly how the new model reuses the old validator.
 
@@ -54,7 +54,7 @@ v1.0 modeled a run as a flat **Protocol → Stage** (two levels; a "stage" was o
 |---|---|---|
 | **Simulation** | `Simulation(version, topologies, starting_structure, phases)` | the whole document: a **topology pool** and one **starting structure** |
 | **Phase** | `Phase(id, name, role, steps)` | a named, role-bearing grouping (minimization / heating / equilibration / production / `""`) |
-| **Step** | `Step(id, name, topology, input_coords, mdin, mdout, mdcrd, expected_gap_ps, gap_tolerance_ps, notes)` | one actual run — today's old "stage" |
+| **Step** | `Step(id, name, topology, input_coords, mdin, mdout, mdcrd, rst, expected_gap_ps, gap_tolerance_ps, notes)` | one actual run — today's old "stage" |
 
 A **Phase** is a convenience/grouping level: it carries a role but no files of its own. A **Step** is where the files live, and it binds exactly one topology **by id** out of the Simulation's pool.
 
@@ -70,7 +70,7 @@ def implies_hmr(dt) -> bool:
     return isinstance(dt, (int, float)) and dt > HMR_MIN_TIMESTEP_PS
 ```
 
-`classify_topology_pool(directory, prmtop_rels)` parses every discovered prmtop, labels each `normal` or `hmr` from its own atom masses (`hmr_active`, via `extract_prmtop_metadata`), and keeps **all** of them — distinct chemical systems (different atom counts) are preserved rather than collapsed into one global topology, which is what v1's `global_prmtop`/`hmr_prmtop` pair did. A step references a pool entry by `id`; a phase can cascade "use this topology for every step in me" as a UI convenience, but the phase itself stores nothing.
+`classify_topology_pool(directory, prmtop_rels)` parses every discovered prmtop, labels each `normal` or `hmr` from its own atom masses (`hmr_active`, via `extract_prmtop_metadata`), and keeps **all** of them — distinct chemical systems (different atom counts) are preserved rather than collapsed into a single global topology. A step references a pool entry by `id`; a phase can cascade "use this topology for every step in me" as a UI convenience, but the phase itself stores nothing.
 
 ### Input-coordinate sources
 
@@ -79,14 +79,14 @@ Every step's starting coordinates resolve through `InputCoords(source, ref, path
 | `source` | Meaning |
 |---|---|
 | `starting_structure` | read the Simulation's single starting structure (only valid/typical for the first step) |
-| `step` (with `ref: <step id>`) | chain from the referenced step's output restart — the continuity anchor |
+| `step` (with `ref: <step id>`) | chain from the referenced step's output restart (its `rst`, stored on the step that writes it) — the continuity anchor |
 | `path` (with `path: "..."`) | an explicit override, bypassing the chain |
 
-This makes the old implicit "first stage uses `initial_coordinates`, later stages use the previous restart" rule an explicit, inspectable field on every step instead of an assumption baked into ordering.
+This makes the old implicit "the first stage uses the initial coordinates, later stages use the previous restart" rule an explicit, inspectable field on every step instead of an assumption baked into ordering.
 
 ### The one role classifier
 
-`ambermeta/roles.py:classify_role()` is the single source of truth for role inference, imported by both `ambermeta.simulation` (v1→v2 migration), `ambermeta.protocol` (`infer_stage_role_from_path`/`infer_stage_role_from_content`), and the GUI's `discover_draft`. Precedence:
+`ambermeta/roles.py:classify_role()` is the single source of truth for role inference, imported by `ambermeta.protocol` (`infer_stage_role_from_path`/`infer_stage_role_from_content`), the CLI, and the GUI's `discover_draft`. Precedence:
 
 1. **Authoritative content** — `cntrl.imin == 1` (mdin) or `mdout.imin == 1` → `minimization`, regardless of filename.
 2. **Filename/path cues** — word-boundary matching per path component (`min`/`minim`/`em` → minimization; `heat`/`warm`/`therm`/`anneal` → heating; `equil`/`eq`/`nvt`/`npt` → equilibration; `prod` → production). Boundaries are `_`, `.`, `-`, or start/end of the component, so `minor` never matches `min`.
@@ -173,95 +173,47 @@ Validation: OK
 
 ---
 
-## 5. Manifest format v2 and the tolerant, auto-migrating reader
+## 5. Manifest format v2 and the tolerant reader
 
-**Responsibility:** be liberal in what you accept, strict in what you emit. This is still the most important boundary in the codebase — the manifest is the durable artifact users and the GUI both round-trip. The full v2 schema (every key, all `input_coords` sources, `gaps`) is in the [manifest reference](manifest.md); this section covers the mechanics.
+**Responsibility:** be liberal in what you accept *within v2*, strict in what you emit. This is still the most important boundary in the codebase — the manifest is the durable artifact users and the GUI both round-trip. The full v2 schema (every key, all `input_coords` sources, `gaps`) is in the [manifest reference](manifest.md); this section covers the mechanics.
 
-### Two readers, one file extension space
+### One reader, one format
 
-`ambermeta/manifest.py` keeps the v1-era **tolerant raw reader** (`_read_raw_manifest`, format-detected by extension — YAML/JSON/TOML/CSV — with `${VAR}`/`$VAR` env expansion) and the **legacy flat normalizer** (`normalize_stage_keys`, `_normalize_manifest`, `_normalize_container`) that maps aliases like `stage`→`name`, `role`→`stage_role`, and flat `expected_gap_ps`/`gap_tolerance_ps`→a nested `gaps` dict.
+`ambermeta/manifest.py:_read_raw_manifest` turns a manifest file into its raw container: **YAML or JSON, chosen by extension**, with `${VAR}`/`$VAR` env expansion (which `plan --no-expand-env` turns off). Those are the only two manifest formats in either direction; a `.toml` or `.csv` path is refused before it is parsed:
 
-`ambermeta/simulation.py:load_simulation(path)` is the v2 entry point, and it is what every v2-aware command (`discover`'s write-back, `export`, `validate --manifest`, `plan -m`, and the GUI's open/save) actually calls:
+```
+<path>: AmberMeta reads and writes manifests as YAML or JSON only; TOML and CSV are not manifest formats.
+```
+
+The rest of `manifest.py` (`_normalize_manifest`, `validate_manifest`) is no longer a file-format concern at all: it normalizes and existence-checks the **in-memory** list of flat stage dicts that `protocol.auto_discover(directory, manifest=[...])` accepts — the shape `_flatten_simulation()` produces (§6), never something read off disk.
+
+`ambermeta/simulation.py:load_simulation(path)` is the one manifest entry point, and it is what every manifest-aware command (`export`, `validate --manifest`, `plan -m`, and the GUI's open) actually calls:
 
 ```python
-def load_simulation(path: str) -> Simulation:
-    """Load a Simulation from a manifest file, auto-migrating v1 manifests."""
-    raw = _read_raw_manifest(path)
-    if _is_v2(raw):
-        return payload_to_simulation(raw)
-    return migrate_v1_manifest(_normalize_container(raw))
+def load_simulation(path: str, expand_env: bool = True) -> Simulation:
+    """Load a Simulation from a v2 manifest file."""
+    raw = _read_raw_manifest(path, expand_env=expand_env)
+    if not isinstance(raw, dict) or "steps" not in raw:
+        ...   # rejected — see below
+    return payload_to_simulation(raw)
 ```
 
-`_is_v2(raw)` is a shape check — `raw.get("version") == 2`, or the presence of a top-level `"phases"` or `"simulation"` key — not a strict version gate, so a hand-edited v2-shaped file without an explicit `version:` still loads as v2. Anything else (a bare `stages:` list, or `{stages:[...]}` with `global_prmtop`/`hmr_prmtop`/`initial_coordinates`) is v1 and goes through migration.
-
-### v1 → v2 migration mechanics (`migrate_v1_manifest`)
-
-| v1 concept | v2 result |
-|---|---|
-| `global_prmtop` | a `normal` topology-pool entry |
-| `hmr_prmtop` | an `hmr` topology-pool entry |
-| a stage's own `prmtop` | its own pool entry (steps that specify a per-stage topology don't fall back to the global one) |
-| `initial_coordinates` | `Simulation.starting_structure` |
-| each `stages[]` entry | one `Step` |
-| contiguous stages sharing a role | coalesced into one `Phase` (a role change starts a new phase) |
-| first step's coordinates | `InputCoords(source="starting_structure")` (or `source="path"` if the stage carried its own `inpcrd` and there is no starting structure) |
-| every later step's coordinates | `InputCoords(source="step", ref=<previous step's id>)` — the continuity chain, made explicit |
-| a stage's role, if unset | re-derived with `classify_role()` from its name, same as fresh discovery |
-
-Real migration output — a v1 manifest (`global_prmtop`, `initial_coordinates`, a bare `stages:` list, no `version` key) run through `export --to v2`:
+The gate is the `steps` key, not the version number, so a hand-edited v2-shaped file without an explicit `version:` still loads. Anything else is rejected outright — there is no second reader and no migration:
 
 ```
-$ ambermeta export v1_sample.yaml --to v2
-{
-  "version": 2,
-  "simulation": {
-    "topologies": [
-      { "id": "top_0", "path": "CH3L1_HUMAN_6NAG.top", "kind": "normal" }
-    ],
-    "starting_structure": "CH3L1_HUMAN_6NAG.crd"
-  },
-  "phases": [
-    { "id": "ph_0", "name": "Production", "role": "production", "order": 0 }
-  ],
-  "steps": [
-    {
-      "id": "st_0", "name": "ntp_prod_0001", "phase": "ph_0", "order": 0,
-      "topology": "top_0", "input_coords": { "source": "starting_structure" },
-      "mdin": "ntp_prod_0001.mdin", "mdout": "ntp_prod_0001.mdout", "mdcrd": null, "notes": []
-    },
-    {
-      "id": "st_1", "name": "ntp_prod_0002", "phase": "ph_0", "order": 1,
-      "topology": "top_0", "input_coords": { "source": "step", "ref": "st_0" },
-      "mdin": "ntp_prod_0002.mdin", "mdout": "ntp_prod_0002.mdout", "mdcrd": null, "notes": []
-    }
-  ]
-}
+$ ambermeta plan -m old.yaml
+ERROR: old.yaml is not a v2 manifest (no 'steps' key). Rebuild it with `ambermeta discover <dir> --write <path>`.
 ```
 
-**Saving always writes v2.** Opening a v1 manifest never mutates the file on disk by itself — migration happens in memory on load; the file on disk only changes when something explicitly saves (`export`, the GUI's Save, `discover --write`).
+(`export` and `validate --manifest` print the same message behind `ERROR: Failed to load manifest: `. Exit code is `1` either way.) A file that *does* announce itself as v2 — `version: 2`, or a top-level `simulation`/`phases` key — but has no `steps` gets a different message telling its owner to restore the steps rather than rebuild, because rebuilding from the directory would discard the phases and topology pool the file still has.
+
+**Loading never writes.** The file on disk changes only when something explicitly saves (`export -o`, the GUI's Save, `discover --write`).
 
 ### Serialization limits
 
-- `write_simulation(sim, path, fmt)` (`fmt` ∈ `{"json", "yaml"}`) is the v2 writer — **JSON and YAML only**, both lossless. This is also what `ambermeta export --to v2` and the GUI's Save call.
-- The legacy flat form (`export --to legacy`, or `write_manifest()` directly) still writes **JSON/YAML/TOML/CSV** — useful for downstream tools that expect the old flat shape, but it's a documented lossy view of a v2 Simulation (topology pool and phase grouping don't survive the round trip).
-
-```
-$ ambermeta export sim.yaml --to legacy --format yaml
-global_prmtop: CH3L1_HUMAN_6NAG.top
-stages:
-- name: ntp_prod_0001
-  stage_role: production
-  prmtop: CH3L1_HUMAN_6NAG.top
-  mdin: ntp_prod_0001.mdin
-  mdout: ntp_prod_0001.mdout
-  inpcrd: CH3L1_HUMAN_6NAG.crd
-- name: ntp_prod_0002
-  stage_role: production
-  prmtop: CH3L1_HUMAN_6NAG.top
-  mdin: ntp_prod_0002.mdin
-  mdout: ntp_prod_0002.mdout
-  inpcrd: ntp_prod_0001.rst
-```
+- `write_simulation(sim, path, fmt)` (`fmt` ∈ `{"json", "yaml"}`) is the only manifest writer — **JSON and YAML only**, both lossless. It is what `ambermeta export`, `discover --write`, and the GUI's Save all call.
+- There is no flat/legacy writer beside it. `export` emits canonical v2 and nothing else, and a `Simulation` has no lossy serialization to fall out of.
+- The one CSV the tool still writes is `plan --stats-csv` — a per-stage *statistics* table from `protocol.write_stats_csv` (§7), not a manifest and not readable back in.
 
 ---
 
@@ -269,7 +221,7 @@ stages:
 
 **Responsibility:** report whether the reconstructed Simulation holds together, as *notes/findings* — not exceptions.
 
-The v2 validator does not reimplement continuity or per-stage checks; it **flattens a `Simulation` back into the flat stage-dict shape `ambermeta.protocol` already knows how to validate**, then calls the same discovery/validation pipeline the CLI's `--recursive` path and v1 manifests use:
+The v2 validator does not reimplement continuity or per-stage checks; it **flattens a `Simulation` back into the flat stage-dict shape `ambermeta.protocol` already knows how to validate**, then calls the same discovery/validation pipeline the CLI's `--recursive` path uses:
 
 ```
 Simulation (phases → steps)
@@ -296,9 +248,11 @@ Underneath, validation is still two-tiered exactly as before:
 
 | Knob | Effect |
 |---|---|
-| `settings.strict_validation` / `--skip-cross-stage-validation` | Whether cross-stage continuity runs at all |
-| `settings.allow_gaps` / `allow_unexpected_gaps` | Whether unconfigured positive gaps are `INFO` (allowed) or a real finding |
-| `--strict` (CLI) | Promotes findings/warnings to a hard validation failure (exit 1) instead of "OK, with N notes" |
+| `--skip-cross-stage-validation` (`plan`) → `settings["strict_validation"]` | Whether cross-stage continuity runs at all |
+| `--allow-gaps` (`validate --manifest`) → `settings["allow_gaps"]` → `allow_unexpected_gaps` | Whether unconfigured positive gaps are `INFO` (allowed) or a real finding |
+| `--strict` (`validate --manifest`) | Promotes findings to a hard validation failure (exit 1) instead of "OK, with N notes" |
+
+That `settings` dict is a **runtime** object, not part of the document: `plan` and `validate` build theirs from the CLI flags alone, the GUI from its Settings panel. A v2 manifest has no `settings` key — `payload_to_simulation` never looks for one — so nothing in the file can turn a check on or off, and `--skip-cross-stage-validation` overrides nothing; it simply switches the continuity checks off for that run.
 
 The upshot: **one continuity engine, one sequence-hole detector, one role classifier** — whether the caller is `plan --recursive` walking a raw directory, `validate --manifest` opening a hand-written v2 file, or the GUI clicking Validate.
 
@@ -306,13 +260,12 @@ The upshot: **one continuity engine, one sequence-hole detector, one role classi
 
 ## 7. Export
 
-**Responsibility:** emit machine-readable records for downstream use. `ambermeta export` (§5) is the v2-native path; the flat engine's exports remain for the retained `plan` path and methods reporting:
+**Responsibility:** emit machine-readable records for downstream use. `ambermeta export` (§5) is the manifest path; the flat engine's exports cover the `plan` reports and methods reporting:
 
 | Export | Producer | Contents |
 |---|---|---|
-| v2 manifest | `simulation.write_simulation()` / `ambermeta export --to v2` | Canonical Simulation → Phase → Step, JSON or YAML |
-| Legacy flat manifest | `manifest.write_manifest()` / `ambermeta export --to legacy` | The old flat `stages:` shape, JSON/YAML/TOML/CSV — a documented lossy view |
-| Protocol summary | `SimulationProtocol.to_dict()` | `totals` + every stage's full metadata, validation, and continuity (the classic `plan` report; still what a v1 manifest or `plan --recursive` prints) |
+| v2 manifest | `simulation.write_simulation()` / `ambermeta export` / `discover --write` | Canonical Simulation → Phase → Step, JSON or YAML |
+| Protocol summary | `SimulationProtocol.to_dict()` | `totals` + every stage's full metadata, validation, and continuity (the classic `plan` report, written by `--summary-path`) |
 | Methods summary | `SimulationProtocol.to_methods_dict()` | Reproducibility-critical metadata only — software/version, MD engine settings (ensemble, thermostat, barostat, cutoff, constraints), system composition, restraints — with energies and bulk arrays dropped |
 | Statistics CSV | `plan --stats-csv` | One row per stage: time range, duration, and temperature/pressure/density/energy as mean ± σ |
 
@@ -340,7 +293,7 @@ The server (`gui/server.py`) is **server-authoritative**:
 
 - A singleton `DocumentStore` (`api/document.py`) holds one in-memory document — the current `Simulation`, `base_directory`, `manifest_path`, and `settings`. The frontend is a view of this; it holds no authoritative state.
 - **Undo/redo lives on the server.** Every mutation deep-copies the prior state onto a bounded undo stack under a `threading.RLock`; a read takes a locked snapshot.
-- **Manifests are written by the same `write_simulation`** the CLI uses — so a GUI **Save** is byte-identical to `ambermeta export --to v2`'s output for the same document.
+- **Manifests are written by the same `write_simulation`** the CLI uses — so a GUI **Save** is byte-identical to `ambermeta export`'s output for the same document.
 
 HTTP surface (base `/api`; full request/response shapes in the [GUI guide](gui.md) and [API reference](api.md)):
 
@@ -378,9 +331,8 @@ These are the invariants the rest of the system (and its tests) depend on:
 
 1. **Three levels, not two.** A Simulation owns a topology pool and a starting structure; a Phase is a role-bearing grouping with no files of its own; a Step binds one topology and declares an explicit `input_coords` source.
 2. **`parse().details`** carries the metadata; the wrapper carries `filename`/`warnings`.
-3. **Tolerant reader, canonical writer, both ways.** `load_simulation()` accepts v1 or v2 and always returns a `Simulation`; `write_simulation()`/`export --to v2` always emits v2 JSON or YAML. Saving never round-trips a v1 file back out as v1.
-4. **v1→v2 migration is deterministic and lossless for the fields v1 had**: `global_prmtop`/`hmr_prmtop` → pool entries, `initial_coordinates` → starting structure, contiguous same-role stages → one phase, each stage → one step chained by explicit `input_coords`.
-5. **One role classifier (`roles.classify_role`)**, one continuity algorithm, one sequence-hole detector — shared verbatim by the CLI and the GUI; the v2 validator flattens into the same `SimulationProtocol` machinery rather than reimplementing it.
-6. **Inference is always announced** — any role, topology kind, or starting structure inferred from content or path shows up as an `INFO` note or a suggestion, never a silent guess.
-7. **Failures are data, not crashes** — `FileLoadError` + fault-tolerant `plan`/`discover`; `--strict` to opt into hard failure.
-8. **The GUI imports the core only through `core_bridge.py`** — no duplicated logic, byte-identical manifests, server-authoritative state.
+3. **One manifest format, read and written.** `load_simulation()` takes a v2 document — YAML or JSON, with or without an explicit `version:` — and anything else is an error, not a conversion; `write_simulation()`/`export` always emits v2 JSON or YAML.
+4. **One role classifier (`roles.classify_role`)**, one continuity algorithm, one sequence-hole detector — shared verbatim by the CLI and the GUI; the v2 validator flattens into the same `SimulationProtocol` machinery rather than reimplementing it.
+5. **Inference is always announced** — any role, topology kind, or starting structure inferred from content or path shows up as an `INFO` note or a suggestion, never a silent guess.
+6. **Failures are data, not crashes** — `FileLoadError` + fault-tolerant `plan`/`discover`; `--strict` to opt into hard failure.
+7. **The GUI imports the core only through `core_bridge.py`** — no duplicated logic, byte-identical manifests, server-authoritative state.
