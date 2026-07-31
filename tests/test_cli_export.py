@@ -38,17 +38,17 @@ steps:
 
 
 def _args(manifest, **over):
-    base = dict(manifest=manifest, to="v2", output=None, format=None)
+    base = dict(manifest=manifest, output=None, format=None)
     base.update(over)
     return SimpleNamespace(**base)
 
 
 def test_export_v2_to_v2_stdout_is_v2_payload(tmp_path, capsys):
-    """export's default --to v2 re-emits a v2 manifest (a format conversion, not an
-    "upgrade" — the v1 file format it used to auto-migrate no longer exists)."""
+    """export re-emits a v2 manifest (a format conversion, not an "upgrade" — the v1
+    file format it used to auto-migrate no longer exists)."""
     m = tmp_path / "sim.yaml"
     m.write_text(V2_MANIFEST, encoding="utf-8")
-    rc = cli._export_command(_args(str(m)))          # default --to v2, no --output -> json stdout
+    rc = cli._export_command(_args(str(m)))          # no --output -> json stdout
     assert rc == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["version"] == 2
@@ -65,19 +65,6 @@ def test_export_v2_to_v2_file_roundtrips(tmp_path):
     sim = load_simulation(str(dest))
     assert sim.version == 2
     assert {p.role for p in sim.phases} >= {"minimization", "production"}
-
-
-def test_export_to_legacy_flat(tmp_path, capsys):
-    # start from a v2 manifest, downgrade to a legacy flat stages: list
-    m = tmp_path / "sim.yaml"
-    m.write_text(V2_MANIFEST, encoding="utf-8")
-    rc = cli._export_command(_args(str(m), to="legacy"))    # v2 -> legacy stdout (json)
-    assert rc == 0
-    payload = json.loads(capsys.readouterr().out)
-    assert "stages" in payload
-    names = [s["name"] for s in payload["stages"]]
-    assert "minimize" in names and "prod_001" in names
-    assert payload["stages"][0]["stage_role"] == "minimization"
 
 
 def test_export_missing_manifest_returns_1(tmp_path):

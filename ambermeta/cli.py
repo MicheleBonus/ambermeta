@@ -317,46 +317,8 @@ def _discover_command(args: argparse.Namespace) -> int:
     return 0
 
 
-def _sim_to_legacy_payload(sim) -> Dict[str, Any]:
-    """Flatten a Simulation into a v1 flat-stages payload for downstream tools."""
-    from ambermeta.simulation import resolve_input_coords
-
-    topo_by_id = {t.id: t.path for t in sim.topologies}
-    normal = [t for t in sim.topologies if t.kind == "normal"]
-    hmr = [t for t in sim.topologies if t.kind == "hmr"]
-    payload: Dict[str, Any] = {}
-    if normal:
-        payload["global_prmtop"] = normal[0].path
-    if hmr:
-        payload["hmr_prmtop"] = hmr[0].path
-    stages: List[Dict[str, Any]] = []
-    for phase in sim.phases:
-        for step in phase.steps:
-            stage: Dict[str, Any] = {"name": step.name}
-            if phase.role:
-                stage["stage_role"] = phase.role
-            if step.topology:
-                stage["prmtop"] = topo_by_id.get(step.topology)
-            for k in ("mdin", "mdout", "mdcrd"):
-                if getattr(step, k):
-                    stage[k] = getattr(step, k)
-            # v1 has no notion of an output restart, so a chained step is flattened by
-            # resolving the link: its inpcrd is whatever the step it continues from wrote.
-            # Reading input_coords.path alone would export nothing for a chained step.
-            inpcrd = resolve_input_coords(sim, step)
-            if inpcrd:
-                stage["inpcrd"] = inpcrd
-            if step.expected_gap_ps is not None or step.gap_tolerance_ps is not None:
-                stage["gaps"] = {"expected": step.expected_gap_ps, "tolerance": step.gap_tolerance_ps}
-            if step.notes:
-                stage["notes"] = list(step.notes)
-            stages.append(stage)
-    payload["stages"] = stages
-    return payload
-
-
 def _export_command(args: argparse.Namespace) -> int:
-    """Convert a v2 manifest to canonical v2 (a different format) or a legacy flat manifest."""
+    """Load a v2 manifest and re-emit it as canonical v2, optionally converting format."""
     from ambermeta.simulation import load_simulation, write_simulation, simulation_to_payload
 
     manifest = args.manifest
@@ -369,18 +331,6 @@ def _export_command(args: argparse.Namespace) -> int:
         print(Colors.error(f"ERROR: Failed to load manifest: {e}"), file=sys.stderr)
         return 1
 
-    if args.to == "legacy":
-        payload = _sim_to_legacy_payload(sim)
-        if args.output:
-            fmt = _resolve_manifest_format(args)      # yaml/json/toml/csv
-            from ambermeta import manifest as manifest_io
-            manifest_io.write_manifest(payload, args.output, fmt)
-            _out(Colors.success(f"Wrote legacy manifest: {args.output} ({fmt})"))
-        else:
-            print(json.dumps(payload, indent=2))
-        return 0
-
-    # default: canonical v2
     if args.output:
         fmt = _resolve_sim_format(args.output, getattr(args, "format", None))
         write_simulation(sim, args.output, fmt)
@@ -874,7 +824,7 @@ _ambermeta_completion() {
             COMPREPLY=( $(compgen -W "--help -o --output --template --auto --format --validate --dry-run --force" -- "$cur") )
             ;;
         export)
-            COMPREPLY=( $(compgen -W "--help --to -o --output --format" -- "$cur") )
+            COMPREPLY=( $(compgen -W "--help -o --output --format" -- "$cur") )
             ;;
         gui)
             COMPREPLY=( $(compgen -W "--help --host --port --no-browser" -- "$cur") )
@@ -898,7 +848,7 @@ _ambermeta() {
   commands=(
     'plan:Build and summarize a SimulationProtocol'
     'discover:Discover files into a Simulation draft (v2)'
-    'export:Convert a manifest to v2 or legacy flat'
+    'export:Re-emit a v2 manifest, optionally converting its format'
     'validate:Validate simulation files'
     'info:Display metadata for a single file'
     'init:Generate example manifest templates'
@@ -926,7 +876,7 @@ _ambermeta() {
           _arguments '(--recursive --no-recursive)'{--recursive,--no-recursive}'[Recurse into subdirectories]' '--pattern[Regex file filter]:pattern:' '--write[Write v2 manifest to path]:file:_files' '--format[Format for --write]:format:(json yaml)' '*:path:_files'
           ;;
         export)
-          _arguments '--to[Target representation]:to:(v2 legacy)' '(-o --output)'{-o,--output}'[Output path]:file:_files' '--format[Output format]:format:(json yaml toml csv)' '1:manifest:_files'
+          _arguments '(-o --output)'{-o,--output}'[Output path]:file:_files' '--format[Output format]:format:(json yaml)' '1:manifest:_files'
           ;;
         validate)
           _arguments '--strict[Treat warnings as errors]' '--format[Output format]:format:(text json yaml)' '--manifest[Validate a whole simulation manifest]:file:_files' '--allow-gaps[Treat unexpected inter-step gaps as allowed]' '*:file:_files'
@@ -955,7 +905,7 @@ complete -c ambermeta -f
 
 complete -c ambermeta -n "__fish_use_subcommand" -a "plan" -d "Build and summarize a SimulationProtocol"
 complete -c ambermeta -n "__fish_use_subcommand" -a "discover" -d "Discover files into a Simulation draft (v2)"
-complete -c ambermeta -n "__fish_use_subcommand" -a "export" -d "Convert a manifest to v2 or legacy flat"
+complete -c ambermeta -n "__fish_use_subcommand" -a "export" -d "Re-emit a v2 manifest, optionally converting its format"
 complete -c ambermeta -n "__fish_use_subcommand" -a "validate" -d "Validate simulation files"
 complete -c ambermeta -n "__fish_use_subcommand" -a "info" -d "Display metadata for a single file"
 complete -c ambermeta -n "__fish_use_subcommand" -a "init" -d "Generate example manifest templates"
@@ -987,9 +937,8 @@ complete -c ambermeta -n "__fish_seen_subcommand_from discover" -l pattern -d "R
 complete -c ambermeta -n "__fish_seen_subcommand_from discover" -l write -d "Write v2 manifest to path"
 complete -c ambermeta -n "__fish_seen_subcommand_from discover" -l format -d "Format for --write" -xa "json yaml"
 
-complete -c ambermeta -n "__fish_seen_subcommand_from export" -l to -d "Target representation" -xa "v2 legacy"
 complete -c ambermeta -n "__fish_seen_subcommand_from export" -s o -l output -d "Output path"
-complete -c ambermeta -n "__fish_seen_subcommand_from export" -l format -d "Output format" -xa "json yaml toml csv"
+complete -c ambermeta -n "__fish_seen_subcommand_from export" -l format -d "Output format" -xa "json yaml"
 
 complete -c ambermeta -n "__fish_seen_subcommand_from validate" -l strict -d "Treat warnings as errors"
 complete -c ambermeta -n "__fish_seen_subcommand_from validate" -l format -d "Output format" -xa "text json yaml"
@@ -1737,7 +1686,7 @@ Commands:
   validate  Quick validation of simulation files
   info      Display detailed metadata for a single file
   init      Generate example manifest templates
-  export    Convert a manifest to canonical v2 or a legacy flat manifest
+  export    Re-emit a v2 manifest, optionally converting its format (json/yaml)
 
 Examples:
   ambermeta plan -m manifest.yaml           Build protocol from manifest
@@ -1750,7 +1699,7 @@ Examples:
   ambermeta validate --manifest sim.yaml      Validate a whole simulation (continuity/gaps)
   ambermeta info --format json system.prmtop  Show metadata as JSON
   ambermeta init --template standard .      Generate manifest template
-  ambermeta export old.yaml -o sim.yaml       Upgrade a v1 manifest to v2
+  ambermeta export sim.yaml -o sim.json       Convert a v2 manifest to JSON
 
 File Types:
   prmtop:  .prmtop, .top, .parm7    (topology/parameters)
@@ -1917,7 +1866,7 @@ For documentation, visit: https://github.com/MicheleBonus/ambermeta
     )
     validate_parser.add_argument(
         "--manifest",
-        help="Validate a whole simulation manifest (v1 auto-migrated) — continuity, sequence holes, suggestions",
+        help="Validate a whole simulation manifest (v2) — continuity, sequence holes, suggestions",
     )
     validate_parser.add_argument(
         "--allow-gaps",
@@ -1944,18 +1893,16 @@ For documentation, visit: https://github.com/MicheleBonus/ambermeta
 
     export_parser = subparsers.add_parser(
         "export",
-        help="Convert a manifest to canonical v2 or a legacy flat manifest",
+        help="Re-emit a v2 manifest, optionally converting its format",
         description=(
-            "Read any manifest (a v1 flat manifest is auto-migrated) and re-emit it. "
-            "--to v2 writes the canonical Simulation manifest (json/yaml); --to legacy writes "
-            "a flat stages: manifest (json/yaml/toml/csv) for downstream tools. Without --output, "
+            "Read a v2 manifest and re-emit it as canonical v2. Useful for converting "
+            "between json and yaml, or for pretty-printing to stdout. Without --output, "
             "prints JSON to stdout."
         ),
     )
-    export_parser.add_argument("manifest", help="Path to the manifest to convert")
-    export_parser.add_argument("--to", choices=["v2", "legacy"], default="v2", help="Target representation (default: v2)")
+    export_parser.add_argument("manifest", help="Path to the v2 manifest to convert")
     export_parser.add_argument("-o", "--output", help="Write to this path (default: print JSON to stdout)")
-    export_parser.add_argument("--format", choices=["json", "yaml", "toml", "csv"], help="Output format (default: inferred from --output extension)")
+    export_parser.add_argument("--format", choices=["json", "yaml"], help="Output format (default: inferred from --output extension)")
 
     # UX-009: init subcommand
     init_parser = subparsers.add_parser(

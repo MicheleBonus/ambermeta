@@ -9,7 +9,7 @@ Eight commands sit under one entry point:
 | [`plan`](#plan) | Build and summarize a manifest (v2-aware) or a discovered/interactive protocol; export reproducibility artifacts |
 | [`discover`](#discover) | Scan a directory into a **Simulation draft** (topology pool + phases + steps) |
 | [`validate`](#validate) | Validate individual files, or a whole Simulation manifest with `--manifest` |
-| [`export`](#export) | Convert a manifest (v1 auto-migrated) to canonical **v2** or a legacy flat manifest |
+| [`export`](#export) | Re-emit a **v2** manifest, optionally converting its format (JSON ⇄ YAML) |
 | [`init`](#init) | Generate a manifest — v1 templates, `--auto` discovery, or `--v2` |
 | [`info`](#info) | Print parsed metadata for a single file |
 | [`gui`](#gui) | Launch the browser GUI |
@@ -78,8 +78,8 @@ positional arguments:
     validate            Validate simulation files without building full
                         protocol
     info                Display detailed metadata for a single file
-    export              Convert a manifest to canonical v2 or a legacy flat
-                        manifest
+    export              Re-emit a v2 manifest, optionally converting its
+                        format
     init                Generate an example manifest file
     gui                 Launch web-based GUI for building protocol manifests
     completion          Print shell completion script for bash, zsh, or fish
@@ -97,7 +97,7 @@ Commands:
   validate  Quick validation of simulation files
   info      Display detailed metadata for a single file
   init      Generate example manifest templates
-  export    Convert a manifest to canonical v2 or a legacy flat manifest
+  export    Re-emit a v2 manifest, optionally converting its format (json/yaml)
 
 Examples:
   ambermeta plan -m manifest.yaml           Build protocol from manifest
@@ -110,7 +110,7 @@ Examples:
   ambermeta validate --manifest sim.yaml      Validate a whole simulation (continuity/gaps)
   ambermeta info --format json system.prmtop  Show metadata as JSON
   ambermeta init --template standard .      Generate manifest template
-  ambermeta export old.yaml -o sim.yaml       Upgrade a v1 manifest to v2
+  ambermeta export sim.yaml -o sim.json       Convert a v2 manifest to JSON
 
 File Types:
   prmtop:  .prmtop, .top, .parm7    (topology/parameters)
@@ -466,8 +466,8 @@ options:
   --strict              Treat warnings as errors
   --format {text,json,yaml}
                         Output format (default: text)
-  --manifest MANIFEST   Validate a whole simulation manifest (v1 auto-
-                        migrated) — continuity, sequence holes, suggestions
+  --manifest MANIFEST   Validate a whole simulation manifest (v2) —
+                        continuity, sequence holes, suggestions
   --allow-gaps          With --manifest: treat unexpected inter-step gaps as
                         allowed
 ```
@@ -560,7 +560,7 @@ Exit codes: `0` ok; `1` if the manifest can't be found/loaded, or the report isn
 
 ## `export`
 
-**New.** Read any manifest — a v1 flat manifest is auto-migrated — and re-emit it as canonical **v2** or a **legacy flat** manifest. This is the command to upgrade an old manifest, or to hand a v2-authored manifest to a downstream tool that only understands the flat `stages:` shape.
+**New.** Read a **v2** manifest and re-emit it as canonical v2, optionally converting between JSON and YAML. The v1 flat file format cannot be read at all — `export` (like `plan -m` and `validate --manifest`) requires a v2 document and fails cleanly if it isn't one. To build a fresh v2 manifest from a directory, use [`discover --write`](#discover) or `init --v2`.
 
 ```bash
 ambermeta export <manifest> [options]
@@ -568,95 +568,71 @@ ambermeta export <manifest> [options]
 
 <!-- BEGIN_CLI_HELP:export -->
 ```text
-usage: ambermeta export [-h] [--to {v2,legacy}] [-o OUTPUT]
-                        [--format {json,yaml,toml,csv}]
-                        manifest
+usage: ambermeta export [-h] [-o OUTPUT] [--format {json,yaml}] manifest
 
-Read any manifest (a v1 flat manifest is auto-migrated) and re-emit it. --to
-v2 writes the canonical Simulation manifest (json/yaml); --to legacy writes a
-flat stages: manifest (json/yaml/toml/csv) for downstream tools. Without
---output, prints JSON to stdout.
+Read a v2 manifest and re-emit it as canonical v2. Useful for converting
+between json and yaml, or for pretty-printing to stdout. Without --output,
+prints JSON to stdout.
 
 positional arguments:
-  manifest              Path to the manifest to convert
+  manifest              Path to the v2 manifest to convert
 
 options:
   -h, --help            show this help message and exit
-  --to {v2,legacy}      Target representation (default: v2)
   -o OUTPUT, --output OUTPUT
                         Write to this path (default: print JSON to stdout)
-  --format {json,yaml,toml,csv}
-                        Output format (default: inferred from --output
+  --format {json,yaml}  Output format (default: inferred from --output
                         extension)
 ```
 <!-- END_CLI_HELP:export -->
 
-- `--to v2` (default): writes through `write_simulation` — **JSON or YAML only**.
-- `--to legacy`: flattens every phase's steps back into a `stages:` list (`global_prmtop`/`hmr_prmtop` from the topology pool's `normal`/`hmr` entries, `input_coords` resolved to an `inpcrd` path) — JSON/YAML/TOML/CSV.
-- Without `-o/--output`, the result prints as JSON to stdout regardless of `--to`.
+- Writes through `write_simulation` — **JSON or YAML only**.
+- Without `-o/--output`, the result prints as JSON to stdout.
 
-### Upgrade a v1 manifest to v2
-
-```text
-$ ambermeta export v1_manifest.yaml -o sim_v2.yaml --format yaml
-Wrote v2 manifest: sim_v2.yaml (yaml)
-```
-
-```yaml
-version: 2
-simulation:
-  topologies:
-  - id: top_0
-    path: CH3L1_HUMAN_6NAG.top
-    kind: normal
-  starting_structure: null
-phases:
-- id: ph_0
-  name: Stage
-  role: ''
-  order: 0
-- id: ph_1
-  name: Production
-  role: production
-  order: 1
-steps:
-- id: st_0
-  name: CH3L1_HUMAN_6NAG
-  phase: ph_0
-  ...
-```
-
-Unlike `discover`'s randomly generated ids, migration from a v1 manifest assigns **deterministic** ids (`top_0`, `ph_0`, `st_0`, ...) in source order — rerunning `export` on the same input reproduces the same ids.
-
-### Downgrade a v2 manifest to legacy flat
+### Convert a manifest to a different format
 
 ```text
-$ ambermeta export sim.yaml --to legacy
+$ ambermeta export sim.yaml -o sim.json
+Wrote v2 manifest: sim.json (json)
+```
+
+```json
 {
-  "global_prmtop": "CH3L1_HUMAN_6NAG.top",
-  "stages": [
+  "version": 2,
+  "simulation": {
+    "topologies": [
+      { "id": "top_CH3L1_HUMAN_6NAG", "path": "CH3L1_HUMAN_6NAG.top", "kind": "normal" }
+    ],
+    "starting_structure": "CH3L1_HUMAN_6NAG.crd"
+  },
+  "phases": [
+    { "id": "ph_prod", "name": "Production", "role": "production", "order": 0 }
+  ],
+  "steps": [
     {
-      "name": "ntp_prod_0001",
-      "stage_role": "production",
-      "prmtop": "CH3L1_HUMAN_6NAG.top",
-      "mdin": "ntp_prod_0001.mdin",
-      "mdout": "ntp_prod_0001.mdout",
-      "inpcrd": "CH3L1_HUMAN_6NAG.crd"
+      "id": "st_prod_0001", "name": "ntp_prod_0001", "phase": "ph_prod", "order": 0,
+      "topology": "top_CH3L1_HUMAN_6NAG",
+      "input_coords": { "source": "starting_structure" },
+      "mdin": "ntp_prod_0001.mdin", "mdout": "ntp_prod_0001.mdout", "mdcrd": null, "notes": []
     },
     {
-      "name": "ntp_prod_0002",
-      "stage_role": "production",
-      "prmtop": "CH3L1_HUMAN_6NAG.top",
-      "mdin": "ntp_prod_0002.mdin",
-      "mdout": "ntp_prod_0002.mdout",
-      "inpcrd": "ntp_prod_0001.rst"
-    },
-    ...
+      "id": "st_prod_0002", "name": "ntp_prod_0002", "phase": "ph_prod", "order": 1,
+      "topology": "top_CH3L1_HUMAN_6NAG",
+      "input_coords": { "source": "step", "ref": "st_prod_0001" },
+      "mdin": "ntp_prod_0002.mdin", "mdout": "ntp_prod_0002.mdout", "mdcrd": null, "notes": []
+    }
   ]
 }
 ```
 
-Exit `0` on success; `1` if the manifest is missing or fails to load (malformed content, unreadable file).
+`export` re-emits the same ids the input manifest already had — it does not assign new ones (that only happens once, in `discover`, when a manifest is first drafted from a directory).
+
+Exit `0` on success; `1` if the manifest is missing, fails to load (malformed content, unreadable file), or isn't a v2 manifest:
+
+```text
+$ ambermeta export old_v1_manifest.yaml
+ERROR: Failed to load manifest: old_v1_manifest.yaml is not a v2 manifest (no 'steps' key). Rebuild it with `ambermeta discover <dir> --write <path>`.
+```
 
 ---
 
@@ -786,7 +762,7 @@ Auto-grouped stages:
 Dry run complete; no files were written.
 ```
 
-The v1 flat manifest this writes (without `--dry-run`) is exactly what [`export`](#export) upgrades to v2, and what `plan -m`/`validate --manifest` auto-migrate on open — see those sections for the round trip.
+The v1 flat manifest this writes (without `--dry-run`) uses the flat `stages:` shape that [`export`](#export), `plan -m`, and `validate --manifest` can no longer read — those commands now require a v2 manifest (see [`discover --write`](#discover) or `init --v2` for producing one).
 
 > ⚠️ `--auto` is non-interactive and needs `--force` to overwrite an existing output file. `--format` only applies in `--auto` mode (it warns otherwise).
 
