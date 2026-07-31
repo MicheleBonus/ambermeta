@@ -572,3 +572,30 @@ def test_to_plain_converts_numpy_scalars_and_tuples_for_yaml():
     assert plain["name"] == "prod" and plain["untouched"] is None
     # The point of the exercise: it now round-trips through safe_dump.
     assert yaml.safe_load(yaml.safe_dump(plain))["nested"][0]["x"] == 1.5
+
+
+def test_write_protocol_outputs_creates_parent_directories(tmp_path):
+    """The CLI's old writer raised FileNotFoundError on a missing parent."""
+    from ambermeta.protocol import write_protocol_outputs
+    sim_protocol = protocol.SimulationProtocol()
+    target = tmp_path / "reports" / "deep" / "summary.json"
+
+    result = write_protocol_outputs(sim_protocol, {"summary": str(target)})
+
+    assert target.is_file()
+    assert result["written"] == [{"artifact": "summary", "path": str(target)}]
+    assert result["failed"] == []
+
+
+def test_write_protocol_outputs_rejects_an_unknown_artifact(tmp_path):
+    from ambermeta.protocol import write_protocol_outputs
+    with pytest.raises(ValueError, match="unknown plan artifact"):
+        write_protocol_outputs(protocol.SimulationProtocol(), {"nope": str(tmp_path / "x")})
+
+
+def test_write_protocol_outputs_rejects_an_unsupported_summary_format(tmp_path):
+    from ambermeta.protocol import write_protocol_outputs
+    with pytest.raises(ValueError, match="json or yaml"):
+        write_protocol_outputs(protocol.SimulationProtocol(),
+                               {"summary": str(tmp_path / "s.toml")},
+                               summary_format="toml")
