@@ -133,7 +133,7 @@ Validation: OK
 ```text
 $ ambermeta export sim.yaml -o sim.json
 
-Wrote v2 manifest: tests/data/amber/md_test_files/sim.json (json)
+Wrote v2 manifest: sim.json (json)
 ```
 
 The full, manifest-driven workflow — editing a manifest by hand, re-validating, and exporting reproducibility artifacts — is in the [CLI reference](docs/cli.md) and the [tutorials](docs/tutorials.md).

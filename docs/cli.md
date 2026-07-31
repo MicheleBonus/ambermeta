@@ -96,7 +96,7 @@ Commands:
   discover  Discover files into a Simulation draft (v2) and optionally write a manifest
   validate  Quick validation of simulation files
   info      Display detailed metadata for a single file
-  init      Generate example manifest templates
+  init      Generate a starting v2 manifest file
   export    Re-emit a v2 manifest, optionally converting its format (json/yaml)
 
 Examples:

@@ -850,7 +850,7 @@ _ambermeta() {
     'export:Re-emit a v2 manifest, optionally converting its format'
     'validate:Validate simulation files'
     'info:Display metadata for a single file'
-    'init:Generate example manifest templates'
+    'init:Generate a starting v2 manifest file'
     'gui:Launch web-based GUI'
     'completion:Print shell completion script'
   )
@@ -907,7 +907,7 @@ complete -c ambermeta -n "__fish_use_subcommand" -a "discover" -d "Discover file
 complete -c ambermeta -n "__fish_use_subcommand" -a "export" -d "Re-emit a v2 manifest, optionally converting its format"
 complete -c ambermeta -n "__fish_use_subcommand" -a "validate" -d "Validate simulation files"
 complete -c ambermeta -n "__fish_use_subcommand" -a "info" -d "Display metadata for a single file"
-complete -c ambermeta -n "__fish_use_subcommand" -a "init" -d "Generate example manifest templates"
+complete -c ambermeta -n "__fish_use_subcommand" -a "init" -d "Generate a starting v2 manifest file"
 complete -c ambermeta -n "__fish_use_subcommand" -a "gui" -d "Launch web-based GUI"
 complete -c ambermeta -n "__fish_use_subcommand" -a "completion" -d "Print shell completion script"
 
@@ -972,20 +972,21 @@ def _init_command(args: argparse.Namespace) -> int:
     if os.path.exists(output_path) and not args.force:
         refuse = Colors.error(f"ERROR: {args.output} already exists. "
                               "Use --force to overwrite.")
-        # With no terminal there is nobody to answer the prompt. Scripted and piped
-        # runs (`ambermeta init . -o m.yaml < /dev/null`, CI) used to reach input()
-        # and die on the EOF; say what to do instead, at the exit code the old
-        # non-interactive path used.
-        stdin = getattr(sys, "stdin", None)
-        if stdin is None or not stdin.isatty():
+        # Deliberately NOT gated on isatty(). `echo y | ambermeta init ...` is a
+        # script answering the prompt, and input() reads a pipe perfectly well —
+        # refusing every non-terminal stdin would break that working shape to
+        # avoid a crash that only empty stdin causes. So: attempt the prompt, and
+        # treat "cannot be read at all" as the refusal. That covers
+        # `< /dev/null`, a closed pipe, and a harness that swaps stdin for an
+        # object which raises on read, all at the exit code and message the old
+        # non-interactive `--auto` path used.
+        if getattr(sys, "stdin", None) is None:
             print(refuse, file=sys.stderr)
             return 1
         _out(Colors.warning(f"WARNING: {args.output} already exists"))
         try:
             response = input("Overwrite? [y/N]: ").strip().lower()
-        except (EOFError, OSError):
-            # isatty() can still lie: a pty whose input end has been closed, a
-            # harness that swaps stdin for an object that refuses to be read.
+        except (EOFError, OSError, RuntimeError):
             print(refuse, file=sys.stderr)
             return 1
         if response != "y":
@@ -1244,7 +1245,7 @@ Commands:
   discover  Discover files into a Simulation draft (v2) and optionally write a manifest
   validate  Quick validation of simulation files
   info      Display detailed metadata for a single file
-  init      Generate example manifest templates
+  init      Generate a starting v2 manifest file
   export    Re-emit a v2 manifest, optionally converting its format (json/yaml)
 
 Examples:
