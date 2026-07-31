@@ -12,6 +12,7 @@
 
 - **The flat engine in `ambermeta/protocol.py` is the analysis layer, not back-compat.** `SimulationProtocol`, `SimulationStage`, `auto_discover`, `_check_continuity`, `to_dict`, `to_methods_dict`, `write_stats_csv` all stay. Only the *file-reading* v1 entry points go.
 - **CSV and TOML survive as export-only views.** `write_manifest`, `CSV_COLUMNS`, `_toml_escape` stay. Only the *parsers* go.
+  > **SUPERSEDED during execution (user ruling).** CSV/TOML export was dropped entirely: `write_manifest`, `CSV_COLUMNS` and `_toml_escape` are all gone, and `_read_raw_manifest` refuses a `.toml`/`.csv` path outright. JSON and YAML are the only manifest formats, in both directions. Do not plan PR 2 around a TOML/CSV export view — there is none.
 - **The in-memory v1-shaped dict stays.** `core_bridge.document_to_payload` builds it as an argument to `auto_discover`; it is never serialised.
 - **`docs/cli.md` must be regenerated with Python 3.11 exactly** (`scripts/export_cli_help.py:25` hard-refuses other versions) whenever `build_parser` changes, or the `cli-docs-sync` CI job fails.
 - **Any change under `ambermeta/gui/frontend/src/**` requires `npm ci && npm run build` and a commit of `ambermeta/gui/static/`**, or `gui-static-check` fails. No task in this PR touches the frontend.
@@ -824,6 +825,8 @@ Add `from ambermeta.errors import AmberMetaError` to the imports.
 In `ambermeta/simulation.py`, delete in this order (bottom-up, so line numbers stay valid):
 `migrate_v1_manifest` (194-267), `_v1_globals` (190-191), `_is_v2` (161-162), `_adopt_legacy_restart_paths` (137-158) **and its call at line 133**. Then trim the now-dead imports: line 8 becomes `from ambermeta.manifest import _read_raw_manifest`; delete line 9 (`classify_role`); drop `Any` from the typing import at line 6.
 
+> **PARTLY SUPERSEDED during execution (controller ruling).** `_adopt_legacy_restart_paths` and its call **were kept** and are still in the file. Despite the name it is v2 schema-evolution compat, not v1 code: it normalises v2 documents written before `Step.rst` existed, which stored a chained step's restart on the consuming step as `input_coords.path`. It has a passing test (`tests/test_gui_document.py::test_loading_a_legacy_manifest_moves_the_restart_onto_the_step_that_wrote_it`). Do not schedule it for removal in PR 2.
+
 In `ambermeta/manifest.py`, delete `_parse_csv_manifest` (77-113), `_parse_toml_manifest` (116-137), `normalize_stage_keys` (210-254), `_normalize_container` (257-271), and `load_manifest`. In `_read_raw_manifest`, delete the `.toml` branch (361-362) and the `.csv` branch (363-364) and add an explicit guard so an unsupported suffix is not swallowed by the JSON fallback:
 
 ```python
@@ -833,6 +836,8 @@ In `ambermeta/manifest.py`, delete `_parse_csv_manifest` (77-113), `_parse_toml_
             "Manifests are YAML or JSON."
         )
 ```
+
+> **Wording superseded** by the same user ruling: with no export side left, "export-only formats" advertised a feature that does not exist. The shipped message is `f"{path}: AmberMeta reads and writes manifests as YAML or JSON only; TOML and CSV are not manifest formats."` (`ambermeta/manifest.py`).
 
 Delete the now-dead `from io import StringIO` (line 7) and the `tomllib`/`tomli` try-block (18-24). Remove `"normalize_stage_keys"`, `"_normalize_container"` and `"load_manifest"` from `__all__`.
 
