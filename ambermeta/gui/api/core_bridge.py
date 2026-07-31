@@ -150,13 +150,15 @@ def build_protocol(stages: List[Dict[str, Any]], settings: Dict[str, Any],
         hmr_prmtop=payload.get("hmr_prmtop"),
         skip_cross_stage_validation=not settings.get("strict_validation", True),
         allow_unexpected_gaps=settings.get("allow_gaps", False),
-        strict=False,
+        auto_detect_restarts=bool(settings.get("auto_detect_restarts", False)),
+        strict=bool(settings.get("strict", False)),
     )
 
 
 def build_validation_report(stages: List[Dict[str, Any]], settings: Dict[str, Any],
-                            base_directory: str) -> Dict[str, Any]:
-    protocol = build_protocol(stages, settings, base_directory)
+                            base_directory: str, protocol=None) -> Dict[str, Any]:
+    if protocol is None:
+        protocol = build_protocol(stages, settings, base_directory)
 
     # Per-document missing-file pass (resolved against base_directory).
     missing_by_name: Dict[str, List[Dict[str, str]]] = {}
@@ -356,9 +358,9 @@ def _continuity_gap_suggestions(flat, stage_issues, start_index=0):
     return out
 
 
-def validate_simulation(sim, settings, base_directory):
+def validate_simulation(sim, settings, base_directory, protocol=None):
     flat = _flatten_simulation(sim)
-    report = build_validation_report(flat, dict(settings), base_directory)
+    report = build_validation_report(flat, dict(settings), base_directory, protocol=protocol)
     suggestions = build_suggestions(sim, base_directory)
     suggestions.extend(_continuity_gap_suggestions(flat, report.get("stage_issues", []), start_index=len(suggestions)))
     report["suggestions"] = suggestions

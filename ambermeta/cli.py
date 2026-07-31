@@ -233,7 +233,7 @@ def _input_source_label(sim, step) -> str:
     return ic.path or "?"
 
 
-def _print_simulation(sim, report=None) -> None:
+def _print_simulation(sim, report=None, *, verbose: bool = False) -> None:
     """Print the three-level Simulation structure (pool, starting structure, phases→steps)."""
     _out("\nSimulation summary")
     _out("==================")
@@ -253,6 +253,12 @@ def _print_simulation(sim, report=None) -> None:
             line = f"  - {step.name}  topology={topo}  input={_input_source_label(sim, step)}"
             _out(line + (f"  ({files})" if files else ""))
     if report is not None:
+        if verbose:
+            for issue in report.get("stage_issues", []):
+                lines = ((issue.get("errors") or []) + (issue.get("warnings") or [])
+                         + (issue.get("info") or []))
+                for line in lines:
+                    _out(f"    {issue['name']}: {line}")
         _sim_findings(report)
 
 
@@ -1523,19 +1529,59 @@ stages:
 
 
 def _plan_v2(args: argparse.Namespace, directory: str) -> int:
-    """Summarize a v2 (Simulation) manifest: structure + continuity/sequence findings."""
+    """Summarize a v2 manifest and write any requested plan artifacts."""
     from ambermeta.simulation import load_simulation
-    from ambermeta.gui.api.core_bridge import validate_simulation
+    from ambermeta.gui.api.core_bridge import (
+        _flatten_simulation, build_protocol, validate_simulation,
+    )
+    from ambermeta.protocol import write_protocol_outputs
 
-    sim = load_simulation(args.manifest)
+    expand_env = not getattr(args, "no_expand_env", False)
+    sim = load_simulation(args.manifest, expand_env=expand_env)
     settings = {
         "strict_validation": not bool(getattr(args, "skip_cross_stage_validation", None)),
         "allow_gaps": False,
         "use_relative_paths": True,
+        "global_prmtop": getattr(args, "prmtop", None),
+        "auto_detect_restarts": bool(getattr(args, "auto_detect_restarts", False)),
+        "strict": bool(getattr(args, "strict", False)),
     }
-    report = validate_simulation(sim, settings, directory)
-    _print_simulation(sim, report)
-    return 0
+    protocol = build_protocol(_flatten_simulation(sim), settings, directory)
+
+    # An empty manifest was an error on the old flat path; keep that contract.
+    if not protocol.stages:
+        print("ERROR: manifest produced 0 stages.", file=sys.stderr)
+        return 1
+
+    report = validate_simulation(sim, settings, directory, protocol=protocol)
+    _print_simulation(sim, report, verbose=bool(getattr(args, "verbose", False)))
+
+    targets = {}
+    for artifact, raw in (("summary", args.summary_path),
+                          ("methods_summary", args.methods_summary_path),
+                          ("stats_csv", getattr(args, "stats_csv", None))):
+        if raw:
+            targets[artifact] = os.path.abspath(raw)
+    if not targets:
+        return 0
+
+    paths = list(targets.values())
+    dupes = sorted({p for p in paths if paths.count(p) > 1})
+    if dupes:
+        print(Colors.error("ERROR: each output needs its own file; more than one is "
+                           "aimed at " + ", ".join(dupes)), file=sys.stderr)
+        return 2
+
+    fmt = _resolve_sim_format(args.summary_path or "", args.summary_format)
+    result = write_protocol_outputs(protocol, targets, summary_format=fmt)
+    for item in result["written"]:
+        _out(f"Wrote {item['artifact']}: {item['path']}")
+    for warning in result["warnings"]:
+        print(Colors.warning(f"WARNING: {warning}"), file=sys.stderr)
+    for item in result["failed"]:
+        print(Colors.error(f"ERROR: could not write {item['artifact']} to "
+                           f"{item['path']}: {item['error']}"), file=sys.stderr)
+    return 1 if result["failed"] else 0
 
 
 def _plan_command(args: argparse.Namespace) -> int:

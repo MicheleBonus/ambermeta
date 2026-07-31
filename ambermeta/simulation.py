@@ -179,9 +179,9 @@ def write_simulation(sim: Simulation, path: str, fmt: str) -> None:
     raise ValueError(f"v2 write supports json/yaml only, got: {fmt}")
 
 
-def load_simulation(path: str) -> Simulation:
+def load_simulation(path: str, expand_env: bool = True) -> Simulation:
     """Load a Simulation from a manifest file, auto-migrating v1 manifests."""
-    raw = _read_raw_manifest(path)
+    raw = _read_raw_manifest(path, expand_env=expand_env)
     if _is_v2(raw):
         return payload_to_simulation(raw)
     return migrate_v1_manifest(_normalize_container(raw))
