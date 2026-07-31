@@ -1528,33 +1528,18 @@ stages:
 """
 
 
-def _plan_v2(args: argparse.Namespace, directory: str) -> int:
-    """Summarize a v2 manifest and write any requested plan artifacts."""
-    from ambermeta.simulation import load_simulation
-    from ambermeta.gui.api.core_bridge import (
-        _flatten_simulation, build_protocol, validate_simulation,
-    )
+def _write_plan_artifacts(args: argparse.Namespace, protocol: SimulationProtocol) -> int:
+    """Build the requested plan artifacts from an already-built protocol and report
+    the outcome.
+
+    Shared by both `plan` paths (v2 manifest and the flat manifest/recursive/interactive
+    modes) so the two writers cannot drift apart again: one set of targets, one
+    duplicate-target guard, one call to :func:`write_protocol_outputs`, one report.
+
+    Returns 0 on success (or nothing requested), 2 if two artifacts target the same
+    file, 1 if any artifact failed to write.
+    """
     from ambermeta.protocol import write_protocol_outputs
-
-    expand_env = not getattr(args, "no_expand_env", False)
-    sim = load_simulation(args.manifest, expand_env=expand_env)
-    settings = {
-        "strict_validation": not bool(getattr(args, "skip_cross_stage_validation", None)),
-        "allow_gaps": False,
-        "use_relative_paths": True,
-        "global_prmtop": getattr(args, "prmtop", None),
-        "auto_detect_restarts": bool(getattr(args, "auto_detect_restarts", False)),
-        "strict": bool(getattr(args, "strict", False)),
-    }
-    protocol = build_protocol(_flatten_simulation(sim), settings, directory)
-
-    # An empty manifest was an error on the old flat path; keep that contract.
-    if not protocol.stages:
-        print("ERROR: manifest produced 0 stages.", file=sys.stderr)
-        return 1
-
-    report = validate_simulation(sim, settings, directory, protocol=protocol)
-    _print_simulation(sim, report, verbose=bool(getattr(args, "verbose", False)))
 
     targets = {}
     for artifact, raw in (("summary", args.summary_path),
@@ -1588,6 +1573,36 @@ def _plan_v2(args: argparse.Namespace, directory: str) -> int:
         print(Colors.error(f"ERROR: could not write {item['artifact']} to "
                            f"{item['path']}: {item['error']}"), file=sys.stderr)
     return 1 if result["failed"] else 0
+
+
+def _plan_v2(args: argparse.Namespace, directory: str) -> int:
+    """Summarize a v2 manifest and write any requested plan artifacts."""
+    from ambermeta.simulation import load_simulation
+    from ambermeta.gui.api.core_bridge import (
+        _flatten_simulation, build_protocol, validate_simulation,
+    )
+
+    expand_env = not getattr(args, "no_expand_env", False)
+    sim = load_simulation(args.manifest, expand_env=expand_env)
+    settings = {
+        "strict_validation": not bool(getattr(args, "skip_cross_stage_validation", None)),
+        "allow_gaps": False,
+        "use_relative_paths": True,
+        "global_prmtop": getattr(args, "prmtop", None),
+        "auto_detect_restarts": bool(getattr(args, "auto_detect_restarts", False)),
+        "strict": bool(getattr(args, "strict", False)),
+    }
+    protocol = build_protocol(_flatten_simulation(sim), settings, directory)
+
+    # An empty manifest was an error on the old flat path; keep that contract.
+    if not protocol.stages:
+        print("ERROR: manifest produced 0 stages.", file=sys.stderr)
+        return 1
+
+    report = validate_simulation(sim, settings, directory, protocol=protocol)
+    _print_simulation(sim, report, verbose=bool(getattr(args, "verbose", False)))
+
+    return _write_plan_artifacts(args, protocol)
 
 
 def _plan_command(args: argparse.Namespace) -> int:
@@ -1718,41 +1733,7 @@ def _plan_command(args: argparse.Namespace) -> int:
 
     _print_protocol(protocol, verbose=args.verbose)
 
-    if args.summary_path:
-        from ambermeta.protocol import to_plain
-
-        # Built-in types only: yaml.safe_dump rejects the numpy scalars the parsers
-        # produce, and used to die partway through leaving a truncated summary on disk.
-        payload = to_plain(protocol.to_dict())
-        summary_format = args.summary_format
-        if summary_format is None:
-            _, ext = os.path.splitext(args.summary_path)
-            ext = ext.lower().lstrip(".")
-            if ext in {"yaml", "yml"}:
-                summary_format = "yaml"
-            else:
-                summary_format = "json"
-        if summary_format == "json":
-            with open(args.summary_path, "w", encoding="utf-8") as fh:
-                json.dump(payload, fh, indent=2)
-        elif summary_format == "yaml":
-            if yaml is None:
-                raise RuntimeError("PyYAML is required to write YAML summaries.")
-            with open(args.summary_path, "w", encoding="utf-8") as fh:
-                yaml.safe_dump(payload, fh, sort_keys=False)
-        else:
-            raise ValueError(f"Unsupported summary format: {summary_format}")
-    if args.methods_summary_path:
-        from ambermeta.protocol import to_plain
-
-        with open(args.methods_summary_path, "w", encoding="utf-8") as fh:
-            json.dump(to_plain(protocol.to_methods_dict()), fh, indent=2)
-
-    # UX-007: CSV export for statistics
-    if getattr(args, "stats_csv", None):
-        _export_stats_csv(protocol, args.stats_csv)
-
-    return 0
+    return _write_plan_artifacts(args, protocol)
 
 
 def _gui_command(args: argparse.Namespace) -> int:
@@ -1780,14 +1761,6 @@ def _gui_command(args: argparse.Namespace) -> int:
     except Exception as e:
         print(Colors.error(f"ERROR: GUI failed: {e}"))
         return 1
-
-
-def _export_stats_csv(protocol: SimulationProtocol, filepath: str) -> None:
-    """Export per-stage statistics to a CSV file."""
-    from ambermeta.protocol import write_stats_csv
-
-    write_stats_csv(protocol, filepath)
-    _out(f"Statistics exported to: {filepath}")
 
 
 def build_parser() -> argparse.ArgumentParser:

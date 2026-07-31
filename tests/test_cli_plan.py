@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shutil
 from types import SimpleNamespace
 
 import ambermeta.cli as cli
@@ -117,3 +118,14 @@ def test_plan_empty_manifest_nonzero(tmp_path):
     (tmp_path / "m.yaml").write_text("stages: []\n")
     rc = main(["plan", str(tmp_path), "--manifest", str(tmp_path / "m.yaml")])
     assert rc == 1
+
+
+def test_plan_recursive_creates_missing_parent_directories(tmp_path, sample_md_data_dir):
+    """The recursive path used to raise FileNotFoundError on a missing parent."""
+    from ambermeta.cli import main
+    for f in sample_md_data_dir.iterdir():
+        shutil.copy(f, tmp_path)
+    rc = main(["plan", str(tmp_path), "--recursive",
+               "--summary-path", str(tmp_path / "out" / "summary.json")])
+    assert rc == 0
+    assert (tmp_path / "out" / "summary.json").is_file()
