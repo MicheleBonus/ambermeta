@@ -69,8 +69,13 @@ def document_to_payload(stages: List[Dict[str, Any]], settings: Dict[str, Any],
             entry["stage_role"] = role
         # This whitelist is the gate: a key that is not copied out here never reaches
         # _manifest_to_stages, so tagging the step and flattening the tag would both be
-        # silent no-ops without these three lines. Copied only when set, like `gaps`,
-        # so an untagged document's payload is the one it always had.
+        # silent no-ops without these three lines. Only `lineage` is really conditional —
+        # `step_id` is set on every step and `parent_id` on every chained one, so every
+        # document's engine payload carries those two. That is deliberate rather than
+        # sloppy: they are how a lineage head is measured against its real producer, and
+        # withholding them from untagged documents would only mean recomputing them the
+        # moment one tag appeared. This payload is in-memory input to `auto_discover` and
+        # is never serialised, so it is not part of any on-disk shape.
         for provenance in ("lineage", "step_id", "parent_id"):
             val = s.get(provenance)
             if val:

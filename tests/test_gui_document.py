@@ -615,6 +615,27 @@ def test_update_step_refuses_a_step_that_continues_from_itself():
     assert st._find_step("rep1_2")[1].input_coords.ref == "rep1_1"
 
 
+def test_update_step_refuses_a_link_that_closes_a_loop_of_any_length():
+    """The 1-cycle was refused while `rep1_1 <- rep1_2` was accepted silently.
+
+    A cyclic provenance chain saved over the API with 200 and validated `ok: true`, which
+    is the same false claim as a fabricated edge — a run cannot be its own ancestor. Longer
+    loops are checked by walking up from the proposed producer, so a three-step ring is
+    caught as readily as a two-step one.
+    """
+    import pytest
+    st = _campaign_store()
+    # rep1_2 continues from rep1_1, so pointing rep1_1 back at rep1_2 closes a 2-cycle.
+    with pytest.raises(ValueError, match="already continues from it"):
+        st.update_step("rep1_1", {"input_coords": {"source": "step", "ref": "rep1_2"}})
+    assert st._find_step("rep1_1")[1].input_coords.ref == "eq"        # unchanged
+    assert st.to_response().can_undo is False                         # and unsnapshotted
+
+    # A second consumer of one producer is a fan-out, not a loop, and stays legal.
+    st.update_step("rep1_2", {"input_coords": {"source": "step", "ref": "eq"}})
+    assert st._find_step("rep1_2")[1].input_coords.ref == "eq"
+
+
 def test_a_hand_written_link_between_two_members_is_kept_and_reported():
     """It is the only way to record a genuine branch, so it is a finding, not a refusal."""
     st = _campaign_store()

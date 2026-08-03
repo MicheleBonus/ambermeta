@@ -117,9 +117,19 @@ interface RenderedGroup {
  */
 function layOutPhase(groups: StepGroup[], suggestions: Suggestion[]): RenderedGroup[] {
   let previous: StepModel | null = null;
+  // One finding, one set of ghosts. `serverBase` drops the directory, so two bands in
+  // different directories that share a base and a lineage both match the same suggestion —
+  // reachable whenever the layout was too ambiguous to tag, since untagged bands all carry
+  // `lineage: null`. Drawing it in each would show more missing runs than core reported,
+  // which is the one thing this view must never do.
+  const drawn = new Set<string>();
   return groups.map((group) => {
     const width = Math.max(0, ...group.steps.map((s) => numWidth(s.name)));
-    const ghosts = ghostsForGroup(group, width, suggestions);
+    const ghosts = ghostsForGroup(group, width, suggestions).filter((gh) => {
+      if (drawn.has(gh.id)) return false;
+      drawn.add(gh.id);
+      return true;
+    });
     const ordered: SequenceItem[] = [
       ...group.steps.map((step): SequenceItem => ({ kind: "step", num: stepNumber(step.name), step })),
       ...ghosts.map((gh): SequenceItem => ({ kind: "ghost", num: gh.num, id: gh.id, name: gh.name })),

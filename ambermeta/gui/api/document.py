@@ -411,7 +411,9 @@ class DocumentStore:
 
         * a ref naming a step nobody holds resolves to no coordinates at all while the
           chain still reads as intact;
-        * a self-reference is a 1-cycle;
+        * a self-reference is a 1-cycle, and so is any ref reaching a step that already
+          continues (directly or not) from this one — the 1-cycle was refused while
+          ``s1 -> s2 -> s1`` was accepted silently, saved to disk, and validated ``ok``;
         * ``source="step"`` with no ref at all says this run continued from something and
           declines to say what. It is not the way to say "reads the starting structure" —
           that source exists — and it resolves to nothing.
@@ -437,6 +439,21 @@ class DocumentStore:
             _, producer = self._find_step(ref)
         except KeyError:
             raise ValueError(f"no step to continue from: {ref}") from None
+        # Walk the chain up from the proposed producer: if it comes back to the consumer,
+        # this link closes a loop. Every step is visited at most once, and `seen` also stops
+        # a pre-existing cycle elsewhere in the document turning this check into a hang.
+        by_id = {s.id: s for _, s in iter_steps(self._doc.simulation)}
+        seen, cur = set(), producer
+        while cur is not None:
+            if cur.id == consumer.id:
+                raise ValueError(
+                    f"{consumer.name} cannot continue from {producer.name}: "
+                    f"{producer.name} already continues from it")
+            if cur.id in seen:
+                break
+            seen.add(cur.id)
+            cur = (by_id.get(cur.input_coords.ref)
+                   if cur.input_coords.source == "step" else None)
         if not crosses_lineage(producer, consumer):
             return []
         return [
