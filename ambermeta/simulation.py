@@ -292,8 +292,14 @@ def crosses_lineage(producer: Optional[Step], consumer: Step) -> bool:
             and producer.lineage != consumer.lineage)
 
 
-def _same_lineage(a: Step, b: Step) -> bool:
-    """Whether two steps sit in the same membership bucket, untagged included."""
+def same_lineage(a: Step, b: Step) -> bool:
+    """Whether two steps sit in the same membership bucket, untagged included.
+
+    The STRICT rule, and the one every *automatic* link must use: untagged is a member of
+    its own, matching `predecessors` and `lineages.buckets`. `crosses_lineage` is the loose
+    counterpart — it treats untagged as a wildcard — and is right only for judging a link a
+    human declared, where one shared equilibration really does feed N replicas.
+    """
     return (a.lineage or None) == (b.lineage or None)
 
 
@@ -315,28 +321,31 @@ def relink_restarts(sim: Simulation, before: Dict[str, Optional[str]]) -> None:
 
     Steps absent from ``before`` are new and keep whatever they were created with.
 
-    "The order" means the document's order in a single-member document and each member's
-    own order in a multi-member one — which is the same rule, since one member's steps are
-    all of them. Both branches stop at a lineage boundary: measured on an interleaved
-    reorder of two replicas the *first* branch manufactured two cross-lineage edges and
-    the second none, and on a reorder that puts rep2 in front it is the second branch that
-    manufactures one. Neither is safe alone.
+    **Only in a single-member document.** A multi-member one is left alone entirely; see
+    below for why.
     """
+    # Adjacency means provenance in a one-member document and nowhere else. That is the
+    # premise of the whole feature: once a document holds several members, the order steps
+    # appear in is presentation — `discover` emits them phase-major, so a member's steps are
+    # not even contiguous — and re-deriving links from it fabricates continuations nobody
+    # declared. Measured, through the real HTTP API on a discovered campaign: one drag of a
+    # shared prep step into the production phase produced three false edges, a phase reorder
+    # made an equilibration read replica 3's final production restart, and an add-then-reorder
+    # closed a 2-cycle that `validate` reported as `ok: true`.
+    #
+    # So in a multi-member document nothing is re-chained: every link stays exactly as
+    # declared. A reorder there is a change of view, not of provenance, and the user can still
+    # say what continues from what — that route is validated (`_check_continues_from`) where
+    # this one can only guess. Silence is recoverable; a false edge is not.
+    if len({step.lineage or None for _, step in iter_steps(sim)}) > 1:
+        return
+
     seen: List[Step] = []
     for _, step in iter_steps(sim):
         ic = step.input_coords
         if step.id in before:
             was = before[step.id]
-            prev = seen[-1] if seen else None
-            # Whoever now precedes this step — but never across a lineage boundary, which
-            # would assert that one member continued from another. Where the neighbour is
-            # refused the step follows its own member's order instead: rep1's second chunk
-            # interleaved behind rep2's first still continues rep1's first chunk, and that
-            # link was true before the drag and is true after it. Only when the member has
-            # nothing earlier does the step become a head and read the starting structure.
-            new_prev = prev
-            if crosses_lineage(prev, step):
-                new_prev = next((p for p in reversed(seen) if _same_lineage(p, step)), None)
+            new_prev = seen[-1] if seen else None
             if ic.source == "step" and ic.ref == was:
                 # Auto-chained. Follow the new order, keeping any legacy resolved path so
                 # a document written before `rst` existed does not lose its only record.
@@ -390,7 +399,7 @@ def repair_dangling_refs(sim: Simulation) -> List[str]:
     seen: List[Step] = []
     for step in steps:
         if orphaned(step):
-            parent = next((p for p in reversed(seen) if _same_lineage(p, step)), None)
+            parent = next((p for p in reversed(seen) if same_lineage(p, step)), None)
             step.input_coords = (
                 InputCoords(source="starting_structure") if parent is None
                 else InputCoords(source="step", ref=parent.id, path=step.input_coords.path)

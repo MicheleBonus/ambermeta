@@ -564,12 +564,23 @@ def test_a_warning_does_not_outlive_the_edit_that_raised_it():
     assert st.to_response().warnings == []
 
 
-def test_moving_a_step_into_another_members_phase_does_not_chain_it_across():
-    """A single-phase reorder cannot show this: _step_before crosses phase boundaries."""
+def test_moving_a_step_into_another_members_phase_changes_no_link():
+    """A single-phase reorder cannot show this: _step_before crosses phase boundaries.
+
+    In a multi-member document a drag rearranges the view, not the provenance, so every
+    link is exactly what it was — including rep3's tail, which keeps continuing from rep3's
+    head even though it now sits between rep1's chunks. Re-deriving links from the new
+    adjacency is what fabricated three false edges from a single drag.
+    """
     st = _campaign_store()
+    before = {sid: (s.input_coords.source, s.input_coords.ref)
+              for sid, s in ((s.id, s) for _, s in iter_steps(st._doc.simulation))}
     st.move_step("rep3_2", "pp", 1)          # rep3's tail dropped between rep1's chunks
+    after = {sid: (s.input_coords.source, s.input_coords.ref)
+             for sid, s in ((s.id, s) for _, s in iter_steps(st._doc.simulation))}
+    assert after == before
     assert _cross_lineage_refs(st) == []
-    assert st._find_step("rep3_2")[1].input_coords == InputCoords(source="starting_structure")
+    assert st._find_step("rep3_2")[1].input_coords.ref == "rep3_1"
     assert st._find_step("rep1_2")[1].input_coords.ref == "rep1_1"
 
 

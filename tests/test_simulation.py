@@ -68,7 +68,8 @@ def test_write_then_load_v2_yaml_and_json(tmp_path):
 # --- restart chain: the file is recorded on the step that writes it ---------
 
 from ambermeta.simulation import (
-    iter_steps, predecessors, relink_restarts, repair_dangling_refs, resolve_input_coords,
+    crosses_lineage, iter_steps, predecessors, relink_restarts, repair_dangling_refs,
+    resolve_input_coords, same_lineage,
 )
 
 
@@ -315,29 +316,26 @@ def _has_cycle(sim):
     return False
 
 
-def test_reversing_a_multi_lineage_phase_reverses_each_member_coherently():
-    """Two chunks of one member must never end up claiming the same producer.
+def test_reordering_a_multi_member_document_changes_no_link():
+    """Adjacency means provenance in a one-member document and nowhere else.
 
-    `relink_restarts` asks two questions — "was this link auto-derived?" (against
-    `predecessors`) and "what should it become?" (its own member-scoped walk). While
-    `predecessors` was document-order and the walk was member-scoped, the two disagreed on
-    every multi-member document, because `discover` emits them phase-major: a genuine
-    `rep1/prod_0002 -> rep1/prod_0001` link never equalled its document-order predecessor,
-    so it was read as a choice the user had made by hand and frozen, while the head branch
-    repointed around it. Both of a member's chunks then pointed at its first step.
+    Every attempt to re-derive links from order in a multi-member document fabricated
+    something: while `predecessors` was document-order and the guard was member-scoped, a
+    reversal left both of a member's chunks claiming its first step; making both
+    member-scoped closed that but the untagged side stayed a wildcard, and one drag of a
+    shared prep step then produced three false edges. The order steps appear in is a view —
+    `discover` emits them phase-major, so a member's steps are not even contiguous — and
+    the rule that survives is to leave declared provenance alone.
     """
     sim = _replicas()
     phase = sim.phases[0]
+    was = _producer_of(sim)
     before = predecessors(sim)
     phase.steps.reverse()
     relink_restarts(sim, before)
 
-    producers = _producer_of(sim)
-    assert producers == {
-        "rep2/prod_0002": "starting_structure", "rep2/prod_0001": "rep2/prod_0002",
-        "rep1/prod_0002": "starting_structure", "rep1/prod_0001": "rep1/prod_0002",
-    }
-    chained = [v for v in producers.values() if v != "starting_structure"]
+    assert _producer_of(sim) == was
+    chained = [v for v in was.values() if v != "starting_structure"]
     assert len(chained) == len(set(chained)), "two steps claim the same producer"
 
 
@@ -369,15 +367,13 @@ def test_no_reordering_can_close_a_cycle_in_a_multi_lineage_document():
             ]),
         ],
     )
+    was = _producer_of(sim)
     before = predecessors(sim)
     sim.phases.reverse()
     relink_restarts(sim, before)
 
     assert not _has_cycle(sim)
-    assert _producer_of(sim) == {
-        "rep1/prod": "starting_structure", "rep2/prod": "starting_structure",
-        "rep1/min": "rep1/prod", "rep2/min": "rep2/prod",
-    }
+    assert _producer_of(sim) == was
 
 
 def test_predecessors_is_unchanged_for_an_untagged_document():
@@ -536,16 +532,43 @@ def test_a_shared_parent_feeding_one_member_twice_is_not_reported():
     assert repair_dangling_refs(sim) == []
 
 
-def test_an_untagged_step_continues_into_and_out_of_a_lineage():
+def test_an_untagged_step_may_be_declared_to_feed_a_lineage():
     """Only two DIFFERENT declared tags are a boundary. A shared equilibration feeding
-    three replicas is the commonest layout there is and every edge in it is real."""
+    three replicas is the commonest layout there is and every edge in it is real — so
+    `crosses_lineage`, which judges links a human declared, must permit it.
+
+    That is the *loose* rule and it is right only here. Automatic chaining uses the strict
+    one (`same_lineage`), because inferring this same edge from adjacency is what let a
+    drag fabricate `rep2/prod_0001 <- common/min_0001`.
+    """
+    sim = _fan_out()
+    eq = sim.phases[0].steps[0]
+    for _, step in iter_steps(sim):
+        if step.lineage:
+            assert not crosses_lineage(eq, step)
+            assert not same_lineage(eq, step)
+
+
+def test_a_swap_inside_one_member_leaves_the_shared_parent_alone():
+    """The regression this replaces asserted only that rep1's NEW head still read `eq`.
+
+    It did — and so did the old head, because the loose rule let the head branch re-derive
+    a link across the untagged boundary while the member-scoped `before` map froze the
+    genuine one. Both of rep1's chunks ended up reading the equilibration, which the
+    assertion never looked at.
+    """
     sim = _fan_out()
     phase = sim.phases[1]
+    was = _producer_of(sim)
     before = predecessors(sim)
     phase.steps = [phase.steps[1], phase.steps[0]] + phase.steps[2:]   # swap rep1's chunks
     relink_restarts(sim, before)
+
     assert _cross_lineage_refs(sim) == []
-    assert phase.steps[0].input_coords.ref == "eq"    # rep1's new head still reads it
+    assert _producer_of(sim) == was
+    within = [v for k, v in _producer_of(sim).items() if k.startswith("rep1")]
+    assert sorted(within) == ["common/equil", "rep1/prod_0001"], (
+        "rep1's own chain must survive the swap intact")
 
 
 def test_loading_a_flat_manifest_says_so_instead_of_returning_nothing(tmp_path):

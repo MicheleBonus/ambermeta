@@ -14,7 +14,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from ambermeta.lineages import buckets
 from ambermeta.simulation import (
-    Simulation, Phase, Step, Topology, InputCoords, crosses_lineage,
+    Simulation, Phase, Step, Topology, InputCoords, crosses_lineage, same_lineage,
     iter_steps, predecessors, relink_restarts, repair_dangling_refs, resolve_input_coords,
 )
 
@@ -380,7 +380,13 @@ class DocumentStore:
             # rather than a row of steps that all read the starting structure.
             if not ic and self._doc.settings.get("auto_link_restarts"):
                 prev = self._step_before(sid)
-                if (prev is not None and not crosses_lineage(prev, step)
+                # `same_lineage`, not `not crosses_lineage`: the loose rule treats untagged
+                # as a wildcard, which is right for a link a human declares (one shared
+                # equilibration really does feed N replicas) and wrong for one inferred from
+                # adjacency. Adding a tagged step after an untagged one used to link them,
+                # and a following reorder could then close a cycle. An automatic link only
+                # ever joins the member it is landing in.
+                if (prev is not None and same_lineage(prev, step)
                         and not (tag is None and ambiguous)):
                     step.input_coords = InputCoords(source="step", ref=prev.id)
             # Whoever used to follow the insertion point is still chained to the step
