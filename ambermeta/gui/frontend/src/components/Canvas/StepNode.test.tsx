@@ -16,20 +16,10 @@ import type { FileInfo, StepModel, TopologyModel } from "@/types";
 
 const topology: TopologyModel = { id: "t0", path: "/w/setup/wt_hmr.prmtop", kind: "hmr" };
 
-const step: StepModel = {
-  id: "s0",
-  name: "prod_0001",
-  topology: "t0",
-  input_coords: { source: "starting_structure", ref: null, path: null },
-  mdin: "/w/equil/01_min.mdin",
-  mdout: "/w/runs/01_min.mdout",
-  mdcrd: null,
-  rst: null,
-  resolved_input_coords: null,
-  expected_gap_ps: null,
-  gap_tolerance_ps: null,
-  notes: [],
-};
+const step: StepModel = makeStep({
+  id: "s0", name: "prod_0001", topology: "t0",
+  mdin: "/w/equil/01_min.mdin", mdout: "/w/runs/01_min.mdout",
+});
 
 /** One file per slot type, so a filtered picker is visibly narrower than the tree. */
 const PICKABLE: FileInfo[] = [
@@ -300,6 +290,74 @@ it("retires the Undo offer as soon as another change lands on the document", asy
   await waitFor(() => expect(patch.calls).toBe(1));
   await waitFor(() =>
     expect(screen.queryByRole("button", { name: "Undo" })).not.toBeInTheDocument());
+});
+
+/** Verbatim from `repair_dangling_refs`: what the server says when the step several
+ *  members continued from is deleted. Long on purpose — this is the shape of the text the
+ *  toast has to hold, and it is why the pill grew a width cap. */
+const SHARED_PARENT_WARNING =
+  "A deleted step was the input of 3 runs in different lineages (rep1, rep2, rep3). " +
+  "Each now continues from the nearest earlier run of its own lineage, or reads the " +
+  "starting structure where its lineage has none: re-chaining any of them to another " +
+  "would claim a continuation that never ran.";
+
+/** A delete that answers with the warnings the server would have raised for it. */
+function deleteReturning(warnings: string[]): Captured {
+  const seen: Captured = { body: undefined, calls: 0 };
+  server.use(http.delete("/api/steps/:stepId", () => {
+    seen.calls += 1;
+    return HttpResponse.json({ ...emptyDocument, warnings });
+  }));
+  return seen;
+}
+
+it("reports what the server warned about the edit it just made", async () => {
+  // The chain invariants let this delete through and report what it cost; the finding
+  // exists only on the response to that one request. Nothing on the client read the field,
+  // so a fan-out collapsed in silence and the one surface that knew said nothing.
+  deleteReturning([SHARED_PARENT_WARNING]);
+  renderStep();
+
+  await userEvent.click(screen.getByRole("button", { name: "delete step prod_0001" }));
+
+  const toast = (await screen.findByText(SHARED_PARENT_WARNING)).parentElement;
+  // The edit succeeded — this is a warning about what it meant, and must not be dressed
+  // as the failure it is not. The Undo offer beside it is the answer if it was unwanted.
+  expect(toast).toHaveClass("text-warning");
+  expect(toast).not.toHaveClass("text-error");
+  expect(await screen.findByRole("button", { name: "Undo" })).toBeInTheDocument();
+});
+
+it("stays quiet when the edit raised no warning", async () => {
+  const del = deleteReturning([]);
+  renderStep();
+
+  await userEvent.click(screen.getByRole("button", { name: "delete step prod_0001" }));
+
+  // The Undo offer is what makes the silence meaningful: the edit did land, so the one
+  // toast on screen is the whole of what an unremarkable delete has to say. Counted by
+  // the dismiss button, one per toast — DndContext's own live region is a role="status"
+  // too, so counting that role would count the drag announcer as a message.
+  expect(await screen.findByRole("button", { name: "Undo" })).toBeInTheDocument();
+  await waitFor(() => expect(del.calls).toBe(1));
+  expect(screen.getAllByRole("button", { name: "Dismiss" })).toHaveLength(1);
+});
+
+it("retires the warning with the next edit, like the offer beside it", async () => {
+  // It describes one edit. The server has already forgotten it by the next mutation
+  // (`DocumentStore._snapshot` clears the warnings), so a note still on screen would
+  // outlive its own source and be read as a finding about the edit that replaced it.
+  deleteReturning([SHARED_PARENT_WARNING]);
+  const patch = capture("put", "/api/steps/:stepId");
+  renderStep();
+
+  await userEvent.click(screen.getByRole("button", { name: "delete step prod_0001" }));
+  expect(await screen.findByText(SHARED_PARENT_WARNING)).toBeInTheDocument();
+
+  await userEvent.click(screen.getByRole("button", { name: "clear topology" }));
+  await waitFor(() => expect(patch.calls).toBe(1));
+  await waitFor(() =>
+    expect(screen.queryByText(SHARED_PARENT_WARNING)).not.toBeInTheDocument());
 });
 
 it("clears a step's topology from the card, not only from the inspector", async () => {

@@ -38,7 +38,29 @@ Suggestions:
 Wrote v2 draft manifest: sim.yaml (yaml)
 ```
 
-Builds a topology pool, infers phase roles, and chains each step's input coordinates off the previous step's restart (`input=restart of <step name>`). In the file itself that chain is stored as a step id reference; the ids are freshly generated each run, so don't expect them to be stable across runs. Edit `sim.yaml` by hand, or refine it in the GUI, before committing to it.
+Builds a topology pool, infers phase roles, and chains each step's input coordinates off the previous step's restart (`input=restart of <step name>`) — the previous step **of the same lineage**, where the layout names members. In the file itself that chain is stored as a step id reference; the ids are freshly generated each run, so don't expect them to be stable across runs. Edit `sim.yaml` by hand, or refine it in the GUI, before committing to it.
+
+### Discover a replica tree
+
+```bash
+ambermeta discover runs/ --write replicas.yaml
+```
+
+```
+Phase: Production [production]
+  - rep1/prod_0001  input=starting structure  ...
+  - rep1/prod_0002  input=restart of rep1/prod_0001 (rep1/prod_0001.rst)  ...
+  - rep2/prod_0001  input=starting structure  ...
+  - rep2/prod_0002  input=restart of rep2/prod_0001 (rep2/prod_0001.rst)  ...
+  - rep3/prod_0001  input=starting structure  ...
+  - rep3/prod_0002  input=restart of rep3/prod_0001 (rep3/prod_0001.rst)  ...
+
+Suggestions:
+  ...
+  - [applied] Runs carry 3 declared lineage(s)
+```
+
+`rep1/`, `rep2/`, `rep3/` run the same set of runs, so each is tagged as a member and gets its own chain from the starting structure — no `rep1/prod_0002 → rep2/prod_0001` edge. The tags land in the manifest as `lineage:` on each step. An ambiguous layout is left untagged rather than guessed at; the rule and everything it refuses is in [manifest §9.1](manifest.md#91-how-discover-infers-members).
 
 ### Preview the draft without writing anything
 
@@ -61,6 +83,8 @@ Validation: OK
 ```
 
 Checks the whole Simulation: restart-to-input-coordinate continuity between consecutive steps, gaps in a numbered run sequence, and missing files. Add `--strict` to fail on warnings too, or `--format json` for CI parsing.
+
+On a manifest declaring lineages, "consecutive" means consecutive within a member, and a numbered-sequence hole is reported per member — so a replica that stopped early is named (`rep2/prod sequence is missing member(s) 2, 3`) instead of being averaged away, and replicas numbered on offset scales raise nothing. Do **not** reach for `--allow-gaps` to quieten a replica tree; see [tutorials §2](tutorials.md#2-validate-continuity-and-catch-a-sequence-hole).
 
 ### Convert a manifest between YAML and JSON
 

@@ -4,7 +4,7 @@ import json
 import os
 from dataclasses import asdict, dataclass, field, is_dataclass
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Pattern
+from typing import Any, Callable, Dict, List, NamedTuple, Optional, Pattern, Tuple
 
 import re
 
@@ -18,6 +18,11 @@ from ambermeta.topology_pool import implies_hmr
 from ambermeta.errors import AmberMetaError, FileLoadError, classify_exception
 from ambermeta.logging_config import get_logger
 from ambermeta.roles import classify_role
+from ambermeta.lineages import UNTAGGED, buckets, infer_lineages_from_layout
+# The one spelling of the boundary rule. Its parameters are annotated `Step` but it reads
+# nothing except `.lineage`, and `SimulationStage` carries that too — re-stating the rule
+# here would make a third copy of it, which is how the two chainers drifted apart already.
+from ambermeta.simulation import crosses_lineage
 from ambermeta.manifest import (
     validate_manifest,
     _normalize_manifest,
@@ -129,6 +134,18 @@ class SimulationStage:
     mdout: Optional[MdoutData] = None
     mdcrd: Optional[MdcrdData] = None
     restart_path: Optional[str] = None
+    # Provenance. `lineage` names the run member this stage belongs to: read from the v2
+    # document on the manifest path, inferred from the directory layout on the scan path —
+    # both entries into this engine, because a stage the engine cannot place in a member is
+    # one it will compare against whatever happens to precede it.
+    # `step_id`/`parent_id` are the document's own step ids and exist only where a document
+    # does. They are kept because the flatten resolves input_coords down to a bare inpcrd
+    # path — after that the edge is unrecoverable, and a lineage head has to be checked
+    # against the step it really continues from rather than against its document-order
+    # neighbour.
+    lineage: Optional[str] = None
+    step_id: Optional[str] = None
+    parent_id: Optional[str] = None
     validation: List[str] = field(default_factory=list)
     continuity: List[str] = field(default_factory=list)
     load_errors: List[FileLoadError] = field(default_factory=list)
@@ -347,99 +364,159 @@ class SimulationProtocol:
             self._check_continuity(allow_unexpected_gaps=allow_unexpected_gaps)
 
     def _check_continuity(self, allow_unexpected_gaps: bool = False) -> None:
-        for prev, current in zip(self.stages, self.stages[1:]):
-            end_time = None
-            if prev.mdcrd and prev.mdcrd.details:
-                end_time = getattr(prev.mdcrd.details, "time_end", None)
-            if end_time is None and prev.mdout and prev.mdout.details:
-                stats = getattr(prev.mdout.details, "stats", None)
-                if stats is not None and getattr(stats, "count", 0):
-                    end_time = getattr(stats, "time_end", None)
+        if not any(stage.lineage for stage in self.stages):
+            # One member: the partition below reduces to exactly this zip, but the head
+            # check would add a note to the document's first stage. `observed_gap_ps` and
+            # the note lists are serialised into summary.json, so an untagged document
+            # keeps the original path rather than a path that merely ought to agree.
+            for prev, current in zip(self.stages, self.stages[1:]):
+                self._check_stage_pair(prev, current, allow_unexpected_gaps=allow_unexpected_gaps)
+            return
 
-            start_time = None
-            if current.inpcrd and current.inpcrd.details:
-                start_time = getattr(current.inpcrd.details, "time", None)
+        # Document order is not experiment order once there is more than one member:
+        # replicas interleave, and `discover` emits them phase-major, so a neighbour zip
+        # compares each member's head against another member's tail and reports an
+        # overlap that never happened.
+        partitions = buckets(self.stages)
+        for member in partitions.values():
+            for prev, current in zip(member, member[1:]):
+                self._check_stage_pair(prev, current, allow_unexpected_gaps=allow_unexpected_gaps)
 
-            if end_time is None or start_time is None:
-                # Add informational note when continuity check is skipped
-                missing = []
-                if end_time is None:
-                    missing.append(f"end time from {prev.name} (no mdcrd/mdout)")
-                if start_time is None:
-                    missing.append(f"inpcrd time from {current.name}")
-                current._add_continuity_note(
-                    f"INFO: Cannot verify continuity between {prev.name} and {current.name} "
-                    f"(missing {', '.join(missing)})"
+        # Partitioning on its own drops a check that was correct: a head genuinely
+        # continues the stage it branched from, and leaving it at `observed_gap_ps=None`
+        # with no note reads as "checked and fine" rather than "not checked". So every
+        # head is measured against its real producer, which is why `parent_id` is carried
+        # this far — the flatten resolves input_coords down to a bare path and the edge is
+        # unrecoverable afterwards.
+        by_step_id = {s.step_id: s for s in self.stages if s.step_id}
+        for member in partitions.values():
+            head = member[0]
+            producer = by_step_id.get(head.parent_id) if head.parent_id else None
+            # "resolved" rather than "recorded": the id may be absent, may name a stage
+            # this protocol does not hold, or may name the head itself. All three mean the
+            # same thing to a reader — nothing was compared.
+            #
+            # A head that came from `discover` always lands here, and that is deliberate,
+            # not a hole to be plugged: `discover_draft` gives every member's first run
+            # `starting_structure`, because a restart file sitting beside a replica is not
+            # evidence of which run read it. Chaining the head to whatever precedes it in
+            # the document is the false continuation this partition exists to remove — so
+            # the note IS the answer for a discovered head. A declared producer (a
+            # hand-written manifest, an edit in the GUI) is the only thing that earns a
+            # real measurement, and it gets one on the line below.
+            if producer is None or producer is head:
+                head._add_continuity_note(
+                    f"INFO: Continuity for {head.name} was not measured "
+                    "(no producing stage resolved)."
                 )
                 continue
+            self._check_stage_pair(producer, head, allow_unexpected_gaps=allow_unexpected_gaps)
 
-            gap = start_time - end_time
+    def _check_stage_pair(
+        self,
+        prev: SimulationStage,
+        current: SimulationStage,
+        allow_unexpected_gaps: bool = False,
+    ) -> None:
+        """Compare one producer/consumer pair and record what it says about `current`.
 
-            # Tolerance is a small absolute floor plus half a frame interval —
-            # NOT scaled by elapsed time, which would hide real gaps in long runs.
-            prior_dt = (
-                getattr(prev.mdcrd.details, "avg_dt", None)
-                if (prev.mdcrd and prev.mdcrd.details)
-                else None
+        Split out of :meth:`_check_continuity` so the same check can be applied to a pair
+        that is *not* adjacent in document order — a lineage head and the stage it really
+        continues from. The body is unchanged; only the loop's `continue`s became
+        `return`s.
+        """
+        end_time = None
+        if prev.mdcrd and prev.mdcrd.details:
+            end_time = getattr(prev.mdcrd.details, "time_end", None)
+        if end_time is None and prev.mdout and prev.mdout.details:
+            stats = getattr(prev.mdout.details, "stats", None)
+            if stats is not None and getattr(stats, "count", 0):
+                end_time = getattr(stats, "time_end", None)
+
+        start_time = None
+        if current.inpcrd and current.inpcrd.details:
+            start_time = getattr(current.inpcrd.details, "time", None)
+
+        if end_time is None or start_time is None:
+            # Add informational note when continuity check is skipped
+            missing = []
+            if end_time is None:
+                missing.append(f"end time from {prev.name} (no mdcrd/mdout)")
+            if start_time is None:
+                missing.append(f"inpcrd time from {current.name}")
+            current._add_continuity_note(
+                f"INFO: Cannot verify continuity between {prev.name} and {current.name} "
+                f"(missing {', '.join(missing)})"
             )
-            default_tolerance = 0.1
-            if isinstance(prior_dt, (int, float)) and prior_dt > 0:
-                default_tolerance = max(default_tolerance, float(prior_dt) * 0.5)
+            return
 
-            # When no explicit gap expectation is provided, treat small
-            # differences as numerical noise instead of real gaps/overlaps.
-            if current.expected_gap_ps is None:
-                if abs(gap) <= default_tolerance:
-                    gap = 0.0
+        gap = start_time - end_time
 
-            # Sanity check: massive gaps (> 1e6 ps = 1 µs) are likely errors
-            # in unit conversion or file parsing, not real discontinuities
-            if abs(gap) > 1e6:
+        # Tolerance is a small absolute floor plus half a frame interval —
+        # NOT scaled by elapsed time, which would hide real gaps in long runs.
+        prior_dt = (
+            getattr(prev.mdcrd.details, "avg_dt", None)
+            if (prev.mdcrd and prev.mdcrd.details)
+            else None
+        )
+        default_tolerance = 0.1
+        if isinstance(prior_dt, (int, float)) and prior_dt > 0:
+            default_tolerance = max(default_tolerance, float(prior_dt) * 0.5)
+
+        # When no explicit gap expectation is provided, treat small
+        # differences as numerical noise instead of real gaps/overlaps.
+        if current.expected_gap_ps is None:
+            if abs(gap) <= default_tolerance:
+                gap = 0.0
+
+        # Sanity check: massive gaps (> 1e6 ps = 1 µs) are likely errors
+        # in unit conversion or file parsing, not real discontinuities
+        if abs(gap) > 1e6:
+            current._add_continuity_note(
+                f"INFO: Implausible gap detected ({gap:g} ps); likely a unit or parsing error. "
+                f"Continuity check skipped."
+            )
+            current.observed_gap_ps = None
+            return
+
+        current.observed_gap_ps = gap
+
+        if gap < 0:
+            # Small negative gaps within tolerance are likely floating-point noise
+            if abs(gap) > default_tolerance:
                 current._add_continuity_note(
-                    f"INFO: Implausible gap detected ({gap:g} ps); likely a unit or parsing error. "
-                    f"Continuity check skipped."
+                    f"Stage appears to overlap previous stage by {abs(gap):g} ps."
                 )
-                current.observed_gap_ps = None
-                continue
+        elif gap > 0:
+            # Informational: the raw observed gap. The actual judgement (within
+            # window / shorter / exceeds / unexpected) is emitted separately below,
+            # so this line is INFO-only and must not surface as a continuity problem.
+            current._add_continuity_note(f"INFO: Stage starts {gap:g} ps after previous ended.")
 
-            current.observed_gap_ps = gap
-
-            if gap < 0:
-                # Small negative gaps within tolerance are likely floating-point noise
-                if abs(gap) > default_tolerance:
-                    current._add_continuity_note(
-                        f"Stage appears to overlap previous stage by {abs(gap):g} ps."
-                    )
-            elif gap > 0:
-                # Informational: the raw observed gap. The actual judgement (within
-                # window / shorter / exceeds / unexpected) is emitted separately below,
-                # so this line is INFO-only and must not surface as a continuity problem.
-                current._add_continuity_note(f"INFO: Stage starts {gap:g} ps after previous ended.")
-
-            if current.expected_gap_ps is not None:
-                tolerance = current.gap_tolerance_ps or default_tolerance
-                lower = current.expected_gap_ps - tolerance
-                upper = current.expected_gap_ps + tolerance
-                if gap < lower:
-                    current._add_continuity_note(
-                        f"Observed gap {gap:g} ps is shorter than expected {current.expected_gap_ps:g} ps."
-                    )
-                elif gap > upper:
-                    current._add_continuity_note(
-                        f"Observed gap {gap:g} ps exceeds expected {current.expected_gap_ps:g} ps."
-                    )
-                else:
-                    # Healthy: the observed gap matched the stated expectation. This is a
-                    # positive confirmation, not a problem — INFO so it is never surfaced
-                    # as a "needs you" continuity suggestion.
-                    current._add_continuity_note(
-                        f"INFO: Observed gap {gap:g} ps is within expected window ({current.expected_gap_ps:g}±{tolerance:g} ps)."
-                    )
-            elif gap != 0:
-                if allow_unexpected_gaps:
-                    current._add_continuity_note("INFO: Gap detected and allowed by manifest settings.allow_gaps.")
-                else:
-                    current._add_continuity_note("Gap detected without stated expectation; verify continuity.")
+        if current.expected_gap_ps is not None:
+            tolerance = current.gap_tolerance_ps or default_tolerance
+            lower = current.expected_gap_ps - tolerance
+            upper = current.expected_gap_ps + tolerance
+            if gap < lower:
+                current._add_continuity_note(
+                    f"Observed gap {gap:g} ps is shorter than expected {current.expected_gap_ps:g} ps."
+                )
+            elif gap > upper:
+                current._add_continuity_note(
+                    f"Observed gap {gap:g} ps exceeds expected {current.expected_gap_ps:g} ps."
+                )
+            else:
+                # Healthy: the observed gap matched the stated expectation. This is a
+                # positive confirmation, not a problem — INFO so it is never surfaced
+                # as a "needs you" continuity suggestion.
+                current._add_continuity_note(
+                    f"INFO: Observed gap {gap:g} ps is within expected window ({current.expected_gap_ps:g}±{tolerance:g} ps)."
+                )
+        elif gap != 0:
+            if allow_unexpected_gaps:
+                current._add_continuity_note("INFO: Gap detected and allowed by manifest settings.allow_gaps.")
+            else:
+                current._add_continuity_note("Gap detected without stated expectation; verify continuity.")
 
     def totals(self) -> Dict[str, float]:
         total_steps = 0.0
@@ -803,7 +880,18 @@ class SimulationProtocol:
         stages_payload = []
         stage_sequence = []
         for stage in self.stages:
-            stage_sequence.append({"name": stage.name, "role": stage.stage_role})
+            # A flat ordered list reads as one chain, so a fan-out published here claims
+            # rep1 ran, then rep2, then rep3. The tag says which member the run belongs to
+            # and nothing else — no count, no independence claim (decision 4). Emitted only
+            # when set, like Step.lineage in the manifest, so an untagged document's
+            # methods_summary.json is unchanged.
+            sequence_entry: Dict[str, Optional[str]] = {
+                "name": stage.name,
+                "role": stage.stage_role,
+            }
+            if stage.lineage:
+                sequence_entry["lineage"] = stage.lineage
+            stage_sequence.append(sequence_entry)
             stage_payload = {
                 "name": stage.name,
                 "role": stage.stage_role,
@@ -1036,6 +1124,13 @@ def _manifest_to_stages(
         elif isinstance(notes, list):
             stage.validation.extend(str(n) for n in notes)
 
+        # Provenance, read after construction like `gaps` and `notes`. Empty strings are
+        # coerced away so a cleared tag or a cleared id is absent rather than a nameless
+        # member, matching how payload_to_simulation ingests Step.lineage.
+        stage.lineage = entry.get("lineage") or None
+        stage.step_id = entry.get("step_id") or None
+        stage.parent_id = entry.get("parent_id") or None
+
         stages.append(stage)
 
     return stages
@@ -1049,8 +1144,31 @@ def _ordered_stems(grouped: Dict[str, Any]) -> List[str]:
     return sorted(grouped.keys(), key=key)
 
 
-def detect_numeric_sequences(filenames: List[str]) -> Dict[str, List[str]]:
-    """Detect numeric sequences in filenames for automatic grouping.
+def _run_stems(grouped: Dict[str, Dict[str, str]]) -> List[str]:
+    """The groups that are runs — one holding an mdin or an mdout — in natural order.
+
+    The one place that answers "is this group a run?", because the answer is exactly what
+    `infer_lineages_from_layout` must be handed, and it now has three callers. A
+    topology-only group, or a bare coordinate file, contributes a run name no sibling
+    directory can match and so breaks the membership predicate — a rule restated at three
+    call sites is a rule that eventually differs at one of them.
+    """
+    return [stem for stem in _ordered_stems(grouped)
+            if grouped[stem].get("mdin") or grouped[stem].get("mdout")]
+
+
+class _TaggedRun(NamedTuple):
+    """A run name with the member it belongs to, the shape `lineages.buckets` groups."""
+
+    name: str
+    lineage: Optional[str]
+
+
+def detect_numeric_sequences(
+    filenames: List[str],
+    lineages: Optional[List[Optional[str]]] = None,
+) -> Dict[Tuple[Any, str], List[str]]:
+    """Detect numeric sequences in filenames for automatic grouping, one member at a time.
 
     Identifies patterns in two formats:
     - Suffix format: prod_001, prod_002, etc. (common for production runs)
@@ -1060,13 +1178,24 @@ def detect_numeric_sequences(filenames: List[str]) -> Dict[str, List[str]]:
     ----------
     filenames:
         List of filenames to analyze.
+    lineages:
+        Read positionally alongside ``filenames`` — one tag per run, ``None`` where a run
+        carries none. Omitting it makes every run untagged, which is a single bucket and
+        therefore the grouping this function always did.
+
+        Keyed exactly as :func:`detect_sequence_gaps`, down to the sentinel: the two
+        detectors have to agree on what counts as the same run in two directories, or one
+        reports a family complete while the other reports it short. Pooling was a claim in
+        its own right, not just a missed finding — three replicas of a chunked production
+        run were published as one six-run sequence, in a note that names the count.
 
     Returns
     -------
-    Dictionary mapping base pattern to list of matching files in numeric order.
+    Dictionary mapping ``(member, base pattern)`` to that member's matching files in
+    numeric order. ``member`` is a declared tag or
+    :data:`~ambermeta.lineages.UNTAGGED`. The base stays bare — every member of an
+    experiment runs the same one, and it is what the note and the canvas display.
     """
-    import re
-
     # Pattern to detect numeric suffixes: name_001, name.001, name001, name-001
     # \d+ (not \d{2,}) so single-digit sequences (prod_1, prod_2, prod_3) are detected.
     # The base group (.+?) ensures a stem that is *only* a number never matches here.
@@ -1076,35 +1205,42 @@ def detect_numeric_sequences(filenames: List[str]) -> Dict[str, List[str]]:
     # The trailing group (.+) ensures a stem that is *only* a number never matches here.
     prefix_pattern = re.compile(r'^(\d+)[-_.]?(.+)$')
 
-    groups: Dict[str, List[tuple[int, str]]] = {}
+    tags: List[Optional[str]] = list(lineages) if lineages is not None else []
+    tags += [None] * (len(filenames) - len(tags))
 
-    for filename in filenames:
-        stem = Path(filename).stem
+    groups: Dict[Tuple[Any, str], List[tuple[int, str]]] = {}
 
-        # Try suffix pattern first (prod_001, prod_002)
-        match = suffix_pattern.match(stem)
-        if match:
-            base = match.group(1)
-            if base.isdigit():
-                continue  # skip pure-numeric bases (e.g. "0001", "0002")
-            num = int(match.group(2))
-            groups.setdefault(f"suffix:{base}", []).append((num, filename))
-            continue
+    for member, runs in buckets(_TaggedRun(n, t) for n, t in zip(filenames, tags)).items():
+        for run in runs:
+            filename = run.name
+            # `Path().stem` discards the directory for the reason `detect_sequence_gaps`
+            # spells out: two directories are one member until something says otherwise,
+            # so an untagged document groups exactly as it always did.
+            stem = Path(filename).stem
 
-        # Try prefix pattern (01_min, 02_nvt)
-        match = prefix_pattern.match(stem)
-        if match:
-            num = int(match.group(1))
-            # For prefix patterns, use the parent directory as additional grouping
-            parent_dir = str(Path(filename).parent)
-            if parent_dir == ".":
-                parent_dir = ""
-            base = f"prefix:{parent_dir}"
-            groups.setdefault(base, []).append((num, filename))
+            # Try suffix pattern first (prod_001, prod_002)
+            match = suffix_pattern.match(stem)
+            if match:
+                base = match.group(1)
+                if base.isdigit():
+                    continue  # skip pure-numeric bases (e.g. "0001", "0002")
+                num = int(match.group(2))
+                groups.setdefault((member, f"suffix:{base}"), []).append((num, filename))
+                continue
+
+            # Try prefix pattern (01_min, 02_nvt)
+            match = prefix_pattern.match(stem)
+            if match:
+                num = int(match.group(1))
+                # For prefix patterns, use the parent directory as additional grouping
+                parent_dir = str(Path(filename).parent)
+                if parent_dir == ".":
+                    parent_dir = ""
+                groups.setdefault((member, f"prefix:{parent_dir}"), []).append((num, filename))
 
     # Sort each group by numeric value and return just the filenames
-    result: Dict[str, List[str]] = {}
-    for base, items in groups.items():
+    result: Dict[Tuple[Any, str], List[str]] = {}
+    for (member, base), items in groups.items():
         if len(items) >= 2:  # Only consider sequences with 2+ files
             items.sort(key=lambda x: x[0])
             # Clean up the base pattern for display
@@ -1112,36 +1248,112 @@ def detect_numeric_sequences(filenames: List[str]) -> Dict[str, List[str]]:
             if not clean_base:
                 # For prefix patterns without a parent dir, use a descriptive name
                 clean_base = "numbered_sequence"
-            result[clean_base] = [filename for _, filename in items]
+            result[(member, clean_base)] = [filename for _, filename in items]
 
     return result
 
 
-def detect_sequence_gaps(names: List[str]) -> Dict[str, List[int]]:
-    """Return, per numbered-sequence base, the integer indices that are missing.
+def _overlapping_cohorts(by_member: Dict[Any, set]) -> List[List[Any]]:
+    """Split members of one base into groups linked by a shared index.
 
-    e.g. ['prod_0001', 'prod_0002', 'prod_0004'] -> {'prod': [3]}.
-    Only bases with 2+ present members are considered; pure-numeric bases skipped.
+    Sweeping in ascending order of first index, a member joins the cohort being built when
+    it starts at or below the highest index that cohort has reached, and opens a new one
+    otherwise — so two members end up together only when a chain of shared indices connects
+    them, and a member alone in its cohort is one nothing relates to.
+
+    This is the question ``max(mins) <= min(maxes)`` asked of each part of a base rather
+    than of the whole of it. Asked of the whole it was all-or-nothing: one member numbered
+    on a scale of its own answered "no" for everybody, so ``rep3`` at 11-12 silently
+    excused ``rep2``'s crash from being measured against ``rep1``.
+
+    Sorted on the ranges alone, never on the member — the untagged sentinel does not order
+    against a string. Python's sort is stable, so equal ranges keep first-appearance order.
+    """
+    cohorts: List[List[Any]] = []
+    reach = 0
+    for member, nums in sorted(by_member.items(), key=lambda kv: (min(kv[1]), max(kv[1]))):
+        if cohorts and min(nums) <= reach:
+            cohorts[-1].append(member)
+            reach = max(reach, max(nums))
+        else:
+            cohorts.append([member])
+            reach = max(nums)
+    return cohorts
+
+
+def detect_sequence_gaps(
+    names: List[str],
+    lineages: Optional[List[Optional[str]]] = None,
+) -> Dict[Tuple[Any, str], List[int]]:
+    """Return, per member and numbered-sequence base, the indices missing from it.
+
+    e.g. ``['prod_0001', 'prod_0002', 'prod_0004']`` -> ``{(UNTAGGED, 'prod'): [3]}``.
+    Pure-numeric bases are skipped.
+
+    ``lineages`` is read positionally alongside ``names`` — one tag per run, ``None``
+    where a run carries none. Omitting it makes every run untagged, which is the shape
+    every caller had before members existed. The key's first slot is therefore a declared
+    tag or :data:`~ambermeta.lineages.UNTAGGED`, never a directory: a hand-tagged manifest
+    may name its members anything, and two members of one experiment number their runs on
+    the same scale whatever directories they live in.
+
+    Two rules decide what is missing, and the second is why a member cannot simply be
+    measured on its own:
+
+    * within one member, an index between its lowest and its highest that no run occupies
+      is missing. This is the original rule, and the only one that can fire when a base
+      has just one member — which is every base of an untagged document, so such a
+      document reports exactly what it always did;
+    * members of one base **whose numbering overlaps** form a cohort, and the cohort's
+      full extent frames every member in it, so a member that stopped early is reported
+      rather than covered for by its siblings. A crashed replica is the failure mode
+      members exist to expose and it has no interior hole of its own to find.
+
+      Overlap is the qualifier that keeps independently-numbered members apart: ``rep1``
+      at 1-2 beside ``rep2`` at 11-12 share no index, so nothing relates the two scales
+      and neither member is short. Reporting them was the pre-lineage behaviour — one
+      card naming eight runs that were never meant to exist.
     """
     suffix_pattern = re.compile(r'^(.+?)[-_.]?(\d+)$')
-    present: Dict[str, set] = {}
-    for name in names:
-        stem = Path(name).stem
-        match = suffix_pattern.match(stem)
-        if not match:
-            continue
-        base = match.group(1)
-        if base.isdigit():
-            continue
-        present.setdefault(base, set()).add(int(match.group(2)))
 
-    gaps: Dict[str, List[int]] = {}
-    for base, nums in present.items():
-        if len(nums) < 2:
-            continue
-        missing = [i for i in range(min(nums), max(nums) + 1) if i not in nums]
-        if missing:
-            gaps[base] = missing
+    tags: List[Optional[str]] = list(lineages) if lineages is not None else []
+    tags += [None] * (len(names) - len(tags))
+
+    # base -> member -> the indices that member holds
+    present: Dict[str, Dict[Any, set]] = {}
+    for member, runs in buckets(_TaggedRun(n, t) for n, t in zip(names, tags)).items():
+        for run in runs:
+            # `Path().stem` keeps discarding the directory on purpose: an untagged
+            # document with runs in two directories is one member, and splitting it by
+            # directory here would start reporting findings — and `--strict` exit codes —
+            # for manifests that never opted into anything.
+            stem = Path(run.name).stem
+            match = suffix_pattern.match(stem)
+            if not match:
+                continue
+            base = match.group(1)
+            if base.isdigit():
+                continue
+            present.setdefault(base, {}).setdefault(member, set()).add(int(match.group(2)))
+
+    gaps: Dict[Tuple[Any, str], List[int]] = {}
+    for base, by_member in present.items():
+        for cohort in _overlapping_cohorts(by_member):
+            frame: Optional[Tuple[int, int]] = None
+            if len(cohort) > 1:
+                frame = (min(min(by_member[m]) for m in cohort),
+                         max(max(by_member[m]) for m in cohort))
+            for member in cohort:
+                nums = by_member[member]
+                if frame is None:
+                    if len(nums) < 2:
+                        continue
+                    low, high = min(nums), max(nums)
+                else:
+                    low, high = frame
+                missing = [i for i in range(low, high + 1) if i not in nums]
+                if missing:
+                    gaps[(member, base)] = missing
     return gaps
 
 
@@ -1179,6 +1391,22 @@ def auto_detect_restart_chain(
     - Timestamp continuity
     - File naming conventions (e.g., prod_001.rst -> prod_002 uses it)
 
+    This is the second, independent chainer — ``discover`` builds its own — so it carries
+    the same lineage guard: **no candidate belonging to another declared member may be
+    scored, and the document-order predecessor is only consulted when it belongs to the
+    same member.** Neither restriction can be expressed by the atom-count check below,
+    because replicas of one system agree on every count. "Belonging" is read from the
+    declared writer where there is one and from the directory otherwise — see ``_owner``
+    below for why a declared writer alone is not enough.
+
+    **The guard is inert wherever a stage is built without a tag**, since an untagged stage
+    is the implicit single member and continues into anything. Both paths that read a tree
+    now tag what they find — ``auto_discover``'s scan infers from the layout exactly as the
+    manifest path reads it from the document — so ``plan --recursive
+    --auto-detect-restarts`` over a raw replica tree is protected. What remains untagged,
+    and deliberately: ``ProtocolBuilder.add_stage``, which is handed one stage at a time
+    with no layout to infer from and no parameter to declare one.
+
     Parameters
     ----------
     stages:
@@ -1192,8 +1420,53 @@ def auto_detect_restart_chain(
     -------
     Dictionary mapping stage names to their restart file paths.
     """
-    # Collect all potential restart files
-    restart_candidates: List[tuple[str, InpcrdData]] = []
+    # Collect all potential restart files, each with a stage that speaks for the member the
+    # file belongs to, where the layout names one.
+    restart_candidates: List[tuple[str, InpcrdData, Optional[SimulationStage]]] = []
+    stage_by_run = {stage.name: stage for stage in stages}
+
+    # Which member each *directory* belongs to, spoken for by one of its own stages. Only a
+    # directory whose declared stages agree on a single non-null tag speaks at all: a mixed
+    # directory, or one holding nothing but untagged runs, says nothing about membership
+    # and leaves its files open to every consumer.
+    speaker_by_dir: Dict[str, Optional[SimulationStage]] = {}
+    for stage in stages:
+        stage_dir = stage.name.rpartition("/")[0]
+        if stage_dir not in speaker_by_dir:
+            speaker_by_dir[stage_dir] = stage if stage.lineage else None
+        else:
+            speaking = speaker_by_dir[stage_dir]
+            if speaking is not None and (stage.lineage or None) != speaking.lineage:
+                speaker_by_dir[stage_dir] = None
+
+    def _owner(path: str) -> Optional[SimulationStage]:
+        """A stage that speaks for the member this restart belongs to, if one does.
+
+        A run writes the restart named after it, and stage names are the path-prefixed
+        posix stems `smart_group_files` builds, so a *declared* writer is a lookup rather
+        than a second layout inference.
+
+        Reading only declared writers is not enough, and the gap is the common case rather
+        than the exotic one: `rep1/prod_0001.rst` left behind by a chunk whose mdout was
+        never collected is claimed by no stage, and was then scored for rep2 exactly as if
+        it were unowned. The directory is evidence in its own right — a restart sitting in
+        rep1's directory was written by rep1's run whether or not that run reached the
+        document.
+
+        A file that neither a stage nor a directory claims stays a candidate for everyone:
+        one shared equilibration in its own directory, feeding N replicas, is a real edge
+        and the ordinary way a campaign starts. *Another member's* directory is evidence;
+        merely a different one is not.
+        """
+        try:
+            relative = os.path.relpath(path, directory)
+        except ValueError:      # different drives on Windows; nothing to place it under
+            return None
+        run = Path(relative).with_suffix("").as_posix()
+        writer = stage_by_run.get(run)
+        if writer is not None:
+            return writer
+        return speaker_by_dir.get(run.rpartition("/")[0])
 
     ext_map = {".rst", ".rst7", ".ncrst", ".restrt", ".inpcrd"}
 
@@ -1215,7 +1488,7 @@ def auto_detect_restart_chain(
             continue
         try:
             data = InpcrdParser(full_path).parse()
-            restart_candidates.append((full_path, data))
+            restart_candidates.append((full_path, data, _owner(full_path)))
         except (IOError, OSError, ValueError):
             continue
 
@@ -1237,11 +1510,30 @@ def auto_detect_restart_chain(
             # Some mdin files might reference atom count
             pass
 
+        # Both terms below read the *document-order* predecessor, and in a multi-lineage
+        # document that neighbour is routinely another member — discover output is
+        # phase-major, and a replica-major manifest puts rep2's head straight after rep1's
+        # tail. Scoring against it is what assigned rep1's terminal restart to rep2.
+        prev_stage = stages[i - 1] if i > 0 else None
+        if crosses_lineage(prev_stage, stage):
+            prev_stage = None
+
+        # `\d{2,}` is leftmost-matching, so the directory must not be folded into the name
+        # here: `rep10/prod_0002` as `rep10_prod_0002` scores against 10, which both misses
+        # its real predecessor prod_0001 and matches an unrelated prod_0009.
+        stage_base = stage.name.rpartition("/")[2]
+
         # Try to find matching restart
         best_match: Optional[tuple[str, float]] = None
 
-        for rst_path, rst_data in restart_candidates:
+        for rst_path, rst_data, rst_owner in restart_candidates:
             if not rst_data or not rst_data.details:
+                continue
+
+            # A restart belonging to another member was never read here. The atom-count
+            # check below cannot refuse it: replicas of one system share every count, which
+            # is what makes that guard a no-op exactly where it is needed most.
+            if crosses_lineage(rst_owner, stage):
                 continue
 
             # Check atom count match
@@ -1251,19 +1543,18 @@ def auto_detect_restart_chain(
 
             # Check naming convention match
             rst_stem = Path(rst_path).stem
-            stage_stem = stage.name.replace("/", "_")
 
             # Common patterns: stagename.rst -> next stage, prev_stage.rst7 -> current
             score = 0.0
 
             # Check if restart name matches previous stage
-            if i > 0:
-                prev_name = stages[i - 1].name.replace("/", "_")
+            if prev_stage is not None:
+                prev_name = prev_stage.name.replace("/", "_")
                 if prev_name in rst_stem or rst_stem in prev_name:
                     score += 5.0
 
             # Check for numeric sequence matching
-            stage_match = re.search(r'(\d{2,})', stage_stem)
+            stage_match = re.search(r'(\d{2,})', stage_base)
             rst_match = re.search(r'(\d{2,})', rst_stem)
             if stage_match and rst_match:
                 stage_num = int(stage_match.group(1))
@@ -1274,8 +1565,8 @@ def auto_detect_restart_chain(
                     score += 3.0
 
             # Check timestamp if previous stage has end time
-            if i > 0 and stages[i - 1].mdcrd and stages[i - 1].mdcrd.details:
-                prev_end = getattr(stages[i - 1].mdcrd.details, "time_end", None)
+            if prev_stage is not None and prev_stage.mdcrd and prev_stage.mdcrd.details:
+                prev_end = getattr(prev_stage.mdcrd.details, "time_end", None)
                 rst_time = getattr(rst_data.details, "time", None)
                 if prev_end is not None and rst_time is not None:
                     if abs(prev_end - rst_time) < 0.1:  # Within 0.1 ps
@@ -1383,12 +1674,18 @@ def smart_group_files(
             continue
         group[kind] = full_path
 
-    # Detect and handle numeric sequences
+    # Detect and handle numeric sequences, per member. Nothing upstream of discovery has
+    # read a manifest, so the tags are inferred here, by the repo's one rule for it. A
+    # layout that rule refuses leaves every run untagged, which is the single pooled family
+    # this always produced.
     all_stems = list(grouped.keys())
-    sequences = detect_numeric_sequences(all_stems)
+    tags = infer_lineages_from_layout(_run_stems(grouped))
+    sequences = detect_numeric_sequences(all_stems, [tags.get(s) for s in all_stems])
 
-    # Add sequence metadata to groups
-    for base_pattern, sequence_stems in sequences.items():
+    # Add sequence metadata to groups. The member is deliberately not written into
+    # `_sequence_base`: it names the family, every member runs the same one, and the stem
+    # already carries the directory the tag was inferred from.
+    for (_member, base_pattern), sequence_stems in sequences.items():
         for idx, stem in enumerate(sequence_stems):
             if stem in grouped:
                 grouped[stem]["_sequence_base"] = base_pattern
@@ -1452,6 +1749,16 @@ def auto_discover(
     # Use smart grouping for file discovery
     grouped = smart_group_files(directory, pattern=pattern_filter, recursive=recursive)
 
+    # The same layout inference `discover_draft` performs, because this is the same tree
+    # read for the same purpose — `plan <dir> --recursive` reaches the engine here instead
+    # of through a manifest, and a stage built without a tag is one the continuity
+    # partition, the restart-chain guard and `stage_sequence` cannot tell apart from its
+    # neighbours. Untagged, a replica tree was one document-order chain: each member's head
+    # measured against the previous member's tail, published as an overlap that never
+    # happened. Inferred from the whole tree, before `include_stems`/`include_roles` narrow
+    # it — membership is a property of the layout, not of what the caller asked to see.
+    lineage_by_stem = infer_lineages_from_layout(_run_stems(grouped))
+
     compiled_rules: List[tuple[Pattern[str], str]] = []
     if grouping_rules:
         for pattern, role in grouping_rules.items():
@@ -1475,7 +1782,17 @@ def auto_discover(
         if include_stems and stem not in include_stems:
             continue
 
-        stage = SimulationStage(name=stem, stage_role=stage_role)
+        # A group that is not a run carries no tag: `lineage_by_stem` holds run names only,
+        # so a topology or a lone starting structure stays untagged. Untagged is its own
+        # member here, not a wildcard — `_check_continuity` buckets it separately, so a
+        # shared prep run's edge into each replica is NOT measured on this path; each
+        # member's head reports "not measured" instead. That is a deliberate trade: before
+        # the partition the prep run was compared against whichever replica happened to
+        # follow it in document order, which was the true edge for exactly one member and
+        # a fabricated one for the rest. `crosses_lineage` is the looser rule and does let
+        # an untagged producer's restart reach any member.
+        stage = SimulationStage(name=stem, stage_role=stage_role,
+                                lineage=lineage_by_stem.get(stem))
 
         # Add sequence info as validation notes if detected
         if "_sequence_base" in kinds:

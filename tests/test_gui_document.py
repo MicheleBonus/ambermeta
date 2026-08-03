@@ -3,7 +3,7 @@ import json
 
 from ambermeta.gui.api.document import DocumentStore
 from ambermeta.simulation import (
-    Simulation, Phase, Step, Topology, InputCoords, resolve_input_coords,
+    Simulation, Phase, Step, Topology, InputCoords, iter_steps, resolve_input_coords,
 )
 
 
@@ -111,9 +111,12 @@ def test_step_mutators_move_reorder_clear():
 def test_add_step_sets_input_coords_source():
     st = _store()
     p = st.add_phase("P", "production")
-    sid = st.add_step(p, {"name": "prod", "input_coords": {"source": "step", "ref": "prev"}})
+    # A real predecessor: the ref used to be a made-up string, which now names nobody and
+    # is refused. The point of the test is that a supplied source/ref is honoured at all.
+    prev = st.add_step(p, {"name": "equil"})
+    sid = st.add_step(p, {"name": "prod", "input_coords": {"source": "step", "ref": prev}})
     _, s = st._find_step(sid)
-    assert s.input_coords.source == "step" and s.input_coords.ref == "prev"
+    assert s.input_coords.source == "step" and s.input_coords.ref == prev
 
 
 def test_remove_topology_clears_step_binding():
@@ -213,6 +216,20 @@ def test_response_carries_the_resolved_input_coordinates():
     assert steps[0].resolved_input_coords == "cryst/wt.crd"
     assert steps[1].resolved_input_coords == "equil/01_min.rst"
     assert steps[1].rst == "equil/02_nvt.rst"
+
+
+def test_response_carries_the_lineage_tag():
+    # A StepModel field that _sim_to_model does not construct serialises as null forever
+    # and nothing raises, so the tag is asserted on the wire and not on the dataclass.
+    st = _store()
+    sim = Simulation(phases=[Phase(id="p0", name="Prod", role="production", steps=[
+        Step(id="s0", name="rep1/prod_0001", lineage="rep1"),
+        Step(id="s1", name="prod_0001"),
+    ])])
+    st.replace(simulation=sim, settings=st.get().settings, manifest_path=None,
+               dirty=False, reset_history=True)
+    steps = st.to_response().simulation.phases[0].steps
+    assert [s.lineage for s in steps] == ["rep1", None]
 
 
 def test_reordering_steps_relinks_the_chain():
@@ -433,6 +450,200 @@ def test_a_deliberate_continues_from_survives_an_unrelated_drag():
     st.update_step("s2", {"input_coords": {"source": "step", "ref": "s0"}})
     st.reorder_steps("p0", ["s1", "s0", "s2"])
     assert st._find_step("s2")[1].input_coords.ref == "s0"   # the user's choice, untouched
+
+
+# --- the chain-maintenance invariant, over the store's six mutation sites ----
+
+def _campaign_store(**settings):
+    """common/equil, then rep1..rep3 x two production chunks, each reading that restart."""
+    st = _store()
+    sim = Simulation(
+        starting_structure="wt.crd",
+        phases=[
+            Phase(id="pe", name="Equil", role="equilibration", steps=[
+                Step(id="eq", name="common/equil",
+                     input_coords=InputCoords(source="starting_structure"),
+                     rst="common/equil.rst")]),
+            Phase(id="pp", name="Production", role="production", steps=[
+                s for tag in ("rep1", "rep2", "rep3")
+                for s in (
+                    Step(id=f"{tag}_1", name=f"{tag}/prod_0001", lineage=tag,
+                         input_coords=InputCoords(source="step", ref="eq"),
+                         rst=f"{tag}/prod_0001.rst"),
+                    Step(id=f"{tag}_2", name=f"{tag}/prod_0002", lineage=tag,
+                         input_coords=InputCoords(source="step", ref=f"{tag}_1"),
+                         rst=f"{tag}/prod_0002.rst"),
+                )]),
+        ],
+    )
+    st.replace(simulation=sim, settings={**st.get().settings, **settings},
+               manifest_path=None, dirty=False, reset_history=True)
+    return st
+
+
+def _cross_lineage_refs(st):
+    sim = st.get().simulation
+    by_id = {s.id: s for _, s in iter_steps(sim)}
+    out = []
+    for _, step in iter_steps(sim):
+        ic = step.input_coords
+        producer = by_id.get(ic.ref) if ic.source == "step" else None
+        if (producer is not None and producer.lineage and step.lineage
+                and producer.lineage != step.lineage):
+            out.append((producer.name, step.name))
+    return out
+
+
+def test_a_step_added_to_a_phase_holding_several_members_is_not_chained_at_all():
+    """"Which member does the step before this one belong to?" has no answer here, and
+    the answer the store used to pick was "whichever replica happens to be last"."""
+    st = _campaign_store()
+    sid = st.add_step("pp", {"name": "prod_0007"})
+    _, s = st._find_step(sid)
+    assert s.input_coords == InputCoords(source="starting_structure")
+    assert _cross_lineage_refs(st) == []
+
+
+def test_a_tagged_step_joins_its_own_member_and_continues_from_its_tail():
+    st = _campaign_store()
+    sid = st.add_step("pp", {"name": "rep1/prod_0003", "lineage": "rep1"})
+    _, s = st._find_step(sid)
+    assert s.lineage == "rep1"                      # dropped on the floor before
+    assert s.input_coords.ref == "rep1_2"           # not rep3's tail
+    assert [x.name for x in st._find_phase("pp").steps][:4] == [
+        "rep1/prod_0001", "rep1/prod_0002", "rep1/prod_0003", "rep2/prod_0001"]
+    assert _cross_lineage_refs(st) == []
+
+
+def test_a_step_can_be_placed_by_index_like_a_move():
+    st = _campaign_store()
+    sid = st.add_step("pp", {"name": "rep2/prod_0000", "lineage": "rep2"}, index=2)
+    assert [s.id for s in st._find_phase("pp").steps][:3] == ["rep1_1", "rep1_2", sid]
+
+
+def test_a_single_member_document_still_chains_an_appended_step():
+    """The guard must not fire on a document that declares one member, or every tagged
+    single-lineage manifest loses the append behaviour untagged ones keep."""
+    st = _campaign_store()
+    for _, s in iter_steps(st.get().simulation):
+        s.lineage = "only"
+    sid = st.add_step("pp", {"name": "prod_0007", "lineage": "only"})
+    assert st._find_step(sid)[1].input_coords.ref == "rep3_2"
+
+
+def test_deleting_the_phase_that_held_the_shared_parent_does_not_serialise_the_replicas():
+    st = _campaign_store()
+    st.delete_phase("pe")
+    assert _cross_lineage_refs(st) == []
+    assert [s.input_coords.source for s in st._find_phase("pp").steps] == [
+        "starting_structure", "step"] * 3
+
+
+def test_the_same_holds_when_the_user_turned_auto_linking_off():
+    """repair_dangling_refs is called straight from delete_phase and delete_step, so the
+    auto_link_restarts switch never protected anyone from this."""
+    st = _campaign_store(auto_link_restarts=False)
+    st.delete_phase("pe")
+    assert _cross_lineage_refs(st) == []
+
+
+def test_deleting_a_parent_that_several_members_read_is_reported_on_the_response():
+    st = _campaign_store()
+    resp = st.to_response()
+    assert resp.warnings == []
+    st.delete_step("eq")
+    warnings = st.to_response().warnings
+    assert len(warnings) == 1 and "rep1, rep2, rep3" in warnings[0]
+
+
+def test_a_warning_does_not_outlive_the_edit_that_raised_it():
+    st = _campaign_store()
+    st.delete_step("eq")
+    assert st.to_response().warnings
+    st.update_phase("pp", {"name": "Production runs"})
+    assert st.to_response().warnings == []
+
+
+def test_moving_a_step_into_another_members_phase_changes_no_link():
+    """A single-phase reorder cannot show this: _step_before crosses phase boundaries.
+
+    In a multi-member document a drag rearranges the view, not the provenance, so every
+    link is exactly what it was — including rep3's tail, which keeps continuing from rep3's
+    head even though it now sits between rep1's chunks. Re-deriving links from the new
+    adjacency is what fabricated three false edges from a single drag.
+    """
+    st = _campaign_store()
+    before = {sid: (s.input_coords.source, s.input_coords.ref)
+              for sid, s in ((s.id, s) for _, s in iter_steps(st._doc.simulation))}
+    st.move_step("rep3_2", "pp", 1)          # rep3's tail dropped between rep1's chunks
+    after = {sid: (s.input_coords.source, s.input_coords.ref)
+             for sid, s in ((s.id, s) for _, s in iter_steps(st._doc.simulation))}
+    assert after == before
+    assert _cross_lineage_refs(st) == []
+    assert st._find_step("rep3_2")[1].input_coords.ref == "rep3_1"
+    assert st._find_step("rep1_2")[1].input_coords.ref == "rep1_1"
+
+
+def test_no_reordering_route_can_link_one_member_to_another():
+    """_relink is reached from reorder_phases, add_step, move_step and reorder_steps. The
+    shared helper covers all four, but only by running each is that a fact rather than a
+    reading of the call graph."""
+    st = _campaign_store()
+    st.reorder_steps("pp", ["rep1_1", "rep2_1", "rep1_2", "rep2_2", "rep3_1", "rep3_2"])
+    assert _cross_lineage_refs(st) == []
+    st.reorder_phases(["pp", "pe"])          # the shared equilibration dragged to the end
+    assert _cross_lineage_refs(st) == []
+    # Each member still continues within itself wherever the order still says so.
+    assert st._find_step("rep1_2")[1].input_coords.ref == "rep1_1"
+    assert st._find_step("rep2_2")[1].input_coords.ref == "rep2_1"
+
+
+def test_update_step_refuses_a_continues_from_that_names_nobody():
+    import pytest
+    st = _campaign_store()
+    with pytest.raises(ValueError, match="no step to continue from"):
+        st.update_step("rep1_2", {"input_coords": {"source": "step", "ref": "ghost"}})
+    assert st._find_step("rep1_2")[1].input_coords.ref == "rep1_1"   # unchanged
+    assert st.to_response().can_undo is False                        # and unsnapshotted
+
+
+def test_update_step_refuses_a_step_that_continues_from_itself():
+    import pytest
+    st = _campaign_store()
+    with pytest.raises(ValueError, match="cannot continue from itself"):
+        st.update_step("rep1_2", {"input_coords": {"source": "step", "ref": "rep1_2"}})
+    assert st._find_step("rep1_2")[1].input_coords.ref == "rep1_1"
+
+
+def test_update_step_refuses_a_link_that_closes_a_loop_of_any_length():
+    """The 1-cycle was refused while `rep1_1 <- rep1_2` was accepted silently.
+
+    A cyclic provenance chain saved over the API with 200 and validated `ok: true`, which
+    is the same false claim as a fabricated edge — a run cannot be its own ancestor. Longer
+    loops are checked by walking up from the proposed producer, so a three-step ring is
+    caught as readily as a two-step one.
+    """
+    import pytest
+    st = _campaign_store()
+    # rep1_2 continues from rep1_1, so pointing rep1_1 back at rep1_2 closes a 2-cycle.
+    with pytest.raises(ValueError, match="already continues from it"):
+        st.update_step("rep1_1", {"input_coords": {"source": "step", "ref": "rep1_2"}})
+    assert st._find_step("rep1_1")[1].input_coords.ref == "eq"        # unchanged
+    assert st.to_response().can_undo is False                         # and unsnapshotted
+
+    # A second consumer of one producer is a fan-out, not a loop, and stays legal.
+    st.update_step("rep1_2", {"input_coords": {"source": "step", "ref": "eq"}})
+    assert st._find_step("rep1_2")[1].input_coords.ref == "eq"
+
+
+def test_a_hand_written_link_between_two_members_is_kept_and_reported():
+    """It is the only way to record a genuine branch, so it is a finding, not a refusal."""
+    st = _campaign_store()
+    st.update_step("rep2_1", {"input_coords": {"source": "step", "ref": "rep1_2"}})
+    assert st._find_step("rep2_1")[1].input_coords.ref == "rep1_2"
+    warnings = st.to_response().warnings
+    assert len(warnings) == 1
+    assert "rep2/prod_0001" in warnings[0] and "rep1/prod_0002" in warnings[0]
 
 
 def test_adding_a_pooled_path_as_hmr_applies_the_kind_it_was_asked_for():

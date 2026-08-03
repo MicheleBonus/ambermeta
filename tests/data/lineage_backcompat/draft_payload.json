@@ -1,0 +1,102 @@
+{
+  "version": 2,
+  "simulation": {
+    "topologies": [
+      {
+        "id": "top_CH3L1_HUMAN_6NAG",
+        "path": "CH3L1_HUMAN_6NAG.top",
+        "kind": "normal"
+      }
+    ],
+    "starting_structure": "CH3L1_HUMAN_6NAG.crd"
+  },
+  "phases": [
+    {
+      "id": "<id:0>",
+      "name": "Production",
+      "role": "production",
+      "order": 0
+    }
+  ],
+  "steps": [
+    {
+      "id": "<id:1>",
+      "name": "ntp_prod_0001",
+      "phase": "<id:0>",
+      "order": 0,
+      "topology": "top_CH3L1_HUMAN_6NAG",
+      "input_coords": {
+        "source": "starting_structure"
+      },
+      "mdin": "ntp_prod_0001.mdin",
+      "mdout": "ntp_prod_0001.mdout",
+      "mdcrd": null,
+      "notes": [],
+      "rst": "ntp_prod_0001.rst"
+    },
+    {
+      "id": "<id:2>",
+      "name": "ntp_prod_0002",
+      "phase": "<id:0>",
+      "order": 1,
+      "topology": "top_CH3L1_HUMAN_6NAG",
+      "input_coords": {
+        "source": "step",
+        "ref": "<id:1>"
+      },
+      "mdin": "ntp_prod_0002.mdin",
+      "mdout": "ntp_prod_0002.mdout",
+      "mdcrd": null,
+      "notes": [],
+      "rst": "ntp_prod_0002.rst"
+    },
+    {
+      "id": "<id:3>",
+      "name": "ntp_prod_0003",
+      "phase": "<id:0>",
+      "order": 2,
+      "topology": "top_CH3L1_HUMAN_6NAG",
+      "input_coords": {
+        "source": "step",
+        "ref": "<id:2>"
+      },
+      "mdin": "ntp_prod_0003.mdin",
+      "mdout": "ntp_prod_0003.mdout",
+      "mdcrd": null,
+      "notes": [],
+      "rst": "ntp_prod_0003.rst"
+    },
+    {
+      "id": "<id:4>",
+      "name": "ntp_prod_0004",
+      "phase": "<id:0>",
+      "order": 3,
+      "topology": "top_CH3L1_HUMAN_6NAG",
+      "input_coords": {
+        "source": "step",
+        "ref": "<id:3>"
+      },
+      "mdin": "ntp_prod_0004.mdin",
+      "mdout": "ntp_prod_0004.mdout",
+      "mdcrd": null,
+      "notes": [],
+      "rst": "ntp_prod_0004.rst"
+    },
+    {
+      "id": "<id:5>",
+      "name": "ntp_prod_0005",
+      "phase": "<id:0>",
+      "order": 4,
+      "topology": "top_CH3L1_HUMAN_6NAG",
+      "input_coords": {
+        "source": "step",
+        "ref": "<id:4>"
+      },
+      "mdin": "ntp_prod_0005.mdin",
+      "mdout": "ntp_prod_0005.mdout",
+      "mdcrd": null,
+      "notes": [],
+      "rst": "ntp_prod_0005.rst"
+    }
+  ]
+}

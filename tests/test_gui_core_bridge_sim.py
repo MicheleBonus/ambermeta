@@ -57,6 +57,49 @@ def test_build_suggestions_flags_missing_run_and_hmr():
     assert "2" in miss["evidence"]
     assert miss["base"] == "prod"
     assert miss["missing"] == [2]
+    assert miss["lineage"] is None
+
+
+def _members(chunks):
+    """One Production phase holding `{tag: [indices]}` as tagged, path-prefixed steps."""
+    steps = [Step(id=f"{tag}_{i}", name=f"{tag}/prod_{i:04d}", lineage=tag)
+             for tag, idxs in chunks.items() for i in idxs]
+    return Simulation(phases=[Phase(id="p0", name="Production", role="production",
+                                    steps=steps)])
+
+
+def _missing_run(sim):
+    return [s for s in core_bridge.build_suggestions(sim, "/base")
+            if s["kind"] == "missing_run"]
+
+
+def test_an_untagged_document_keeps_the_card_it_always_had():
+    # The wording is the guarantee, not just the count: an untagged document must read
+    # exactly as it did before members existed.
+    sim = Simulation(phases=[Phase(id="p0", name="Production", role="production", steps=[
+        Step(id="a", name="prod_0001"), Step(id="b", name="prod_0004")])])
+    card, = _missing_run(sim)
+    assert card["title"] == "prod sequence is missing member(s) 2, 3"
+    assert card["evidence"] == "present members of 'prod' skip index(es) 2, 3"
+    assert card["base"] == "prod"
+
+
+def test_a_crashed_replica_is_reported_once_and_scoped_to_the_short_member():
+    sim = _members({"rep1": [1, 2, 3], "rep2": [1], "rep3": [1, 2, 3]})
+    card, = _missing_run(sim)
+    assert card["lineage"] == "rep2"
+    assert card["base"] == "prod"          # the bare base the canvas matches a ghost on
+    assert card["missing"] == [2, 3]
+    assert card["title"] == "rep2/prod sequence is missing member(s) 2, 3"
+    assert "skip" not in card["evidence"]  # it stopped; it did not skip
+
+
+def test_members_numbered_from_different_offsets_produce_no_card():
+    assert _missing_run(_members({"rep1": [1, 2], "rep2": [11, 12]})) == []
+
+
+def test_a_complete_ensemble_produces_no_card():
+    assert _missing_run(_members({"rep1": [1, 2], "rep2": [1, 2], "rep3": [1, 2]})) == []
 
 
 def test_continuity_gap_suggestions_are_step_scoped():
@@ -122,6 +165,193 @@ def test_discover_draft_on_real_fixtures(sample_md_data_dir):
         assert flat[0].rst and flat[0].rst.endswith(".rst")
         assert resolve_input_coords(sim, flat[1]) == flat[0].rst
     assert isinstance(out["suggestions"], list)
+
+
+# ---------------------------------------------------------------------------
+# discover_draft on a replica tree: one chain per member, one phase per role
+# ---------------------------------------------------------------------------
+
+def _edges(sim):
+    """(step name, what it reads) in document order, with refs resolved to names."""
+    by_id = {s.id: s for p in sim.phases for s in p.steps}
+    return [(s.name, by_id[s.input_coords.ref].name
+             if s.input_coords.source == "step" else s.input_coords.source)
+            for p in sim.phases for s in p.steps]
+
+
+def test_discover_draft_chains_within_each_lineage_and_never_across(replica_tree):
+    """The failure design section 1 opens with, in the tree that produces it.
+
+    Before this fix `discover_draft` threaded one flat `prev_step_id` over `_ordered_stems`,
+    which is replica-major, so the observed edges included `rep2/heat_0001 <- rep1/prod_0002`
+    and `rep3/heat_0001 <- rep2/prod_0002`: AmberMeta asserting that replica 2 continued
+    from a restart file in replica 1's directory. Note the boundary edge is heat<-prod, not
+    prod<-prod — `heat` natural-sorts before `min`, so the first run of each replica in
+    document order is its heating.
+
+    Listed phase-major, which is what the grouping below makes document order: the members
+    interleave, and the chain still never leaves one.
+    """
+    sim = core_bridge.discover_draft(str(replica_tree), recursive=True)["simulation"]
+
+    assert _edges(sim) == [
+        ("rep1/heat_0001", "starting_structure"),
+        ("rep2/heat_0001", "starting_structure"),
+        ("rep3/heat_0001", "starting_structure"),
+        ("rep1/min_0001", "rep1/heat_0001"),
+        ("rep2/min_0001", "rep2/heat_0001"),
+        ("rep3/min_0001", "rep3/heat_0001"),
+        ("rep1/prod_0001", "rep1/min_0001"),
+        ("rep1/prod_0002", "rep1/prod_0001"),
+        ("rep2/prod_0001", "rep2/min_0001"),
+        ("rep2/prod_0002", "rep2/prod_0001"),
+        ("rep3/prod_0001", "rep3/min_0001"),
+        ("rep3/prod_0002", "rep3/prod_0001"),
+    ]
+    # Three heads, one per member — not one globally first step and two false edges.
+    assert sum(1 for _, reads in _edges(sim) if reads == "starting_structure") == 3
+
+
+def test_discover_draft_tags_every_run_with_its_replica_directory(replica_tree):
+    sim = core_bridge.discover_draft(str(replica_tree), recursive=True)["simulation"]
+    assert [s.lineage for p in sim.phases for s in p.steps] == (
+        ["rep1", "rep2", "rep3"] * 2
+        + ["rep1", "rep1", "rep2", "rep2", "rep3", "rep3"])
+
+
+def test_discover_draft_groups_same_role_steps_from_every_lineage_into_one_phase(replica_tree):
+    """Nine phases become three.
+
+    `_ordered_stems` is replica-major and the contiguous-role rule opens a phase per role
+    change, so this tree previously rendered nine phases — three separately named
+    "Minimization", each holding one run — and the canvas had nowhere to show a member.
+    """
+    sim = core_bridge.discover_draft(str(replica_tree), recursive=True)["simulation"]
+
+    assert [(p.name, p.role, [s.name for s in p.steps]) for p in sim.phases] == [
+        ("Heating", "heating",
+         ["rep1/heat_0001", "rep2/heat_0001", "rep3/heat_0001"]),
+        ("Minimization", "minimization",
+         ["rep1/min_0001", "rep2/min_0001", "rep3/min_0001"]),
+        ("Production", "production",
+         ["rep1/prod_0001", "rep1/prod_0002", "rep2/prod_0001",
+          "rep2/prod_0002", "rep3/prod_0001", "rep3/prod_0002"]),
+    ]
+
+
+def test_discover_draft_opens_a_new_phase_when_a_role_recurs(recurring_role_tree):
+    """Grouping across members must not reorder the steps inside one.
+
+    Keyed on the role alone, the second minimisation of a min -> heat -> min member was
+    merged into that role's FIRST phase, so the member's steps came out of the document
+    as min, min, heat, prod. A recurrence that is not contiguous is a different phase of
+    the protocol and opens one.
+    """
+    sim = core_bridge.discover_draft(str(recurring_role_tree), recursive=True)["simulation"]
+
+    assert [(p.name, p.role, [s.name for s in p.steps]) for p in sim.phases] == [
+        ("Minimization", "minimization", ["rep1/01_min", "rep2/01_min"]),
+        ("Heating", "heating", ["rep1/02_heat", "rep2/02_heat"]),
+        ("Minimization", "minimization", ["rep1/03_min", "rep2/03_min"]),
+        ("Production", "production", ["rep1/04_prod", "rep2/04_prod"]),
+    ]
+
+
+def test_discover_draft_never_chains_a_step_to_a_later_one(recurring_role_tree):
+    """The consequence the reordering had, stated as the property it violated.
+
+    Every restart is written before it is read, so a chain edge must always point
+    backwards in document order. Hoisting `03_min` next to `01_min` left it reading the
+    `02_heat` that now followed it — and continuity compares consecutive *document*
+    stages, so the pairs it checked were no longer the pairs that ran.
+    """
+    sim = core_bridge.discover_draft(str(recurring_role_tree), recursive=True)["simulation"]
+    flat = [s for p in sim.phases for s in p.steps]
+    position = {step.id: index for index, step in enumerate(flat)}
+
+    forward_only = [(step.name, flat[position[step.input_coords.ref]].name)
+                    for step in flat
+                    if step.input_coords.source == "step"
+                    and position[step.input_coords.ref] > position[step.id]]
+    assert forward_only == []
+
+
+def test_discover_draft_keeps_the_untagged_prep_chain_out_of_the_replicas(campaign_tree):
+    """Shared prep beside three replicas — the layout design section 6 is written around.
+
+    The untagged runs are one bucket with one chain of their own, and no replica head is
+    chained to the prep run that happens to precede it in document order. Each head reads
+    the starting structure instead: which prep run actually produced it is chain evidence
+    the mdout header carries and this scan does not read, and inventing the edge is the
+    class of claim this PR exists to stop.
+    """
+    sim = core_bridge.discover_draft(str(campaign_tree), recursive=True)["simulation"]
+
+    assert _edges(sim) == [
+        ("common/equil_0001", "starting_structure"),
+        ("common/heat_0001", "common/equil_0001"),
+        ("common/min_0001", "common/heat_0001"),
+        ("rep1/prod_0001", "starting_structure"),
+        ("rep1/prod_0002", "rep1/prod_0001"),
+        ("rep2/prod_0001", "starting_structure"),
+        ("rep2/prod_0002", "rep2/prod_0001"),
+        ("rep3/prod_0001", "starting_structure"),
+        ("rep3/prod_0002", "rep3/prod_0001"),
+    ]
+    assert [s.lineage for p in sim.phases for s in p.steps] == (
+        [None] * 3 + ["rep1", "rep1", "rep2", "rep2", "rep3", "rep3"])
+
+
+def test_discover_draft_reports_the_inferred_grouping_as_applied(replica_tree):
+    """Decision 7: the inference is a claim, so it is surfaced rather than performed
+    silently. `[applied]`, not `needs_you` — there is nothing for the user to accept."""
+    out = core_bridge.discover_draft(str(replica_tree), recursive=True)
+    sug = next(s for s in out["suggestions"] if s["kind"] == "lineage_group")
+    assert sug["severity"] == "applied"
+    assert "3" in sug["title"]
+    assert all(tag in sug["evidence"] for tag in ("rep1", "rep2", "rep3"))
+
+
+def test_the_grouping_card_accounts_for_the_runs_that_carry_no_tag(campaign_tree):
+    """Three of the canonical campaign's nine runs are shared prep and stay untagged.
+
+    The count is of *declared* members, so a card that named only those would say "3"
+    about a document holding nine runs and leave the reader to assume the other six —
+    there are six — were what the three lineages hold.
+    """
+    out = core_bridge.discover_draft(str(campaign_tree), recursive=True)
+    sug = next(s for s in out["suggestions"] if s["kind"] == "lineage_group")
+    assert sug["title"] == "Runs carry 3 declared lineage(s)"
+    assert sug["evidence"] == ("rep1: 2 run(s); rep2: 2 run(s); rep3: 2 run(s); "
+                               "no lineage: 3 run(s)")
+
+
+def test_discover_reports_the_replica_that_stopped_early(crashed_replica_tree):
+    """End to end: layout inference tags the runs, and the tag is what lets the detector
+    see that rep2 is short. Before this keying the whole tree pooled into one `prod`
+    family running 1-3, which is complete, so the crash produced no finding at all."""
+    out = core_bridge.discover_draft(str(crashed_replica_tree), recursive=True)
+    card, = [s for s in out["suggestions"] if s["kind"] == "missing_run"]
+    assert card["lineage"] == "rep2"
+    assert card["base"] == "prod" and card["missing"] == [2, 3]
+
+
+def test_discover_draft_leaves_an_ambiguous_tree_untagged_and_serially_chained(nested_sweep_tree):
+    """A nested sweep varies in two segments at once, so nothing is tagged — and an
+    untagged tree keeps exactly the flat chain and contiguous phases it always had."""
+    tree = nested_sweep_tree
+    sim = core_bridge.discover_draft(str(tree), recursive=True)["simulation"]
+
+    assert [s.lineage for p in sim.phases for s in p.steps] == [None] * 4
+    assert len(sim.phases) == 1
+    assert _edges(sim) == [
+        ("300K/rep1/prod_0001", "starting_structure"),
+        ("300K/rep2/prod_0001", "300K/rep1/prod_0001"),
+        ("310K/rep1/prod_0001", "300K/rep2/prod_0001"),
+        ("310K/rep2/prod_0001", "310K/rep1/prod_0001"),
+    ]
+    assert not any(s["kind"] == "lineage_group"
+                   for s in core_bridge.build_suggestions(sim, str(tree)))
 
 
 def test_validate_simulation_reports_missing_files_and_suggestions(tmp_path):

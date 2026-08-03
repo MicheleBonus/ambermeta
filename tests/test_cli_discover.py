@@ -33,6 +33,21 @@ def test_discover_write_roundtrips_v2(sample_md_data_dir, tmp_path, capsys):
     assert any(s.name.startswith("ntp_prod") for p in sim.phases for s in p.steps)
 
 
+def test_discover_reports_the_lineage_grouping_and_writes_it(replica_tree, tmp_path, capsys):
+    """Design section 8.2: no new flag. `--explain-grouping` is answered by the `[applied]`
+    line and by the tag landing in the manifest, so the inference is visible as data."""
+    dest = tmp_path / "draft.yaml"
+    rc = cli._discover_command(_args(str(replica_tree), write=str(dest)))
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "[applied] Runs carry 3 declared lineage(s)" in out
+
+    sim = load_simulation(str(dest))
+    assert sorted({s.lineage for p in sim.phases for s in p.steps}) == ["rep1", "rep2", "rep3"]
+    # Three phases, not nine: one per role, shared by the three members.
+    assert [p.role for p in sim.phases] == ["heating", "minimization", "production"]
+
+
 def test_discover_empty_directory_returns_1(tmp_path, capsys):
     rc = cli._discover_command(_args(str(tmp_path)))
     assert rc == 1

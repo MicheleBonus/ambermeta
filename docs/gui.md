@@ -77,13 +77,15 @@ Each pane is resizable (drag the divider); widths persist across sessions.
 
 ## 3. A typical session
 
-1. **Discover.** Click **Discover**, optionally uncheck "Search subdirectories" or set a filename pattern, then **Run discover**. The server scans the launch directory, groups files by stem, classifies the topology pool (normal vs. HMR), picks a starting structure, and chains later steps' input coordinates to the previous step's output restart. This **replaces** the current draft (a confirmation guards unsaved changes) and repopulates the suggestions tray.
+1. **Discover.** Click **Discover**, optionally uncheck "Search subdirectories" or set a filename pattern, then **Run discover**. The server scans the launch directory, groups files by stem, classifies the topology pool (normal vs. HMR), picks a starting structure, and chains later steps' input coordinates to the previous step's output restart — the previous step **of the same lineage**, when the directory layout names members (`rep1/`, `rep2/`, … running the same set of runs); each member then starts from the starting structure and same-role steps of every member share one phase. This **replaces** the current draft (a confirmation guards unsaved changes) and repopulates the suggestions tray.
 2. **Assign & adjust.** Drag a file from **Files** onto the topology pool, the starting-structure slot, a step's `mdin`/`mdout`/`mdcrd`/`rst` slot, or a phase's/step's topology target. Or select a file in **Files** and use the Inspector's **Assign** actions (§6) — the same mutations, without dragging.
 3. **Arrange.** In the **Canvas**, drag a step's grip handle to reorder it within a phase or drop it onto another phase to move it; drag a phase's grip handle to reorder phases.
 4. **Validate.** Click **Validate**. The panel lists per-step issues (missing files, continuity/sequence problems) and protocol-level notes, and lets you jump to a step. A simulation with continuity notes shows as *valid, with N protocol note(s)* — never a silent clean pass when something is worth a look.
 5. **Save / Plan / Export.** **Save** writes the canonical **v2 manifest** to disk (YAML or JSON) and reports the path it wrote. **Plan** is the step after that: it writes the manifest *and* the artifacts [`ambermeta plan`](cli.md) produces — `summary.json`, `methods_summary.json`, and optionally a statistics CSV — so the whole pipeline is one action rather than a save followed by a trip to a terminal. **Export** previews YAML or JSON for copying without writing anything.
 
 Undo/redo (**Ctrl+Z** / **Ctrl+Shift+Z**, **Ctrl+Y**) and a dirty-state dot live in the top bar; history is kept on the server (100 steps). **Open** resets it — a different manifest is a new editing session — while **Discover** does not, so a discovery run on the wrong directory is one undo away. Removing something (a step, a phase, a topology, the starting structure) reports itself with an **Undo** button; that offer disappears as soon as you make another change, because undo always reverses the most recent one.
+
+An edit that the chain rules let through but could not honour in full reports itself in the same place, as a **warning-toned message** — deleting a step that runs in several lineages continued from (which also carries an Undo offer), or setting a "continues from" that crosses a lineage boundary (which does not; `lineage` in [`docs/manifest.md` §5](manifest.md#5-steps) says what a member is). It is not an error: the edit landed, and the message says what it cost so you can go and look. It has the same lifetime as an Undo offer and for the same reason — it describes one edit, so the next one clears it.
 
 ---
 
@@ -156,9 +158,32 @@ The Inspector's content depends on what's selected:
 Every inferred thing is surfaced as an explainable suggestion rather than applied silently — this is the draft-first design: roles, the HMR topology, the starting structure, sequence holes, and continuity gaps all show up here. Suggestions are grouped:
 
 - **Needs you** — something the tool can't resolve on its own (`missing_run`: a numbered-sequence hole; `continuity_gap`: a genuine start/end mismatch between consecutive steps; `topology_confirm`: more than one topology in the pool, confirm which is HMR). Each card offers **Accept** / **Adjust** / **Ignore**.
-- **Applied** — something already reflected in the draft, shown for transparency (`starting_structure`, `role_guess`). Each card offers **Dismiss**, plus **Undo** (calls the server's undo) when the suggestion says it can be undone.
+- **Applied** — something already reflected in the draft, shown for transparency (`starting_structure`, `role_guess`, `lineage_group`: the run lineages the document declares, how many runs each holds, and how many carry none). Each card offers **Dismiss**, plus **Undo** (calls the server's undo) when the suggestion says it can be undone.
 
 Every card shows a `title` and a monospace `evidence` string explaining the inference. Dismissing a card only hides it in this browser session — it does not mutate the document; **Undo** is the only action here that does.
+
+A `missing_run` card carries a `lineage` field naming the member it is scoped to (`null` for the untagged bucket), so a replica that stopped early is named rather than pooled with its siblings:
+
+```jsonc
+{ "id": "sug_1", "kind": "missing_run", "severity": "needs_you",
+  "title": "rep2/prod sequence is missing member(s) 2, 3",
+  "evidence": "'rep2/prod' has no run at index(es) 2, 3",
+  "base": "prod", "missing": [2, 3], "lineage": "rep2",
+  "actions": ["Mark as expected gap", "Locate file", "Ignore"] }
+```
+
+`lineage_group` is the `[applied]` card reporting membership itself. Its evidence names each declared member and its run count, and counts the untagged runs separately — left unsaid, "3 lineages" would read as covering all nine runs of a campaign whose shared prep carries no tag at all:
+
+```jsonc
+{ "id": "sug_2", "kind": "lineage_group", "severity": "applied",
+  "title": "Runs carry 3 declared lineage(s)",
+  "evidence": "rep1: 2 run(s); rep2: 2 run(s); rep3: 2 run(s); no lineage: 3 run(s)",
+  "actions": ["Undo"] }
+```
+
+That card reports what the document **declares**, not where the tags came from — nothing after the fact can tell an inferred tag from a hand-written one, so a manifest whose lineages you typed yourself is described the same way. `discover` announces its own inference by running this over the draft it just built.
+
+(Both blocks above elide the always-present `step_id`/`phase_id`/`base`/`missing`/`lineage` keys where they are `null` — no route sets `exclude_none`, so every key is on the wire on every card.)
 
 The tray re-runs validation (and refills itself) after every document mutation, after Discover, and whenever the Validate panel is opened.
 
@@ -303,11 +328,43 @@ The frontend talks to a small REST API under `/api` (`ambermeta/gui/api/routes.p
 | `POST` | `/api/phases/reorder` | `{ phase_ids[] }` | Document (`400` unless the id set matches exactly) |
 | `PUT` | `/api/phases/{id}` | `{ name?, role?, topology? }` — `topology` present (including `null`) sets or clears it on **every step of the phase** in one undoable operation | Document (`404` if the phase or the topology id is unknown) |
 | `DELETE` | `/api/phases/{id}?reassign_to=<phase_id>` | — | Document (`404`; `400` if `reassign_to` is the phase being deleted); moves the deleted phase's steps to `reassign_to` if given |
-| `POST` | `/api/phases/{id}/steps` | `{ name, topology?, input_coords?, mdin?, mdout?, mdcrd?, rst?, expected_gap_ps?, gap_tolerance_ps?, notes? }` | Document (`404` if phase unknown) |
+| `POST` | `/api/phases/{id}/steps` | `{ name, topology?, input_coords?, mdin?, mdout?, mdcrd?, rst?, lineage?, index?, expected_gap_ps?, gap_tolerance_ps?, notes? }` — `lineage` places the step in that member; `index` (default `-1`) is the position within the phase, appending **within the step's own lineage** | Document (`404` if phase unknown, `400` for an unusable `input_coords.ref` — see below) |
 | `POST` | `/api/phases/{id}/steps/reorder` | `{ step_ids[] }` | Document (`404`/`400`) |
-| `PUT` | `/api/steps/{id}` | `{ name?, topology?, input_coords?, files?: {mdin?,mdout?,mdcrd?,rst?}, expected_gap_ps?, gap_tolerance_ps?, notes? }` — `topology`, `expected_gap_ps` and `gap_tolerance_ps` use present-vs-absent: sending `null` clears, omitting leaves alone | Document (`404`) |
+| `PUT` | `/api/steps/{id}` | `{ name?, topology?, input_coords?, files?: {mdin?,mdout?,mdcrd?,rst?}, expected_gap_ps?, gap_tolerance_ps?, notes? }` — `topology`, `expected_gap_ps` and `gap_tolerance_ps` use present-vs-absent: sending `null` clears, omitting leaves alone | Document (`404`; `400` for an unusable `input_coords.ref` — see below) |
 | `DELETE` | `/api/steps/{id}` | — | Document (`404`) |
 | `POST` | `/api/steps/{id}/move` | `{ phase_id, index? }` (`index` default `-1` = append) | Document (`404`) |
+
+#### `input_coords.ref` is validated — three `400`s
+
+`POST /api/phases/{id}/steps` and `PUT /api/steps/{id}` both refuse a "continues from" that cannot mean
+anything. Previously either would store one verbatim, so a dead id resolved to no coordinates while the
+chain still looked intact, and a self-reference made a one-step cycle:
+
+```
+$ curl -X PUT .../api/steps/9831ac9c -d '{"input_coords":{"source":"step","ref":"deadbeef"}}'
+400 {"detail":"no step to continue from: deadbeef"}
+
+$ curl -X PUT .../api/steps/9831ac9c -d '{"input_coords":{"source":"step","ref":"9831ac9c"}}'
+400 {"detail":"a step cannot continue from itself"}
+
+$ curl -X PUT .../api/steps/9831ac9c -d '{"input_coords":{"source":"step"}}'
+400 {"detail":"a step that continues from another must name it"}
+```
+
+A **cross-lineage** `ref` is a different case and is **accepted with `200`**: setting one by hand is the only
+way to express a genuine branch, so it is honoured and reported in `warnings` rather than rejected
+(see [the data model](#data-model-documentresponse) below). No automatic operation will create or maintain
+one — [manifest §6](manifest.md#the-chain-invariant) states the invariant.
+
+Adding a step to a **multi-lineage phase without naming a lineage** does not auto-chain it at all: it is
+created reading the starting structure rather than continuing whichever step happens to sit last. Silence
+is recoverable, a false edge is not — pass `lineage` and it is inserted after that member's last step and
+chained to it instead.
+
+`lineage` is **read-only at this surface in this release.** `StepCreate` honours it, so a step can be born
+into a member; `StepUpdate` declares the field but no route writes it, so `PUT /api/steps/{id}` with
+`{"lineage": "..."}` returns `200` and leaves the tag unchanged. Retag by editing the manifest and
+reopening it, or let `discover` infer it.
 
 ### Unified assignment, settings, history, validation
 
@@ -373,15 +430,19 @@ $ curl -s -o /dev/null -w '%{http_code}\n' 'http://127.0.0.1:8799/api/nonexisten
             "input_coords": { "source": "starting_structure", "ref": null, "path": null },
             "mdin": "ntp_prod_0001.mdin", "mdout": "ntp_prod_0001.mdout", "mdcrd": null,
             "rst": "ntp_prod_0001.rst",
+            "lineage": null,
             "resolved_input_coords": "CH3L1_HUMAN_6NAG.crd",
             "expected_gap_ps": null, "gap_tolerance_ps": null, "notes": [] }
         ] }
     ]
-  }
+  },
+  "warnings": []
 }
 ```
 
 This is `ambermeta.gui.api.schemas.DocumentResponse` — the same shape the frontend renders and the shape `simulation_to_payload`/`payload_to_simulation` round-trip to a v2 manifest (`docs/manifest.md`).
+
+`warnings` is the one field that describes the **request** rather than the document: what the edit just made could not do without inventing a link nobody declared — a step several lineages continued from deleted, a `ref` set across a lineage boundary. The next **mutation** replaces it, so it is never a running total; a `GET /api/document` in between still shows the last edit's, since a read is not an edit. `save` and `plan` are not mutations of the document and do not clear it, so the copy embedded in their responses is the *previous* edit's — read `warnings` off the mutation's own response, not off a later one. `discover` replaces the document wholesale and so always reports an empty list here. The GUI announces it as a warning-toned message on the edit that raised it (§3); a script driving the API should read it off the mutation's own response.
 
 One field here has no counterpart on disk: **`resolved_input_coords` is read-only and API-only**. The server resolves the chain (`starting_structure`, or `ref` → that step's `rst`, or an explicit `path`) and hands the answer over so the frontend never re-implements the rules. Sending it back is not how you change what a step reads — set `input_coords` instead. `rst`, by contrast, is a real manifest field: the restart this step produces.
 

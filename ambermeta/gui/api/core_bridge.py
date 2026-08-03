@@ -67,6 +67,19 @@ def document_to_payload(stages: List[Dict[str, Any]], settings: Dict[str, Any],
         role = s.get("role")
         if role:
             entry["stage_role"] = role
+        # This whitelist is the gate: a key that is not copied out here never reaches
+        # _manifest_to_stages, so tagging the step and flattening the tag would both be
+        # silent no-ops without these three lines. Only `lineage` is really conditional —
+        # `step_id` is set on every step and `parent_id` on every chained one, so every
+        # document's engine payload carries those two. That is deliberate rather than
+        # sloppy: they are how a lineage head is measured against its real producer, and
+        # withholding them from untagged documents would only mean recomputing them the
+        # moment one tag appeared. This payload is in-memory input to `auto_discover` and
+        # is never serialised, so it is not part of any on-disk shape.
+        for provenance in ("lineage", "step_id", "parent_id"):
+            val = s.get(provenance)
+            if val:
+                entry[provenance] = val
         for kind in STAGE_FILE_KINDS:
             val = _relativize(s.get(kind), base_directory, relative)
             if val:
@@ -268,6 +281,7 @@ def preview_simulation(sim, base_directory, fmt):
 
 
 def build_suggestions(sim, base_directory):
+    from ambermeta.lineages import UNTAGGED, lineages
     from ambermeta.protocol import detect_sequence_gaps
     out = []
 
@@ -275,15 +289,26 @@ def build_suggestions(sim, base_directory):
         return {"id": f"sug_{len(out) + 1}", "kind": kind, "severity": severity,
                 "title": title, "evidence": evidence, "actions": actions}
 
-    step_names = [s.name for p in sim.phases for s in p.steps]
-    for base, missing in detect_sequence_gaps(step_names).items():
+    steps = [s for p in sim.phases for s in p.steps]
+    gaps = detect_sequence_gaps([s.name for s in steps], [s.lineage for s in steps])
+    for (member, base), missing in gaps.items():
+        tag = None if member is UNTAGGED else member
         idxs = ", ".join(str(i) for i in missing)
+        # The member is named in the prose only when there is one, so an untagged document
+        # reads exactly as it always did. `base` stays the bare run base either way: it is
+        # what the canvas matches a ghost against, and it is shared by every member.
+        scope = f"{tag}/{base}" if tag else base
+        # A short member did not skip anything — it stopped. Saying "skip" of a run that
+        # crashed would be the same kind of unearned claim this keying exists to remove.
+        evidence = (f"'{scope}' has no run at index(es) {idxs}" if tag
+                    else f"present members of '{base}' skip index(es) {idxs}")
         sug = _sug("missing_run", "needs_you",
-                    f"{base} sequence is missing member(s) {idxs}",
-                    f"present members of '{base}' skip index(es) {idxs}",
+                    f"{scope} sequence is missing member(s) {idxs}",
+                    evidence,
                     ["Mark as expected gap", "Locate file", "Ignore"])
         sug["base"] = base
         sug["missing"] = missing
+        sug["lineage"] = tag
         out.append(sug)
 
     hmr = [t for t in sim.topologies if t.kind == "hmr"]
@@ -301,6 +326,31 @@ def build_suggestions(sim, base_directory):
     if role_pairs:
         out.append(_sug("role_guess", "applied", "Phase roles inferred from file content/names",
                         "; ".join(role_pairs), ["Undo"]))
+
+    # Decision 7: the grouping is reported, never performed silently. `[applied]` and not
+    # `needs_you` because there is nothing to accept — the tag is on the steps and visible
+    # in the manifest, so the evidence names each member and how many runs it holds and
+    # the user can read the claim back off the document.
+    #
+    # It says what the document declares, not where the tags came from. This function also
+    # runs from validate_simulation for any open document, so a manifest whose lineages
+    # were typed by hand would be told they had been read off its directories — and after
+    # the fact nothing here can tell an inferred tag from a hand-written one. `discover`
+    # announces its own inference by running on the draft it just built.
+    #
+    # The untagged runs are counted beside the declared members because the count is of
+    # declared members only: left unsaid, "3 lineages" reads as covering all nine runs of
+    # a campaign whose shared prep — three of those nine — carries no tag at all.
+    declared = lineages(sim)
+    if declared:
+        untagged = [s for s in steps if not s.lineage]
+        evidence = [f"{tag}: {len(runs)} run(s)" for tag, runs in declared.items()]
+        if untagged:
+            evidence.append(f"no lineage: {len(untagged)} run(s)")
+        out.append(_sug("lineage_group", "applied",
+                        f"Runs carry {len(declared)} declared lineage(s)",
+                        "; ".join(evidence),
+                        ["Undo"]))
     return out
 
 
@@ -318,6 +368,11 @@ def _flatten_simulation(sim):
             inpcrd = resolve_input_coords(sim, s)
             flat.append({
                 "name": s.name, "role": p.role, "step_id": s.id,
+                # The producing step, carried as an id. `inpcrd` above is that producer's
+                # restart *path*, which several steps can share, so the edge itself cannot
+                # be recovered from it downstream.
+                "lineage": s.lineage,
+                "parent_id": s.input_coords.ref if s.input_coords.source == "step" else None,
                 "prmtop": topo_by_id.get(s.topology) if s.topology else None,
                 "mdin": s.mdin, "mdout": s.mdout, "mdcrd": s.mdcrd, "inpcrd": inpcrd,
                 "expected_gap_ps": s.expected_gap_ps, "gap_tolerance_ps": s.gap_tolerance_ps,
@@ -390,10 +445,11 @@ def write_plan_outputs(sim, settings, base_directory, targets: Dict[str, str],
 
 def discover_draft(base_directory, recursive=True, pattern=None):
     from ambermeta.simulation import Simulation, Phase, Step, Topology, InputCoords
+    from ambermeta.lineages import UNTAGGED, infer_lineages_from_layout
     from ambermeta.roles import classify_role
     from ambermeta.topology_pool import classify_topology_pool, implies_hmr
     from ambermeta.coords import sniff_coordinate_kind
-    from ambermeta.protocol import smart_group_files, _ordered_stems
+    from ambermeta.protocol import smart_group_files, _run_stems
     from ambermeta.parsers import MdinParser
     import uuid
 
@@ -426,11 +482,23 @@ def discover_draft(base_directory, recursive=True, pattern=None):
             break
     sim.starting_structure = starting
 
-    prev_step_id = None
-    for stem in _ordered_stems(grouped):
+    # The runs, collected before the loop because the tags have to exist before the chain
+    # does. `_run_stems` is replica-major, so a chain threaded as the scan goes joins rep1's
+    # last run to rep2's first — the false continuation this feature exists to remove — and
+    # tagging the steps afterwards cannot unmake an edge already recorded.
+    run_stems = _run_stems(grouped)
+    tags = infer_lineages_from_layout(run_stems)
+    # `members()`' rule applied to stems instead of steps: every untagged run shares one
+    # bucket, and that bucket counts. A tree the inference refused therefore has exactly
+    # one member and takes the single flat chain and contiguous phases it always had.
+    multi_lineage = len({tags.get(stem) or UNTAGGED for stem in run_stems}) >= 2
+
+    prev_by_lineage = {}
+    # Where each member's previous step landed. A phase lookup that may only start here
+    # can never move a member backwards, which is what keeps its steps in order.
+    phase_index_by_lineage = {}
+    for stem in run_stems:
         kinds = grouped[stem]
-        if not (kinds.get("mdin") or kinds.get("mdout")):
-            continue  # not a run (topology-only or a coordinate artifact)
         dt = None
         mdin_details = None
         if kinds.get("mdin"):
@@ -441,8 +509,13 @@ def discover_draft(base_directory, recursive=True, pattern=None):
                 pass
         role = classify_role(stem, mdin_details=mdin_details) or ""
         topology = hmr_topo if (hmr_topo and implies_hmr(dt)) else default_topo
+        tag = tags.get(stem)
+        member = tag or UNTAGGED
+        prev_step_id = prev_by_lineage.get(member)
         if prev_step_id is None:
-            # The first run reads what tLEaP wrote alongside the topology.
+            # The first run of each member reads what tLEaP wrote alongside the topology.
+            # Which member is the point: one flat "is this the first run at all?" test is
+            # what chained replica 2 onto replica 1.
             ic = InputCoords(source="starting_structure")
         else:
             # Chained: this run's input coords ARE the previous run's output restart.
@@ -457,12 +530,39 @@ def discover_draft(base_directory, recursive=True, pattern=None):
             # A run's single-frame coordinate sibling is the restart it wrote (-r restrt),
             # which is exactly what the next run reads.
             rst=_relativize(kinds.get("inpcrd"), base_directory),
+            lineage=tag,
         )
-        if not sim.phases or sim.phases[-1].role != role:
-            sim.phases.append(Phase(id=uuid.uuid4().hex[:8],
-                                    name=(role.title() if role else "Stage"), role=role))
-        sim.phases[-1].steps.append(step)
-        prev_step_id = step.id
+        if multi_lineage:
+            # One phase per role, shared by every member. Left contiguous, the replica-major
+            # ordering opens a phase per role PER member — nine phases for three replicas of
+            # three roles, three of them named "Minimization" — which is not a grouping of
+            # anything and leaves the canvas no place to show a member.
+            #
+            # Searched forward from where this member last landed rather than looked up by
+            # role, because a role can recur: a member running min -> heat -> min has a
+            # second minimisation that belongs after its heating, and a plain role->phase
+            # map hoists it back into the first "Minimization". That reorders the member's
+            # steps inside the document, which both breaks the chain — a step then reads a
+            # restart written by a step that follows it — and changes which consecutive
+            # pairs continuity compares. Starting the search AT the last index, not after
+            # it, is what still lets a genuinely contiguous repeat (prod_0001, prod_0002)
+            # share one phase.
+            start = phase_index_by_lineage.get(member, 0)
+            index = next((i for i in range(start, len(sim.phases))
+                          if sim.phases[i].role == role), None)
+            if index is None:
+                index = len(sim.phases)
+                sim.phases.append(Phase(id=uuid.uuid4().hex[:8],
+                                        name=(role.title() if role else "Stage"), role=role))
+            phase = sim.phases[index]
+            phase_index_by_lineage[member] = index
+        else:
+            if not sim.phases or sim.phases[-1].role != role:
+                sim.phases.append(Phase(id=uuid.uuid4().hex[:8],
+                                        name=(role.title() if role else "Stage"), role=role))
+            phase = sim.phases[-1]
+        phase.steps.append(step)
+        prev_by_lineage[member] = step.id
 
     warnings = []
     if len(sim.topologies) > 1:

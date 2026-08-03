@@ -7,6 +7,7 @@ import { server, emptyDocument } from "@/test/server";
 import { queryClient, setDocument } from "@/api/queryClient";
 import { SelectionProvider } from "@/state/selection";
 import { SuggestionsContext } from "@/components/Suggestions/suggestionsContext";
+import { makeStep } from "@/test/factories";
 import { Canvas } from "./Canvas";
 import type { DocumentResponse, Suggestion } from "@/types";
 
@@ -28,6 +29,7 @@ const docWithProductionPhase: DocumentResponse = {
   dirty: false,
   can_undo: false,
   can_redo: false,
+  warnings: [],
   settings: { auto_link_restarts: true, strict_validation: true, allow_gaps: false, use_relative_paths: true },
   simulation: {
     version: 2,
@@ -42,34 +44,11 @@ const docWithProductionPhase: DocumentResponse = {
         name: "Production",
         role: "production",
         steps: [
-          {
-            id: "s0",
-            name: "prod_0001",
-            topology: "t0",
-            input_coords: { source: "starting_structure", ref: null, path: null },
-            mdin: "/w/prod1.in",
-            mdout: null,
-            mdcrd: null,
-            rst: null,
-            resolved_input_coords: null,
-            expected_gap_ps: null,
-            gap_tolerance_ps: null,
-            notes: [],
-          },
-          {
-            id: "s1",
-            name: "prod_0002",
-            topology: "t1",
+          makeStep({ id: "s0", name: "prod_0001", topology: "t0", mdin: "/w/prod1.in" }),
+          makeStep({
+            id: "s1", name: "prod_0002", topology: "t1", mdin: "/w/prod2.in",
             input_coords: { source: "step", ref: "s0", path: null },
-            mdin: "/w/prod2.in",
-            mdout: null,
-            mdcrd: null,
-            rst: null,
-            resolved_input_coords: null,
-            expected_gap_ps: null,
-            gap_tolerance_ps: null,
-            notes: [],
-          },
+          }),
         ],
       },
     ],

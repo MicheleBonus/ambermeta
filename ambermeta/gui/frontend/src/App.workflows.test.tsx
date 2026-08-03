@@ -5,6 +5,7 @@ import { QueryClientProvider } from "@tanstack/react-query";
 import { http, HttpResponse } from "msw";
 import { server, emptyDocument } from "@/test/server";
 import { queryClient } from "@/api/queryClient";
+import { makeStep } from "@/test/factories";
 import App from "@/App";
 import type { DiscoverResult, ValidationReport } from "@/types";
 
@@ -29,22 +30,7 @@ describe("top-bar workflows", () => {
               id: "p1",
               name: "Production",
               role: "production",
-              steps: [
-                {
-                  id: "s1",
-                  name: "prod_001",
-                  topology: null,
-                  input_coords: { source: "starting_structure", ref: null, path: null },
-                  mdin: "prod_001.in",
-                  mdout: null,
-                  mdcrd: null,
-                  rst: null,
-                  resolved_input_coords: null,
-                  expected_gap_ps: null,
-                  gap_tolerance_ps: null,
-                  notes: [],
-                },
-              ],
+              steps: [makeStep({ id: "s1", name: "prod_001", mdin: "prod_001.in" })],
             },
           ],
         },

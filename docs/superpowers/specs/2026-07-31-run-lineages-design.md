@@ -440,3 +440,91 @@ is a single 5-link NPT chain from Amber 22 pmemd.cuda with `ntt=3`.
 invariant; plumbing to `SimulationStage`; totals and `lineages`; continuity partition;
 sequence-gap keying; header-only mdout read; discover tagging and phase grouping; coherence
 findings; canvas bands and bulk tagging.
+
+> **AMENDED after PR 1 landed — see section 13.** PR 2 is split into **2a (correctness)** and
+> **2b (breakdown and editing surface)**. Every line number quoted anywhere above this point
+> predates PR 1 and is wrong; section 13.2 maps the ones that matter.
+
+---
+
+## 13. Amendments after verification (2026-08-03)
+
+PR 1 merged as `bfbe681` (#74), deleting ~719 lines across 17 files. Every factual claim in
+sections 1-12 was then re-verified against the resulting tree, by execution rather than by
+reading. 66 claims had drifted; 11 were substantively wrong. This section records what changed.
+**Where section 13 and sections 1-12 disagree, section 13 wins.**
+
+### 13.1 New rulings
+
+1. **The untagged sentinel is excluded from `lineage_count` and from the `lineages` map.** It
+   still forms its own continuity partition, and it still counts toward `is_multi_lineage`.
+   Section 5's literal rule would have reported `lineage_count: 4` for the canonical
+   `common/{min,heat,equil}` + `rep1..3/prod_*` campaign — the exact miscount section 6's
+   membership predicate exists to prevent, reintroduced through the back door.
+2. **A lineage head is checked against its real producer**, not left unchecked. Naive
+   partitioning silently drops a check that is correct today (verified: a genuine `equil -> rep1`
+   continuation goes from `observed_gap_ps=0.0` to `None`), and a document of single-step
+   lineages produces *zero* continuity output, which reads as "checked and fine" rather than
+   "not checked". This requires a producer link on `SimulationStage` that section 7.1 does not
+   specify — see 13.3.
+3. **`to_methods_dict`'s `stage_sequence` gains a per-entry `lineage` key.** Purely additive, so
+   an untagged document's `methods_summary.json` stays byte-identical.
+4. **PR 2 splits.** See 13.4.
+
+### 13.2 Substantively wrong claims in sections 1-12
+
+| Section | Claim | Reality |
+|---|---|---|
+| 7.5 | Three operations create false cross-tag edges | **Six** mutation call sites, and the primary producer is not among them — see 13.3 |
+| 7.5 | `relink_restarts`' fix belongs on the `elif` branch | On an interleaved reorder the `elif` produces **zero** cross-tag edges and the *first* branch produces **two**. Both need the guard |
+| 7.5 | `auto_link_restarts` is the opt-out | `repair_dangling_refs` is called directly by `delete_phase` and `delete_step`, bypassing the gated `_relink` wrapper. Turning auto-linking off does not protect the user |
+| 7.3 | Partitioning is a pure improvement | It removes a correct check from every lineage head — hence ruling 2 |
+| 7.3 | Implementable inside `_check_continuity` alone | `SimulationStage` carries no tag; 7.1's plumbing is a hard prerequisite |
+| 7.4 | Offset numbering yields "eight spurious `needs_you` cards" | **One** card naming eight indices, plus up to eight spurious canvas ghosts. And the ghosts are already dead for any multi-directory tree, because the server's `base` is `prod` while the client's `numericBase` is `rep1/prod` |
+| 7.1 | `_manifest_to_stages` "reads no other key" | It reads `files`, the five file kinds, `gaps`/`gap` and `notes` *after* construction. A tag can be plumbed post-construction in that same style |
+| 7.1 | Two "discover construction sites" | Neither is reached by `ambermeta discover`, which goes through `discover_draft`. One is `ProtocolBuilder.add_stage`, which has zero in-repo callers |
+| 3.1 | `lineages` is "absent entirely" when single-lineage | Unachievable in the API responses: no route sets `exclude_none`, so an `Optional` field serialises as `"lineages": null`. Only `to_dict()`/`summary.json` can literally omit it. Section 5 chose the opposite convention for `StepModel.lineage`, so the doc contradicted itself |
+| 8 | POINTERS is read from the mdout | There is no POINTERS block in any mdout — it is a prmtop `%FLAG`. The mdout analogue is `1. RESOURCE USE:`, and `natoms`/`nres` are **already parsed** |
+| 5.1 | `discover` fails without FastAPI because `discover_draft` lives under `gui/api/` | PR 1 emptied `gui/api/__init__.py` precisely to fix this. The relocation is now optional tidying, not a bug fix |
+| 9 | `_adopt_legacy_restart_paths` was removed | Deliberately **kept** — it is v2 schema-evolution compat, not v1 back-compat |
+| 9 | CSV/TOML survive as export-only views | Dropped entirely by user ruling during PR 1. `write_stats_csv` is the only CSV left |
+
+### 13.3 The omission that matters most
+
+**`discover_draft` is the primary producer of false cross-lineage edges, and section 7.5 does
+not list it.** `ambermeta/gui/api/core_bridge.py:451` emits `InputCoords(source="step",
+ref=prev_step_id)` unconditionally, guarded only by whether this is the *globally* first step
+(`:444`). `prev_step_id` is one flat variable over `_ordered_stems` order, so a `rep1/rep2/rep3`
+tree yields a single serial chain with `rep1/prod_0002 -> rep2/prod_0001` and
+`rep2/prod_0002 -> rep3/prod_0001` baked in. It is reached by both `ambermeta discover` and
+`POST /discover`, so every replica document arrives at the CLI and the GUI already wrong.
+This is the mechanism behind the failure section 1 opens with; fixing only 7.5's three named
+operations leaves it in place.
+
+Two further unlisted hazards, both verified:
+
+- **`update_step` accepts any `ref` with no validation** (`document.py:355-358`, exposed as
+  `PUT /steps/{id}`): a nonexistent id and a self-referencing id are both accepted verbatim.
+  Any guard added to the automatic paths is bypassable here.
+- **A false `ref` is now a false *file*, not merely a false edge.** Because `Step.rst` landed in
+  PR 1, `resolve_input_coords` returns the producer's `rst`, so a cross-lineage ref makes the
+  manifest, the GUI's `resolved_input_coords`, and the methods summary all name a file from the
+  wrong replica.
+
+### 13.4 Revised sequencing
+
+**PR 2a — correctness. Nothing new is claimed; false claims stop.**
+Model field and payload round-trip; plumbing to `SimulationStage` (tag **and** producer link);
+`discover_draft` per-lineage chaining and phase grouping; guards on all six mutation sites plus
+`update_step` validation; continuity partition with the producer-checked head; sequence-gap
+keying on `(lineage, base)`; `stage_sequence` tagging; read-only `lineage` on the API and TS
+models. Every item is a defect with a failing test available before the fix.
+
+**PR 2b — the breakdown and the editing surface.**
+`totals` + `lineages` and `LineageTotals`; coherence findings and the GUI error channel;
+header-only mdout read (resolved `ig`, File Assignments, authoritative begin-time); canvas
+lineage bands; bulk tagging; CLI printing of the per-lineage breakdown.
+
+`auto_detect_restart_chain` (`plan --auto-detect-restarts`) needs the same guard or a
+multi-lineage refusal; it is scheduled in 2a because it is the second independent chainer and
+shares the defect.

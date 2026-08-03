@@ -9,6 +9,8 @@ export interface StepModel {
   mdin: string | null; mdout: string | null; mdcrd: string | null;
   /** The restart this step writes. The next step reads it — see `resolved_input_coords`. */
   rst: string | null;
+  /** Which run lineage (replica, branch, pose) this step belongs to; null = untagged. */
+  lineage: string | null;
   /** Server-resolved: the coordinate file this step actually reads, following the chain. */
   resolved_input_coords: string | null;
   expected_gap_ps: number | null; gap_tolerance_ps: number | null; notes: string[];
@@ -23,11 +25,23 @@ export interface RuntimeSettings {
 export interface DocumentResponse {
   base_directory: string; manifest_path: string | null; dirty: boolean;
   can_undo: boolean; can_redo: boolean; settings: RuntimeSettings; simulation: SimulationModel;
+  /**
+   * What the edit that produced this document could not do without inventing a link nobody
+   * declared: a shared parent deleted out from under several lineages, a hand-set
+   * "continues from" that crosses one. It describes the edit rather than the document — the
+   * server clears it on the next mutation — so it is never a running total of anything.
+   *
+   * Required, not optional: the server always sends the key, and a fixture allowed to omit
+   * it is a surface that silently reports nothing (see `makeStep`'s note in test/factories).
+   */
+  warnings: string[];
 }
 export interface Suggestion {
   id: string; kind: string; severity: "needs_you" | "applied" | "info";
   title: string; evidence: string; actions: string[];
   step_id?: string; phase_id?: string; base?: string; missing?: number[];
+  /** missing_run: the lineage the finding is scoped to, null for the untagged bucket. */
+  lineage?: string | null;
 }
 export interface MissingFile { kind: string; path: string; }
 export interface StageIssue {

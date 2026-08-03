@@ -67,6 +67,10 @@ class StepModel(BaseModel):
     mdout: Optional[str] = None
     mdcrd: Optional[str] = None
     rst: Optional[str] = None            # the restart this step writes; the next step reads it
+    # Which run lineage (replica, branch, pose) this step belongs to; null is the implicit
+    # single member. Written by `discover`'s inference or by editing the manifest, so the
+    # GUI only displays it.
+    lineage: Optional[str] = None
     # The coordinate file this step actually reads, resolved through the chain. Read-only:
     # the GUI shows it without re-implementing the resolution rules.
     resolved_input_coords: Optional[str] = None
@@ -115,6 +119,10 @@ class DocumentResponse(BaseModel):
     can_redo: bool = False
     settings: RuntimeSettings = Field(default_factory=RuntimeSettings)
     simulation: SimulationModel = Field(default_factory=SimulationModel)
+    # What the last edit could not do without inventing a link the user never declared:
+    # a shared parent deleted out from under several lineages, a hand-set "continues from"
+    # that crosses one. Describes the edit, not the document, so the next edit clears it.
+    warnings: List[str] = Field(default_factory=list)
 
 
 # ---- request models ----
@@ -171,6 +179,13 @@ class StepCreate(BaseModel):
     mdout: Optional[str] = None
     mdcrd: Optional[str] = None
     rst: Optional[str] = None
+    lineage: Optional[str] = None
+    # Where in the phase the step lands. An index inside the phase places the step exactly
+    # there, the same position StepMove's would, so the two ways of placing a step do not
+    # disagree about what index 0 means. -1 — or any index outside the phase — appends,
+    # and appends within the step's own lineage: after that lineage's last step in the
+    # phase, or at the end when the phase holds none of it.
+    index: int = -1
     expected_gap_ps: Optional[float] = None
     gap_tolerance_ps: Optional[float] = None
     notes: List[str] = Field(default_factory=list)
@@ -182,6 +197,10 @@ class StepUpdate(BaseModel):
     # dropped, so a gap once set could never be removed — only overwritten with 0.
     name: Optional[str] = None
     topology: Optional[str] = None
+    # The tag is read-only at this surface today: no route writes it. Declared as a
+    # top-level field so it inherits `topology`'s presence semantics when a write path
+    # arrives, rather than `files`' ""-clears rule — a lineage is a label, not a file slot.
+    lineage: Optional[str] = None
     input_coords: Optional[InputCoordsModel] = None
     files: Optional[StageFiles] = None
     expected_gap_ps: Optional[float] = None
@@ -243,7 +262,7 @@ class PlanResult(BaseModel):
 
 class Suggestion(BaseModel):
     id: str
-    kind: str        # missing_run|continuity_gap|topology_confirm|restart_link|role_guess|starting_structure
+    kind: str        # missing_run|continuity_gap|topology_confirm|restart_link|role_guess|starting_structure|lineage_group
     severity: str    # needs_you|applied|info
     title: str
     evidence: str
@@ -252,6 +271,11 @@ class Suggestion(BaseModel):
     phase_id: Optional[str] = None
     base: Optional[str] = None          # missing_run: the numbered-sequence base
     missing: Optional[List[int]] = None # missing_run: the absent indices
+    # missing_run: the member the finding is scoped to, null for the untagged bucket.
+    # Declared, not incidental: pydantic's extra='ignore' would drop the key from
+    # build_suggestions' dict silently, so the card would name no member and nothing
+    # would say why.
+    lineage: Optional[str] = None
 
 
 class MissingFile(BaseModel):

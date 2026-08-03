@@ -4,6 +4,7 @@ import { QueryClientProvider } from "@tanstack/react-query";
 import { http, HttpResponse } from "msw";
 import { server, emptyDocument } from "@/test/server";
 import { queryClient } from "@/api/queryClient";
+import { makeStep } from "@/test/factories";
 import { getToasts, _resetToasts } from "@/lib/toast";
 import App from "@/App";
 import { DragChip } from "@/components/Canvas/DragChip";
@@ -28,12 +29,7 @@ vi.mock("@dnd-kit/core", async (importOriginal) => {
 });
 
 function step(id: string, name: string): StepModel {
-  return {
-    id, name, topology: null,
-    input_coords: { source: "starting_structure", ref: null, path: null },
-    mdin: null, mdout: null, mdcrd: null, rst: null, resolved_input_coords: null,
-    expected_gap_ps: null, gap_tolerance_ps: null, notes: [],
-  };
+  return makeStep({ id, name });
 }
 
 function phase(id: string, name: string, steps: StepModel[] = []): PhaseModel {

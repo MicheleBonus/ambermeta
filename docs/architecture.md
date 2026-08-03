@@ -54,7 +54,7 @@ v1.0 modeled a run as a flat **Protocol → Stage** (two levels; a "stage" was o
 |---|---|---|
 | **Simulation** | `Simulation(version, topologies, starting_structure, phases)` | the whole document: a **topology pool** and one **starting structure** |
 | **Phase** | `Phase(id, name, role, steps)` | a named, role-bearing grouping (minimization / heating / equilibration / production / `""`) |
-| **Step** | `Step(id, name, topology, input_coords, mdin, mdout, mdcrd, rst, expected_gap_ps, gap_tolerance_ps, notes)` | one actual run — today's old "stage" |
+| **Step** | `Step(id, name, topology, input_coords, mdin, mdout, mdcrd, rst, lineage, expected_gap_ps, gap_tolerance_ps, notes)` | one actual run — today's old "stage" |
 
 A **Phase** is a convenience/grouping level: it carries a role but no files of its own. A **Step** is where the files live, and it binds exactly one topology **by id** out of the Simulation's pool.
 
@@ -78,7 +78,7 @@ Every step's starting coordinates resolve through `InputCoords(source, ref, path
 
 | `source` | Meaning |
 |---|---|
-| `starting_structure` | read the Simulation's single starting structure (only valid/typical for the first step) |
+| `starting_structure` | read the Simulation's single starting structure — what the **head of each lineage** reads, which in a document that declares none is just the first step |
 | `step` (with `ref: <step id>`) | chain from the referenced step's output restart (its `rst`, stored on the step that writes it) — the continuity anchor |
 | `path` (with `path: "..."`) | an explicit override, bypassing the chain |
 
@@ -116,7 +116,34 @@ if isinstance(prior_dt, (int, float)) and prior_dt > 0:
 
 A gap within an explicit `expected_gap_ps ± gap_tolerance_ps` window (or within the default floor, when no expectation is set) is logged as an `INFO` note — a **healthy transition is never flagged**. A gap outside that window, an overlap, or an unconfigured non-zero gap becomes a real (non-`INFO`) continuity note, which is what the GUI turns into a `continuity_gap` suggestion.
 
-**Sequence holes** are a separate, first-class finding: `detect_sequence_gaps(names)` looks at numbered-run families (`prod_0001`, `prod_0002`, `prod_0004`, …) and reports the missing indices — here, `{"prod": [3]}` — independent of whether any continuity gap was ever measured, because the file for index 3 simply doesn't exist to measure a gap against.
+"Consecutive" means consecutive **within one lineage**. When any step carries a `lineage` tag, `_check_continuity` partitions the stages by member first and compares pairs inside each member; each member's head is then measured against the step it actually continues from (its `input_coords.ref`, carried into the flat engine as `parent_id`), or gets an `INFO: Continuity for <name> was not measured (no producing stage resolved).` note where no producer resolves. A document that declares no lineage at all takes the original flat neighbour-by-neighbour path, unchanged.
+
+The tag reaches the engine by both routes into it, so the partition is not a manifest-only guarantee: `auto_discover`'s own directory scan (`plan --recursive`) runs the same `infer_lineages_from_layout` over the run groups it found, and tags each stage with the directory segment that names its member. A discovered stage has no `parent_id`, so every member's head reports that it was not measured — a restart sitting beside a replica is not evidence of which run read it, and the note is the honest answer.
+
+Both halves of that are visible on one document. Three replicas of a two-chunk production run, discovered and planned (`plan -m replicas.yaml`), with the tags in place and then stripped out of the same file:
+
+```
+tagged                                          untagged (what this used to do)
+------------------------------------------      ------------------------------------------
+rep1/prod_0001  gap=None                        rep1/prod_0001  gap=None
+  INFO: Continuity for rep1/prod_0001 was
+  not measured (no producing stage resolved).
+rep1/prod_0002  gap=0.0                         rep1/prod_0002  gap=0.0
+rep2/prod_0001  gap=None                        rep2/prod_0001  gap=None
+  INFO: Continuity for rep2/prod_0001 was         INFO: Cannot verify continuity between
+  not measured (no producing stage resolved).     rep1/prod_0002 and rep2/prod_0001 ...
+rep2/prod_0002  gap=0.0                         rep2/prod_0002  gap=0.0
+rep3/prod_0001  gap=None                        rep3/prod_0001  gap=None
+  INFO: Continuity for rep3/prod_0001 was         INFO: Cannot verify continuity between
+  not measured (no producing stage resolved).     rep2/prod_0002 and rep3/prod_0001 ...
+rep3/prod_0002  gap=0.0                         rep3/prod_0002  gap=0.0
+```
+
+The within-member chunk boundaries are measured either way and meet exactly (`gap=0.0`). What changes is the member boundary: untagged, the engine names the pair `rep1/prod_0002 → rep2/prod_0001` and reports on it — with times on both sides that becomes `Stage appears to overlap previous stage by N ps.`, a finding about two runs that never touched. Tagged, that pair is never formed, and each head instead says it was not measured.
+
+**Why `discover` does not simply invent the missing edge.** It would be easy to point each head at whatever restart sits nearest, and it would be wrong: `discover_draft` gives every member's first run `starting_structure` precisely because a restart file lying beside a replica is not evidence that *that* run read it — basenames collide across replica directories by construction (`rep1/prod_0001.rst` and `rep2/prod_0001.rst`), so any pick among N candidates is a guess published as provenance. A declared producer is the only thing that earns a real measurement: write the `ref` in the manifest (or set it in the GUI) and the head is measured against it, gap and all. Until then the `INFO` note is the answer, not a hole to be plugged — the one outcome ruled out is silence, which reads as "checked and fine".
+
+**Sequence holes** are a separate, first-class finding: `detect_sequence_gaps(names, lineages=None)` looks at numbered-run families (`prod_0001`, `prod_0002`, `prod_0004`, …) and reports the missing indices **per member**, keyed on `(member, base)` — here, `{(UNTAGGED, "prod"): [3]}` — independent of whether any continuity gap was ever measured, because the file for index 3 simply doesn't exist to measure a gap against. `lineages` is read positionally alongside `names`, one tag per run and `None` where a run carries none; omitting it puts every run in the one untagged bucket (`ambermeta.lineages.UNTAGGED`), which is the single family the detector always had. Inside a member, an index between its lowest and its highest that no run occupies is missing; across members of one base, only those whose numbering *overlaps* frame each other — so `rep2` stopping at `prod_0001` beside `rep1`'s `0001-0003` is reported, while a member numbered `0011-0012` on a scale of its own is not.
 
 Real output on the sample data (`tests/data/amber/md_test_files/`, a 64,528-atom glycoprotein system with a five-run NPT production sequence) with `ntp_prod_0003.*` removed:
 
@@ -239,17 +266,17 @@ per-stage validation + cross-stage continuity (§3)  →  stage_issues / protoco
 { ok, totals, stage_issues, protocol_issues, suggestions }
 ```
 
-Concretely, `core_bridge.validate_simulation(sim, settings, base_directory)` (called by `validate --manifest`, `plan -m <v2 manifest>`, and the GUI's Validate) does exactly this: flatten, run `auto_discover`, then layer on two v2-specific suggestion kinds — `missing_run` (from `detect_sequence_gaps`, §3) and `continuity_gap` (one per genuine, non-`INFO` continuity note, keyed off the engine's own healthy/problem classification rather than text-matching warning strings).
+Concretely, `core_bridge.validate_simulation(sim, settings, base_directory)` (called by `validate --manifest`, `plan -m <v2 manifest>`, and the GUI's Validate) does exactly this: flatten, run `auto_discover`, then layer on the v2-specific suggestion kinds — `missing_run` (from `detect_sequence_gaps`, §3), `continuity_gap` (one per genuine, non-`INFO` continuity note, keyed off the engine's own healthy/problem classification rather than text-matching warning strings), and `lineage_group` (an `[applied]` card naming each lineage the document declares, how many runs it holds, and how many runs carry no lineage at all).
 
 Underneath, validation is still two-tiered exactly as before:
 
 - **Per-stage** (`SimulationStage.validate()`): atom-count agreement across the stage's files, box sanity, basic timing/sampling checks. A stage whose files partly failed to parse is flagged `degraded` (`True` when any `FileLoadError` is attached) but still validated on what *did* parse — a corrupt `mdout` never discards a good `prmtop`.
-- **Cross-stage** (`SimulationProtocol.validate(cross_stage=True, allow_unexpected_gaps=False)`): the continuity math from §3, run between every consecutive pair.
+- **Cross-stage** (`SimulationProtocol.validate(cross_stage=True, allow_unexpected_gaps=False)`): the continuity math from §3, run between every consecutive pair *within a member*, plus each member's head against its real producer. With nothing tagged that is every consecutive pair in the document, unchanged.
 
 | Knob | Effect |
 |---|---|
 | `--skip-cross-stage-validation` (`plan`) → `settings["strict_validation"]` | Whether cross-stage continuity runs at all |
-| `--allow-gaps` (`validate --manifest`) → `settings["allow_gaps"]` → `allow_unexpected_gaps` | Whether unconfigured positive gaps are `INFO` (allowed) or a real finding |
+| `--allow-gaps` (`validate --manifest`) → `settings["allow_gaps"]` → `allow_unexpected_gaps` | Whether an unconfigured non-zero gap is `INFO` (allowed) or a real finding. It does **not** suppress `Stage appears to overlap previous stage by N ps.`, which is emitted before this knob is consulted — and it is not the way to handle replicas, which are a lineage boundary rather than a gap (§3) |
 | `--strict` (`validate --manifest`) | Promotes findings to a hard validation failure (exit 1) instead of "OK, with N notes" |
 
 That `settings` dict is a **runtime** object, not part of the document: `plan` and `validate` build theirs from the CLI flags alone, the GUI from its Settings panel. A v2 manifest has no `settings` key — `payload_to_simulation` never looks for one — so nothing in the file can turn a check on or off, and `--skip-cross-stage-validation` overrides nothing; it simply switches the continuity checks off for that run.

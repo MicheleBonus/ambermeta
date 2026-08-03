@@ -12,8 +12,9 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
+from ambermeta.lineages import buckets
 from ambermeta.simulation import (
-    Simulation, Phase, Step, Topology, InputCoords,
+    Simulation, Phase, Step, Topology, InputCoords, crosses_lineage, same_lineage,
     iter_steps, predecessors, relink_restarts, repair_dangling_refs, resolve_input_coords,
 )
 
@@ -53,6 +54,11 @@ class DocumentStore:
             self._doc = Document(base_directory=base_directory)
             self._undo: List[Any] = []
             self._redo: List[Any] = []
+            # What the last edit could not do without inventing something — a shared
+            # parent deleted out from under several members, a hand-written link across a
+            # lineage boundary. Deliberately not undoable state: it describes an edit, not
+            # the document, so the next edit replaces it (see _snapshot).
+            self._warnings: List[str] = []
 
     # -- internal -----------------------------------------------------------
     def _state(self) -> Any:
@@ -79,6 +85,9 @@ class DocumentStore:
     def _snapshot(self) -> None:
         self._push(self._undo, self._state())
         self._redo.clear()
+        # Every content mutation starts here, so this is the one place that guarantees a
+        # warning never outlives the edit that raised it.
+        self._warnings = []
 
     def _find_phase(self, phase_id: str) -> Phase:
         for p in self._doc.simulation.phases:
@@ -136,6 +145,7 @@ class DocumentStore:
                                                   ref=s.input_coords.ref,
                                                   path=s.input_coords.path),
                     mdin=s.mdin, mdout=s.mdout, mdcrd=s.mdcrd, rst=s.rst,
+                    lineage=s.lineage,
                     resolved_input_coords=resolve_input_coords(sim, s),
                     expected_gap_ps=s.expected_gap_ps,
                     gap_tolerance_ps=s.gap_tolerance_ps, notes=list(s.notes),
@@ -173,12 +183,14 @@ class DocumentStore:
                 can_redo=bool(self._redo),
                 settings=RuntimeSettings(**d.settings),
                 simulation=self._sim_to_model(),
+                warnings=list(self._warnings),
             )
 
     # -- document-level mutations -------------------------------------------
     def replace(self, *, simulation: Simulation, settings: Dict[str, Any],
                 manifest_path: Optional[str], dirty: bool, reset_history: bool) -> None:
         with self.lock:
+            self._warnings = []
             if reset_history:
                 self._undo.clear()
                 self._redo.clear()
@@ -308,45 +320,158 @@ class DocumentStore:
             if target is not None:
                 target.steps.extend(p.steps)
             self._doc.simulation.phases.remove(p)
-            repair_dangling_refs(self._doc.simulation)
+            # Not gated on auto_link_restarts, and deliberately so: an orphan pointing at
+            # a dead id is a broken document either way. Deleting the phase that held a
+            # shared equilibration is the realistic way a fan-out loses its root, which is
+            # why the repair has to know about lineages and has to be able to report.
+            self._warnings = repair_dangling_refs(self._doc.simulation)
             self._doc.dirty = True
 
     # -- step mutations -----------------------------------------------------
-    def add_step(self, phase_id: str, fields: Dict[str, Any]) -> str:
+    def add_step(self, phase_id: str, fields: Dict[str, Any], index: int = -1) -> str:
+        """Add a step to ``phase_id``.
+
+        An ``index`` inside the phase places the step exactly there, the same position
+        ``move_step`` gives it. -1, or any index outside the phase, appends — and appends
+        within the step's own lineage: after that lineage's last step in the phase, or at
+        the end of the phase when the step is untagged or the phase holds none of its
+        lineage. That is where ``move_step``'s convention stops and this one starts, and
+        the reason is below: appending a tagged step behind some other member's tail is
+        what made the automatic link reach for the wrong neighbour.
+        """
         with self.lock:
             p = self._find_phase(phase_id)
-            self._snapshot()
             sid = _new_id()
             ic = fields.get("input_coords") or {}
+            tag = fields.get("lineage") or None
             step = Step(
                 id=sid, name=fields.get("name", ""), topology=fields.get("topology"),
                 input_coords=InputCoords(source=ic.get("source", "starting_structure"),
                                          ref=ic.get("ref"), path=ic.get("path")),
                 mdin=fields.get("mdin"), mdout=fields.get("mdout"), mdcrd=fields.get("mdcrd"),
-                rst=fields.get("rst"),
+                rst=fields.get("rst"), lineage=tag,
                 expected_gap_ps=fields.get("expected_gap_ps"),
                 gap_tolerance_ps=fields.get("gap_tolerance_ps"),
                 notes=list(fields.get("notes") or []),
             )
+            # Built before the snapshot, not after, so a refused link leaves neither a step
+            # nor an undo entry that reverses nothing — the same bargain update_step makes.
+            # The check needs the step, not its id: nothing is in the document yet.
+            notes = self._check_continues_from(step, ic)
+            self._snapshot()
+            # "Which member does the step before this one belong to?" has no answer in a
+            # phase holding several, so an untagged step gets no automatic link there at
+            # all. Asked of the whole document when the phase is still empty, because
+            # _step_before crosses phase boundaries and would otherwise reach into the
+            # last member that happens to be in the file.
+            scope = p.steps or [s for _, s in iter_steps(self._doc.simulation)]
+            ambiguous = len(buckets(scope)) >= 2
             before = self._order()
-            p.steps.append(step)
-            # A step appended with no stated coordinates continues from whatever now
-            # precedes it, so building a run by dropping mdin files in order produces a
-            # linked chain rather than a row of steps that all read the starting structure.
+            if 0 <= index <= len(p.steps):
+                p.steps.insert(index, step)
+            else:
+                # A tagged step joins its own lineage rather than the end of the phase:
+                # appending it after some other member's tail is what makes the chain
+                # below reach for the wrong neighbour in the first place.
+                same = [i for i, s in enumerate(p.steps) if (s.lineage or None) == tag]
+                p.steps.insert(same[-1] + 1 if tag and same else len(p.steps), step)
+            # A step added with no stated coordinates continues from whatever now precedes
+            # it, so building a run by dropping mdin files in order produces a linked chain
+            # rather than a row of steps that all read the starting structure.
             if not ic and self._doc.settings.get("auto_link_restarts"):
                 prev = self._step_before(sid)
-                if prev is not None:
+                # `same_lineage`, not `not crosses_lineage`: the loose rule treats untagged
+                # as a wildcard, which is right for a link a human declares (one shared
+                # equilibration really does feed N replicas) and wrong for one inferred from
+                # adjacency. Adding a tagged step after an untagged one used to link them,
+                # and a following reorder could then close a cycle. An automatic link only
+                # ever joins the member it is landing in.
+                if (prev is not None and same_lineage(prev, step)
+                        and not (tag is None and ambiguous)):
                     step.input_coords = InputCoords(source="step", ref=prev.id)
             # Whoever used to follow the insertion point is still chained to the step
             # BEFORE it, so without this a step added to a non-final phase forks the
             # chain: two steps claim the same producer and the new one feeds nobody.
             self._relink(before)
+            self._warnings = notes          # after _snapshot(), which clears them
             self._doc.dirty = True
             return sid
+
+    def _check_continues_from(self, consumer: Step, ic: Dict[str, Any]) -> List[str]:
+        """Validate a hand-set ``continues from``. Raises ValueError on an impossible one.
+
+        Editing a step and creating one are the two ways a caller states a link the tool
+        would never derive, so between them they are where every guard on the automatic
+        paths can be walked around. They share this function rather than a copy of it
+        precisely because a check that lives in only one of them is not a check: creation
+        used to apply none at all, which made ``POST /phases/{id}/steps`` a second, silent
+        way in for exactly the refs ``PUT /steps/{id}`` had just learned to refuse.
+
+        Refused, because each is a claim the document cannot honour:
+
+        * a ref naming a step nobody holds resolves to no coordinates at all while the
+          chain still reads as intact;
+        * a self-reference is a 1-cycle, and so is any ref reaching a step that already
+          continues (directly or not) from this one — the 1-cycle was refused while
+          ``s1 -> s2 -> s1`` was accepted silently, saved to disk, and validated ``ok``;
+        * ``source="step"`` with no ref at all says this run continued from something and
+          declines to say what. It is not the way to say "reads the starting structure" —
+          that source exists — and it resolves to nothing.
+
+        A ref across two declared lineages is different in kind: it is the *only* way to
+        record a genuine branch, so it is accepted and reported rather than refused.
+
+        ``consumer`` is the step as it will be rather than an id to look up, because on
+        the create path it is built but not yet in the document. That also settles what
+        self-reference means there: the new id is minted here and the caller has never
+        seen it, so a create cannot deliberately name itself — the check costs nothing and
+        stays shared, and a ref that did somehow equal the fresh id would be refused by
+        the existence check below anyway, the new step not being in the document yet.
+        """
+        if ic.get("source") != "step":
+            return []
+        ref = ic.get("ref")
+        if not ref:
+            raise ValueError("a step that continues from another must name it")
+        if ref == consumer.id:
+            raise ValueError("a step cannot continue from itself")
+        try:
+            _, producer = self._find_step(ref)
+        except KeyError:
+            raise ValueError(f"no step to continue from: {ref}") from None
+        # Walk the chain up from the proposed producer: if it comes back to the consumer,
+        # this link closes a loop. Every step is visited at most once, and `seen` also stops
+        # a pre-existing cycle elsewhere in the document turning this check into a hang.
+        by_id = {s.id: s for _, s in iter_steps(self._doc.simulation)}
+        seen, cur = set(), producer
+        while cur is not None:
+            if cur.id == consumer.id:
+                raise ValueError(
+                    f"{consumer.name} cannot continue from {producer.name}: "
+                    f"{producer.name} already continues from it")
+            if cur.id in seen:
+                break
+            seen.add(cur.id)
+            cur = (by_id.get(cur.input_coords.ref)
+                   if cur.input_coords.source == "step" else None)
+        if not crosses_lineage(producer, consumer):
+            return []
+        return [
+            "{c} (lineage {ct}) now continues from {p} (lineage {pt}). A link between two "
+            "declared lineages is a branch, not a continuation: no automatic operation "
+            "will create or maintain it.".format(
+                c=consumer.name or consumer.id, ct=consumer.lineage,
+                p=producer.name or producer.id, pt=producer.lineage)
+        ]
 
     def update_step(self, step_id: str, patch: Dict[str, Any]) -> None:
         with self.lock:
             _, s = self._find_step(step_id)
+            notes: List[str] = []
+            if patch.get("input_coords") is not None:
+                # Validate before mutating, so a rejected edit leaves neither a changed
+                # document nor an undo entry that reverses nothing.
+                notes = self._check_continues_from(s, patch["input_coords"])
             self._snapshot()
             if patch.get("name") is not None:
                 s.name = patch["name"]
@@ -368,6 +493,7 @@ class DocumentStore:
                 s.gap_tolerance_ps = patch["gap_tolerance_ps"]
             if patch.get("notes") is not None:
                 s.notes = list(patch["notes"])
+            self._warnings = notes          # after _snapshot(), which clears them
             self._doc.dirty = True
 
     def delete_step(self, step_id: str) -> None:
@@ -376,7 +502,7 @@ class DocumentStore:
             self._snapshot()
             p.steps.remove(s)
             # Whoever continued from this step would otherwise be left holding a dead id.
-            repair_dangling_refs(self._doc.simulation)
+            self._warnings = repair_dangling_refs(self._doc.simulation)
             self._doc.dirty = True
 
     def move_step(self, step_id: str, phase_id: str, index: int) -> None:
@@ -452,6 +578,7 @@ class DocumentStore:
                 return False
             self._push(self._redo, self._state())
             self._restore(self._undo.pop())
+            self._warnings = []
             # The in-memory document no longer matches whatever was last written, whichever
             # direction we moved in.
             self._doc.dirty = True
@@ -463,5 +590,6 @@ class DocumentStore:
                 return False
             self._push(self._undo, self._state())
             self._restore(self._redo.pop())
+            self._warnings = []
             self._doc.dirty = True
             return True
