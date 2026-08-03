@@ -75,7 +75,7 @@ export function FilePicker({ open, mode, title, filterType, onPick, onClose }: P
           <label className="block text-sm">
             <span className="text-ink-secondary">Save as</span>
             <input aria-label="Path" value={path} onChange={(e) => setPath(e.target.value)}
-              placeholder="ambermeta.yaml"
+              placeholder="manifest.yaml"
               className="w-full mt-1 px-2 py-1 border border-hairline rounded font-mono bg-app" />
             <span className="block mt-1 text-xs text-ink-muted">
               A new name writes a new file; pick one above to overwrite it.
