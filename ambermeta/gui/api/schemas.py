@@ -67,6 +67,10 @@ class StepModel(BaseModel):
     mdout: Optional[str] = None
     mdcrd: Optional[str] = None
     rst: Optional[str] = None            # the restart this step writes; the next step reads it
+    # Which run lineage (replica, branch, pose) this step belongs to; null is the implicit
+    # single member. Written by `discover`'s inference or by editing the manifest, so the
+    # GUI only displays it.
+    lineage: Optional[str] = None
     # The coordinate file this step actually reads, resolved through the chain. Read-only:
     # the GUI shows it without re-implementing the resolution rules.
     resolved_input_coords: Optional[str] = None
@@ -171,6 +175,7 @@ class StepCreate(BaseModel):
     mdout: Optional[str] = None
     mdcrd: Optional[str] = None
     rst: Optional[str] = None
+    lineage: Optional[str] = None
     expected_gap_ps: Optional[float] = None
     gap_tolerance_ps: Optional[float] = None
     notes: List[str] = Field(default_factory=list)
@@ -182,6 +187,10 @@ class StepUpdate(BaseModel):
     # dropped, so a gap once set could never be removed — only overwritten with 0.
     name: Optional[str] = None
     topology: Optional[str] = None
+    # The tag is read-only at this surface today: no route writes it. Declared as a
+    # top-level field so it inherits `topology`'s presence semantics when a write path
+    # arrives, rather than `files`' ""-clears rule — a lineage is a label, not a file slot.
+    lineage: Optional[str] = None
     input_coords: Optional[InputCoordsModel] = None
     files: Optional[StageFiles] = None
     expected_gap_ps: Optional[float] = None

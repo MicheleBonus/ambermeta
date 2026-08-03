@@ -16,20 +16,10 @@ import type { FileInfo, StepModel, TopologyModel } from "@/types";
 
 const topology: TopologyModel = { id: "t0", path: "/w/setup/wt_hmr.prmtop", kind: "hmr" };
 
-const step: StepModel = {
-  id: "s0",
-  name: "prod_0001",
-  topology: "t0",
-  input_coords: { source: "starting_structure", ref: null, path: null },
-  mdin: "/w/equil/01_min.mdin",
-  mdout: "/w/runs/01_min.mdout",
-  mdcrd: null,
-  rst: null,
-  resolved_input_coords: null,
-  expected_gap_ps: null,
-  gap_tolerance_ps: null,
-  notes: [],
-};
+const step: StepModel = makeStep({
+  id: "s0", name: "prod_0001", topology: "t0",
+  mdin: "/w/equil/01_min.mdin", mdout: "/w/runs/01_min.mdout",
+});
 
 /** One file per slot type, so a filtered picker is visibly narrower than the tree. */
 const PICKABLE: FileInfo[] = [

@@ -7,23 +7,14 @@ import { http, HttpResponse } from "msw";
 import { server, emptyDocument } from "@/test/server";
 import { queryClient } from "@/api/queryClient";
 import { SelectionProvider, useSelection, type SelKind } from "@/state/selection";
+import { makeStep } from "@/test/factories";
 import { Inspector } from "./Inspector";
-import type { DocumentResponse, PhaseModel, StepModel } from "@/types";
-
-function makeStep(id: string, name: string, over: Partial<StepModel> = {}): StepModel {
-  return {
-    id, name, topology: null,
-    input_coords: { source: "starting_structure", ref: null, path: null },
-    mdin: null, mdout: null, mdcrd: null, rst: null, resolved_input_coords: null,
-    expected_gap_ps: null, gap_tolerance_ps: null, notes: [],
-    ...over,
-  };
-}
+import type { DocumentResponse, PhaseModel } from "@/types";
 
 const PHASES: PhaseModel[] = [
   { id: "p0", name: "Production", role: "production",
-    steps: [makeStep("s0", "prod_0001"),
-            makeStep("s1", "prod_0002", { expected_gap_ps: 20 })] },
+    steps: [makeStep({ id: "s0", name: "prod_0001" }),
+            makeStep({ id: "s1", name: "prod_0002", expected_gap_ps: 20 })] },
   { id: "p1", name: "Heating", role: "heating", steps: [] },
 ];
 

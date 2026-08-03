@@ -9,6 +9,8 @@ export interface StepModel {
   mdin: string | null; mdout: string | null; mdcrd: string | null;
   /** The restart this step writes. The next step reads it — see `resolved_input_coords`. */
   rst: string | null;
+  /** Which run lineage (replica, branch, pose) this step belongs to; null = untagged. */
+  lineage: string | null;
   /** Server-resolved: the coordinate file this step actually reads, following the chain. */
   resolved_input_coords: string | null;
   expected_gap_ps: number | null; gap_tolerance_ps: number | null; notes: string[];

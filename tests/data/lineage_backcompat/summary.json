@@ -1,0 +1,1293 @@
+{
+  "totals": {
+    "steps": 25000000.0,
+    "time_ps": 100000.0
+  },
+  "stages": [
+    {
+      "name": "ntp_prod_0001",
+      "stage_role": "production",
+      "expected_gap_ps": null,
+      "gap_tolerance_ps": null,
+      "observed_gap_ps": null,
+      "restart_path": "<RUNDIR>/CH3L1_HUMAN_6NAG.crd",
+      "summary": {
+        "intent": "production",
+        "result": "Completed",
+        "expected_gap_ps": "",
+        "observed_gap_ps": "",
+        "continuity": "",
+        "evidence": ""
+      },
+      "validation": [],
+      "continuity": [],
+      "degraded": false,
+      "load_errors": [],
+      "files": {
+        "prmtop": {
+          "filename": "<RUNDIR>/CH3L1_HUMAN_6NAG.top",
+          "warnings": [],
+          "details": {
+            "filename": "<RUNDIR>/CH3L1_HUMAN_6NAG.top",
+            "version": "V0001.000",
+            "title": "default_name",
+            "force_field_type": null,
+            "force_field_features": [
+              "CMAP Correction",
+              "Orthorhombic Box",
+              "Box/density are from the topology-time box (LEaP BOX_DIMENSIONS), not the equilibrated system",
+              "Contains Ions (72)"
+            ],
+            "natom": 64528,
+            "nres": 15102,
+            "nbond": 64539,
+            "total_mass": 308554.444,
+            "total_charge": 8.020996347271433e-05,
+            "is_neutral": true,
+            "box_dimensions": [
+              98.3405545,
+              76.0526585,
+              81.2272985
+            ],
+            "box_angles": [
+              90.0,
+              90.0,
+              90.0
+            ],
+            "box_volume": 607503.888512848,
+            "density": 0.8433970648221194,
+            "box_is_topology_time": true,
+            "solvent_type": "Explicit Solvent",
+            "simulation_category": "Protein / Ligand in Explicit Water",
+            "residue_composition": {
+              "ACE": 1,
+              "TYR": 16,
+              "LYS": 20,
+              "LEU": 34,
+              "VAL": 14,
+              "CYX": 4,
+              "THR": 25,
+              "SER": 28,
+              "TRP": 8,
+              "GLN": 16,
+              "ARG": 19,
+              "GLU": 10,
+              "GLY": 32,
+              "ASP": 25,
+              "CYS": 1,
+              "PHE": 21,
+              "PRO": 15,
+              "ALA": 28,
+              "HIE": 4,
+              "ILE": 19,
+              "ASN": 12,
+              "HID": 5,
+              "MET": 6,
+              "NME": 1,
+              "ROH": 1,
+              "4YA": 1,
+              "4YB": 4,
+              "0YB": 1,
+              "K+": 34,
+              "Cl-": 38,
+              "WAT": 14659
+            },
+            "num_solvent_molecules": 14659,
+            "num_solute_residues": 443,
+            "hmr_active": false,
+            "hmr_hydrogen_mass_range": [
+              1.008,
+              1.008
+            ],
+            "hmr_hydrogen_mass_summary": "1.008-1.008 amu across 32188 H",
+            "hmr_detection_method": "atomic_number",
+            "warnings": []
+          }
+        },
+        "inpcrd": {
+          "filename": "<RUNDIR>/CH3L1_HUMAN_6NAG.crd",
+          "warnings": [],
+          "details": {
+            "filename": "<RUNDIR>/CH3L1_HUMAN_6NAG.crd",
+            "file_format": "Formatted ASCII",
+            "title": "default_name",
+            "program": "Unknown",
+            "program_version": "Unknown",
+            "conventions": "Unknown",
+            "natoms": 64528,
+            "nres": null,
+            "time": null,
+            "has_coordinates": true,
+            "has_velocities": false,
+            "has_forces": false,
+            "has_box": true,
+            "box_dimensions": [
+              98.3405545,
+              76.0526585,
+              81.2272985
+            ],
+            "box_angles": [
+              90.0,
+              90.0,
+              90.0
+            ],
+            "box_volume": 607503.888512848,
+            "warnings": []
+          }
+        },
+        "mdin": {
+          "filename": "<RUNDIR>/ntp_prod_0001.mdin",
+          "warnings": [],
+          "details": {
+            "filename": "<RUNDIR>/ntp_prod_0001.mdin",
+            "title": "Production (20 ns)",
+            "simulation_type": "Molecular Dynamics (MD)",
+            "length_steps": 5000000,
+            "dt": 0.004,
+            "restart_flag": 1,
+            "ensemble": "NPT (isotropic)",
+            "stage_role": "Production [NPT (isotropic)]",
+            "energy_freq": 25000,
+            "coord_freq": 25000,
+            "restart_freq": 250000,
+            "traj_format": "NetCDF",
+            "cutoff": 9.0,
+            "temp_control": "Langevin Dynamics",
+            "target_temp": 300.0,
+            "press_control": "Berendsen (Isotropic)",
+            "pbc": "PBC / Constant Pressure",
+            "constraints": "H-bonds",
+            "implicit_solvent": "No",
+            "restraints_active": false,
+            "nmr_options": false,
+            "qmmm_active": false,
+            "has_temp_ramp": false,
+            "has_restraint_schedule": false,
+            "has_cutoff_schedule": false,
+            "uses_free_energy": false,
+            "uses_constant_pH": false,
+            "uses_constant_redox": false,
+            "uses_gamd": false,
+            "uses_remd": false,
+            "cntrl_parameters": {
+              "ntx": 5,
+              "irest": 1,
+              "ntpr": 25000,
+              "ntwr": 250000,
+              "ntwx": 25000,
+              "nstlim": 5000000,
+              "t": 1000.0,
+              "dt": 0.004,
+              "ntt": 3,
+              "gamma_ln": 1.0,
+              "ntp": 1,
+              "ntc": 2,
+              "ntf": 2,
+              "ntb": 2,
+              "cut": 9.0,
+              "_namelist": "cntrl"
+            },
+            "additional_namelists": [],
+            "wt_schedules": [],
+            "restraint_definitions": [],
+            "warnings": []
+          }
+        },
+        "mdout": {
+          "filename": "<RUNDIR>/ntp_prod_0001.mdout",
+          "warnings": [],
+          "details": {
+            "filename": "<RUNDIR>/ntp_prod_0001.mdout",
+            "program": "PMEMD",
+            "version": "22",
+            "run_date": "01/11/2023 at 16:17:56",
+            "gpu_model": "NVIDIA GeForce RTX 2080",
+            "natoms": 64528,
+            "nres": 15102,
+            "box_type": "RECTILINEAR",
+            "run_type": "MD",
+            "dt": 0.004,
+            "nstlim": 5000000,
+            "cutoff": 9.0,
+            "thermostat": "Langevin",
+            "target_temp": 300.0,
+            "barostat": "Berendsen",
+            "shake_active": true,
+            "stats": {
+              "count": 200,
+              "time_start": 1020.0,
+              "time_end": 20920.0,
+              "_temps": {
+                "count": 200,
+                "mean": 300.43200000000013,
+                "m2": 311.14600000000297
+              },
+              "_pressures": {
+                "count": 200,
+                "mean": -2.995999999999997,
+                "m2": 3112231.216800002
+              },
+              "_etots": {
+                "count": 200,
+                "mean": -163868.99637149996,
+                "m2": 12345220.119009383
+              },
+              "_densities": {
+                "count": 200,
+                "mean": 1.0369550000000003,
+                "m2": 0.00030795499999996856
+              },
+              "_volumes": {
+                "count": 200,
+                "mean": 494114.8055245,
+                "m2": 70079467.26365186
+              },
+              "_first_density": 1.0348,
+              "_last_density": 1.0374,
+              "_first_volume": 495151.8058,
+              "_last_volume": 493919.4293,
+              "sum_bond": 276799.38959999994,
+              "sum_angle": 632708.0293,
+              "sum_dihed": 385965.5382999999,
+              "sum_vdw": 4576159.117000003,
+              "sum_elec": -44843585.12339999
+            },
+            "wall_time_seconds": 7445.0,
+            "ns_per_day": 232.15,
+            "finished_properly": true,
+            "warnings": []
+          }
+        },
+        "mdcrd": null
+      }
+    },
+    {
+      "name": "ntp_prod_0002",
+      "stage_role": "production",
+      "expected_gap_ps": null,
+      "gap_tolerance_ps": null,
+      "observed_gap_ps": 0.0,
+      "restart_path": "<RUNDIR>/ntp_prod_0001.rst",
+      "summary": {
+        "intent": "production",
+        "result": "Completed",
+        "expected_gap_ps": "",
+        "observed_gap_ps": "0 ps",
+        "continuity": "",
+        "evidence": ""
+      },
+      "validation": [],
+      "continuity": [],
+      "degraded": false,
+      "load_errors": [],
+      "files": {
+        "prmtop": {
+          "filename": "<RUNDIR>/CH3L1_HUMAN_6NAG.top",
+          "warnings": [],
+          "details": {
+            "filename": "<RUNDIR>/CH3L1_HUMAN_6NAG.top",
+            "version": "V0001.000",
+            "title": "default_name",
+            "force_field_type": null,
+            "force_field_features": [
+              "CMAP Correction",
+              "Orthorhombic Box",
+              "Box/density are from the topology-time box (LEaP BOX_DIMENSIONS), not the equilibrated system",
+              "Contains Ions (72)"
+            ],
+            "natom": 64528,
+            "nres": 15102,
+            "nbond": 64539,
+            "total_mass": 308554.444,
+            "total_charge": 8.020996347271433e-05,
+            "is_neutral": true,
+            "box_dimensions": [
+              98.3405545,
+              76.0526585,
+              81.2272985
+            ],
+            "box_angles": [
+              90.0,
+              90.0,
+              90.0
+            ],
+            "box_volume": 607503.888512848,
+            "density": 0.8433970648221194,
+            "box_is_topology_time": true,
+            "solvent_type": "Explicit Solvent",
+            "simulation_category": "Protein / Ligand in Explicit Water",
+            "residue_composition": {
+              "ACE": 1,
+              "TYR": 16,
+              "LYS": 20,
+              "LEU": 34,
+              "VAL": 14,
+              "CYX": 4,
+              "THR": 25,
+              "SER": 28,
+              "TRP": 8,
+              "GLN": 16,
+              "ARG": 19,
+              "GLU": 10,
+              "GLY": 32,
+              "ASP": 25,
+              "CYS": 1,
+              "PHE": 21,
+              "PRO": 15,
+              "ALA": 28,
+              "HIE": 4,
+              "ILE": 19,
+              "ASN": 12,
+              "HID": 5,
+              "MET": 6,
+              "NME": 1,
+              "ROH": 1,
+              "4YA": 1,
+              "4YB": 4,
+              "0YB": 1,
+              "K+": 34,
+              "Cl-": 38,
+              "WAT": 14659
+            },
+            "num_solvent_molecules": 14659,
+            "num_solute_residues": 443,
+            "hmr_active": false,
+            "hmr_hydrogen_mass_range": [
+              1.008,
+              1.008
+            ],
+            "hmr_hydrogen_mass_summary": "1.008-1.008 amu across 32188 H",
+            "hmr_detection_method": "atomic_number",
+            "warnings": []
+          }
+        },
+        "inpcrd": {
+          "filename": "<RUNDIR>/ntp_prod_0001.rst",
+          "warnings": [],
+          "details": {
+            "filename": "<RUNDIR>/ntp_prod_0001.rst",
+            "file_format": "NetCDF",
+            "title": "default_name",
+            "program": "pmemd",
+            "program_version": "Version 22",
+            "conventions": "AMBERRESTART",
+            "natoms": 64528,
+            "nres": null,
+            "time": 20920.00000242704,
+            "has_coordinates": true,
+            "has_velocities": true,
+            "has_forces": false,
+            "has_box": true,
+            "box_dimensions": [
+              91.78526594551442,
+              70.98306005877042,
+              75.81276343991902
+            ],
+            "box_angles": [
+              90.0,
+              90.0,
+              90.0
+            ],
+            "box_volume": 493935.24397171935,
+            "warnings": []
+          }
+        },
+        "mdin": {
+          "filename": "<RUNDIR>/ntp_prod_0002.mdin",
+          "warnings": [],
+          "details": {
+            "filename": "<RUNDIR>/ntp_prod_0002.mdin",
+            "title": "Production (20 ns)",
+            "simulation_type": "Molecular Dynamics (MD)",
+            "length_steps": 5000000,
+            "dt": 0.004,
+            "restart_flag": 1,
+            "ensemble": "NPT (isotropic)",
+            "stage_role": "Production [NPT (isotropic)]",
+            "energy_freq": 25000,
+            "coord_freq": 25000,
+            "restart_freq": 250000,
+            "traj_format": "NetCDF",
+            "cutoff": 9.0,
+            "temp_control": "Langevin Dynamics",
+            "target_temp": 300.0,
+            "press_control": "Berendsen (Isotropic)",
+            "pbc": "PBC / Constant Pressure",
+            "constraints": "H-bonds",
+            "implicit_solvent": "No",
+            "restraints_active": false,
+            "nmr_options": false,
+            "qmmm_active": false,
+            "has_temp_ramp": false,
+            "has_restraint_schedule": false,
+            "has_cutoff_schedule": false,
+            "uses_free_energy": false,
+            "uses_constant_pH": false,
+            "uses_constant_redox": false,
+            "uses_gamd": false,
+            "uses_remd": false,
+            "cntrl_parameters": {
+              "ntx": 5,
+              "irest": 1,
+              "ntpr": 25000,
+              "ntwr": 250000,
+              "ntwx": 25000,
+              "nstlim": 5000000,
+              "t": 21000.0,
+              "dt": 0.004,
+              "ntt": 3,
+              "gamma_ln": 1.0,
+              "ntp": 1,
+              "ntc": 2,
+              "ntf": 2,
+              "ntb": 2,
+              "cut": 9.0,
+              "_namelist": "cntrl"
+            },
+            "additional_namelists": [],
+            "wt_schedules": [],
+            "restraint_definitions": [],
+            "warnings": []
+          }
+        },
+        "mdout": {
+          "filename": "<RUNDIR>/ntp_prod_0002.mdout",
+          "warnings": [],
+          "details": {
+            "filename": "<RUNDIR>/ntp_prod_0002.mdout",
+            "program": "PMEMD",
+            "version": "22",
+            "run_date": "01/11/2023 at 18:22:02",
+            "gpu_model": "NVIDIA GeForce RTX 2080",
+            "natoms": 64528,
+            "nres": 15102,
+            "box_type": "RECTILINEAR",
+            "run_type": "MD",
+            "dt": 0.004,
+            "nstlim": 5000000,
+            "cutoff": 9.0,
+            "thermostat": "Langevin",
+            "target_temp": 300.0,
+            "barostat": "Berendsen",
+            "shake_active": true,
+            "stats": {
+              "count": 200,
+              "time_start": 21020.0,
+              "time_end": 40920.0,
+              "_temps": {
+                "count": 200,
+                "mean": 300.3727499999999,
+                "m2": 396.50138750000093
+              },
+              "_pressures": {
+                "count": 200,
+                "mean": 5.3290000000000015,
+                "m2": 3202932.8318000003
+              },
+              "_etots": {
+                "count": 200,
+                "mean": -163904.62254649986,
+                "m2": 11485157.199108621
+              },
+              "_densities": {
+                "count": 200,
+                "mean": 1.0369945000000007,
+                "m2": 0.000310163950000017
+              },
+              "_volumes": {
+                "count": 200,
+                "mean": 494097.3027115001,
+                "m2": 70250416.48535503
+              },
+              "_first_density": 1.0366,
+              "_last_density": 1.0398,
+              "_first_volume": 494264.1429,
+              "_last_volume": 492773.9358,
+              "sum_bond": 277618.4758000002,
+              "sum_angle": 634283.4335000002,
+              "sum_dihed": 387384.34439999994,
+              "sum_vdw": 4582453.307699999,
+              "sum_elec": -44859975.81120003
+            },
+            "wall_time_seconds": 7458.0,
+            "ns_per_day": 231.73,
+            "finished_properly": true,
+            "warnings": []
+          }
+        },
+        "mdcrd": null
+      }
+    },
+    {
+      "name": "ntp_prod_0003",
+      "stage_role": "production",
+      "expected_gap_ps": null,
+      "gap_tolerance_ps": null,
+      "observed_gap_ps": 0.0,
+      "restart_path": "<RUNDIR>/ntp_prod_0002.rst",
+      "summary": {
+        "intent": "production",
+        "result": "Completed",
+        "expected_gap_ps": "",
+        "observed_gap_ps": "0 ps",
+        "continuity": "",
+        "evidence": ""
+      },
+      "validation": [],
+      "continuity": [],
+      "degraded": false,
+      "load_errors": [],
+      "files": {
+        "prmtop": {
+          "filename": "<RUNDIR>/CH3L1_HUMAN_6NAG.top",
+          "warnings": [],
+          "details": {
+            "filename": "<RUNDIR>/CH3L1_HUMAN_6NAG.top",
+            "version": "V0001.000",
+            "title": "default_name",
+            "force_field_type": null,
+            "force_field_features": [
+              "CMAP Correction",
+              "Orthorhombic Box",
+              "Box/density are from the topology-time box (LEaP BOX_DIMENSIONS), not the equilibrated system",
+              "Contains Ions (72)"
+            ],
+            "natom": 64528,
+            "nres": 15102,
+            "nbond": 64539,
+            "total_mass": 308554.444,
+            "total_charge": 8.020996347271433e-05,
+            "is_neutral": true,
+            "box_dimensions": [
+              98.3405545,
+              76.0526585,
+              81.2272985
+            ],
+            "box_angles": [
+              90.0,
+              90.0,
+              90.0
+            ],
+            "box_volume": 607503.888512848,
+            "density": 0.8433970648221194,
+            "box_is_topology_time": true,
+            "solvent_type": "Explicit Solvent",
+            "simulation_category": "Protein / Ligand in Explicit Water",
+            "residue_composition": {
+              "ACE": 1,
+              "TYR": 16,
+              "LYS": 20,
+              "LEU": 34,
+              "VAL": 14,
+              "CYX": 4,
+              "THR": 25,
+              "SER": 28,
+              "TRP": 8,
+              "GLN": 16,
+              "ARG": 19,
+              "GLU": 10,
+              "GLY": 32,
+              "ASP": 25,
+              "CYS": 1,
+              "PHE": 21,
+              "PRO": 15,
+              "ALA": 28,
+              "HIE": 4,
+              "ILE": 19,
+              "ASN": 12,
+              "HID": 5,
+              "MET": 6,
+              "NME": 1,
+              "ROH": 1,
+              "4YA": 1,
+              "4YB": 4,
+              "0YB": 1,
+              "K+": 34,
+              "Cl-": 38,
+              "WAT": 14659
+            },
+            "num_solvent_molecules": 14659,
+            "num_solute_residues": 443,
+            "hmr_active": false,
+            "hmr_hydrogen_mass_range": [
+              1.008,
+              1.008
+            ],
+            "hmr_hydrogen_mass_summary": "1.008-1.008 amu across 32188 H",
+            "hmr_detection_method": "atomic_number",
+            "warnings": []
+          }
+        },
+        "inpcrd": {
+          "filename": "<RUNDIR>/ntp_prod_0002.rst",
+          "warnings": [],
+          "details": {
+            "filename": "<RUNDIR>/ntp_prod_0002.rst",
+            "file_format": "NetCDF",
+            "title": "default_name",
+            "program": "pmemd",
+            "program_version": "Version 22",
+            "conventions": "AMBERRESTART",
+            "natoms": 64528,
+            "nres": null,
+            "time": 40920.00000650158,
+            "has_coordinates": true,
+            "has_velocities": true,
+            "has_forces": false,
+            "has_box": true,
+            "box_dimensions": [
+              91.71262390731746,
+              70.9268816067465,
+              75.75276259337217
+            ],
+            "box_angles": [
+              90.0,
+              90.0,
+              90.0
+            ],
+            "box_volume": 492763.41950932157,
+            "warnings": []
+          }
+        },
+        "mdin": {
+          "filename": "<RUNDIR>/ntp_prod_0003.mdin",
+          "warnings": [],
+          "details": {
+            "filename": "<RUNDIR>/ntp_prod_0003.mdin",
+            "title": "Production (20 ns)",
+            "simulation_type": "Molecular Dynamics (MD)",
+            "length_steps": 5000000,
+            "dt": 0.004,
+            "restart_flag": 1,
+            "ensemble": "NPT (isotropic)",
+            "stage_role": "Production [NPT (isotropic)]",
+            "energy_freq": 25000,
+            "coord_freq": 25000,
+            "restart_freq": 250000,
+            "traj_format": "NetCDF",
+            "cutoff": 9.0,
+            "temp_control": "Langevin Dynamics",
+            "target_temp": 300.0,
+            "press_control": "Berendsen (Isotropic)",
+            "pbc": "PBC / Constant Pressure",
+            "constraints": "H-bonds",
+            "implicit_solvent": "No",
+            "restraints_active": false,
+            "nmr_options": false,
+            "qmmm_active": false,
+            "has_temp_ramp": false,
+            "has_restraint_schedule": false,
+            "has_cutoff_schedule": false,
+            "uses_free_energy": false,
+            "uses_constant_pH": false,
+            "uses_constant_redox": false,
+            "uses_gamd": false,
+            "uses_remd": false,
+            "cntrl_parameters": {
+              "ntx": 5,
+              "irest": 1,
+              "ntpr": 25000,
+              "ntwr": 250000,
+              "ntwx": 25000,
+              "nstlim": 5000000,
+              "t": 41000.0,
+              "dt": 0.004,
+              "ntt": 3,
+              "gamma_ln": 1.0,
+              "ntp": 1,
+              "ntc": 2,
+              "ntf": 2,
+              "ntb": 2,
+              "cut": 9.0,
+              "_namelist": "cntrl"
+            },
+            "additional_namelists": [],
+            "wt_schedules": [],
+            "restraint_definitions": [],
+            "warnings": []
+          }
+        },
+        "mdout": {
+          "filename": "<RUNDIR>/ntp_prod_0003.mdout",
+          "warnings": [],
+          "details": {
+            "filename": "<RUNDIR>/ntp_prod_0003.mdout",
+            "program": "PMEMD",
+            "version": "22",
+            "run_date": "01/11/2023 at 20:26:22",
+            "gpu_model": "NVIDIA GeForce RTX 2080",
+            "natoms": 64528,
+            "nres": 15102,
+            "box_type": "RECTILINEAR",
+            "run_type": "MD",
+            "dt": 0.004,
+            "nstlim": 5000000,
+            "cutoff": 9.0,
+            "thermostat": "Langevin",
+            "target_temp": 300.0,
+            "barostat": "Berendsen",
+            "shake_active": true,
+            "stats": {
+              "count": 200,
+              "time_start": 41020.0,
+              "time_end": 60920.0,
+              "_temps": {
+                "count": 200,
+                "mean": 300.3926499999999,
+                "m2": 345.25949549999626
+              },
+              "_pressures": {
+                "count": 200,
+                "mean": -10.628000000000007,
+                "m2": 2459275.203199999
+              },
+              "_etots": {
+                "count": 200,
+                "mean": -163946.52386449993,
+                "m2": 11588739.344533151
+              },
+              "_densities": {
+                "count": 200,
+                "mean": 1.0369005,
+                "m2": 0.00031884994999997545
+              },
+              "_volumes": {
+                "count": 200,
+                "mean": 494141.8798245002,
+                "m2": 72424467.19773792
+              },
+              "_first_density": 1.037,
+              "_last_density": 1.0361,
+              "_first_volume": 494081.0215,
+              "_last_volume": 494533.0903,
+              "sum_bond": 278283.2039000001,
+              "sum_angle": 634527.6565,
+              "sum_dihed": 384913.07540000015,
+              "sum_vdw": 4578276.351399999,
+              "sum_elec": -44863485.27840001
+            },
+            "wall_time_seconds": 7444.0,
+            "ns_per_day": 232.19,
+            "finished_properly": true,
+            "warnings": []
+          }
+        },
+        "mdcrd": null
+      }
+    },
+    {
+      "name": "ntp_prod_0004",
+      "stage_role": "production",
+      "expected_gap_ps": null,
+      "gap_tolerance_ps": null,
+      "observed_gap_ps": 0.0,
+      "restart_path": "<RUNDIR>/ntp_prod_0003.rst",
+      "summary": {
+        "intent": "production",
+        "result": "Completed",
+        "expected_gap_ps": "",
+        "observed_gap_ps": "0 ps",
+        "continuity": "",
+        "evidence": ""
+      },
+      "validation": [],
+      "continuity": [],
+      "degraded": false,
+      "load_errors": [],
+      "files": {
+        "prmtop": {
+          "filename": "<RUNDIR>/CH3L1_HUMAN_6NAG.top",
+          "warnings": [],
+          "details": {
+            "filename": "<RUNDIR>/CH3L1_HUMAN_6NAG.top",
+            "version": "V0001.000",
+            "title": "default_name",
+            "force_field_type": null,
+            "force_field_features": [
+              "CMAP Correction",
+              "Orthorhombic Box",
+              "Box/density are from the topology-time box (LEaP BOX_DIMENSIONS), not the equilibrated system",
+              "Contains Ions (72)"
+            ],
+            "natom": 64528,
+            "nres": 15102,
+            "nbond": 64539,
+            "total_mass": 308554.444,
+            "total_charge": 8.020996347271433e-05,
+            "is_neutral": true,
+            "box_dimensions": [
+              98.3405545,
+              76.0526585,
+              81.2272985
+            ],
+            "box_angles": [
+              90.0,
+              90.0,
+              90.0
+            ],
+            "box_volume": 607503.888512848,
+            "density": 0.8433970648221194,
+            "box_is_topology_time": true,
+            "solvent_type": "Explicit Solvent",
+            "simulation_category": "Protein / Ligand in Explicit Water",
+            "residue_composition": {
+              "ACE": 1,
+              "TYR": 16,
+              "LYS": 20,
+              "LEU": 34,
+              "VAL": 14,
+              "CYX": 4,
+              "THR": 25,
+              "SER": 28,
+              "TRP": 8,
+              "GLN": 16,
+              "ARG": 19,
+              "GLU": 10,
+              "GLY": 32,
+              "ASP": 25,
+              "CYS": 1,
+              "PHE": 21,
+              "PRO": 15,
+              "ALA": 28,
+              "HIE": 4,
+              "ILE": 19,
+              "ASN": 12,
+              "HID": 5,
+              "MET": 6,
+              "NME": 1,
+              "ROH": 1,
+              "4YA": 1,
+              "4YB": 4,
+              "0YB": 1,
+              "K+": 34,
+              "Cl-": 38,
+              "WAT": 14659
+            },
+            "num_solvent_molecules": 14659,
+            "num_solute_residues": 443,
+            "hmr_active": false,
+            "hmr_hydrogen_mass_range": [
+              1.008,
+              1.008
+            ],
+            "hmr_hydrogen_mass_summary": "1.008-1.008 amu across 32188 H",
+            "hmr_detection_method": "atomic_number",
+            "warnings": []
+          }
+        },
+        "inpcrd": {
+          "filename": "<RUNDIR>/ntp_prod_0003.rst",
+          "warnings": [],
+          "details": {
+            "filename": "<RUNDIR>/ntp_prod_0003.rst",
+            "file_format": "NetCDF",
+            "title": "default_name",
+            "program": "pmemd",
+            "program_version": "Version 22",
+            "conventions": "AMBERRESTART",
+            "natoms": 64528,
+            "nres": null,
+            "time": 60920.000010576114,
+            "has_coordinates": true,
+            "has_velocities": true,
+            "has_forces": false,
+            "has_box": true,
+            "box_dimensions": [
+              91.823837960086,
+              71.01289011479972,
+              75.844623139681
+            ],
+            "box_angles": [
+              90.0,
+              90.0,
+              90.0
+            ],
+            "box_volume": 494558.2225564834,
+            "warnings": []
+          }
+        },
+        "mdin": {
+          "filename": "<RUNDIR>/ntp_prod_0004.mdin",
+          "warnings": [],
+          "details": {
+            "filename": "<RUNDIR>/ntp_prod_0004.mdin",
+            "title": "Production (20 ns)",
+            "simulation_type": "Molecular Dynamics (MD)",
+            "length_steps": 5000000,
+            "dt": 0.004,
+            "restart_flag": 1,
+            "ensemble": "NPT (isotropic)",
+            "stage_role": "Production [NPT (isotropic)]",
+            "energy_freq": 25000,
+            "coord_freq": 25000,
+            "restart_freq": 250000,
+            "traj_format": "NetCDF",
+            "cutoff": 9.0,
+            "temp_control": "Langevin Dynamics",
+            "target_temp": 300.0,
+            "press_control": "Berendsen (Isotropic)",
+            "pbc": "PBC / Constant Pressure",
+            "constraints": "H-bonds",
+            "implicit_solvent": "No",
+            "restraints_active": false,
+            "nmr_options": false,
+            "qmmm_active": false,
+            "has_temp_ramp": false,
+            "has_restraint_schedule": false,
+            "has_cutoff_schedule": false,
+            "uses_free_energy": false,
+            "uses_constant_pH": false,
+            "uses_constant_redox": false,
+            "uses_gamd": false,
+            "uses_remd": false,
+            "cntrl_parameters": {
+              "ntx": 5,
+              "irest": 1,
+              "ntpr": 25000,
+              "ntwr": 250000,
+              "ntwx": 25000,
+              "nstlim": 5000000,
+              "t": 61000.0,
+              "dt": 0.004,
+              "ntt": 3,
+              "gamma_ln": 1.0,
+              "ntp": 1,
+              "ntc": 2,
+              "ntf": 2,
+              "ntb": 2,
+              "cut": 9.0,
+              "_namelist": "cntrl"
+            },
+            "additional_namelists": [],
+            "wt_schedules": [],
+            "restraint_definitions": [],
+            "warnings": []
+          }
+        },
+        "mdout": {
+          "filename": "<RUNDIR>/ntp_prod_0004.mdout",
+          "warnings": [],
+          "details": {
+            "filename": "<RUNDIR>/ntp_prod_0004.mdout",
+            "program": "PMEMD",
+            "version": "22",
+            "run_date": "01/11/2023 at 22:30:29",
+            "gpu_model": "NVIDIA GeForce RTX 2080",
+            "natoms": 64528,
+            "nres": 15102,
+            "box_type": "RECTILINEAR",
+            "run_type": "MD",
+            "dt": 0.004,
+            "nstlim": 5000000,
+            "cutoff": 9.0,
+            "thermostat": "Langevin",
+            "target_temp": 300.0,
+            "barostat": "Berendsen",
+            "shake_active": true,
+            "stats": {
+              "count": 200,
+              "time_start": 61020.0,
+              "time_end": 80920.0,
+              "_temps": {
+                "count": 200,
+                "mean": 300.23405000000014,
+                "m2": 363.64281949999184
+              },
+              "_pressures": {
+                "count": 200,
+                "mean": 9.2055,
+                "m2": 3153238.3639500006
+              },
+              "_etots": {
+                "count": 200,
+                "mean": -163972.89182949997,
+                "m2": 13143158.759523181
+              },
+              "_densities": {
+                "count": 200,
+                "mean": 1.0370109999999997,
+                "m2": 0.0002680158000000011
+              },
+              "_volumes": {
+                "count": 200,
+                "mean": 494090.0275705001,
+                "m2": 60524724.59178816
+              },
+              "_first_density": 1.0375,
+              "_last_density": 1.0367,
+              "_first_volume": 493834.9646,
+              "_last_volume": 494250.9724,
+              "sum_bond": 277456.06720000005,
+              "sum_angle": 633166.6376999997,
+              "sum_dihed": 384926.00470000005,
+              "sum_vdw": 4582914.0030000005,
+              "sum_elec": -44868136.625100024
+            },
+            "wall_time_seconds": 7445.0,
+            "ns_per_day": 232.13,
+            "finished_properly": true,
+            "warnings": []
+          }
+        },
+        "mdcrd": null
+      }
+    },
+    {
+      "name": "ntp_prod_0005",
+      "stage_role": "production",
+      "expected_gap_ps": null,
+      "gap_tolerance_ps": null,
+      "observed_gap_ps": 0.0,
+      "restart_path": "<RUNDIR>/ntp_prod_0004.rst",
+      "summary": {
+        "intent": "production",
+        "result": "Completed",
+        "expected_gap_ps": "",
+        "observed_gap_ps": "0 ps",
+        "continuity": "",
+        "evidence": ""
+      },
+      "validation": [],
+      "continuity": [],
+      "degraded": false,
+      "load_errors": [],
+      "files": {
+        "prmtop": {
+          "filename": "<RUNDIR>/CH3L1_HUMAN_6NAG.top",
+          "warnings": [],
+          "details": {
+            "filename": "<RUNDIR>/CH3L1_HUMAN_6NAG.top",
+            "version": "V0001.000",
+            "title": "default_name",
+            "force_field_type": null,
+            "force_field_features": [
+              "CMAP Correction",
+              "Orthorhombic Box",
+              "Box/density are from the topology-time box (LEaP BOX_DIMENSIONS), not the equilibrated system",
+              "Contains Ions (72)"
+            ],
+            "natom": 64528,
+            "nres": 15102,
+            "nbond": 64539,
+            "total_mass": 308554.444,
+            "total_charge": 8.020996347271433e-05,
+            "is_neutral": true,
+            "box_dimensions": [
+              98.3405545,
+              76.0526585,
+              81.2272985
+            ],
+            "box_angles": [
+              90.0,
+              90.0,
+              90.0
+            ],
+            "box_volume": 607503.888512848,
+            "density": 0.8433970648221194,
+            "box_is_topology_time": true,
+            "solvent_type": "Explicit Solvent",
+            "simulation_category": "Protein / Ligand in Explicit Water",
+            "residue_composition": {
+              "ACE": 1,
+              "TYR": 16,
+              "LYS": 20,
+              "LEU": 34,
+              "VAL": 14,
+              "CYX": 4,
+              "THR": 25,
+              "SER": 28,
+              "TRP": 8,
+              "GLN": 16,
+              "ARG": 19,
+              "GLU": 10,
+              "GLY": 32,
+              "ASP": 25,
+              "CYS": 1,
+              "PHE": 21,
+              "PRO": 15,
+              "ALA": 28,
+              "HIE": 4,
+              "ILE": 19,
+              "ASN": 12,
+              "HID": 5,
+              "MET": 6,
+              "NME": 1,
+              "ROH": 1,
+              "4YA": 1,
+              "4YB": 4,
+              "0YB": 1,
+              "K+": 34,
+              "Cl-": 38,
+              "WAT": 14659
+            },
+            "num_solvent_molecules": 14659,
+            "num_solute_residues": 443,
+            "hmr_active": false,
+            "hmr_hydrogen_mass_range": [
+              1.008,
+              1.008
+            ],
+            "hmr_hydrogen_mass_summary": "1.008-1.008 amu across 32188 H",
+            "hmr_detection_method": "atomic_number",
+            "warnings": []
+          }
+        },
+        "inpcrd": {
+          "filename": "<RUNDIR>/ntp_prod_0004.rst",
+          "warnings": [],
+          "details": {
+            "filename": "<RUNDIR>/ntp_prod_0004.rst",
+            "file_format": "NetCDF",
+            "title": "default_name",
+            "program": "pmemd",
+            "program_version": "Version 22",
+            "conventions": "AMBERRESTART",
+            "natoms": 64528,
+            "nres": null,
+            "time": 80920.00001465065,
+            "has_coordinates": true,
+            "has_velocities": true,
+            "has_forces": false,
+            "has_box": true,
+            "box_dimensions": [
+              91.80590247709232,
+              70.99901952834198,
+              75.82980879540497
+            ],
+            "box_angles": [
+              90.0,
+              90.0,
+              90.0
+            ],
+            "box_volume": 494268.4805349966,
+            "warnings": []
+          }
+        },
+        "mdin": {
+          "filename": "<RUNDIR>/ntp_prod_0005.mdin",
+          "warnings": [],
+          "details": {
+            "filename": "<RUNDIR>/ntp_prod_0005.mdin",
+            "title": "Production (20 ns)",
+            "simulation_type": "Molecular Dynamics (MD)",
+            "length_steps": 5000000,
+            "dt": 0.004,
+            "restart_flag": 1,
+            "ensemble": "NPT (isotropic)",
+            "stage_role": "Production [NPT (isotropic)]",
+            "energy_freq": 25000,
+            "coord_freq": 25000,
+            "restart_freq": 250000,
+            "traj_format": "NetCDF",
+            "cutoff": 9.0,
+            "temp_control": "Langevin Dynamics",
+            "target_temp": 300.0,
+            "press_control": "Berendsen (Isotropic)",
+            "pbc": "PBC / Constant Pressure",
+            "constraints": "H-bonds",
+            "implicit_solvent": "No",
+            "restraints_active": false,
+            "nmr_options": false,
+            "qmmm_active": false,
+            "has_temp_ramp": false,
+            "has_restraint_schedule": false,
+            "has_cutoff_schedule": false,
+            "uses_free_energy": false,
+            "uses_constant_pH": false,
+            "uses_constant_redox": false,
+            "uses_gamd": false,
+            "uses_remd": false,
+            "cntrl_parameters": {
+              "ntx": 5,
+              "irest": 1,
+              "ntpr": 25000,
+              "ntwr": 250000,
+              "ntwx": 25000,
+              "nstlim": 5000000,
+              "t": 81000.0,
+              "dt": 0.004,
+              "ntt": 3,
+              "gamma_ln": 1.0,
+              "ntp": 1,
+              "ntc": 2,
+              "ntf": 2,
+              "ntb": 2,
+              "cut": 9.0,
+              "_namelist": "cntrl"
+            },
+            "additional_namelists": [],
+            "wt_schedules": [],
+            "restraint_definitions": [],
+            "warnings": []
+          }
+        },
+        "mdout": {
+          "filename": "<RUNDIR>/ntp_prod_0005.mdout",
+          "warnings": [],
+          "details": {
+            "filename": "<RUNDIR>/ntp_prod_0005.mdout",
+            "program": "PMEMD",
+            "version": "22",
+            "run_date": "01/12/2023 at 00:34:36",
+            "gpu_model": "NVIDIA GeForce RTX 2080",
+            "natoms": 64528,
+            "nres": 15102,
+            "box_type": "RECTILINEAR",
+            "run_type": "MD",
+            "dt": 0.004,
+            "nstlim": 5000000,
+            "cutoff": 9.0,
+            "thermostat": "Langevin",
+            "target_temp": 300.0,
+            "barostat": "Berendsen",
+            "shake_active": true,
+            "stats": {
+              "count": 200,
+              "time_start": 81020.0,
+              "time_end": 100920.0,
+              "_temps": {
+                "count": 200,
+                "mean": 300.3999,
+                "m2": 343.4283979999961
+              },
+              "_pressures": {
+                "count": 200,
+                "mean": 4.795999999999993,
+                "m2": 2458327.7568000006
+              },
+              "_etots": {
+                "count": 200,
+                "mean": -163931.55888300002,
+                "m2": 12158807.368658893
+              },
+              "_densities": {
+                "count": 200,
+                "mean": 1.037146,
+                "m2": 0.00033265679999999384
+              },
+              "_volumes": {
+                "count": 200,
+                "mean": 494025.219429,
+                "m2": 75323507.90744269
+              },
+              "_first_density": 1.0393,
+              "_last_density": 1.0374,
+              "_first_volume": 492987.5331,
+              "_last_volume": 493909.3106,
+              "sum_bond": 277167.55610000005,
+              "sum_angle": 634353.1721000004,
+              "sum_dihed": 383971.41469999996,
+              "sum_vdw": 4578691.091700001,
+              "sum_elec": -44858137.54980003
+            },
+            "wall_time_seconds": 7457.0,
+            "ns_per_day": 231.76,
+            "finished_properly": true,
+            "warnings": []
+          }
+        },
+        "mdcrd": null
+      }
+    }
+  ]
+}

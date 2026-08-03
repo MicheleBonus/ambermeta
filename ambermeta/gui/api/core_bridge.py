@@ -67,6 +67,14 @@ def document_to_payload(stages: List[Dict[str, Any]], settings: Dict[str, Any],
         role = s.get("role")
         if role:
             entry["stage_role"] = role
+        # This whitelist is the gate: a key that is not copied out here never reaches
+        # _manifest_to_stages, so tagging the step and flattening the tag would both be
+        # silent no-ops without these three lines. Copied only when set, like `gaps`,
+        # so an untagged document's payload is the one it always had.
+        for provenance in ("lineage", "step_id", "parent_id"):
+            val = s.get(provenance)
+            if val:
+                entry[provenance] = val
         for kind in STAGE_FILE_KINDS:
             val = _relativize(s.get(kind), base_directory, relative)
             if val:
@@ -318,6 +326,11 @@ def _flatten_simulation(sim):
             inpcrd = resolve_input_coords(sim, s)
             flat.append({
                 "name": s.name, "role": p.role, "step_id": s.id,
+                # The producing step, carried as an id. `inpcrd` above is that producer's
+                # restart *path*, which several steps can share, so the edge itself cannot
+                # be recovered from it downstream.
+                "lineage": s.lineage,
+                "parent_id": s.input_coords.ref if s.input_coords.source == "step" else None,
                 "prmtop": topo_by_id.get(s.topology) if s.topology else None,
                 "mdin": s.mdin, "mdout": s.mdout, "mdcrd": s.mdcrd, "inpcrd": inpcrd,
                 "expected_gap_ps": s.expected_gap_ps, "gap_tolerance_ps": s.gap_tolerance_ps,

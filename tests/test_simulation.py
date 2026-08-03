@@ -218,6 +218,60 @@ def test_a_step_with_no_restart_keeps_the_payload_it_always_had():
     assert "rst" not in simulation_to_payload(sim)["steps"][0]
 
 
+# --- run lineages: the tag a step carries -----------------------------------
+
+def test_lineage_round_trips_through_the_v2_payload():
+    sim = _chain()
+    for step, tag in zip(sim.phases[0].steps, ["rep1", "rep1", "rep2"]):
+        step.lineage = tag
+    payload = simulation_to_payload(sim)
+    assert [s["lineage"] for s in payload["steps"]] == ["rep1", "rep1", "rep2"]
+    assert payload_to_simulation(payload) == sim
+
+
+def test_a_numeric_lineage_tag_loads_as_a_string():
+    """`lineage: 1` is a reasonable thing to hand-write for a numerically named replica.
+
+    YAML and JSON both hand it back as an int, and an int tag would bucket separately from
+    the "1" the same document might carry elsewhere — two members where the author meant
+    one — besides breaking the first caller that sorts or joins tags.
+    """
+    payload = simulation_to_payload(_chain())
+    payload["steps"][0]["lineage"] = 1
+    payload["steps"][1]["lineage"] = "1"
+    steps = [s for p in payload_to_simulation(payload).phases for s in p.steps]
+    assert steps[0].lineage == "1" and steps[1].lineage == "1"
+    assert steps[0].lineage == steps[1].lineage, "an int tag must not split a member"
+
+
+def test_an_empty_lineage_tag_loads_as_untagged():
+    """"" is how the GUI clears a step slot. Kept verbatim it would round-trip as a
+    nameless member, so a hand-edited manifest would grow a lineage nobody declared."""
+    sim = _chain()
+    sim.phases[0].steps[0].lineage = "rep1"
+    payload = simulation_to_payload(sim)
+    payload["steps"][1]["lineage"] = ""
+    back = payload_to_simulation(payload)
+    assert [s.lineage for _, s in iter_steps(back)] == ["rep1", None, None]
+    assert "lineage" not in simulation_to_payload(back)["steps"][1]
+
+
+def test_lineage_survives_the_legacy_restart_path_rewrite():
+    """_adopt_legacy_restart_paths rebuilds InputCoords wholesale on every load, which is
+    why the tag lives on the Step: anything stored on the coords is dropped here."""
+    sim = _chain()
+    for step in sim.phases[0].steps:
+        step.lineage = "rep1"
+    payload = simulation_to_payload(sim)
+    # The pre-`rst` spelling: the resolved restart carried on the consuming step.
+    payload["steps"][1]["input_coords"] = {
+        "source": "step", "ref": "st_0", "path": "equil/01_min.rst"}
+    back = payload_to_simulation(payload)
+    steps = [s for _, s in iter_steps(back)]
+    assert steps[1].input_coords == InputCoords(source="step", ref="st_0")   # rewritten
+    assert [s.lineage for s in steps] == ["rep1", "rep1", "rep1"]
+
+
 def test_loading_a_flat_manifest_says_so_instead_of_returning_nothing(tmp_path):
     """A v1 file used to migrate silently; now it must be a clear error.
 

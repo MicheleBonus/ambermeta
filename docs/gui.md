@@ -373,6 +373,7 @@ $ curl -s -o /dev/null -w '%{http_code}\n' 'http://127.0.0.1:8799/api/nonexisten
             "input_coords": { "source": "starting_structure", "ref": null, "path": null },
             "mdin": "ntp_prod_0001.mdin", "mdout": "ntp_prod_0001.mdout", "mdcrd": null,
             "rst": "ntp_prod_0001.rst",
+            "lineage": null,
             "resolved_input_coords": "CH3L1_HUMAN_6NAG.crd",
             "expected_gap_ps": null, "gap_tolerance_ps": null, "notes": [] }
         ] }

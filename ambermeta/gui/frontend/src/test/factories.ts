@@ -15,6 +15,7 @@ export function makeStep(over: Partial<StepModel> & { id: string; name: string }
     mdout: null,
     mdcrd: null,
     rst: null,
+    lineage: null,
     resolved_input_coords: null,
     expected_gap_ps: null,
     gap_tolerance_ps: null,

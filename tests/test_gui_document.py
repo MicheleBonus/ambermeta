@@ -215,6 +215,20 @@ def test_response_carries_the_resolved_input_coordinates():
     assert steps[1].rst == "equil/02_nvt.rst"
 
 
+def test_response_carries_the_lineage_tag():
+    # A StepModel field that _sim_to_model does not construct serialises as null forever
+    # and nothing raises, so the tag is asserted on the wire and not on the dataclass.
+    st = _store()
+    sim = Simulation(phases=[Phase(id="p0", name="Prod", role="production", steps=[
+        Step(id="s0", name="rep1/prod_0001", lineage="rep1"),
+        Step(id="s1", name="prod_0001"),
+    ])])
+    st.replace(simulation=sim, settings=st.get().settings, manifest_path=None,
+               dirty=False, reset_history=True)
+    steps = st.to_response().simulation.phases[0].steps
+    assert [s.lineage for s in steps] == ["rep1", None]
+
+
 def test_reordering_steps_relinks_the_chain():
     st = _chained_store()
     st.reorder_steps("p0", ["s0", "s2", "s1"])

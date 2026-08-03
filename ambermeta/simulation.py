@@ -42,6 +42,11 @@ class Step:
     # resolves through here, so the file is recorded once and the two steps stay linked
     # even if either is renamed, reordered, or moved to another phase.
     rst: Optional[str] = None
+    # Which run lineage (replica, branch, pose) this step belongs to. Steps sharing a tag
+    # are one member; untagged means the implicit single member. It lives on the Step and
+    # not on input_coords because _adopt_legacy_restart_paths and both relink_restarts
+    # branches rebuild InputCoords wholesale, which would silently drop it.
+    lineage: Optional[str] = None
     expected_gap_ps: Optional[float] = None
     gap_tolerance_ps: Optional[float] = None
     notes: List[str] = field(default_factory=list)
@@ -75,10 +80,12 @@ def _step_payload(step: Step, phase_id: str, order: int) -> Dict[str, Any]:
         "mdin": step.mdin, "mdout": step.mdout, "mdcrd": step.mdcrd,
         "notes": list(step.notes),
     }
-    # Emitted only when known, like `gaps`: a document that records no restarts keeps the
-    # exact step block it had before this field existed.
+    # Emitted only when known, like `gaps`: a document that records no restarts and
+    # declares no lineages keeps the exact step block it had before these fields existed.
     if step.rst is not None:
         data["rst"] = step.rst
+    if step.lineage is not None:
+        data["lineage"] = step.lineage
     if step.expected_gap_ps is not None or step.gap_tolerance_ps is not None:
         data["gaps"] = {"expected": step.expected_gap_ps, "tolerance": step.gap_tolerance_ps}
     return data
@@ -118,12 +125,20 @@ def payload_to_simulation(payload: Dict[str, Any]) -> Simulation:
     for s in sorted(payload.get("steps", []) or [], key=lambda x: (x.get("phase", ""), x.get("order", 0))):
         ic = s.get("input_coords", {}) or {}
         gaps = s.get("gaps", {}) or {}
+        # An empty tag means untagged — the convention the GUI already uses to clear a step
+        # slot. Kept as "", it would survive the round trip and count as a nameless member.
+        # Coerced to str because `lineage: 1` is a reasonable thing to hand-write for a
+        # numerically named replica, and YAML hands it back as an int: left alone it would
+        # group separately from the "1" the same document might carry elsewhere, and would
+        # crash the first caller that sorts or concatenates tags.
+        lineage = s.get("lineage")
+        lineage = None if lineage is None else (str(lineage) or None)
         step = Step(
             id=s["id"], name=s.get("name", ""), topology=s.get("topology"),
             input_coords=InputCoords(source=ic.get("source", "starting_structure"),
                                      ref=ic.get("ref"), path=ic.get("path")),
             mdin=s.get("mdin"), mdout=s.get("mdout"), mdcrd=s.get("mdcrd"),
-            rst=s.get("rst"),
+            rst=s.get("rst"), lineage=lineage,
             expected_gap_ps=gaps.get("expected"), gap_tolerance_ps=gaps.get("tolerance"),
             notes=list(s.get("notes", []) or []),
         )

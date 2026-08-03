@@ -136,6 +136,7 @@ class DocumentStore:
                                                   ref=s.input_coords.ref,
                                                   path=s.input_coords.path),
                     mdin=s.mdin, mdout=s.mdout, mdcrd=s.mdcrd, rst=s.rst,
+                    lineage=s.lineage,
                     resolved_input_coords=resolve_input_coords(sim, s),
                     expected_gap_ps=s.expected_gap_ps,
                     gap_tolerance_ps=s.gap_tolerance_ps, notes=list(s.notes),

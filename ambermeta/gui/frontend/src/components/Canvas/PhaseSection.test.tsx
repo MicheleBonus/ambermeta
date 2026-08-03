@@ -17,20 +17,9 @@ import type { PhaseModel, StepModel, TopologyModel } from "@/types";
 
 const topologies: TopologyModel[] = [{ id: "t0", path: "/w/wt.prmtop", kind: "normal" }];
 
-const step: StepModel = {
-  id: "s0",
-  name: "prod_0001",
-  topology: "t0",
-  input_coords: { source: "starting_structure", ref: null, path: null },
-  mdin: "/w/prod1.in",
-  mdout: null,
-  mdcrd: null,
-  rst: null,
-  resolved_input_coords: null,
-  expected_gap_ps: null,
-  gap_tolerance_ps: null,
-  notes: [],
-};
+const step: StepModel = makeStep({
+  id: "s0", name: "prod_0001", topology: "t0", mdin: "/w/prod1.in",
+});
 
 const phase: PhaseModel = { id: "p0", name: "Production", role: "production", steps: [step] };
 

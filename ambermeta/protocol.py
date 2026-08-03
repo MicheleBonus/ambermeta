@@ -129,6 +129,14 @@ class SimulationStage:
     mdout: Optional[MdoutData] = None
     mdcrd: Optional[MdcrdData] = None
     restart_path: Optional[str] = None
+    # Provenance carried over from the v2 document, never derived here. `lineage` names the
+    # run member this stage belongs to; `step_id`/`parent_id` are the document's own step ids,
+    # kept because the flatten resolves input_coords down to a bare inpcrd path — after that
+    # the edge is unrecoverable, and a lineage head has to be checked against the step it
+    # really continues from rather than against its document-order neighbour.
+    lineage: Optional[str] = None
+    step_id: Optional[str] = None
+    parent_id: Optional[str] = None
     validation: List[str] = field(default_factory=list)
     continuity: List[str] = field(default_factory=list)
     load_errors: List[FileLoadError] = field(default_factory=list)
@@ -1035,6 +1043,13 @@ def _manifest_to_stages(
             stage.validation.append(notes)
         elif isinstance(notes, list):
             stage.validation.extend(str(n) for n in notes)
+
+        # Provenance, read after construction like `gaps` and `notes`. Empty strings are
+        # coerced away so a cleared tag or a cleared id is absent rather than a nameless
+        # member, matching how payload_to_simulation ingests Step.lineage.
+        stage.lineage = entry.get("lineage") or None
+        stage.step_id = entry.get("step_id") or None
+        stage.parent_id = entry.get("parent_id") or None
 
         stages.append(stage)
 
