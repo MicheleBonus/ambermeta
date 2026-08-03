@@ -1,6 +1,6 @@
 # Recipes
 
-Short, copy-paste CLI one-liners for common jobs. All examples run from inside the sample data directory `tests/data/amber/md_test_files/` (a 64,528-atom glycoprotein system with a five-step `ntp_prod_0001..0005` production sequence):
+Short, copy-paste CLI one-liners for common jobs. All examples run from inside the sample data directory `tests/data/amber/md_test_files/` (a 64,528-atom glycoprotein system with a five-run `ntp_prod_0001..0005` production sequence):
 
 ```bash
 cd tests/data/amber/md_test_files

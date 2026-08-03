@@ -63,7 +63,7 @@ The server (FastAPI + Uvicorn) binds the host/port, resolves `directory` to an a
 |---|---|
 | **Files** (left) | A searchable, drag-source file list scanned from the launch directory. |
 | **Canvas** (center) | The Simulation header (topology pool + starting structure) above a vertical timeline of phase sections and step cards. |
-| **Inspector** (right) | Peek/details/assign actions for the selected file; the suggestions tray when a phase, the Simulation itself, or nothing is selected. |
+| **Inspector** (right) | Peek/details/assign actions for the selected file; a stub editor for a selected step or phase; the suggestions tray when the Simulation itself or nothing is selected (§6). |
 | **Open / Save** | Load an existing manifest / write the current one to disk (dot = unsaved changes). |
 | **Discover** | Discover-as-draft: scan the launch directory into a Simulation draft. |
 | **Validate** | Run full validation and show the report. |
@@ -78,7 +78,7 @@ Each pane is resizable (drag the divider); widths persist across sessions.
 ## 3. A typical session
 
 1. **Discover.** Click **Discover**, optionally uncheck "Search subdirectories" or set a filename pattern, then **Run discover**. The server scans the launch directory, groups files by stem, classifies the topology pool (normal vs. HMR), picks a starting structure, and chains later steps' input coordinates to the previous step's output restart. This **replaces** the current draft (a confirmation guards unsaved changes) and repopulates the suggestions tray.
-2. **Assign & adjust.** Drag a file from **Files** onto the topology pool, the starting-structure slot, a step's `mdin`/`mdout`/`mdcrd`/`rst` slot, or a phase's/step's topology target. Or select a file in **Files** and use the Inspector's **Assign** actions (§7) — the same mutations, without dragging.
+2. **Assign & adjust.** Drag a file from **Files** onto the topology pool, the starting-structure slot, a step's `mdin`/`mdout`/`mdcrd`/`rst` slot, or a phase's/step's topology target. Or select a file in **Files** and use the Inspector's **Assign** actions (§6) — the same mutations, without dragging.
 3. **Arrange.** In the **Canvas**, drag a step's grip handle to reorder it within a phase or drop it onto another phase to move it; drag a phase's grip handle to reorder phases.
 4. **Validate.** Click **Validate**. The panel lists per-step issues (missing files, continuity/sequence problems) and protocol-level notes, and lets you jump to a step. A simulation with continuity notes shows as *valid, with N protocol note(s)* — never a silent clean pass when something is worth a look.
 5. **Save / Plan / Export.** **Save** writes the canonical **v2 manifest** to disk (YAML or JSON) and reports the path it wrote. **Plan** is the step after that: it writes the manifest *and* the artifacts [`ambermeta plan`](cli.md) produces — `summary.json`, `methods_summary.json`, and optionally a statistics CSV — so the whole pipeline is one action rather than a save followed by a trip to a terminal. **Export** previews YAML or JSON for copying without writing anything.
@@ -169,9 +169,12 @@ The tray re-runs validation (and refills itself) after every document mutation, 
 - **Open** loads a **v2 manifest** — YAML or JSON — and resets undo history. There is no other reader. An old flat `stages:` document and a `.toml`/`.csv` path are each rejected with `400` and the core reader's own message (respectively):
 
   ```
-  Could not read manifest: old.yaml is not a v2 manifest (no 'steps' key). Rebuild it with `ambermeta discover <dir> --write <path>`.
-  Could not read manifest: old.toml: AmberMeta reads and writes manifests as YAML or JSON only; TOML and CSV are not manifest formats.
+  Could not read manifest: /abs/path/old.yaml is not a v2 manifest (no 'steps' key). Rebuild it with `ambermeta discover <dir> --write <path>`.
+  Could not read manifest: /abs/path/old.toml: AmberMeta reads and writes manifests as YAML or JSON only; TOML and CSV are not manifest formats.
   ```
+
+  The embedded path is always absolute: the request path is resolved through `os.path.realpath` before
+  the reader ever sees it, so what comes back is never the bare filename the client sent.
 
   Rebuild such a file with `ambermeta discover <dir> --write <path>` and open the result.
 - **Save** always writes the canonical **v2 manifest** — YAML or JSON only, chosen by the target's extension or by the Save dialog's format selector, which offers exactly those two.
@@ -203,8 +206,8 @@ steps:
   mdin: ntp_prod_0001.mdin
   mdout: ntp_prod_0001.mdout
   mdcrd: null
-  rst: ntp_prod_0001.rst
   notes: []
+  rst: ntp_prod_0001.rst
 - id: c1e0498e
   name: ntp_prod_0002
   phase: a2a37983
@@ -217,6 +220,7 @@ steps:
   mdout: ntp_prod_0002.mdout
   mdcrd: null
   notes: []
+  rst: ntp_prod_0002.rst
 # ...ntp_prod_0003..0005 follow the same chained-restart pattern
 ```
 
@@ -312,7 +316,7 @@ The frontend talks to a small REST API under `/api` (`ambermeta/gui/api/routes.p
 | `POST` | `/api/assign` | `{ path, target_type, target_id?, kind?, slot? }` — `target_type` ∈ `pool \| starting_structure \| phase_topology \| step_topology \| step_slot` (`step_slot` also needs `slot` ∈ `mdin\|mdout\|mdcrd\|rst`) | Document (`404`/`400`) |
 | `GET` / `PUT` | `/api/settings` | _(GET)_ / `{ auto_link_restarts?, strict_validation?, allow_gaps?, use_relative_paths? }` | Settings / Document |
 | `POST` | `/api/undo` · `/api/redo` | — | Document |
-| `POST` | `/api/plan` | `{ save_manifest_path?, summary_path?, methods_summary_path?, stats_csv_path?, summary_format? }` — a `null` path skips that artifact; `summary_format` is `json`\|`yaml` and the methods summary is always JSON | `{ written[], warnings[], stage_count, totals, document }` (`400` if nothing was selected or a format is unsupported, `403` outside the launch directory) |
+| `POST` | `/api/plan` | `{ save_manifest_path?, summary_path?, methods_summary_path?, stats_csv_path?, summary_format? }` — a `null` path skips that artifact; `summary_format` is `json`\|`yaml` and the methods summary is always JSON | `{ written[], failed[], warnings[], stage_count, totals, document }` — `failed[]` names any artifact that could not be written, so a partial success is reported rather than implied (`400` if nothing was selected or a format is unsupported, `403` outside the launch directory) |
 | `POST` | `/api/validate` | — | Validation report (§9) |
 
 ### Files
@@ -368,6 +372,8 @@ $ curl -s -o /dev/null -w '%{http_code}\n' 'http://127.0.0.1:8799/api/nonexisten
           { "id": "b71986d7", "name": "ntp_prod_0001", "topology": "top_CH3L1_HUMAN_6NAG",
             "input_coords": { "source": "starting_structure", "ref": null, "path": null },
             "mdin": "ntp_prod_0001.mdin", "mdout": "ntp_prod_0001.mdout", "mdcrd": null,
+            "rst": "ntp_prod_0001.rst",
+            "resolved_input_coords": "CH3L1_HUMAN_6NAG.crd",
             "expected_gap_ps": null, "gap_tolerance_ps": null, "notes": [] }
         ] }
     ]
@@ -377,12 +383,15 @@ $ curl -s -o /dev/null -w '%{http_code}\n' 'http://127.0.0.1:8799/api/nonexisten
 
 This is `ambermeta.gui.api.schemas.DocumentResponse` — the same shape the frontend renders and the shape `simulation_to_payload`/`payload_to_simulation` round-trip to a v2 manifest (`docs/manifest.md`).
 
+One field here has no counterpart on disk: **`resolved_input_coords` is read-only and API-only**. The server resolves the chain (`starting_structure`, or `ref` → that step's `rst`, or an explicit `path`) and hands the answer over so the frontend never re-implements the rules. Sending it back is not how you change what a step reads — set `input_coords` instead. `rst`, by contrast, is a real manifest field: the restart this step produces.
+
 ---
 
 ## 12. Known limitations
 
 - **Step and phase inline editing is stubbed.** The Inspector shows a placeholder (`Step editor.` / `Phase editor.`) when a step or phase is selected — you cannot yet rename a step, change its role, or set its gap tolerance/notes from there. Reach those fields via drag-and-drop assignment, the file-side Assign actions (§6), the HTTP API (§11), or by editing the saved manifest and reopening it.
 - **Suggestion cards are advisory**, not bound to their nominal actions beyond Dismiss/Undo — "Accept"/"Adjust"/"Ignore" currently just dismiss the card in the browser; the underlying condition (e.g. a sequence hole) still needs to be fixed via assignment or by adding the missing run's files.
+- **Save and Preview write v2 only, as YAML or JSON.** `write_simulation` accepts no other format (anything else raises `ValueError: v2 write supports json/yaml only, got: <fmt>`), and there is no other on-disk form to fall back to — so a manifest leaving the GUI is always one of those two.
 
 ---
 

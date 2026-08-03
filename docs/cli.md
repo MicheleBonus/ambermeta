@@ -218,7 +218,7 @@ options:
 
 `--recursive` discovery under `plan` is a separate, still-supported flat engine (auto-discovery straight from files on disk, no manifest involved) and always prints the classic per-stage **Protocol summary**; use [`discover`](#discover) for the new Simulation-draft view of a directory.
 
-### Exports (manifest/recursive modes only)
+### Exports (all three modes)
 
 | Flag | Output |
 |---|---|
@@ -282,15 +282,15 @@ Phases: 1
 
 Phase: Production [production]
   - ntp_prod_0001  topology=CH3L1_HUMAN_6NAG.top  input=starting structure  (mdin=ntp_prod_0001.mdin, mdout=ntp_prod_0001.mdout)
-  - ntp_prod_0002  topology=CH3L1_HUMAN_6NAG.top  input=step 10428ec4  (mdin=ntp_prod_0002.mdin, mdout=ntp_prod_0002.mdout)
-  - ntp_prod_0003  topology=CH3L1_HUMAN_6NAG.top  input=step c261aa4f  (mdin=ntp_prod_0003.mdin, mdout=ntp_prod_0003.mdout)
-  - ntp_prod_0004  topology=CH3L1_HUMAN_6NAG.top  input=step aae0b2b3  (mdin=ntp_prod_0004.mdin, mdout=ntp_prod_0004.mdout)
-  - ntp_prod_0005  topology=CH3L1_HUMAN_6NAG.top  input=step 04ec75b7  (mdin=ntp_prod_0005.mdin, mdout=ntp_prod_0005.mdout)
+  - ntp_prod_0002  topology=CH3L1_HUMAN_6NAG.top  input=restart of ntp_prod_0001 (ntp_prod_0001.rst)  (mdin=ntp_prod_0002.mdin, mdout=ntp_prod_0002.mdout)
+  - ntp_prod_0003  topology=CH3L1_HUMAN_6NAG.top  input=restart of ntp_prod_0002 (ntp_prod_0002.rst)  (mdin=ntp_prod_0003.mdin, mdout=ntp_prod_0003.mdout)
+  - ntp_prod_0004  topology=CH3L1_HUMAN_6NAG.top  input=restart of ntp_prod_0003 (ntp_prod_0003.rst)  (mdin=ntp_prod_0004.mdin, mdout=ntp_prod_0004.mdout)
+  - ntp_prod_0005  topology=CH3L1_HUMAN_6NAG.top  input=restart of ntp_prod_0004 (ntp_prod_0004.rst)  (mdin=ntp_prod_0005.mdin, mdout=ntp_prod_0005.mdout)
 
 Validation: OK
 ```
 
-(`input=step <id>` is the source step's id — the continuity chain. The healthy 20 ns inter-run gaps between the sample sequence's runs fall inside the expected window and are not flagged, so there are no continuity findings.)
+(`input=restart of <step> (<file>)` is the continuity chain, resolved to the producing step's name and its output restart. The healthy 20 ns inter-run gaps between the sample sequence's runs fall inside the expected window and are not flagged, so there are no continuity findings.)
 
 #### `-m` on a pre-v2 manifest
 
@@ -353,17 +353,17 @@ Phases: 1
 
 Phase: Production [production]
   - ntp_prod_0001  topology=CH3L1_HUMAN_6NAG.top  input=starting structure  (mdin=ntp_prod_0001.mdin, mdout=ntp_prod_0001.mdout)
-  - ntp_prod_0002  topology=CH3L1_HUMAN_6NAG.top  input=step 10428ec4  (mdin=ntp_prod_0002.mdin, mdout=ntp_prod_0002.mdout)
-  - ntp_prod_0003  topology=CH3L1_HUMAN_6NAG.top  input=step c261aa4f  (mdin=ntp_prod_0003.mdin, mdout=ntp_prod_0003.mdout)
-  - ntp_prod_0004  topology=CH3L1_HUMAN_6NAG.top  input=step aae0b2b3  (mdin=ntp_prod_0004.mdin, mdout=ntp_prod_0004.mdout)
-  - ntp_prod_0005  topology=CH3L1_HUMAN_6NAG.top  input=step 04ec75b7  (mdin=ntp_prod_0005.mdin, mdout=ntp_prod_0005.mdout)
+  - ntp_prod_0002  topology=CH3L1_HUMAN_6NAG.top  input=restart of ntp_prod_0001 (ntp_prod_0001.rst)  (mdin=ntp_prod_0002.mdin, mdout=ntp_prod_0002.mdout)
+  - ntp_prod_0003  topology=CH3L1_HUMAN_6NAG.top  input=restart of ntp_prod_0002 (ntp_prod_0002.rst)  (mdin=ntp_prod_0003.mdin, mdout=ntp_prod_0003.mdout)
+  - ntp_prod_0004  topology=CH3L1_HUMAN_6NAG.top  input=restart of ntp_prod_0003 (ntp_prod_0003.rst)  (mdin=ntp_prod_0004.mdin, mdout=ntp_prod_0004.mdout)
+  - ntp_prod_0005  topology=CH3L1_HUMAN_6NAG.top  input=restart of ntp_prod_0004 (ntp_prod_0004.rst)  (mdin=ntp_prod_0005.mdin, mdout=ntp_prod_0005.mdout)
 
 Suggestions:
   - [applied] CH3L1_HUMAN_6NAG.crd set as the starting structure
   - [applied] Phase roles inferred from file content/names
 ```
 
-`ntp_prod_0000` (a bare restart with no `mdin`/`mdout`) isn't turned into a step at all — a step needs at least an `mdin`/`mdout` pair to be a "run"; it is simply excluded from the draft. `CH3L1_HUMAN_6NAG.crd` is picked as the starting structure because it is single-frame coordinates. Step ids (`10428ec4`, ...) are randomly generated each run — do not depend on them being stable across invocations of `discover`.
+`ntp_prod_0000` (a bare restart with no `mdin`/`mdout`) isn't turned into a step at all — a step needs at least an `mdin`/`mdout` pair to be a "run"; it is simply excluded from the draft. `CH3L1_HUMAN_6NAG.crd` is picked as the starting structure because it is single-frame coordinates. The printed `input=restart of <step> (<file>)` names the *producing step* and the restart it resolves to, not the raw id: step ids (`10428ec4`, ... in the manifest below) are `uuid4` slices, regenerated on every run, so nothing user-facing prints them and nothing should depend on them being stable across invocations of `discover`.
 
 `--write` saves the draft as v2:
 
@@ -398,6 +398,7 @@ steps:
   mdout: ntp_prod_0001.mdout
   mdcrd: null
   notes: []
+  rst: ntp_prod_0001.rst
 - id: c261aa4f
   name: ntp_prod_0002
   phase: 4ba21bbf
@@ -406,15 +407,15 @@ steps:
   input_coords:
     source: step
     ref: 10428ec4
-    path: ntp_prod_0001.rst
   mdin: ntp_prod_0002.mdin
   mdout: ntp_prod_0002.mdout
   mdcrd: null
   notes: []
+  rst: ntp_prod_0002.rst
 # ... ntp_prod_0003..0005 follow the same shape, each chained to the previous step
 ```
 
-Note `input_coords` on a chained step carries **both** `ref` (the source step's id) *and* the resolved `path` (its output restart) — the manifest stays self-describing even if you inspect it outside AmberMeta. Paths are written relative to `directory` when the draft's files live under it.
+Note the restart is written **once**, on the step that produced it (`rst:`), and a chained consumer carries only `ref` — the id of the step it continues from. Nothing repeats the path. To find the file a chained step actually starts from, follow `ref` to the producing step and read its `rst`; `ambermeta.simulation.resolve_input_coords` does exactly that, and it is what the `input=restart of ...` line above prints. Paths are written relative to `directory` when the draft's files live under it.
 
 Exit `0` on success; `1` if `directory` doesn't exist, or if discovery finds no phases (nothing to draft) — e.g. an empty or unrecognized directory:
 
@@ -831,11 +832,27 @@ The generated scripts complete all eight subcommands, including `discover` and `
 Manifest paths support `${VAR}`/`$VAR` expansion by default. Every manifest-reading command — `plan -m`, `export`, `validate --manifest` — loads through `ambermeta.simulation.load_simulation`, which shares the same underlying reader, so expansion behaves identically everywhere (`init` never reads a manifest, only writes a template):
 
 ```yaml
-stages:
-  - name: production
-    prmtop: ${PROJECT_DIR}/system.prmtop
+version: 2
+simulation:
+  topologies:
+    - id: top_wt
+      path: ${PROJECT_DIR}/system.prmtop
+      kind: normal
+  starting_structure: ${PROJECT_DIR}/system.inpcrd
+phases:
+  - { id: ph_prod, name: Production, role: production, order: 0 }
+steps:
+  - id: st_prod
+    name: production
+    phase: ph_prod
+    topology: top_wt
+    input_coords: { source: starting_structure }
+    mdin:  ${PROJECT_DIR}/input/prod.mdin
     mdout: ${PROJECT_DIR}/output/prod.mdout
 ```
+
+(Use block style for any value containing `${...}`: inside a YAML *flow* mapping — `{ path: ${VAR}/x }` — the
+brace opens a nested flow collection and the document fails to parse. Quoting works too.)
 
 Disable with `--no-expand-env` (`plan` only). Full rules in the [manifest reference §8](manifest.md#8-environment-variable-expansion).
 

@@ -118,7 +118,7 @@ A gap within an explicit `expected_gap_ps ± gap_tolerance_ps` window (or within
 
 **Sequence holes** are a separate, first-class finding: `detect_sequence_gaps(names)` looks at numbered-run families (`prod_0001`, `prod_0002`, `prod_0004`, …) and reports the missing indices — here, `{"prod": [3]}` — independent of whether any continuity gap was ever measured, because the file for index 3 simply doesn't exist to measure a gap against.
 
-Real output on the sample data (`tests/data/amber/md_test_files/`, a 64,528-atom glycoprotein system with a six-member NPT production sequence) with `ntp_prod_0003.*` removed:
+Real output on the sample data (`tests/data/amber/md_test_files/`, a 64,528-atom glycoprotein system with a five-run NPT production sequence) with `ntp_prod_0003.*` removed:
 
 ```
 $ ambermeta discover /path/to/dir
@@ -131,9 +131,9 @@ Phases: 1
 
 Phase: Production [production]
   - ntp_prod_0001  topology=CH3L1_HUMAN_6NAG.top  input=starting structure  (mdin=ntp_prod_0001.mdin, mdout=ntp_prod_0001.mdout)
-  - ntp_prod_0002  topology=CH3L1_HUMAN_6NAG.top  input=step ecd74072  (mdin=ntp_prod_0002.mdin, mdout=ntp_prod_0002.mdout)
-  - ntp_prod_0004  topology=CH3L1_HUMAN_6NAG.top  input=step 26c90545  (mdin=ntp_prod_0004.mdin, mdout=ntp_prod_0004.mdout)
-  - ntp_prod_0005  topology=CH3L1_HUMAN_6NAG.top  input=step d8ad36cf  (mdin=ntp_prod_0005.mdin, mdout=ntp_prod_0005.mdout)
+  - ntp_prod_0002  topology=CH3L1_HUMAN_6NAG.top  input=restart of ntp_prod_0001 (ntp_prod_0001.rst)  (mdin=ntp_prod_0002.mdin, mdout=ntp_prod_0002.mdout)
+  - ntp_prod_0004  topology=CH3L1_HUMAN_6NAG.top  input=restart of ntp_prod_0002 (ntp_prod_0002.rst)  (mdin=ntp_prod_0004.mdin, mdout=ntp_prod_0004.mdout)
+  - ntp_prod_0005  topology=CH3L1_HUMAN_6NAG.top  input=restart of ntp_prod_0004 (ntp_prod_0004.rst)  (mdin=ntp_prod_0005.mdin, mdout=ntp_prod_0005.mdout)
 
 Suggestions:
   - [needs_you] ntp_prod sequence is missing member(s) 3

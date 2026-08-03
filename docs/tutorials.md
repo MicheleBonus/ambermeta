@@ -1,6 +1,6 @@
 # Tutorials
 
-Task-oriented walkthroughs for getting real work done with AmberMeta. Each uses the sample data in `tests/data/amber/md_test_files/` — a 64,528-atom glycoprotein system (`CH3L1_HUMAN_6NAG.top` + `.crd`) with a six-member NPT production sequence (`ntp_prod_0001` … `ntp_prod_0005`) — so every command and every line of output below is reproducible. Run them from a writable scratch copy so you don't touch the repo's test fixtures:
+Task-oriented walkthroughs for getting real work done with AmberMeta. Each uses the sample data in `tests/data/amber/md_test_files/` — a 64,528-atom glycoprotein system (`CH3L1_HUMAN_6NAG.top` + `.crd`) with a five-run NPT production sequence (`ntp_prod_0001` … `ntp_prod_0005`, plus a bare `ntp_prod_0000.rst` that is not itself a run) — so every command below is reproducible. Terminal output is too, with one exception: step and phase ids are `uuid4` slices minted fresh on every `discover`, so the ids inside manifests here will not match yours. Run them from a writable scratch copy so you don't touch the repo's test fixtures:
 
 ```bash
 mkdir -p /tmp/ambermeta-tutorial
@@ -42,17 +42,17 @@ Phases: 1
 
 Phase: Production [production]
   - ntp_prod_0001  topology=CH3L1_HUMAN_6NAG.top  input=starting structure  (mdin=ntp_prod_0001.mdin, mdout=ntp_prod_0001.mdout)
-  - ntp_prod_0002  topology=CH3L1_HUMAN_6NAG.top  input=step 8f9b2e3f  (mdin=ntp_prod_0002.mdin, mdout=ntp_prod_0002.mdout)
-  - ntp_prod_0003  topology=CH3L1_HUMAN_6NAG.top  input=step de27bb87  (mdin=ntp_prod_0003.mdin, mdout=ntp_prod_0003.mdout)
-  - ntp_prod_0004  topology=CH3L1_HUMAN_6NAG.top  input=step 6aa07bf3  (mdin=ntp_prod_0004.mdin, mdout=ntp_prod_0004.mdout)
-  - ntp_prod_0005  topology=CH3L1_HUMAN_6NAG.top  input=step 71f7cca0  (mdin=ntp_prod_0005.mdin, mdout=ntp_prod_0005.mdout)
+  - ntp_prod_0002  topology=CH3L1_HUMAN_6NAG.top  input=restart of ntp_prod_0001 (ntp_prod_0001.rst)  (mdin=ntp_prod_0002.mdin, mdout=ntp_prod_0002.mdout)
+  - ntp_prod_0003  topology=CH3L1_HUMAN_6NAG.top  input=restart of ntp_prod_0002 (ntp_prod_0002.rst)  (mdin=ntp_prod_0003.mdin, mdout=ntp_prod_0003.mdout)
+  - ntp_prod_0004  topology=CH3L1_HUMAN_6NAG.top  input=restart of ntp_prod_0003 (ntp_prod_0003.rst)  (mdin=ntp_prod_0004.mdin, mdout=ntp_prod_0004.mdout)
+  - ntp_prod_0005  topology=CH3L1_HUMAN_6NAG.top  input=restart of ntp_prod_0004 (ntp_prod_0004.rst)  (mdin=ntp_prod_0005.mdin, mdout=ntp_prod_0005.mdout)
 
 Suggestions:
   - [applied] CH3L1_HUMAN_6NAG.crd set as the starting structure
   - [applied] Phase roles inferred from file content/names
 ```
 
-`CH3L1_HUMAN_6NAG.top` was found once and put in the topology pool; `CH3L1_HUMAN_6NAG.crd` (a single-frame restart, no trajectory) was picked as the Simulation's starting structure and feeds `ntp_prod_0001`. Every later step's `input` is `step <id>` — the previous step's own output restart, the continuity chain. Both suggestions are `[applied]` automatically; a `[needs_you]` suggestion (you'll see one in [§2](#2-validate-continuity-and-catch-a-sequence-hole)) is not.
+`CH3L1_HUMAN_6NAG.top` was found once and put in the topology pool; `CH3L1_HUMAN_6NAG.crd` (a single-frame restart, no trajectory) was picked as the Simulation's starting structure and feeds `ntp_prod_0001`. Every later step's `input` is `restart of <step> (<file>)` — the previous step's own output restart, the continuity chain. Both suggestions are `[applied]` automatically; a `[needs_you]` suggestion (you'll see one in [§2](#2-validate-continuity-and-catch-a-sequence-hole)) is not.
 
 Write the draft to a v2 manifest with `--write`:
 
@@ -148,6 +148,7 @@ steps:
   mdcrd: null
   notes:
   - First production run; starts from the equilibrated starting structure.
+  rst: ntp_prod_0001.rst
 # ... ntp_prod_0002 .. ntp_prod_0005 follow, each chained to the previous step
 ```
 
@@ -163,7 +164,9 @@ Wrote v2 manifest: simulation.json (json)
 
 With no `-o` at all, the canonical payload goes to stdout as JSON, which is handy for piping into `jq`.
 
-YAML and JSON are the only manifest formats AmberMeta reads or writes; handing `export` a `.toml` or `.csv` path is an error, not a conversion. It also only reads v2 — a pre-2.0 flat manifest (`stages:`, `global_prmtop`) is no longer a format it understands:
+YAML and JSON are the only manifest formats AmberMeta reads or writes. On the way *in*, a `.toml` or `.csv` manifest is rejected outright — `ERROR: Failed to load manifest: <path>: AmberMeta reads and writes manifests as YAML or JSON only; TOML and CSV are not manifest formats.` On the way *out* there is no such guard: because only `.yaml`/`.yml` select YAML, `-o out.toml` writes **JSON into a file named `.toml`** and exits `0`. Pick the extension deliberately, or pass `--format` and let the name follow.
+
+`export` also only reads v2 — a pre-2.0 flat manifest (`stages:`, `global_prmtop`) is no longer a format it understands:
 
 ```bash
 ambermeta export old.yaml -o new.yaml; echo "exit: $?"
@@ -177,6 +180,8 @@ exit: 1
 Do what it says: rebuild from the directory with `discover --write`, then edit the draft as above.
 
 Prefer a browser? [§3](#3-round-trip-a-manifest-through-the-gui) does the same discover → edit → save loop in the GUI, and writes the identical file. Full schema: [manifest reference](manifest.md). Full flag reference: [CLI reference](cli.md).
+
+**Just want the numbers, not a manifest?** `ambermeta plan <dir> --recursive` scans the same directory through the retained flat engine and prints a per-stage *Protocol summary* — durations, thermostat/barostat, frame counts, per-stage statistics — without producing a document to maintain. See [recipes](recipes.md) and [cli.md](cli.md#plan) for that mode.
 
 ---
 
@@ -210,9 +215,9 @@ Phases: 1
 
 Phase: Production [production]
   - ntp_prod_0001  topology=CH3L1_HUMAN_6NAG.top  input=starting structure  (mdin=ntp_prod_0001.mdin, mdout=ntp_prod_0001.mdout)
-  - ntp_prod_0002  topology=CH3L1_HUMAN_6NAG.top  input=step baf48c84  (mdin=ntp_prod_0002.mdin, mdout=ntp_prod_0002.mdout)
-  - ntp_prod_0004  topology=CH3L1_HUMAN_6NAG.top  input=step f11face0  (mdin=ntp_prod_0004.mdin, mdout=ntp_prod_0004.mdout)
-  - ntp_prod_0005  topology=CH3L1_HUMAN_6NAG.top  input=step dbee856a  (mdin=ntp_prod_0005.mdin, mdout=ntp_prod_0005.mdout)
+  - ntp_prod_0002  topology=CH3L1_HUMAN_6NAG.top  input=restart of ntp_prod_0001 (ntp_prod_0001.rst)  (mdin=ntp_prod_0002.mdin, mdout=ntp_prod_0002.mdout)
+  - ntp_prod_0004  topology=CH3L1_HUMAN_6NAG.top  input=restart of ntp_prod_0002 (ntp_prod_0002.rst)  (mdin=ntp_prod_0004.mdin, mdout=ntp_prod_0004.mdout)
+  - ntp_prod_0005  topology=CH3L1_HUMAN_6NAG.top  input=restart of ntp_prod_0004 (ntp_prod_0004.rst)  (mdin=ntp_prod_0005.mdin, mdout=ntp_prod_0005.mdout)
 
 Suggestions:
   - [needs_you] ntp_prod sequence is missing member(s) 3
@@ -267,8 +272,9 @@ cp simulation.yaml broken.yaml
 input_coords:
   source: step
   ref: 8f9b2e3f          # was de27bb87 (ntp_prod_0002) — now points at ntp_prod_0001
-  path: ntp_prod_0001.rst
 ```
+
+`ref` is the only thing you set. The restart filename is not repeated here: it lives on the producing step's `rst`, and AmberMeta follows `ref` to find it. (Ids are `uuid4` slices regenerated by every `discover` run, so copy the real ones out of *your* `simulation.yaml` rather than the ones printed here.)
 
 ```bash
 ambermeta validate --manifest broken.yaml
@@ -336,7 +342,7 @@ ambermeta validate --manifest broken.yaml --format json
 
 (A step's own `notes` ride along in the same `warnings`/`protocol_issues` channel as real findings — if you added a note in [§1](#1-discover-edit-and-export-a-v2-manifest), you'll see it listed there too. Reserve `notes` for things worth a reviewer's attention.)
 
-`--strict` turns this into exit code 1 the same way it did for the sequence hole. Fix the reference (`ref: de27bb87`, `path: ntp_prod_0002.rst`) and `validate` goes back to a bare `Validation: OK` — no findings section at all, which is itself the signal that continuity is clean.
+`--strict` turns this into exit code 1 the same way it did for the sequence hole. Restore the reference (`ref: de27bb87`, `ntp_prod_0002`'s id) and `validate` goes back to a bare `Validation: OK` — no findings section at all, which is itself the signal that continuity is clean.
 
 **Declaring an intentional gap.** If a step genuinely restarts from a checkpoint after a real time jump, say so — an unstated gap is what triggers "verify continuity"; a stated one that matches is silently confirmed (`INFO`, not surfaced as a problem):
 

@@ -18,19 +18,25 @@ A manifest is YAML or JSON. Format is detected from the file extension.
 | Format | Extension | Requires |
 |---|---|---|
 | YAML | `.yaml`, `.yml` | `pyyaml` (the `yaml` extra) |
-| JSON | anything else | stdlib — always available |
+| JSON | any other extension except `.toml`/`.csv` | stdlib — always available |
 
 The two are interchangeable in both directions: `load_simulation` parses either to the same plain
 dict *before* it inspects the shape, and `write_simulation` takes `fmt` ∈ `{"json", "yaml"}` (anything
 else raises `ValueError: v2 write supports json/yaml only, got: <fmt>`). Only the extension decides how a
-file is *read* — a `.yaml`/`.yml` path goes through PyYAML, every other extension is parsed as JSON.
+file is *read* — a `.yaml`/`.yml` path goes through PyYAML, `.toml`/`.csv` are refused outright (below),
+and every other extension is parsed as JSON.
 
 TOML and CSV are **not** manifest formats. Pointing any reader at a `.toml` or `.csv` path fails
-immediately rather than half-parsing it:
+immediately — that check sits *between* the YAML branch and the JSON fallback, so those two extensions
+never reach the JSON parser:
 
 ```
-AmberMeta reads and writes manifests as YAML or JSON only; TOML and CSV are not manifest formats.
+<path>: AmberMeta reads and writes manifests as YAML or JSON only; TOML and CSV are not manifest formats.
 ```
+
+The message is always prefixed with the offending path. Note this guard is on the **read** side only: the
+writers pick their format from the extension the same blunt way, so `export -o out.toml` writes JSON into a
+file named `.toml` and exits `0`. Pass `--format` if the extension can't be trusted to say what you meant.
 
 (`ambermeta plan --stats-csv` is unrelated: it writes a per-stage *statistics* CSV — a report, not a
 manifest — and is unaffected by any of this.)
@@ -323,8 +329,9 @@ ambermeta gui runs/                         # build it in the browser, drag file
 `discover` and the GUI's **Discover** button run the same engine (`discover_draft` in
 `ambermeta/gui/api/core_bridge.py`): they classify every prmtop into the topology pool, find a starting
 structure, group runs into role-named phases, and chain each step's `input_coords` off the previous step —
-surfacing each inference as an explainable suggestion rather than silently guessing. Directory scanning is
-`discover` and only `discover`.
+surfacing each inference as an explainable suggestion rather than silently guessing. It is the only thing
+that scans a directory into a *v2 draft* — `plan --recursive` also scans from scratch, but through the flat
+analysis engine (§10), and prints a Protocol summary rather than producing a manifest.
 
 `init` is simpler: it always writes the same fixed, commented v2 YAML template — a starting point you fill
 in by hand rather than a draft of what's on disk. It does not scan anything; its positional `directory`
@@ -346,25 +353,131 @@ See the [GUI guide](gui.md) and [CLI reference](cli.md).
 
 To build a protocol from a document you already hold in memory, use
 `auto_discover(directory, manifest=<list of stage dicts>)` — its `manifest=` argument takes stage dicts,
-not a path. Full signatures for all of the above are in [api.md](api.md).
+not a path. That shape is documented immediately below. Full signatures for all of the above are in
+[api.md](api.md).
+
+### The flat stage-dict shape (in-memory only)
+
+The analysis engine behind `auto_discover`, `plan --recursive`, and `ProtocolBuilder` predates v2 and works
+on a **flat list of stages**, not on a `Simulation`. There is no longer any file format for this — nothing
+reads it from disk, and `load_simulation` will not parse it — but it is still the live in-memory contract
+for `auto_discover(directory, manifest=[...])`, so it is specified here.
+
+`manifest=` accepts a list of stage dicts, a mapping of `name → stage dict` (the key becomes `name`), or a
+mapping with a `stages:` list under it. Entries that are not dicts raise
+`TypeError: Manifest entries must be dictionaries`; anything that is neither list nor mapping raises
+`TypeError: Manifest must be a list or dictionary`.
+
+#### Stage keys
+
+| Key | Required | Meaning |
+|---|---|---|
+| `name` | **yes** | Stage name. Missing or empty raises `ValueError: Each manifest entry must include a 'name'.` |
+| `stage_role` | no | One of the [canonical role tokens](#7-canonical-role-tokens). When absent it is inferred — first from `grouping_rules`, then from the mdin's content. |
+| `prmtop`, `mdin`, `mdout`, `mdcrd`, `inpcrd` | no | The five file slots (`ambermeta.manifest.STAGE_FILE_KINDS`). Relative paths resolve against `directory`. |
+| `files` | no | A mapping holding the same five keys. Merged with the top-level ones; a top-level key **wins** on conflict. |
+| `gaps` / `gap` | no | Expected inter-stage gap — see below. `gaps` is checked first. |
+| `notes` | no | A string (appended as one note) or a list (each item appended). |
+
+Unrecognized keys are ignored rather than rejected, so extra bookkeeping of your own rides along harmlessly.
+
+#### Gap configuration
+
+`gaps` and `gap` are interchangeable spellings, and the value takes any of four shapes — a mapping, a bare
+number, a bare string, or a list:
+
+```python
+{"name": "prod2", "gaps": {"expected": 2.0, "tolerance": 0.5,     # ps
+                           "notes": "restarted after a queue eviction"}}
+{"name": "prod2", "gaps": {"expected_ps": 2.0, "tolerance_ps": 0.5}}  # aliases
+{"name": "prod2", "gaps": 2.0}          # bare number → expected, no tolerance
+{"name": "prod2", "gaps": "checkpoint restart, gap is intentional"}   # bare string → a note
+{"name": "prod2", "gaps": ["note one", "note two"]}                  # list → several notes
+```
+
+Nested `notes` inside the mapping form take a string or a list, same as the top-level `notes` key.
+
+#### Validation behavior
+
+For each adjacent pair of stages the engine measures the gap between the previous stage's end time and this
+stage's start time, then:
+
+- **No expectation set** and the gap is within the default tolerance → normalised to exactly `0.0`, i.e.
+  treated as floating-point noise rather than a finding. The default tolerance is `0.1` ps, or half the
+  previous stage's frame interval if that is larger — an absolute floor, deliberately *not* scaled by
+  elapsed time, so a real gap cannot hide inside a long run.
+- **Within an explicit `expected ± tolerance` window** → an `INFO` note confirming the match. A healthy
+  declared transition is never surfaced as a problem.
+- **Shorter than, or beyond, that window** → a real (non-`INFO`) continuity note.
+- **Non-zero with no expectation set** → `Gap detected without stated expectation; verify continuity.`,
+  unless gaps were allowed, in which case it is `INFO`.
+- **Overlap** (negative gap) beyond the default tolerance → `Stage appears to overlap previous stage by N ps.`
+- **Beyond ±1e6 ps** (1 µs) → treated as a unit or parsing error: an `INFO` note, and the continuity check
+  for that pair is skipped rather than reported as a discontinuity.
+
+#### Role rules and injected restarts
+
+`grouping_rules` maps a regex to a role and fills in `stage_role` where the entry didn't set one, emitting
+`INFO: stage_role '<role>' inferred from stage_role_rules` (that note names the internal parameter, not the
+one you pass). A pattern that fails to compile is **not** an error — it is escaped and matched as a literal
+string. Only the mapping form works; a list of pairs is not accepted. The same rules apply on the
+disk-discovery path, when `manifest` is `None`.
+
+`restart_files` injects an `inpcrd` for stages that don't name one, keyed by stage **name or role** (name is
+tried first):
+
+```python
+from ambermeta import auto_discover
+
+protocol = auto_discover(
+    "runs/",
+    manifest=[
+        {"name": "equil", "stage_role": "equilibration", "mdin": "equil.in", "mdout": "equil.out"},
+        {"name": "prod1", "stage_role": "production",    "mdin": "prod1.in", "mdout": "prod1.out",
+         "gaps": {"expected": 0.0, "tolerance": 0.1}},
+    ],
+    grouping_rules={r"^equil": "equilibration"},
+    restart_files={"prod1": "runs/equil.rst7"},
+)
+```
+
+`ProtocolBuilder` wraps the same engine with a fluent API (`.from_directory()`, `.with_grouping_rules()`,
+`.with_stage_tolerance()`, `.auto_detect_restarts()`, `.build()`); see [api.md](api.md#protocolbuilder).
 
 ---
 
 ## 11. Errors
 
-| Error | Cause | Fix |
-|---|---|---|
-| `FileNotFoundError`: `Manifest not found: <path>` | Manifest missing | Check the path. |
-| `ImportError` (YAML) | `pyyaml` not installed and the path ends in `.yaml`/`.yml` | `pip install -e ".[yaml]"` |
-| `<path> is not a v2 manifest (no 'steps' key).` | The file is some other document — most often a manifest from before the v2 format | `ambermeta discover <dir> --write <path>` to rebuild it. |
-| `<path> is a v2 manifest but is missing its 'steps' list.` | The document announces itself as v2 (`version: 2`, or a `simulation`/`phases` key) but has no steps | Restore the steps, or rebuild with `discover --write`. |
-| `AmberMeta reads and writes manifests as YAML or JSON only; TOML and CSV are not manifest formats.` | A `.toml` or `.csv` path was handed to a reader | Convert the document to YAML or JSON (§1). |
-| `TypeError` | The parsed file is neither a mapping nor a list | Use the shape in §2. |
-| `ValueError` | `write_simulation` called with `fmt` other than `json`/`yaml` | Ask for `json` or `yaml`. |
-| `RuntimeError` | YAML output requested without `pyyaml` installed | `pip install -e ".[yaml]"` |
+Reading a manifest raises one of these. The **Surfaces as** column is what the CLI actually prints — the
+two forms differ, and only the first is a message AmberMeta wrote for you to read.
 
-On the command line these surface as `ERROR: <message>` with exit code 1; `ambermeta export` and
-`ambermeta validate --manifest` prefix them with `Failed to load manifest: `.
+| Error | Cause | Surfaces as | Fix |
+|---|---|---|---|
+| `AmberMetaError`: `<path> is not a v2 manifest (no 'steps' key).` | The file is some other document — most often a manifest from before the v2 format | `ERROR:` | `ambermeta discover <dir> --write <path>` to rebuild it. |
+| `AmberMetaError`: `<path> is a v2 manifest but is missing its 'steps' list.` | The document announces itself as v2 (`version: 2`, or a `simulation`/`phases` key) but has no steps | `ERROR:` | Restore the steps, or rebuild with `discover --write`. |
+| `AmberMetaError`: `<path>: AmberMeta reads and writes manifests as YAML or JSON only; TOML and CSV are not manifest formats.` | A `.toml` or `.csv` path was handed to a reader | `ERROR:` | Convert the document to YAML or JSON (§1). |
+| `AmberMetaError`: `Manifest references missing files:` | `plan --strict -m` and a path in the manifest doesn't exist | `ERROR:` | Fix the paths, or drop `--strict` to have the files skipped and recorded per-stage. |
+| `FileNotFoundError`: `Manifest not found: <path>` | Manifest missing | `ERROR:` under `export`/`validate --manifest` (each pre-checks the path itself); `Unexpected error` under `plan -m` | Check the path. |
+| `TypeError`: `Manifest must be a mapping or list of stage entries.` | The parsed file is a scalar — neither a mapping nor a list | `Unexpected error` | Use the shape in §2. |
+| `TypeError`: `Manifest entries must be dictionaries` / `Manifest must be a list or dictionary` | An in-memory `manifest=` container of the wrong shape (§10) | `Unexpected error` | Pass stage dicts. |
+| `ValueError`: `Each manifest entry must include a 'name'.` | An in-memory stage dict with no `name` (§10) | `Unexpected error` | Give every entry a `name`. |
+| `json.JSONDecodeError` (a `ValueError`) | A malformed JSON manifest | `ERROR:` under `export`/`validate --manifest`; `Unexpected error` under `plan -m` | Fix the syntax at the reported line/column. |
+| `yaml.YAMLError` (e.g. `ScannerError`) | A malformed YAML manifest | `Unexpected error` everywhere | Fix the syntax at the reported line/column. |
+| `ImportError` | `pyyaml` not installed and the path ends in `.yaml`/`.yml` | `Unexpected error` | `pip install -e ".[yaml]"` |
+| `ValueError`: `v2 write supports json/yaml only, got: <fmt>` | `write_simulation` called with another `fmt` | — (not reachable from the CLI: `--format` is restricted to `json`/`yaml` by the parser) | Ask for `json` or `yaml`. |
+| `RuntimeError` | YAML output requested without `pyyaml` installed | `Unexpected error` | `pip install -e ".[yaml]"` |
+
+Everything above exits `1`. The two surfaces are:
+
+- **`ERROR: <message>`** — a deliberate, readable failure. `ambermeta export` and
+  `ambermeta validate --manifest` additionally prefix load failures with `Failed to load manifest: `;
+  `plan -m` prints the message unprefixed. (The `Manifest not found` row is the exception to its own
+  prefix: `export` and `validate` catch it in their own pre-check, before the loader is reached, so it
+  prints as a bare `ERROR: Manifest not found: <path>`.)
+- **`Unexpected error (<Type>: <message>). Re-run with --log-level DEBUG for the full traceback.`** — the
+  catch-all. These types are outside the handlers' `except` tuples, or are raised by `write_simulation`
+  outside the guarded block. Reaching one is not a documented contract; treat it as a bug report worth
+  filing rather than an error surface to script against.
 
 Validation (`ambermeta validate`, `plan`, `validate_simulation`) produces **warnings/findings**, not hard
 errors, for: missing files that block a check, atom-count mismatches, timing/box inconsistencies,

@@ -196,9 +196,10 @@ footer.foot a{color:var(--muted)}
 <tr><td><code>netcdf</code></td><td><code>netCDF4</code>, <code>scipy</code>, <code>numpy</code></td><td>NetCDF trajectory (<code>.nc</code>) and restart (<code>.ncrst</code>) parsing</td></tr>
 <tr><td><code>gui</code></td><td><code>fastapi</code>, <code>uvicorn</code>, <code>websockets</code>, <code>python-multipart</code>, <code>pyyaml</code></td><td>The browser GUI (<code>ambermeta gui</code>)</td></tr>
 <tr><td><code>yaml</code></td><td><code>pyyaml</code></td><td>YAML manifests</td></tr>
+<tr><td><code>toml</code></td><td><code>tomli</code> (only on Python &lt; 3.11)</td><td>Nothing any more — AmberMeta neither reads nor writes TOML. Kept so an existing <code>pip install ambermeta[toml]</code> still resolves</td></tr>
 <tr><td><code>tests</code></td><td><code>pytest</code>, <code>pytest-cov</code>, <code>httpx</code></td><td>Running the test suite</td></tr>
 <tr><td><code>dev</code></td><td><code>black</code>, <code>ruff</code>, <code>mypy</code></td><td>Linting and type checking</td></tr>
-<tr><td><code>all</code></td><td>netcdf + gui + yaml</td><td>The full runtime feature set (not <code>tests</code>/<code>dev</code>)</td></tr>
+<tr><td><code>all</code></td><td>netcdf + gui + yaml + toml</td><td>The full runtime feature set (not <code>tests</code>/<code>dev</code>)</td></tr>
 </tbody>
 </table>
 
@@ -210,7 +211,7 @@ footer.foot a{color:var(--muted)}
 
 <section id="quickstart" class="wrap">
 <h2>Quickstart <a class="anchor" href="#quickstart">#</a></h2>
-<p>Every command below runs against the sample data in <code>tests/data/amber/md_test_files/</code> — a real 64,528-atom glycoprotein system with a six-member NPT production sequence — so the output is reproducible.</p>
+<p>Every command below runs against the sample data in <code>tests/data/amber/md_test_files/</code> — a real 64,528-atom glycoprotein system with a five-run NPT production sequence — so the output is reproducible, apart from step and phase ids, which are <code>uuid4</code> slices minted fresh on every run.</p>
 
 <h3>Discover the directory into a Simulation draft and save it as a v2 manifest</h3>
 <pre><code><span class="p">$</span> ambermeta discover tests/data/amber/md_test_files --write sim.yaml
@@ -224,10 +225,10 @@ Phases: 1
 
 Phase: Production [production]
   - ntp_prod_0001  topology=CH3L1_HUMAN_6NAG.top  input=starting structure  (mdin=ntp_prod_0001.mdin, mdout=ntp_prod_0001.mdout)
-  - ntp_prod_0002  topology=CH3L1_HUMAN_6NAG.top  input=step ffb5de6a  (mdin=ntp_prod_0002.mdin, mdout=ntp_prod_0002.mdout)
-  - ntp_prod_0003  topology=CH3L1_HUMAN_6NAG.top  input=step 295e0a9f  (mdin=ntp_prod_0003.mdin, mdout=ntp_prod_0003.mdout)
-  - ntp_prod_0004  topology=CH3L1_HUMAN_6NAG.top  input=step 9ab831d9  (mdin=ntp_prod_0004.mdin, mdout=ntp_prod_0004.mdout)
-  - ntp_prod_0005  topology=CH3L1_HUMAN_6NAG.top  input=step f0eb600f  (mdin=ntp_prod_0005.mdin, mdout=ntp_prod_0005.mdout)
+  - ntp_prod_0002  topology=CH3L1_HUMAN_6NAG.top  input=restart of ntp_prod_0001 (ntp_prod_0001.rst)  (mdin=ntp_prod_0002.mdin, mdout=ntp_prod_0002.mdout)
+  - ntp_prod_0003  topology=CH3L1_HUMAN_6NAG.top  input=restart of ntp_prod_0002 (ntp_prod_0002.rst)  (mdin=ntp_prod_0003.mdin, mdout=ntp_prod_0003.mdout)
+  - ntp_prod_0004  topology=CH3L1_HUMAN_6NAG.top  input=restart of ntp_prod_0003 (ntp_prod_0003.rst)  (mdin=ntp_prod_0004.mdin, mdout=ntp_prod_0004.mdout)
+  - ntp_prod_0005  topology=CH3L1_HUMAN_6NAG.top  input=restart of ntp_prod_0004 (ntp_prod_0004.rst)  (mdin=ntp_prod_0005.mdin, mdout=ntp_prod_0005.mdout)
 
 Suggestions:
   - [applied] CH3L1_HUMAN_6NAG.crd set as the starting structure
@@ -320,7 +321,7 @@ Phases: 1
 
 Phase: Production [production]
   - ntp_prod_0001  topology=CH3L1_HUMAN_6NAG.top  input=starting structure  (mdin=ntp_prod_0001.mdin, mdout=ntp_prod_0001.mdout)
-  - ntp_prod_0002  topology=CH3L1_HUMAN_6NAG.top  input=step 10428ec4  (mdin=ntp_prod_0002.mdin, mdout=ntp_prod_0002.mdout)
+  - ntp_prod_0002  topology=CH3L1_HUMAN_6NAG.top  input=restart of ntp_prod_0001 (ntp_prod_0001.rst)  (mdin=ntp_prod_0002.mdin, mdout=ntp_prod_0002.mdout)
   ...
 
 Validation: OK</span></code></pre>
@@ -383,13 +384,14 @@ steps:
 <tr><td><code>simulation.topologies[]</code></td><td>The pool — every prmtop the Simulation uses, once, each an <code>{id, path, kind}</code>. Steps bind by <code>id</code> instead of each run carrying its own copy.</td></tr>
 <tr><td><code>simulation.starting_structure</code></td><td>The initial coordinate file feeding the first step whose <code>input_coords.source</code> is <code>starting_structure</code>.</td></tr>
 <tr><td><code>phases[]</code></td><td><code>{id, name, role, order}</code> — a role-bearing grouping; <code>role</code> is one of the <a href="#fields">canonical role tokens</a> or empty.</td></tr>
-<tr><td><code>steps[]</code></td><td><code>{id, name, phase, order, topology, input_coords, mdin, mdout, mdcrd, notes, gaps}</code> — one actual run.</td></tr>
-<tr><td><code>input_coords.source</code></td><td><code>starting_structure</code> · <code>step</code> (with <code>ref: &lt;step id&gt;</code>) · <code>path</code> (with <code>path: "..."</code>) — the continuity anchor the validator walks.</td></tr>
+<tr><td><code>steps[]</code></td><td><code>{id, name, phase, order, topology, input_coords, mdin, mdout, mdcrd, rst, notes, gaps}</code> — one actual run.</td></tr>
+<tr><td><code>steps[].rst</code></td><td>The restart this run <em>writes</em>. Recorded on the producing step, not on the one that reads it, so a chained pair stays linked through renames and reordering.</td></tr>
+<tr><td><code>input_coords.source</code></td><td><code>starting_structure</code> · <code>step</code> (with <code>ref: &lt;step id&gt;</code>, and nothing else — the file is found by following <code>ref</code> to that step's <code>rst</code>) · <code>path</code> (with <code>path: "..."</code>) — the continuity anchor the validator walks.</td></tr>
 <tr><td><code>gaps.expected</code> / <code>gaps.tolerance</code></td><td>Expected inter-run gap and tolerance, in ps; both may be <code>null</code>.</td></tr>
 </tbody>
 </table>
 
-<p><strong>v2 is read and written as JSON or YAML — nothing else.</strong> <code>write_simulation</code> emits those two; the reader picks YAML for a <code>.yaml</code>/<code>.yml</code> suffix and JSON otherwise. TOML and CSV are <em>not</em> manifest formats in either direction: handing a <code>.toml</code> or <code>.csv</code> path to any manifest reader fails with <em>"AmberMeta reads and writes manifests as YAML or JSON only; TOML and CSV are not manifest formats."</em> (The unrelated <code>plan --stats-csv</code> still writes a per-stage <em>statistics</em> CSV — that is a report, not a manifest.)</p>
+<p><strong>v2 is read and written as JSON or YAML — nothing else.</strong> <code>write_simulation</code> emits those two; the reader picks YAML for a <code>.yaml</code>/<code>.yml</code> suffix and JSON otherwise. TOML and CSV are <em>not</em> manifest formats: handing a <code>.toml</code> or <code>.csv</code> path to any manifest reader fails with <em>"&lt;path&gt;: AmberMeta reads and writes manifests as YAML or JSON only; TOML and CSV are not manifest formats."</em> That guard is on the read side only — the writers infer format from the extension just as bluntly, so <code>export -o out.toml</code> writes JSON into a <code>.toml</code>-named file and exits <code>0</code>. (The unrelated <code>plan --stats-csv</code> still writes a per-stage <em>statistics</em> CSV — that is a report, not a manifest.)</p>
 
 <h3>There is no v1 manifest</h3>
 <p>The old flat <code>stages:</code> manifest — <code>global_prmtop</code>/<code>hmr_prmtop</code>, <code>initial_coordinates</code>, one stage per run — <strong>is no longer readable</strong>. There is no reader for it and no migration path. Opening one is a hard error:</p>
@@ -430,7 +432,7 @@ for phase in sim.phases:
 <tr><td><code>simulation_to_payload</code> / <code>payload_to_simulation</code></td><td>the v2 dict round-trip the GUI's HTTP API uses</td></tr>
 </tbody>
 </table>
-<p>Dataclasses: <code>Topology(id, path, kind="normal")</code>; <code>InputCoords(source="starting_structure", ref=None, path=None)</code>; <code>Step(id, name, topology=None, input_coords, mdin=None, mdout=None, mdcrd=None, expected_gap_ps=None, gap_tolerance_ps=None, notes=[])</code>; <code>Phase(id, name, role="", steps=[])</code>; <code>Simulation(version=2, topologies=[], starting_structure=None, phases=[])</code>.</p>
+<p>Dataclasses: <code>Topology(id, path, kind="normal")</code>; <code>InputCoords(source="starting_structure", ref=None, path=None)</code>; <code>Step(id, name, topology=None, input_coords, mdin=None, mdout=None, mdcrd=None, rst=None, expected_gap_ps=None, gap_tolerance_ps=None, notes=[])</code>; <code>Phase(id, name, role="", steps=[])</code>; <code>Simulation(version=2, topologies=[], starting_structure=None, phases=[])</code>.</p>
 
 <h3>Advanced/shared helpers — <code>ambermeta.gui.api.core_bridge</code></h3>
 <p>Pure functions the CLI and GUI both call — the only place in <code>ambermeta.gui</code> that imports the core engine, so it's the ground truth for how <code>discover</code>/<code>validate --manifest</code> actually work.</p>
@@ -491,7 +493,7 @@ print(md.stats.temp_stats.stdev)       <span class="o"># 1.2504190252445306</spa
 <tbody>
 <tr><td><strong>Files</strong> (left)</td><td>A searchable file list; drag a file onto the topology pool, the starting-structure slot, a step's topology, or a step's <code>mdin</code>/<code>mdout</code>/<code>mdcrd</code> slot.</td></tr>
 <tr><td><strong>Canvas</strong> (center)</td><td>A continuous vertical timeline — phases as sections, steps as cards showing their bound topology (▸) and input-coordinate source (◂); continuity arrows between steps (amber only where a real gap exists); missing-run ghosts for sequence holes; long numbered runs collapse. Drag to reorder steps within a phase, move a step across phases, or reorder phases.</td></tr>
-<tr><td><strong>Inspector</strong> (right)</td><td>Peek + full-details/raw tabs for the selected file/step/phase, and assign actions. The Simulation, a phase, or nothing selected shows the suggestions tray instead.</td></tr>
+<tr><td><strong>Inspector</strong> (right)</td><td>Peek + full-details/raw tabs and assign actions for the selected <em>file</em>. A selected step or phase gets a placeholder editor (see below); with the Simulation or nothing selected it shows the suggestions tray instead.</td></tr>
 </tbody>
 </table>
 

@@ -64,7 +64,7 @@ python -m pip install -e ".[gui]"     # just the GUI
 
 ## 3. Sixty-second quickstart (CLI)
 
-Every command below is run against the sample data in `tests/data/amber/md_test_files/` — a real 64,528-atom glycoprotein system with a six-member NPT production sequence.
+Every command below is run against the sample data in `tests/data/amber/md_test_files/` — a real 64,528-atom glycoprotein system with a five-run NPT production sequence (`ntp_prod_0001` … `ntp_prod_0005`).
 
 **Discover the directory into a Simulation draft and save it as a v2 manifest:**
 
@@ -80,10 +80,10 @@ Phases: 1
 
 Phase: Production [production]
   - ntp_prod_0001  topology=CH3L1_HUMAN_6NAG.top  input=starting structure  (mdin=ntp_prod_0001.mdin, mdout=ntp_prod_0001.mdout)
-  - ntp_prod_0002  topology=CH3L1_HUMAN_6NAG.top  input=step ffb5de6a  (mdin=ntp_prod_0002.mdin, mdout=ntp_prod_0002.mdout)
-  - ntp_prod_0003  topology=CH3L1_HUMAN_6NAG.top  input=step 295e0a9f  (mdin=ntp_prod_0003.mdin, mdout=ntp_prod_0003.mdout)
-  - ntp_prod_0004  topology=CH3L1_HUMAN_6NAG.top  input=step 9ab831d9  (mdin=ntp_prod_0004.mdin, mdout=ntp_prod_0004.mdout)
-  - ntp_prod_0005  topology=CH3L1_HUMAN_6NAG.top  input=step f0eb600f  (mdin=ntp_prod_0005.mdin, mdout=ntp_prod_0005.mdout)
+  - ntp_prod_0002  topology=CH3L1_HUMAN_6NAG.top  input=restart of ntp_prod_0001 (ntp_prod_0001.rst)  (mdin=ntp_prod_0002.mdin, mdout=ntp_prod_0002.mdout)
+  - ntp_prod_0003  topology=CH3L1_HUMAN_6NAG.top  input=restart of ntp_prod_0002 (ntp_prod_0002.rst)  (mdin=ntp_prod_0003.mdin, mdout=ntp_prod_0003.mdout)
+  - ntp_prod_0004  topology=CH3L1_HUMAN_6NAG.top  input=restart of ntp_prod_0003 (ntp_prod_0003.rst)  (mdin=ntp_prod_0004.mdin, mdout=ntp_prod_0004.mdout)
+  - ntp_prod_0005  topology=CH3L1_HUMAN_6NAG.top  input=restart of ntp_prod_0004 (ntp_prod_0004.rst)  (mdin=ntp_prod_0005.mdin, mdout=ntp_prod_0005.mdout)
 
 Suggestions:
   - [applied] CH3L1_HUMAN_6NAG.crd set as the starting structure
@@ -167,6 +167,7 @@ steps:
     input_coords: { source: starting_structure }
     mdin: min.in
     mdout: min.out
+    rst: min.rst                                  # the restart THIS step writes
   - id: st_prod_001
     name: prod_001
     phase: ph_prod
@@ -176,15 +177,16 @@ steps:
     mdin: prod_001.in
     mdout: prod_001.out
     mdcrd: prod_001.nc
+    rst: prod_001.rst
     gaps: { expected: null, tolerance: null }
 ```
 
-Each step's `input_coords.source` is one of `starting_structure`, `step` (with `ref: <step id>`), or `path` (with an explicit `path:`) — that's the continuity anchor the validator walks. `gaps.expected`/`gaps.tolerance` are the per-step expected inter-run gap and tolerance, in ps; both may be `null`.
+Each step's `input_coords.source` is one of `starting_structure`, `step` (with `ref: <step id>`), or `path` (with an explicit `path:`) — that's the continuity anchor the validator walks. A chained step names *only* the step it continues from: the restart file itself is recorded once, as `rst` on the step that wrote it, and `ref` is followed to reach it. `gaps.expected`/`gaps.tolerance` are the per-step expected inter-run gap and tolerance, in ps; both may be `null`.
 
-**v2 is read and written as JSON or YAML** (`load_simulation`/`write_simulation`) — those are the only manifest formats AmberMeta has. A `.toml` or `.csv` path is refused with a message saying so, rather than being half-parsed.
+**v2 is read and written as JSON or YAML** (`load_simulation`/`write_simulation`) — those are the only manifest formats AmberMeta has. A `.toml` or `.csv` manifest is refused with a message saying so, rather than being half-parsed.
 
 ```bash
-ambermeta validate --manifest simulation.yaml --summary-path summary.json
+ambermeta validate --manifest simulation.yaml --format json
 ```
 
 The complete schema — every key, all input-coordinate sources, gap configuration, environment-variable expansion, and role tokens — is documented in the [manifest schema reference](docs/manifest.md).

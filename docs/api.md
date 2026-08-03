@@ -38,7 +38,7 @@ from ambermeta.parsers import (
 >
 > Field names are AMBER-flavored and differ from intuition: `hmr_active` (not `is_hmr`), `residue_composition` (not `residue_counts`), `temp_control`/`press_control`/`stage_role` on `mdin`. The exact field list per file type is in [§7](#7-parser-metadata-fields).
 
-Examples below run against the sample data shipped in the repo: `tests/data/amber/md_test_files/` — a 64,528-atom glycoprotein system (`CH3L1_HUMAN_6NAG.top`/`.crd`) with a six-member NPT production sequence `ntp_prod_0000..0005`.
+Examples below run against the sample data shipped in the repo: `tests/data/amber/md_test_files/` — a 64,528-atom glycoprotein system (`CH3L1_HUMAN_6NAG.top`/`.crd`) with a five-run NPT production sequence `ntp_prod_0001..0005`. (`ntp_prod_0000.rst` also ships, but it is a bare restart with no `mdin`/`mdout`, so nothing turns it into a step.)
 
 ---
 
@@ -68,6 +68,7 @@ class Step:
     mdin: Optional[str] = None
     mdout: Optional[str] = None
     mdcrd: Optional[str] = None
+    rst: Optional[str] = None             # the restart this run WRITES (-r restrt)
     expected_gap_ps: Optional[float] = None
     gap_tolerance_ps: Optional[float] = None
     notes: List[str] = field(default_factory=list)
@@ -114,12 +115,30 @@ def payload_to_simulation(payload: Dict[str, Any]) -> Simulation
 
 The v2 dict round-trip `write_simulation`/`load_simulation` use internally — reach for these directly when you want the dict (e.g. to `json.dumps` it yourself, hand it to a web response, or inspect it without touching disk).
 
+### `resolve_input_coords()`
+
+```python
+def resolve_input_coords(sim: Simulation, step: Step) -> Optional[str]
+```
+
+Returns the path a step actually starts from, or `None` if it can't be resolved. This is the only correct way to answer "which file does this step read?", because the answer is not stored on the step itself:
+
+| `input_coords.source` | Resolves to |
+|---|---|
+| `starting_structure` | `sim.starting_structure` |
+| `step` | the `rst` of the step whose `id` equals `input_coords.ref`, falling back to `input_coords.path` if that lookup finds nothing |
+| `path` | `input_coords.path`, verbatim |
+
+For a chained step, `input_coords.path` is `None` and the filename lives on the *producing* step's `rst` — recorded once, so renaming or reordering either step cannot desynchronize the pair. Continuity checking and the CLI's `input=restart of <step> (<file>)` line both go through this function.
+
 ### Worked example: discover, inspect, round-trip
 
 ```python
 import os
 from ambermeta.gui.api.core_bridge import discover_draft
-from ambermeta.simulation import simulation_to_payload, write_simulation, load_simulation
+from ambermeta.simulation import (
+    simulation_to_payload, write_simulation, load_simulation, resolve_input_coords,
+)
 
 base = os.path.abspath("tests/data/amber/md_test_files")
 result = discover_draft(base)
@@ -138,7 +157,14 @@ sim.phases[0].steps[0].input_coords
 # InputCoords(source='starting_structure', ref=None, path=None)
 
 sim.phases[0].steps[1].input_coords
-# InputCoords(source='step', ref='4a09deaa', path='ntp_prod_0001.rst')
+# InputCoords(source='step', ref='4a09deaa', path=None)
+#   `ref` is steps[0].id — a uuid4 slice, regenerated on every discover run.
+
+sim.phases[0].steps[0].rst
+# 'ntp_prod_0001.rst'   <- the restart lives on the step that WROTE it
+
+resolve_input_coords(sim, sim.phases[0].steps[1])
+# 'ntp_prod_0001.rst'   <- ... and is reached by following `ref`
 
 write_simulation(sim, "simulation.json", "json")
 sim2 = load_simulation("simulation.json")
@@ -146,7 +172,7 @@ len(sim2.phases) == len(sim.phases)
 # True
 ```
 
-`input_coords` on the first step of a phase resolves to the Simulation's starting structure; every later step chains from the previous step's output restart — `discover_draft` already resolves that restart's path into `input_coords.path` so continuity can read its time without re-scanning the directory.
+`input_coords` on the first step of a phase resolves to the Simulation's starting structure; every later step chains from the previous step's output restart. That restart is recorded **once**, as `rst` on the step that produced it — a chained consumer stores only `ref`, and `input_coords.path` stays `None` (it is used only for `source == "path"`). Use [`resolve_input_coords()`](#resolve_input_coords) to go from a step to the file it actually starts from; that is what continuity and the `input=restart of ...` CLI line both call.
 
 ---
 
