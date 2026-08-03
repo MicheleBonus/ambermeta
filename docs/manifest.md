@@ -238,6 +238,29 @@ and dropped from the consumer, so the document you save back is in the current s
 lose the filename. A `path` that cannot be normalised — the `ref` names a Step that is not in the document
 — is still honoured as a fallback when resolving.
 
+### The chain invariant
+
+**No automatic operation will create an `input_coords.ref` that crosses a lineage boundary.** A restart
+written by replica 2 was never read by replica 1; a tool that says otherwise has invented the one fact this
+model exists to record. The rule holds across every path that maintains the chain on your behalf —
+`discover`'s draft, reordering steps or phases, moving a step between phases, adding a step, and the
+re-chaining that follows a delete.
+
+A boundary needs **two different declared tags**. An untagged Step is the implicit single member and
+continues into, or out of, anything — one shared equilibration feeding N replicas is the commonest layout
+there is, and it is a real edge, so `common/equil` → `rep1/prod_0001` is never refused on tag grounds.
+
+What that leaves you, deliberately: **a cross-member `ref` you set by hand is allowed.** It is the only way
+to express a genuine branch, so it is honoured and *reported* rather than rejected — the GUI and the HTTP
+API surface it as a warning on the edit that made it ([gui.md §11](gui.md#data-model-documentresponse)),
+and nothing afterwards will maintain or recreate it. Editing the YAML directly is subject to no check at
+all; the invariant constrains what AmberMeta writes, not what you may write.
+
+Where an automatic path *would* have crossed a boundary it falls back to the nearest earlier Step of the
+consumer's own member, or to `starting_structure` when that member has none. Deleting a Step that several
+members continued from cannot be repaired by re-chaining — the fan-out it was is gone — so each consumer
+falls back that way and the operation reports what it cost.
+
 Real example — running `discover` on the sample production sequence in
 `tests/data/amber/md_test_files/` (five `ntp_prod_000N` runs chained off restarts) and inspecting the
 first two Steps of the `--write`'d manifest:
@@ -336,12 +359,82 @@ separately from the head of the starting structure, and reported as an `[applied
 suggestion; an ambiguous layout is left untagged rather than guessed at, and is chained and grouped exactly
 as it was before lineages existed. It is the only thing
 that scans a directory into a *v2 draft* — `plan --recursive` also scans from scratch, but through the flat
-analysis engine (§10), and prints a Protocol summary rather than producing a manifest.
+analysis engine (§10), and prints a Protocol summary rather than producing a manifest. The member inference
+is shared, not exclusive to the draft: `plan --recursive` applies the same rule to the runs it finds, so its
+continuity checks stay inside each member too. Its restart auto-detection does as well, with one gap worth
+knowing: a leftover restart with no `mdin`/`mdout` beside it is not a run, so it is untagged, and an untagged
+producer is not refused to anybody — that one file stays open to every member.
 
 `init` is simpler: it always writes the same fixed, commented v2 YAML template — a starting point you fill
 in by hand rather than a draft of what's on disk. It does not scan anything; its positional `directory`
 argument (default `.`) only says where the file lands, and `-o/--output` and `--force` are its only flags.
 See the [GUI guide](gui.md) and [CLI reference](cli.md).
+
+### 9.1 How `discover` infers members
+
+A lineage is normally **declared** — you write `lineage:` on the steps (§5). `discover` is the one thing
+that will propose one for you, and it does so only from **directory layout**, never from file contents.
+
+**The rule.** Group the runs by their directory. A directory is a candidate member only if it sits beside
+at least one other directory running *the same set of run bases* — where the base of `prod_0001` is `prod`
+(the same stripping `detect_sequence_gaps` uses). Exactly one such cohort must exist, its directories must
+all be at the same depth, and exactly one path segment must vary across them. That segment becomes the tag.
+
+Bases, not whole run names, is deliberate: **a replica that died early is the single most important thing
+this feature has to catch.** `rep1/prod_0001..0003` beside `rep2/prod_0001` is one crashed member, not two
+unrelated directories, and keying the predicate on exact run-name sets would refuse to tag it — silently
+disabling the very sequence-hole finding that would have reported the crash.
+
+Everything the rule refuses, refuses to **untagged**, never to a guess. An inference reported as `[applied]`
+is a claim, and a wrong claim here is exactly what lineages exist to stop:
+
+| Layout | Result |
+|---|---|
+| `rep1/prod_000{1,2}`, `rep2/prod_000{1,2}` | tagged `rep1`, `rep2` |
+| `rep1/{min,heat,prod}`, `rep2/{min,heat,prod}` … | tagged; a member may run any number of roles |
+| `rep1/prod_0001..0003` beside `rep2/prod_0001` (a crashed replica) | tagged — the bases match even though the run sets do not |
+| `rep1/prod_000{1,2}` beside `rep2/prod_001{1,2}` (offset numbering) | tagged; each member is numbered on its own scale |
+| `common/{min,heat,equil}` beside `rep1..3/prod_*` | `rep1..3` tagged; `common` runs different bases, fails the predicate, stays **untagged** |
+| Run files at the tree root beside `rep1/`, `rep2/` | the root runs carry no segment and stay untagged; **the subdirectories are still tagged** |
+| One lineage in one subdirectory (`rep1/` alone) | nothing to differ from — untagged |
+| `300K/rep1/`, `300K/rep2/`, `310K/rep1/`, `310K/rep2/` (a nested sweep) | two segments vary at once; neither can be shown to name the member — untagged |
+| `a1/prod`, `a2/prod` beside `b1/heat`, `b2/heat` (two rival cohorts) | two experiments in one manifest, which this model does not represent — untagged |
+| `rep1/prod_0001` beside `x/rep2/prod_0001` (mismatched depth) | untagged |
+| `rep1_prod_0001`, `rep2_prod_0001` — flat, replica in the **filename** | **untagged.** Only directory segments are read |
+| `01_min_rep1`, `01_min_rep2` — flat, replica as a filename *suffix* | **untagged**, same reason |
+
+The last two rows are the ones people expect to work. Splitting a stem into tokens has no non-arbitrary
+rule, and the obvious one tags a plain chunked chain `prod_0001`/`prod_0002` as two members — breaking
+every untagged document in the process of helping a few. Tag those layouts by hand instead.
+
+### 9.2 A multi-lineage document is phase-major
+
+This changes the shape of the file, so it is worth stating plainly. When `discover` tags members, same-role
+steps from **every** member share one phase. Left contiguous, the replica-major scan order would open a
+phase per role *per member* — nine phases for three replicas of three roles, three of them named
+"Minimization" — which groups nothing.
+
+The consequence: **a member's steps are not contiguous in document order.** For
+`rep{1,2,3}/{min_0001,heat_0001,prod_0001}` the draft is three phases, and `rep1`'s runs sit at document
+positions 0, 3, 6 rather than 0, 1, 2:
+
+```
+Phase: Heating        rep1/heat_0001  rep2/heat_0001  rep3/heat_0001
+Phase: Minimization   rep1/min_0001   rep2/min_0001   rep3/min_0001
+Phase: Production     rep1/prod_0001  rep2/prod_0001  rep3/prod_0001
+```
+
+(Heating precedes Minimization because phases open in the runs' natural stem order and `heat` sorts before
+`min` — phase order follows the scan, not the canonical role sequence.)
+
+Anything reading a manifest **must not treat document order as run order** once more than one member is
+declared — group by `lineage` first. That is what `ambermeta.lineages.members()` is for
+([api.md](api.md#ambermetalineages-which-steps-form-which-member)), and it is what the continuity engine
+does before it compares anything ([architecture §3](architecture.md#3-continuity-and-sequence-hole-detection)).
+Within a phase a member's own steps stay in order, and its chain still runs through them.
+
+A single-lineage document is untouched by all of this: one member, contiguous phases, document order *is*
+run order.
 
 ---
 

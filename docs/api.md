@@ -89,6 +89,48 @@ class Simulation:
     phases: List[Phase] = field(default_factory=list)
 ```
 
+### `ambermeta.lineages`: which steps form which member
+
+A **lineage** is one member of a set of related runs — a replica, a branch off a shared restart, a
+pose. `Step.lineage` is the whole of it: steps sharing a tag are one member, and a step with no tag
+belongs to the implicit single member. `ambermeta/lineages.py` is the one place that decides what a
+set of tags *means*, so the CLI, the GUI and the analysis engine read membership from it rather than
+each growing a grouping rule of its own. It imports no FastAPI, so `ambermeta discover` keeps working
+without the GUI extra.
+
+| Name | Signature | Meaning |
+|---|---|---|
+| `members` | `(sim) -> Dict[Any, List[Step]]` | Every membership bucket, in first-appearance order. Untagged steps share **one** bucket keyed by `UNTAGGED` — not one bucket each. |
+| `lineages` | `(sim) -> Dict[str, List[Step]]` | The **declared** tags only. The untagged bucket is not among them. |
+| `is_multi_lineage` | `(sim) -> bool` | `len(members(sim)) >= 2` — the sentinel counts. |
+| `buckets` | `(steps) -> Dict[Any, List[T]]` | The same grouping over any iterable of tag-carrying objects (`Step`, or `SimulationStage` in the flat engine), so a *part* of a document can be asked the question too. |
+| `infer_lineages_from_layout` | `(run_names) -> Dict[str, str]` | `{run_name: tag}` for the runs a directory layout names — see [manifest §9.1](manifest.md#91-how-discover-infers-members). Holds only the runs it could tag, so `.get(name)` → `None` matches `Step.lineage`. |
+| `UNTAGGED` | sentinel object | The key of the shared untagged bucket. An object, not a string, so it cannot collide with a tag someone typed. |
+
+`UNTAGGED`, `members`, `is_multi_lineage` and `infer_lineages_from_layout` are re-exported from the
+package root. **`lineages` and `buckets` are not**, and `lineages` deliberately so: binding that name
+on the package would shadow the `ambermeta.lineages` submodule, and `import ambermeta.lineages as L`
+would hand you the function instead of the module. Import it from the submodule.
+
+```python
+from ambermeta import UNTAGGED, members, is_multi_lineage
+from ambermeta.lineages import lineages           # NOT from `ambermeta`
+
+sim = load_simulation("replicas.yaml")   # an untagged prep run, then rep1 x2, then rep2 x2
+list(members(sim))                       # [<untagged>, 'rep1', 'rep2']  -> 3 buckets
+list(lineages(sim))                      # ['rep1', 'rep2']              -> 2 declared
+is_multi_lineage(sim)                    # True
+```
+
+The bucket order is first-appearance order in the document, which is why the untagged prep run leads
+here: it is step 0. `members()` is keyed `Any` rather than `str` precisely because `UNTAGGED` is in
+it — a caller that wants only what the user declared wants `lineages()`.
+
+One declared tag plus untagged steps is **two** members and is multi-lineage. The alternative —
+counting only declared tags — would make a half-tagged document silently single-lineage, which is the
+worst of both behaviours: the user has declared structure and the tool ignores it. A fully untagged
+document has exactly one member, and every lineage-aware path below is a no-op on it.
+
 ### `load_simulation()`
 
 ```python
@@ -254,6 +296,13 @@ def auto_discover(
 
 Discover and parse simulation files into an ordered protocol. With `manifest` provided, it parses the listed stages; with `manifest=None`, it discovers files on disk (`recursive=True` to descend) — note this directory-scan path builds one stage per **file group** (stem), including non-run groups such as a bare topology+coordinate pair, unlike `discover_draft` which only emits steps for groups with an `mdin`/`mdout`. `strict=True` makes the first unreadable file a hard `AmberMetaError`; the default skips it and records a `FileLoadError`.
 
+The scan path also fills in `SimulationStage.lineage` where the layout names its members, by the same `infer_lineages_from_layout` rule `discover_draft` uses and over the same input — the run groups only, since a topology-only group would contribute a run name no sibling directory can match.
+
+Two consequences, and neither is quite the obvious one:
+
+- **Continuity partitions by member, and untagged is a member of its own** — not a wildcard. A shared `common/equil_0001` beside `rep1..3/prod_*` is therefore *not* measured into each replica; every member's head reports `INFO: Continuity for <run> was not measured (no producing stage resolved).` This is a deliberate trade. Before the partition that prep run was compared against whichever replica followed it in document order — the true edge for exactly one member and a fabricated overlap for the rest. Recovering it properly needs the run's own `File Assignments` record, which is not read yet.
+- **`auto_detect_restarts` will not hand one member's restart to another** — provided the restart was written by a run that reached the document. A leftover restart with no `mdin`/`mdout` beside it becomes an untagged stage, and `crosses_lineage` does not refuse an untagged producer, so such a file is still open to every member.
+
 ```python
 from ambermeta import auto_discover
 
@@ -344,10 +393,11 @@ class SimulationStage:
     mdout:  Optional[MdoutData]  = None
     mdcrd:  Optional[MdcrdData]  = None
     restart_path: Optional[str] = None
-    # Carried over from the v2 document, never derived here: the run member this stage
-    # belongs to, and the document step ids of this stage and of the step it continues
-    # from. Continuity partitions on `lineage` and measures each member's head against
-    # `parent_id`; all three are absent (None) on the directory-scan path.
+    # The run member this stage belongs to, and the document step ids of this stage and of
+    # the step it continues from. Continuity partitions on `lineage` and measures each
+    # member's head against `parent_id`. `lineage` is read from the v2 document on the
+    # manifest path and inferred from the directory layout on the scan path; the two ids
+    # exist only in a document, so a scanned stage carries neither.
     lineage: Optional[str] = None
     step_id: Optional[str] = None
     parent_id: Optional[str] = None

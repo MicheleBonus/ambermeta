@@ -579,3 +579,151 @@ def test_a_layout_the_inference_refuses_groups_as_it_always_did(nested_sweep_tre
     notes = [n for s in protocol.stages for n in s.validation if "Part of sequence" in n]
     assert len(notes) == 4
     assert all("of 4" in n for n in notes)
+
+
+# ---------------------------------------------------------------------------
+# `plan --recursive` — the flat engine discovering its own stages
+# ---------------------------------------------------------------------------
+#
+# `auto_discover(manifest=None)` is the second entry into the same engine and the one
+# `ambermeta plan <dir> --recursive` takes. It builds its stages from stems, so until the
+# layout inference reached it every replica tree was a single document-order chain: each
+# member's head measured against the previous member's *tail*. The tests below were first
+# run against the untagged branch and observed to fail, except the single-directory
+# control, which pins unchanged behaviour and says so.
+
+import os
+from pathlib import Path
+
+
+def _write_run(stem: Path, *, end_ps, restart=True):
+    """One run on disk: mdin, a time-bearing mdout, and the restart it wrote."""
+    stem.parent.mkdir(parents=True, exist_ok=True)
+    stem.with_suffix(".mdin").write_text(_TIMED_MDIN, encoding="utf-8")
+    stem.with_suffix(".mdout").write_text(_mdout(end_ps), encoding="utf-8")
+    if restart:
+        stem.with_suffix(".rst").write_text(_rst(end_ps), encoding="utf-8")
+
+
+# Every member runs the same 100 -> 150 -> 200 ps, so within a member the chunks meet
+# exactly and across members the two chunks coincide completely — the arrangement in which
+# a document-order zip has no choice but to call a member boundary an overlap.
+_CHUNK_END_PS = {1: 150.0, 2: 200.0}
+
+
+@pytest.fixture
+def timed_replica_tree(tmp_path):
+    """Three replicas of a two-chunk production run, with real times on disk.
+
+    `conftest`'s `replica_tree` is mdin-only, which is enough to see *which* pairs the
+    engine compares but not what it then says about them, and "Cannot verify continuity
+    between rep1/prod_0002 and rep2/prod_0001" understates the damage: with times present
+    the same pairing is published as a finding the user is asked to act on.
+
+    `<run>.rst` is the restart that run *wrote*, which is what every chunked Amber script
+    leaves behind (`-o prod_0002.mdout -r prod_0002.rst`).
+    """
+    for rep in ("rep1", "rep2", "rep3"):
+        for chunk, end_ps in _CHUNK_END_PS.items():
+            _write_run(tmp_path / rep / f"prod_{chunk:04d}", end_ps=end_ps)
+    return tmp_path
+
+
+def test_plan_recursive_tags_each_discovered_run_with_its_replica_directory(
+        timed_replica_tree):
+    """The fix itself: the discovery branch reads the same layout `discover` does.
+
+    Everything below this test is a consequence of the tag reaching `SimulationStage`,
+    so it is pinned on its own — a regression here would otherwise surface as three
+    unrelated failures with no obvious common cause.
+    """
+    protocol = auto_discover(str(timed_replica_tree), recursive=True)
+    assert [(s.name, s.lineage) for s in protocol.stages] == [
+        ("rep1/prod_0001", "rep1"), ("rep1/prod_0002", "rep1"),
+        ("rep2/prod_0001", "rep2"), ("rep2/prod_0002", "rep2"),
+        ("rep3/prod_0001", "rep3"), ("rep3/prod_0002", "rep3"),
+    ]
+
+
+def test_plan_recursive_stops_measuring_one_replica_against_another(timed_replica_tree):
+    """The false finding this PR exists to remove, on the CLI mode that still published it.
+
+    Untagged, `rep2/prod_0001` was measured against `rep1/prod_0002` and reported as
+    "Stage appears to overlap previous stage by 50 ps" — an assertion about two runs that
+    never touched, promoted out of INFO and into the list the user is asked to act on.
+
+    The within-member edge must survive the partition, so the +50 ps on each member's
+    second chunk is asserted rather than merely allowed. That gap is itself an artifact of
+    stem grouping handing a run its *own* output restart as input coordinates; it is
+    pre-existing, it is identical on a single-directory tree (see the control below), and
+    it is not what this test is about — it is here because "the member boundary stopped
+    being compared" would be satisfied just as well by comparing nothing at all.
+    """
+    protocol = auto_discover(str(timed_replica_tree), recursive=True)
+    by_name = _by_name(protocol.stages)
+
+    assert [s.observed_gap_ps for s in protocol.stages] == [None, 50.0, None, 50.0, None, 50.0]
+    assert [(s.name, n) for s in protocol.stages
+            for n in s.continuity if "overlap" in n] == []
+
+    # A head is not silently skipped: it has no producer in a discovered document — the
+    # restart beside a replica is not evidence of which run read it — and it says so.
+    for head in ("rep1/prod_0001", "rep2/prod_0001", "rep3/prod_0001"):
+        assert by_name[head].continuity == [
+            f"INFO: Continuity for {head} was not measured (no producing stage resolved)."]
+
+    assert _problems(protocol.stages) == [
+        (f"{rep}/prod_0002", "Gap detected without stated expectation; verify continuity.")
+        for rep in ("rep1", "rep2", "rep3")]
+
+
+def test_a_single_directory_tree_is_untagged_and_measured_exactly_as_before(tmp_path):
+    """The control: one directory has nothing to differ from, so nothing changes.
+
+    Not just "no tags" — the *untagged fast path* has to stay taken. Were the partition to
+    run on a single-member document it would add a "was not measured" note to the first
+    stage, which lands in `summary.json`; the empty note list below is what says it did not.
+    """
+    for chunk, end_ps in _CHUNK_END_PS.items():
+        _write_run(tmp_path / f"prod_{chunk:04d}", end_ps=end_ps)
+
+    protocol = auto_discover(str(tmp_path), recursive=True)
+    assert [s.lineage for s in protocol.stages] == [None, None]
+    assert [s.observed_gap_ps for s in protocol.stages] == [None, 50.0]
+    assert protocol.stages[0].continuity == []
+
+
+@pytest.fixture
+def half_restarted_replica_tree(tmp_path):
+    """Three replicas whose second chunk's restart was not kept.
+
+    Deleting the terminal restart of a finished chunk is ordinary housekeeping, and it is
+    what leaves `prod_0002` with no input coordinates of its own — the only state in which
+    `--auto-detect-restarts` has anything to do. Each replica's `prod_0001.rst` is then a
+    candidate for all three `prod_0002`s, and they are indistinguishable to every check
+    that predates lineages: same atom count, same name, same numeric predecessor.
+    """
+    for rep in ("rep1", "rep2", "rep3"):
+        for chunk, end_ps in _CHUNK_END_PS.items():
+            _write_run(tmp_path / rep / f"prod_{chunk:04d}",
+                       end_ps=end_ps, restart=(chunk == 1))
+    return tmp_path
+
+
+def test_plan_recursive_restart_detection_stops_crossing_replicas(
+        half_restarted_replica_tree):
+    """`auto_detect_restart_chain`'s guard was documented as inert here. It no longer is.
+
+    Untagged, the three `prod_0001.rst` files scored identically and the first one walked
+    over won every time, so all three replicas were recorded as resuming from rep1 — a
+    provenance claim, written into `summary.json` as the file each run read.
+    """
+    protocol = auto_discover(str(half_restarted_replica_tree), recursive=True,
+                             auto_detect_restarts=True, skip_cross_stage_validation=True)
+    by_name = _by_name(protocol.stages)
+
+    for rep in ("rep1", "rep2", "rep3"):
+        stage = by_name[f"{rep}/prod_0002"]
+        assert stage.restart_path is not None, rep
+        assert os.path.relpath(stage.restart_path, half_restarted_replica_tree) == \
+            os.path.join(rep, "prod_0001.rst")

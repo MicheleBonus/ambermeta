@@ -245,12 +245,28 @@ def resolve_input_coords(sim: Simulation, step: Step) -> Optional[str]:
 
 
 def predecessors(sim: Simulation) -> Dict[str, Optional[str]]:
-    """Each step's immediate predecessor in document order (None for the first)."""
+    """Each step's immediate predecessor **within its own member** (None for a head).
+
+    Untagged steps are one member, so for a single-member document this is exactly the
+    document order and the map is unchanged.
+
+    It has to be member-scoped because it is one half of a pair. ``relink_restarts`` asks
+    two questions: "was this link auto-derived?" (``ic.ref == before[step.id]``, answered
+    from here) and "what should it become?" (its own member-scoped walk backwards). If
+    those two disagree the pair is incoherent — and they did. ``discover`` emits
+    multi-member documents phase-major, so a genuine auto-link like
+    ``rep1/prod_0002 -> rep1/prod_0001`` never equalled its *document-order* predecessor,
+    was misclassified as a link the user had chosen by hand, and was frozen while the head
+    branch repointed around it. Reversing a phase then left both of a member's chunks
+    claiming the same producer, and reversing the phase list closed a cycle
+    (``min -> prod -> min``) that saved to disk and validated clean.
+    """
     out: Dict[str, Optional[str]] = {}
-    prev: Optional[str] = None
+    prev_by_member: Dict[Optional[str], Optional[str]] = {}
     for _, step in iter_steps(sim):
-        out[step.id] = prev
-        prev = step.id
+        member = step.lineage or None
+        out[step.id] = prev_by_member.get(member)
+        prev_by_member[member] = step.id
     return out
 
 

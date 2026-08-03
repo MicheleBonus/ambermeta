@@ -292,6 +292,107 @@ def _replicas():
     )
 
 
+def _producer_of(sim):
+    """{step name: what it continues from}, resolving refs to names."""
+    by_id = {s.id: s for _, s in iter_steps(sim)}
+    out = {}
+    for _, s in iter_steps(sim):
+        ic = s.input_coords
+        out[s.name] = (by_id[ic.ref].name if ic.source == "step" and ic.ref in by_id
+                       else ic.source)
+    return out
+
+
+def _has_cycle(sim):
+    by_id = {s.id: s for _, s in iter_steps(sim)}
+    for _, start in iter_steps(sim):
+        seen, cur = set(), start
+        while cur and cur.input_coords.source == "step" and cur.input_coords.ref in by_id:
+            if cur.id in seen:
+                return True
+            seen.add(cur.id)
+            cur = by_id[cur.input_coords.ref]
+    return False
+
+
+def test_reversing_a_multi_lineage_phase_reverses_each_member_coherently():
+    """Two chunks of one member must never end up claiming the same producer.
+
+    `relink_restarts` asks two questions — "was this link auto-derived?" (against
+    `predecessors`) and "what should it become?" (its own member-scoped walk). While
+    `predecessors` was document-order and the walk was member-scoped, the two disagreed on
+    every multi-member document, because `discover` emits them phase-major: a genuine
+    `rep1/prod_0002 -> rep1/prod_0001` link never equalled its document-order predecessor,
+    so it was read as a choice the user had made by hand and frozen, while the head branch
+    repointed around it. Both of a member's chunks then pointed at its first step.
+    """
+    sim = _replicas()
+    phase = sim.phases[0]
+    before = predecessors(sim)
+    phase.steps.reverse()
+    relink_restarts(sim, before)
+
+    producers = _producer_of(sim)
+    assert producers == {
+        "rep2/prod_0002": "starting_structure", "rep2/prod_0001": "rep2/prod_0002",
+        "rep1/prod_0002": "starting_structure", "rep1/prod_0001": "rep1/prod_0002",
+    }
+    chained = [v for v in producers.values() if v != "starting_structure"]
+    assert len(chained) == len(set(chained)), "two steps claim the same producer"
+
+
+def test_no_reordering_can_close_a_cycle_in_a_multi_lineage_document():
+    """Reversing the phase list used to close `min -> prod -> min`.
+
+    A cycle saved to disk and validated `ok: true` is the same class of false claim this
+    feature exists to remove, so it is asserted directly rather than inferred from the
+    absence of cross-tag refs.
+
+    TWO members, phase-major — the shape `discover` actually emits. One member alone
+    cannot reproduce it: document order and member order agree, so the two halves of
+    `relink_restarts` never disagree and the bug is invisible.
+    """
+    sim = Simulation(
+        starting_structure="wt.crd",
+        phases=[
+            Phase(id="ph_m", name="Min", role="minimization", steps=[
+                Step(id="m1", name="rep1/min", lineage="rep1", rst="rep1/min.rst",
+                     input_coords=InputCoords(source="starting_structure")),
+                Step(id="m2", name="rep2/min", lineage="rep2", rst="rep2/min.rst",
+                     input_coords=InputCoords(source="starting_structure")),
+            ]),
+            Phase(id="ph_p", name="Prod", role="production", steps=[
+                Step(id="p1", name="rep1/prod", lineage="rep1", rst="rep1/prod.rst",
+                     input_coords=InputCoords(source="step", ref="m1")),
+                Step(id="p2", name="rep2/prod", lineage="rep2", rst="rep2/prod.rst",
+                     input_coords=InputCoords(source="step", ref="m2")),
+            ]),
+        ],
+    )
+    before = predecessors(sim)
+    sim.phases.reverse()
+    relink_restarts(sim, before)
+
+    assert not _has_cycle(sim)
+    assert _producer_of(sim) == {
+        "rep1/prod": "starting_structure", "rep2/prod": "starting_structure",
+        "rep1/min": "rep1/prod", "rep2/min": "rep2/prod",
+    }
+
+
+def test_predecessors_is_unchanged_for_an_untagged_document():
+    """The member-scoping must be invisible where there is one member.
+
+    Untagged steps are a single bucket, so the map has to stay exactly the document order
+    it always was — this is what keeps every pre-lineage relink test meaningful rather
+    than merely still-passing.
+    """
+    sim = _chain()
+    ids = [s.id for _, s in iter_steps(sim)]
+    assert predecessors(sim) == {sid: (ids[i - 1] if i else None)
+                                 for i, sid in enumerate(ids)}
+
+
 def _fan_out():
     """One shared equilibration, then three tagged replicas of two chunks each."""
     return Simulation(

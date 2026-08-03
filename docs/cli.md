@@ -365,6 +365,42 @@ Suggestions:
 
 `ntp_prod_0000` (a bare restart with no `mdin`/`mdout`) isn't turned into a step at all — a step needs at least an `mdin`/`mdout` pair to be a "run"; it is simply excluded from the draft. `CH3L1_HUMAN_6NAG.crd` is picked as the starting structure because it is single-frame coordinates. The printed `input=restart of <step> (<file>)` names the *producing step* and the restart it resolves to, not the raw id: step ids (`10428ec4`, ... in the manifest below) are `uuid4` slices, regenerated on every run, so nothing user-facing prints them and nothing should depend on them being stable across invocations of `discover`.
 
+### Replica trees
+
+When the layout names members — sibling directories running the same set of runs — `discover` tags each
+step with a `lineage` and chains each member separately from the starting structure:
+
+```text
+$ ambermeta discover runs/
+
+Phase: Production [production]
+  - rep1/prod_0001  topology=...  input=starting structure  (mdin=rep1/prod_0001.mdin, ...)
+  - rep1/prod_0002  topology=...  input=restart of rep1/prod_0001 (rep1/prod_0001.rst)  ...
+  - rep2/prod_0001  topology=...  input=starting structure  (mdin=rep2/prod_0001.mdin, ...)
+  - rep2/prod_0002  topology=...  input=restart of rep2/prod_0001 (rep2/prod_0001.rst)  ...
+  - rep3/prod_0001  topology=...  input=starting structure  (mdin=rep3/prod_0001.mdin, ...)
+  - rep3/prod_0002  topology=...  input=restart of rep3/prod_0001 (rep3/prod_0001.rst)  ...
+
+Suggestions:
+  - [applied] CH3L1_HUMAN_6NAG.crd set as the starting structure
+  - [applied] Phase roles inferred from file content/names
+  - [applied] Runs carry 3 declared lineage(s)
+```
+
+There is no `rep1/prod_0002 → rep2/prod_0001` edge: each member's first run reads the starting structure.
+The extra `[applied]` card names each member and its run count (and counts untagged runs separately, where
+a shared prep directory failed the membership predicate). The inference is reported as data, not as a debug
+mode — the tags are in the written manifest, so you can read the claim back off the document.
+
+Two consequences worth knowing before you script against the output:
+
+- With more than one member the draft is **phase-major**: same-role steps of every member share one phase,
+  so a member's steps are not contiguous in document order. Group by `lineage`, not by position —
+  [manifest §9.2](manifest.md#92-a-multi-lineage-document-is-phase-major).
+- An **ambiguous** layout is left untagged rather than guessed at — including any layout that names the
+  replica in the *filename* rather than in a directory. Full rule and failure modes:
+  [manifest §9.1](manifest.md#91-how-discover-infers-members).
+
 `--write` saves the draft as v2:
 
 ```text
@@ -529,6 +565,24 @@ $ ambermeta validate --manifest sim.yaml --format json
 ```
 
 `stage_issues[].errors` is where a missing file or bad continuity link surfaces (e.g. `missing prmtop: ...`); `suggestions[].kind` in `{"continuity_gap", "missing_run"}` is what drives the "Continuity / sequence findings" block in text mode, and what `--strict` promotes to a failing exit code. `--allow-gaps` relaxes unexpected-gap findings (`continuity_gap`) without touching sequence holes (`missing_run`).
+
+**On a manifest that declares lineages**, both checks are scoped per member:
+
+- Continuity compares consecutive steps **within** a member, and measures each member's first step against
+  the step it actually continues from. Where no producer resolves — which is every head of a `discover`ed
+  replica tree, since each reads the starting structure — it reports
+  `INFO: Continuity for <name> was not measured (no producing stage resolved).` rather than staying silent.
+  A member boundary is not a gap and is never a finding.
+- A sequence hole is reported per member, so a replica that stopped early is named
+  (`rep2/prod sequence is missing member(s) 2, 3`, with `"lineage": "rep2"` on the suggestion) instead of
+  being hidden by its siblings' indices, and members numbered on offset scales raise nothing.
+
+An `[applied]` `lineage_group` suggestion lists what the document declares. Note it describes the
+**document**, not an inference: a manifest whose tags you typed by hand is reported the same way.
+
+`--allow-gaps` is **not** the way to handle replicas — it suppresses every unstated gap in the document
+including real ones inside a member, and it does not suppress overlap findings at all. Declare the members
+instead. Using both is not an error.
 
 Running the same command against a pre-v2 flat manifest (`global_prmtop`/`stages:`, no `steps` key) fails to load — the same "not a v2 manifest" error [`export`](#export) shows below:
 

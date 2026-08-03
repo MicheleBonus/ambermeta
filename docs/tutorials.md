@@ -352,7 +352,9 @@ ambermeta validate --manifest broken.yaml --format json
   gaps: { expected: 2.0, tolerance: 0.5 }   # ps
 ```
 
-For genuinely independent, non-contiguous runs (replicas), pass `--allow-gaps` instead of annotating every step. Full field reference: [manifest reference](manifest.md).
+**Replicas are not a gap — don't reach for `--allow-gaps`.** Blanket-suppressing gap findings used to be the only way to stop AmberMeta comparing one replica's first run against another's last, and it was always the wrong tool: it silences every unstated gap in the document, including the real ones inside a member, and it never touched the *overlap* half of the check at all. Declare the members instead — give each replica's steps a `lineage` tag ([manifest §5](manifest.md#5-steps)), or let `discover` infer it from `rep1/`, `rep2/` directories ([manifest §9.1](manifest.md#91-how-discover-infers-members)). Continuity is then measured inside each member and the boundary between members is never a finding, because it was never a transition.
+
+`--allow-gaps` still exists and still works, for what it is actually for: a document with real, unstated time jumps you have decided not to annotate step by step. Using it alongside lineages is not an error. Full field reference: [manifest reference](manifest.md).
 
 ---
 

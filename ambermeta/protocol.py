@@ -134,11 +134,15 @@ class SimulationStage:
     mdout: Optional[MdoutData] = None
     mdcrd: Optional[MdcrdData] = None
     restart_path: Optional[str] = None
-    # Provenance carried over from the v2 document, never derived here. `lineage` names the
-    # run member this stage belongs to; `step_id`/`parent_id` are the document's own step ids,
-    # kept because the flatten resolves input_coords down to a bare inpcrd path — after that
-    # the edge is unrecoverable, and a lineage head has to be checked against the step it
-    # really continues from rather than against its document-order neighbour.
+    # Provenance. `lineage` names the run member this stage belongs to: read from the v2
+    # document on the manifest path, inferred from the directory layout on the scan path —
+    # both entries into this engine, because a stage the engine cannot place in a member is
+    # one it will compare against whatever happens to precede it.
+    # `step_id`/`parent_id` are the document's own step ids and exist only where a document
+    # does. They are kept because the flatten resolves input_coords down to a bare inpcrd
+    # path — after that the edge is unrecoverable, and a lineage head has to be checked
+    # against the step it really continues from rather than against its document-order
+    # neighbour.
     lineage: Optional[str] = None
     step_id: Optional[str] = None
     parent_id: Optional[str] = None
@@ -1140,6 +1144,19 @@ def _ordered_stems(grouped: Dict[str, Any]) -> List[str]:
     return sorted(grouped.keys(), key=key)
 
 
+def _run_stems(grouped: Dict[str, Dict[str, str]]) -> List[str]:
+    """The groups that are runs — one holding an mdin or an mdout — in natural order.
+
+    The one place that answers "is this group a run?", because the answer is exactly what
+    `infer_lineages_from_layout` must be handed, and it now has three callers. A
+    topology-only group, or a bare coordinate file, contributes a run name no sibling
+    directory can match and so breaks the membership predicate — a rule restated at three
+    call sites is a rule that eventually differs at one of them.
+    """
+    return [stem for stem in _ordered_stems(grouped)
+            if grouped[stem].get("mdin") or grouped[stem].get("mdout")]
+
+
 class _TaggedRun(NamedTuple):
     """A run name with the member it belongs to, the shape `lineages.buckets` groups."""
 
@@ -1382,14 +1399,13 @@ def auto_detect_restart_chain(
     declared writer where there is one and from the directory otherwise — see ``_owner``
     below for why a declared writer alone is not enough.
 
-    **The guard is inert wherever a stage is built without a tag, which is every path that
-    discovers files rather than reading a document**: ``auto_discover``'s scan constructs
-    ``SimulationStage(name=stem, stage_role=...)`` from stems alone, so ``plan --recursive
-    --auto-detect-restarts`` over a raw replica tree is untagged and still chains across
-    replicas; the same holds for ``ProtocolBuilder.add_stage``. Only stages carrying
-    ``lineage`` through the manifest path are protected. Tagging the discovery scan is a
-    change of its own and is deliberately not made here — recorded so it is discoverable
-    rather than a surprise.
+    **The guard is inert wherever a stage is built without a tag**, since an untagged stage
+    is the implicit single member and continues into anything. Both paths that read a tree
+    now tag what they find — ``auto_discover``'s scan infers from the layout exactly as the
+    manifest path reads it from the document — so ``plan --recursive
+    --auto-detect-restarts`` over a raw replica tree is protected. What remains untagged,
+    and deliberately: ``ProtocolBuilder.add_stage``, which is handed one stage at a time
+    with no layout to infer from and no parameter to declare one.
 
     Parameters
     ----------
@@ -1659,13 +1675,11 @@ def smart_group_files(
         group[kind] = full_path
 
     # Detect and handle numeric sequences, per member. Nothing upstream of discovery has
-    # read a manifest, so the tags are inferred here, by the repo's one rule for it — and
-    # only from the groups that hold an mdin or an mdout, because a topology-only group
-    # would hand the inference a run name no directory can match. A layout it refuses
-    # leaves every run untagged, which is the single pooled family this always produced.
+    # read a manifest, so the tags are inferred here, by the repo's one rule for it. A
+    # layout that rule refuses leaves every run untagged, which is the single pooled family
+    # this always produced.
     all_stems = list(grouped.keys())
-    tags = infer_lineages_from_layout(
-        [s for s in all_stems if grouped[s].get("mdin") or grouped[s].get("mdout")])
+    tags = infer_lineages_from_layout(_run_stems(grouped))
     sequences = detect_numeric_sequences(all_stems, [tags.get(s) for s in all_stems])
 
     # Add sequence metadata to groups. The member is deliberately not written into
@@ -1735,6 +1749,16 @@ def auto_discover(
     # Use smart grouping for file discovery
     grouped = smart_group_files(directory, pattern=pattern_filter, recursive=recursive)
 
+    # The same layout inference `discover_draft` performs, because this is the same tree
+    # read for the same purpose — `plan <dir> --recursive` reaches the engine here instead
+    # of through a manifest, and a stage built without a tag is one the continuity
+    # partition, the restart-chain guard and `stage_sequence` cannot tell apart from its
+    # neighbours. Untagged, a replica tree was one document-order chain: each member's head
+    # measured against the previous member's tail, published as an overlap that never
+    # happened. Inferred from the whole tree, before `include_stems`/`include_roles` narrow
+    # it — membership is a property of the layout, not of what the caller asked to see.
+    lineage_by_stem = infer_lineages_from_layout(_run_stems(grouped))
+
     compiled_rules: List[tuple[Pattern[str], str]] = []
     if grouping_rules:
         for pattern, role in grouping_rules.items():
@@ -1758,7 +1782,17 @@ def auto_discover(
         if include_stems and stem not in include_stems:
             continue
 
-        stage = SimulationStage(name=stem, stage_role=stage_role)
+        # A group that is not a run carries no tag: `lineage_by_stem` holds run names only,
+        # so a topology or a lone starting structure stays untagged. Untagged is its own
+        # member here, not a wildcard — `_check_continuity` buckets it separately, so a
+        # shared prep run's edge into each replica is NOT measured on this path; each
+        # member's head reports "not measured" instead. That is a deliberate trade: before
+        # the partition the prep run was compared against whichever replica happened to
+        # follow it in document order, which was the true edge for exactly one member and
+        # a fabricated one for the rest. `crosses_lineage` is the looser rule and does let
+        # an untagged producer's restart reach any member.
+        stage = SimulationStage(name=stem, stage_role=stage_role,
+                                lineage=lineage_by_stem.get(stem))
 
         # Add sequence info as validation notes if detected
         if "_sequence_base" in kinds:

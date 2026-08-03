@@ -162,6 +162,29 @@ Every inferred thing is surfaced as an explainable suggestion rather than applie
 
 Every card shows a `title` and a monospace `evidence` string explaining the inference. Dismissing a card only hides it in this browser session — it does not mutate the document; **Undo** is the only action here that does.
 
+A `missing_run` card carries a `lineage` field naming the member it is scoped to (`null` for the untagged bucket), so a replica that stopped early is named rather than pooled with its siblings:
+
+```jsonc
+{ "id": "sug_1", "kind": "missing_run", "severity": "needs_you",
+  "title": "rep2/prod sequence is missing member(s) 2, 3",
+  "evidence": "'rep2/prod' has no run at index(es) 2, 3",
+  "base": "prod", "missing": [2, 3], "lineage": "rep2",
+  "actions": ["Mark as expected gap", "Locate file", "Ignore"] }
+```
+
+`lineage_group` is the `[applied]` card reporting membership itself. Its evidence names each declared member and its run count, and counts the untagged runs separately — left unsaid, "3 lineages" would read as covering all nine runs of a campaign whose shared prep carries no tag at all:
+
+```jsonc
+{ "id": "sug_2", "kind": "lineage_group", "severity": "applied",
+  "title": "Runs carry 3 declared lineage(s)",
+  "evidence": "rep1: 2 run(s); rep2: 2 run(s); rep3: 2 run(s); no lineage: 3 run(s)",
+  "actions": ["Undo"] }
+```
+
+That card reports what the document **declares**, not where the tags came from — nothing after the fact can tell an inferred tag from a hand-written one, so a manifest whose lineages you typed yourself is described the same way. `discover` announces its own inference by running this over the draft it just built.
+
+(Both blocks above elide the always-present `step_id`/`phase_id`/`base`/`missing`/`lineage` keys where they are `null` — no route sets `exclude_none`, so every key is on the wire on every card.)
+
 The tray re-runs validation (and refills itself) after every document mutation, after Discover, and whenever the Validate panel is opened.
 
 ---
@@ -305,11 +328,43 @@ The frontend talks to a small REST API under `/api` (`ambermeta/gui/api/routes.p
 | `POST` | `/api/phases/reorder` | `{ phase_ids[] }` | Document (`400` unless the id set matches exactly) |
 | `PUT` | `/api/phases/{id}` | `{ name?, role?, topology? }` — `topology` present (including `null`) sets or clears it on **every step of the phase** in one undoable operation | Document (`404` if the phase or the topology id is unknown) |
 | `DELETE` | `/api/phases/{id}?reassign_to=<phase_id>` | — | Document (`404`; `400` if `reassign_to` is the phase being deleted); moves the deleted phase's steps to `reassign_to` if given |
-| `POST` | `/api/phases/{id}/steps` | `{ name, topology?, input_coords?, mdin?, mdout?, mdcrd?, rst?, expected_gap_ps?, gap_tolerance_ps?, notes? }` | Document (`404` if phase unknown) |
+| `POST` | `/api/phases/{id}/steps` | `{ name, topology?, input_coords?, mdin?, mdout?, mdcrd?, rst?, lineage?, index?, expected_gap_ps?, gap_tolerance_ps?, notes? }` — `lineage` places the step in that member; `index` (default `-1`) is the position within the phase, appending **within the step's own lineage** | Document (`404` if phase unknown, `400` for an unusable `input_coords.ref` — see below) |
 | `POST` | `/api/phases/{id}/steps/reorder` | `{ step_ids[] }` | Document (`404`/`400`) |
-| `PUT` | `/api/steps/{id}` | `{ name?, topology?, input_coords?, files?: {mdin?,mdout?,mdcrd?,rst?}, expected_gap_ps?, gap_tolerance_ps?, notes? }` — `topology`, `expected_gap_ps` and `gap_tolerance_ps` use present-vs-absent: sending `null` clears, omitting leaves alone | Document (`404`) |
+| `PUT` | `/api/steps/{id}` | `{ name?, topology?, input_coords?, files?: {mdin?,mdout?,mdcrd?,rst?}, expected_gap_ps?, gap_tolerance_ps?, notes? }` — `topology`, `expected_gap_ps` and `gap_tolerance_ps` use present-vs-absent: sending `null` clears, omitting leaves alone | Document (`404`; `400` for an unusable `input_coords.ref` — see below) |
 | `DELETE` | `/api/steps/{id}` | — | Document (`404`) |
 | `POST` | `/api/steps/{id}/move` | `{ phase_id, index? }` (`index` default `-1` = append) | Document (`404`) |
+
+#### `input_coords.ref` is validated — three `400`s
+
+`POST /api/phases/{id}/steps` and `PUT /api/steps/{id}` both refuse a "continues from" that cannot mean
+anything. Previously either would store one verbatim, so a dead id resolved to no coordinates while the
+chain still looked intact, and a self-reference made a one-step cycle:
+
+```
+$ curl -X PUT .../api/steps/9831ac9c -d '{"input_coords":{"source":"step","ref":"deadbeef"}}'
+400 {"detail":"no step to continue from: deadbeef"}
+
+$ curl -X PUT .../api/steps/9831ac9c -d '{"input_coords":{"source":"step","ref":"9831ac9c"}}'
+400 {"detail":"a step cannot continue from itself"}
+
+$ curl -X PUT .../api/steps/9831ac9c -d '{"input_coords":{"source":"step"}}'
+400 {"detail":"a step that continues from another must name it"}
+```
+
+A **cross-lineage** `ref` is a different case and is **accepted with `200`**: setting one by hand is the only
+way to express a genuine branch, so it is honoured and reported in `warnings` rather than rejected
+(see [the data model](#data-model-documentresponse) below). No automatic operation will create or maintain
+one — [manifest §6](manifest.md#the-chain-invariant) states the invariant.
+
+Adding a step to a **multi-lineage phase without naming a lineage** does not auto-chain it at all: it is
+created reading the starting structure rather than continuing whichever step happens to sit last. Silence
+is recoverable, a false edge is not — pass `lineage` and it is inserted after that member's last step and
+chained to it instead.
+
+`lineage` is **read-only at this surface in this release.** `StepCreate` honours it, so a step can be born
+into a member; `StepUpdate` declares the field but no route writes it, so `PUT /api/steps/{id}` with
+`{"lineage": "..."}` returns `200` and leaves the tag unchanged. Retag by editing the manifest and
+reopening it, or let `discover` infer it.
 
 ### Unified assignment, settings, history, validation
 
@@ -387,7 +442,7 @@ $ curl -s -o /dev/null -w '%{http_code}\n' 'http://127.0.0.1:8799/api/nonexisten
 
 This is `ambermeta.gui.api.schemas.DocumentResponse` — the same shape the frontend renders and the shape `simulation_to_payload`/`payload_to_simulation` round-trip to a v2 manifest (`docs/manifest.md`).
 
-`warnings` is the one field that describes the **request** rather than the document: what the edit just made could not do without inventing a link nobody declared — a step several lineages continued from deleted, a `ref` set across a lineage boundary. The server clears it on the next mutation, so it is never a running total; a `GET /api/document` in between still shows the last edit's, since a read is not an edit. The GUI announces it as a warning-toned message on the edit that raised it (§3); a script driving the API should read it off the mutation's own response.
+`warnings` is the one field that describes the **request** rather than the document: what the edit just made could not do without inventing a link nobody declared — a step several lineages continued from deleted, a `ref` set across a lineage boundary. The next **mutation** replaces it, so it is never a running total; a `GET /api/document` in between still shows the last edit's, since a read is not an edit. `save` and `plan` are not mutations of the document and do not clear it, so the copy embedded in their responses is the *previous* edit's — read `warnings` off the mutation's own response, not off a later one. `discover` replaces the document wholesale and so always reports an empty list here. The GUI announces it as a warning-toned message on the edit that raised it (§3); a script driving the API should read it off the mutation's own response.
 
 One field here has no counterpart on disk: **`resolved_input_coords` is read-only and API-only**. The server resolves the chain (`starting_structure`, or `ref` → that step's `rst`, or an explicit `path`) and hands the answer over so the frontend never re-implements the rules. Sending it back is not how you change what a step reads — set `input_coords` instead. `rst`, by contrast, is a real manifest field: the restart this step produces.
 

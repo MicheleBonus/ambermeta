@@ -444,7 +444,7 @@ def discover_draft(base_directory, recursive=True, pattern=None):
     from ambermeta.roles import classify_role
     from ambermeta.topology_pool import classify_topology_pool, implies_hmr
     from ambermeta.coords import sniff_coordinate_kind
-    from ambermeta.protocol import smart_group_files, _ordered_stems
+    from ambermeta.protocol import smart_group_files, _run_stems
     from ambermeta.parsers import MdinParser
     import uuid
 
@@ -478,13 +478,10 @@ def discover_draft(base_directory, recursive=True, pattern=None):
     sim.starting_structure = starting
 
     # The runs, collected before the loop because the tags have to exist before the chain
-    # does. `_ordered_stems` is replica-major, so a chain threaded as the scan goes joins
-    # rep1's last run to rep2's first — the false continuation this feature exists to
-    # remove — and tagging the steps afterwards cannot unmake an edge already recorded.
-    # A group with neither an mdin nor an mdout is not a run (topology-only, or a
-    # coordinate artifact) and would hand the inference a name no directory can match.
-    run_stems = [stem for stem in _ordered_stems(grouped)
-                 if grouped[stem].get("mdin") or grouped[stem].get("mdout")]
+    # does. `_run_stems` is replica-major, so a chain threaded as the scan goes joins rep1's
+    # last run to rep2's first — the false continuation this feature exists to remove — and
+    # tagging the steps afterwards cannot unmake an edge already recorded.
+    run_stems = _run_stems(grouped)
     tags = infer_lineages_from_layout(run_stems)
     # `members()`' rule applied to stems instead of steps: every untagged run shares one
     # bucket, and that bucket counts. A tree the inference refused therefore has exactly

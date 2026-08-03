@@ -21,8 +21,10 @@ function docMutation<V>(fn: (v: V) => Promise<DocumentResponse>) {
       // The server's report on the edit that just landed: a shared parent deleted out from
       // under several lineages, a hand-set link across two of them. Announced here and
       // nowhere else, because a document mutation is the only response on which this field
-      // describes the request that produced it — save, plan and discover echo the store's
-      // warnings back untouched, and re-announcing them would report one edit twice.
+      // describes the request that produced it. On discover it is always empty (the
+      // document is replaced wholesale); on save and plan it still holds the PREVIOUS
+      // edit's warnings, because neither is a mutation and neither clears them — so
+      // announcing it there would resurrect a finding that already had its say.
       doc.warnings.forEach((w) => pushEditWarning(w));
     },
   });
