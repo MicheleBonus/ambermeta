@@ -1,6 +1,6 @@
 # Tutorials
 
-Task-oriented walkthroughs for getting real work done with AmberMeta. Each uses the sample data in `tests/data/amber/md_test_files/` — a 64,528-atom glycoprotein system (`CH3L1_HUMAN_6NAG.top` + `.crd`) with a six-member NPT production sequence (`ntp_prod_0001` … `ntp_prod_0005`) — so every command and every line of output below is reproducible. Run them from a writable scratch copy so you don't touch the repo's test fixtures:
+Task-oriented walkthroughs for getting real work done with AmberMeta. Each uses the sample data in `tests/data/amber/md_test_files/` — a 64,528-atom glycoprotein system (`CH3L1_HUMAN_6NAG.top` + `.crd`) with a five-run NPT production sequence (`ntp_prod_0001` … `ntp_prod_0005`, plus a bare `ntp_prod_0000.rst` that is not itself a run) — so every command below is reproducible. Terminal output is too, with one exception: step and phase ids are `uuid4` slices minted fresh on every `discover`, so the ids inside manifests here will not match yours. Run them from a writable scratch copy so you don't touch the repo's test fixtures:
 
 ```bash
 mkdir -p /tmp/ambermeta-tutorial
@@ -16,8 +16,7 @@ cd /tmp/ambermeta-tutorial
 
 1. [Discover, edit, and export a v2 manifest](#1-discover-edit-and-export-a-v2-manifest)
 2. [Validate continuity and catch a sequence hole](#2-validate-continuity-and-catch-a-sequence-hole)
-3. [Upgrade a v1 manifest with `export`](#3-upgrade-a-v1-manifest-with-export)
-4. [Round-trip a manifest through the GUI](#4-round-trip-a-manifest-through-the-gui)
+3. [Round-trip a manifest through the GUI](#3-round-trip-a-manifest-through-the-gui)
 
 ---
 
@@ -43,17 +42,17 @@ Phases: 1
 
 Phase: Production [production]
   - ntp_prod_0001  topology=CH3L1_HUMAN_6NAG.top  input=starting structure  (mdin=ntp_prod_0001.mdin, mdout=ntp_prod_0001.mdout)
-  - ntp_prod_0002  topology=CH3L1_HUMAN_6NAG.top  input=step 8f9b2e3f  (mdin=ntp_prod_0002.mdin, mdout=ntp_prod_0002.mdout)
-  - ntp_prod_0003  topology=CH3L1_HUMAN_6NAG.top  input=step de27bb87  (mdin=ntp_prod_0003.mdin, mdout=ntp_prod_0003.mdout)
-  - ntp_prod_0004  topology=CH3L1_HUMAN_6NAG.top  input=step 6aa07bf3  (mdin=ntp_prod_0004.mdin, mdout=ntp_prod_0004.mdout)
-  - ntp_prod_0005  topology=CH3L1_HUMAN_6NAG.top  input=step 71f7cca0  (mdin=ntp_prod_0005.mdin, mdout=ntp_prod_0005.mdout)
+  - ntp_prod_0002  topology=CH3L1_HUMAN_6NAG.top  input=restart of ntp_prod_0001 (ntp_prod_0001.rst)  (mdin=ntp_prod_0002.mdin, mdout=ntp_prod_0002.mdout)
+  - ntp_prod_0003  topology=CH3L1_HUMAN_6NAG.top  input=restart of ntp_prod_0002 (ntp_prod_0002.rst)  (mdin=ntp_prod_0003.mdin, mdout=ntp_prod_0003.mdout)
+  - ntp_prod_0004  topology=CH3L1_HUMAN_6NAG.top  input=restart of ntp_prod_0003 (ntp_prod_0003.rst)  (mdin=ntp_prod_0004.mdin, mdout=ntp_prod_0004.mdout)
+  - ntp_prod_0005  topology=CH3L1_HUMAN_6NAG.top  input=restart of ntp_prod_0004 (ntp_prod_0004.rst)  (mdin=ntp_prod_0005.mdin, mdout=ntp_prod_0005.mdout)
 
 Suggestions:
   - [applied] CH3L1_HUMAN_6NAG.crd set as the starting structure
   - [applied] Phase roles inferred from file content/names
 ```
 
-`CH3L1_HUMAN_6NAG.top` was found once and put in the topology pool; `CH3L1_HUMAN_6NAG.crd` (a single-frame restart, no trajectory) was picked as the Simulation's starting structure and feeds `ntp_prod_0001`. Every later step's `input` is `step <id>` — the previous step's own output restart, the continuity chain. Both suggestions are `[applied]` automatically; a `[needs_you]` suggestion (you'll see one in [§2](#2-validate-continuity-and-catch-a-sequence-hole)) is not.
+`CH3L1_HUMAN_6NAG.top` was found once and put in the topology pool; `CH3L1_HUMAN_6NAG.crd` (a single-frame restart, no trajectory) was picked as the Simulation's starting structure and feeds `ntp_prod_0001`. Every later step's `input` is `restart of <step> (<file>)` — the previous step's own output restart, the continuity chain. Both suggestions are `[applied]` automatically; a `[needs_you]` suggestion (you'll see one in [§2](#2-validate-continuity-and-catch-a-sequence-hole)) is not.
 
 Write the draft to a v2 manifest with `--write`:
 
@@ -112,7 +111,7 @@ Validation: OK
 
 ### Export
 
-`export` re-emits any manifest (v1 auto-migrated) as canonical v2, or as a legacy flat manifest for tools that still expect one. Re-exporting to v2 canonicalizes formatting and lets you switch YAML/JSON:
+`export` reads a v2 manifest and re-emits it as canonical v2 — that's its only output. Re-exporting canonicalizes formatting and lets you switch YAML/JSON:
 
 ```bash
 ambermeta export draft.yaml -o simulation.yaml
@@ -149,48 +148,40 @@ steps:
   mdcrd: null
   notes:
   - First production run; starts from the equilibrated starting structure.
+  rst: ntp_prod_0001.rst
 # ... ntp_prod_0002 .. ntp_prod_0005 follow, each chained to the previous step
 ```
 
-Or hand it to a tool that only understands the flat `stages:` shape:
+The format follows the `-o` extension — `.yaml`/`.yml` gives YAML, anything else JSON — and `--format json|yaml` overrides that. So the same file as JSON:
 
 ```bash
-ambermeta export simulation.yaml --to legacy -o legacy_export.json
+ambermeta export simulation.yaml -o simulation.json
 ```
 
 ```
-Wrote legacy manifest: legacy_export.json (json)
+Wrote v2 manifest: simulation.json (json)
 ```
 
-```json
-{
-  "global_prmtop": "CH3L1_HUMAN_6NAG.top",
-  "stages": [
-    {
-      "name": "ntp_prod_0001",
-      "stage_role": "production",
-      "prmtop": "CH3L1_HUMAN_6NAG.top",
-      "mdin": "ntp_prod_0001.mdin",
-      "mdout": "ntp_prod_0001.mdout",
-      "inpcrd": "CH3L1_HUMAN_6NAG.crd",
-      "notes": ["First production run; starts from the equilibrated starting structure."]
-    },
-    {
-      "name": "ntp_prod_0002",
-      "stage_role": "production",
-      "prmtop": "CH3L1_HUMAN_6NAG.top",
-      "mdin": "ntp_prod_0002.mdin",
-      "mdout": "ntp_prod_0002.mdout",
-      "inpcrd": "ntp_prod_0001.rst"
-    }
-    // ... ntp_prod_0003 .. ntp_prod_0005, each inpcrd chained to the previous stage's restart
-  ]
-}
+With no `-o` at all, the canonical payload goes to stdout as JSON, which is handy for piping into `jq`.
+
+YAML and JSON are the only manifest formats AmberMeta reads or writes. On the way *in*, a `.toml` or `.csv` manifest is rejected outright — `ERROR: Failed to load manifest: <path>: AmberMeta reads and writes manifests as YAML or JSON only; TOML and CSV are not manifest formats.` On the way *out* there is no such guard: because only `.yaml`/`.yml` select YAML, `-o out.toml` writes **JSON into a file named `.toml`** and exits `0`. Pick the extension deliberately, or pass `--format` and let the name follow.
+
+`export` also only reads v2 — a pre-2.0 flat manifest (`stages:`, `global_prmtop`) is no longer a format it understands:
+
+```bash
+ambermeta export old.yaml -o new.yaml; echo "exit: $?"
 ```
 
-Note what's lost going to legacy: the topology pool collapses to one `global_prmtop`, phases disappear (each step becomes a bare stage), and each step's continuity is flattened into a plain `inpcrd` path — the explicit `source`/`ref` distinction is gone. Round-trip through `--to v2` if you need it back.
+```
+ERROR: Failed to load manifest: old.yaml is not a v2 manifest (no 'steps' key). Rebuild it with `ambermeta discover <dir> --write <path>`.
+exit: 1
+```
 
-Prefer a browser? [§4](#4-round-trip-a-manifest-through-the-gui) does the same discover → edit → save loop in the GUI, and writes the identical file. Full schema: [manifest reference](manifest.md). Full flag reference: [CLI reference](cli.md).
+Do what it says: rebuild from the directory with `discover --write`, then edit the draft as above.
+
+Prefer a browser? [§3](#3-round-trip-a-manifest-through-the-gui) does the same discover → edit → save loop in the GUI, and writes the identical file. Full schema: [manifest reference](manifest.md). Full flag reference: [CLI reference](cli.md).
+
+**Just want the numbers, not a manifest?** `ambermeta plan <dir> --recursive` scans the same directory through the retained flat engine and prints a per-stage *Protocol summary* — durations, thermostat/barostat, frame counts, per-stage statistics — without producing a document to maintain. See [recipes](recipes.md) and [cli.md](cli.md#plan) for that mode.
 
 ---
 
@@ -224,9 +215,9 @@ Phases: 1
 
 Phase: Production [production]
   - ntp_prod_0001  topology=CH3L1_HUMAN_6NAG.top  input=starting structure  (mdin=ntp_prod_0001.mdin, mdout=ntp_prod_0001.mdout)
-  - ntp_prod_0002  topology=CH3L1_HUMAN_6NAG.top  input=step baf48c84  (mdin=ntp_prod_0002.mdin, mdout=ntp_prod_0002.mdout)
-  - ntp_prod_0004  topology=CH3L1_HUMAN_6NAG.top  input=step f11face0  (mdin=ntp_prod_0004.mdin, mdout=ntp_prod_0004.mdout)
-  - ntp_prod_0005  topology=CH3L1_HUMAN_6NAG.top  input=step dbee856a  (mdin=ntp_prod_0005.mdin, mdout=ntp_prod_0005.mdout)
+  - ntp_prod_0002  topology=CH3L1_HUMAN_6NAG.top  input=restart of ntp_prod_0001 (ntp_prod_0001.rst)  (mdin=ntp_prod_0002.mdin, mdout=ntp_prod_0002.mdout)
+  - ntp_prod_0004  topology=CH3L1_HUMAN_6NAG.top  input=restart of ntp_prod_0002 (ntp_prod_0002.rst)  (mdin=ntp_prod_0004.mdin, mdout=ntp_prod_0004.mdout)
+  - ntp_prod_0005  topology=CH3L1_HUMAN_6NAG.top  input=restart of ntp_prod_0004 (ntp_prod_0004.rst)  (mdin=ntp_prod_0005.mdin, mdout=ntp_prod_0005.mdout)
 
 Suggestions:
   - [needs_you] ntp_prod sequence is missing member(s) 3
@@ -281,8 +272,9 @@ cp simulation.yaml broken.yaml
 input_coords:
   source: step
   ref: 8f9b2e3f          # was de27bb87 (ntp_prod_0002) — now points at ntp_prod_0001
-  path: ntp_prod_0001.rst
 ```
+
+`ref` is the only thing you set. The restart filename is not repeated here: it lives on the producing step's `rst`, and AmberMeta follows `ref` to find it. (Ids are `uuid4` slices regenerated by every `discover` run, so copy the real ones out of *your* `simulation.yaml` rather than the ones printed here.)
 
 ```bash
 ambermeta validate --manifest broken.yaml
@@ -350,7 +342,7 @@ ambermeta validate --manifest broken.yaml --format json
 
 (A step's own `notes` ride along in the same `warnings`/`protocol_issues` channel as real findings — if you added a note in [§1](#1-discover-edit-and-export-a-v2-manifest), you'll see it listed there too. Reserve `notes` for things worth a reviewer's attention.)
 
-`--strict` turns this into exit code 1 the same way it did for the sequence hole. Fix the reference (`ref: de27bb87`, `path: ntp_prod_0002.rst`) and `validate` goes back to a bare `Validation: OK` — no findings section at all, which is itself the signal that continuity is clean.
+`--strict` turns this into exit code 1 the same way it did for the sequence hole. Restore the reference (`ref: de27bb87`, `ntp_prod_0002`'s id) and `validate` goes back to a bare `Validation: OK` — no findings section at all, which is itself the signal that continuity is clean.
 
 **Declaring an intentional gap.** If a step genuinely restarts from a checkpoint after a real time jump, say so — an unstated gap is what triggers "verify continuity"; a stated one that matches is silently confirmed (`INFO`, not surfaced as a problem):
 
@@ -364,186 +356,7 @@ For genuinely independent, non-contiguous runs (replicas), pass `--allow-gaps` i
 
 ---
 
-## 3. Upgrade a v1 manifest with `export`
-
-**Goal:** take a manifest written for AmberMeta 1.0 (flat `stages:`, `global_prmtop`) and get a canonical v2 file out of it — without hand-translating anything.
-
-v1 manifests still open: the reader auto-migrates a flat `stages:` list (with `global_prmtop`/`hmr_prmtop`/per-stage `inpcrd`) into a `Simulation` in memory. Here's a v1 manifest, unchanged from what 1.0 would have read:
-
-```yaml
-# v1.yaml
-global_prmtop: CH3L1_HUMAN_6NAG.top
-stages:
-  - name: ntp_prod_0001
-    stage_role: production
-    mdin: ntp_prod_0001.mdin
-    mdout: ntp_prod_0001.mdout
-    inpcrd: CH3L1_HUMAN_6NAG.crd
-
-  - name: ntp_prod_0002
-    stage_role: production
-    mdin: ntp_prod_0002.mdin
-    mdout: ntp_prod_0002.mdout
-    inpcrd: ntp_prod_0001.rst
-
-  - name: ntp_prod_0003
-    stage_role: production
-    mdin: ntp_prod_0003.mdin
-    mdout: ntp_prod_0003.mdout
-    inpcrd: ntp_prod_0002.rst
-```
-
-`plan --manifest` still reads it exactly as 1.0 did — a v1 flat manifest keeps the classic per-stage **Protocol summary** (the retained flat engine, not the new model):
-
-```bash
-ambermeta plan . --manifest v1.yaml
-```
-
-```
-Loading manifest: v1.yaml
-
-Protocol summary
-================
-Stages: 3
-Total steps: 15000000
-Total simulated time (ps): 60000.000
-
-- ntp_prod_0001
-  intent: production
-  result: Completed
-  prmtop: atoms=64528, box=98.34×76.05×81.23 Å, density=0.843 g/cc
-  mdin: steps=5000000, dt=0.004 ps
-  mdout: status=complete, steps=5000000, dt=0.004 ps, thermostat=Langevin @ 300 K, barostat=Berendsen, box=RECTILINEAR
-  inpcrd: atoms=64528, box
-  stats: frames=200, time=1020–20920 ps, temp=300.43 ± 1.25 K, density=1.0370 ± 0.0012 g/cc
-  restart: /tmp/ambermeta-tutorial/CH3L1_HUMAN_6NAG.crd
-  evidence: INFO: using global prmtop: CH3L1_HUMAN_6NAG.top
-  note: INFO: using global prmtop: CH3L1_HUMAN_6NAG.top
-...
-```
-
-`validate --manifest`, by contrast, always goes through the new model — it auto-migrates the v1 file first:
-
-```bash
-ambermeta validate --manifest v1.yaml
-```
-
-```
-Simulation validation
-
-Validation: OK
-```
-
-Now convert it for real:
-
-```bash
-ambermeta export v1.yaml -o v1_as_v2.yaml
-```
-
-```
-Wrote v2 manifest: v1_as_v2.yaml (yaml)
-```
-
-```yaml
-# v1_as_v2.yaml
-version: 2
-simulation:
-  topologies:
-  - id: top_0
-    path: CH3L1_HUMAN_6NAG.top
-    kind: normal
-  starting_structure: null
-phases:
-- id: ph_0
-  name: Production
-  role: production
-  order: 0
-steps:
-- id: st_0
-  name: ntp_prod_0001
-  phase: ph_0
-  order: 0
-  topology: top_0
-  input_coords:
-    source: path
-    path: CH3L1_HUMAN_6NAG.crd
-  mdin: ntp_prod_0001.mdin
-  mdout: ntp_prod_0001.mdout
-  mdcrd: null
-  notes: []
-- id: st_1
-  name: ntp_prod_0002
-  phase: ph_0
-  order: 1
-  topology: top_0
-  input_coords: { source: step, ref: st_0 }
-  mdin: ntp_prod_0002.mdin
-  mdout: ntp_prod_0002.mdout
-  mdcrd: null
-  notes: []
-- id: st_2
-  name: ntp_prod_0003
-  phase: ph_0
-  order: 2
-  topology: top_0
-  input_coords: { source: step, ref: st_1 }
-  mdin: ntp_prod_0003.mdin
-  mdout: ntp_prod_0003.mdout
-  mdcrd: null
-  notes: []
-```
-
-`global_prmtop` became a single `normal` pool entry; the three flat stages became three steps under one auto-named `Production` phase, chained `st_0 → st_1 → st_2`. One thing worth noticing: `starting_structure` came back `null`. The migrator only promotes coordinates to the Simulation-level starting structure when v1 declared them that way (a top-level `initial_coordinates` key); this v1 file set `inpcrd` explicitly on the first *stage* instead, so the migrator kept that as an explicit `path` on `st_0` rather than guessing it should be global. That's a good moment to clean it up by hand:
-
-```yaml
-# v1_as_v2.yaml, hand-edited
-simulation:
-  ...
-  starting_structure: CH3L1_HUMAN_6NAG.crd   # was null
-steps:
-- id: st_0
-  ...
-  input_coords:
-    source: starting_structure               # was {source: path, path: CH3L1_HUMAN_6NAG.crd}
-```
-
-```bash
-ambermeta validate --manifest v1_as_v2.yaml
-```
-
-```
-Simulation validation
-
-Validation: OK
-```
-
-```bash
-ambermeta plan . --manifest v1_as_v2.yaml
-```
-
-```
-Simulation summary
-==================
-Topologies (pool): 1
-  - top_0 [normal]  CH3L1_HUMAN_6NAG.top
-Starting structure: CH3L1_HUMAN_6NAG.crd
-Phases: 1
-
-Phase: Production [production]
-  - ntp_prod_0001  topology=CH3L1_HUMAN_6NAG.top  input=starting structure  (mdin=ntp_prod_0001.mdin, mdout=ntp_prod_0001.mdout)
-  - ntp_prod_0002  topology=CH3L1_HUMAN_6NAG.top  input=step st_0  (mdin=ntp_prod_0002.mdin, mdout=ntp_prod_0002.mdout)
-  - ntp_prod_0003  topology=CH3L1_HUMAN_6NAG.top  input=step st_1  (mdin=ntp_prod_0003.mdin, mdout=ntp_prod_0003.mdout)
-
-Validation: OK
-```
-
-Note that `plan` now prints the new **Simulation summary** rather than the old **Protocol summary** — the only thing that changed between the two `plan` invocations above is that the file on disk is v2, not the command. That's the whole point: whether a manifest reads as a flat protocol or a three-level Simulation is a property of the file, and `export` is how you move a file from the former to the latter for good.
-
-If you only need one field checked (`hmr_prmtop`, a stage role, …) rather than a full rewrite, the [manifest reference](manifest.md) documents exactly which v1 key becomes which v2 field. And if your downstream tooling can't take TOML/CSV *and* an HMR topology (CSV can't represent `hmr_prmtop` alongside `global_prmtop`), keep both a v2 (`export --to v2`) and a legacy (`export --to legacy`) copy side by side.
-
----
-
-## 4. Round-trip a manifest through the GUI
+## 3. Round-trip a manifest through the GUI
 
 **Goal:** discover, edit, validate, and save a manifest without touching a terminal — and confirm it's the exact file the CLI would have produced.
 

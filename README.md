@@ -20,7 +20,7 @@ That last part is what makes continuity checking exact: AmberMeta follows the de
 | **Metadata extraction** | Per-file parsers for topology, input, output, trajectory, and restart files. Atom/residue counts, box geometry, density, solvent model, HMR status, ensemble, thermostat/barostat, cutoff, SHAKE, completion status, and streaming thermodynamic statistics (temperature/pressure/density/energy, mean ± σ). |
 | **Simulation discovery** | Scans a directory into a `Simulation` draft: builds the topology pool, detects numbered sequences, infers each step's role (minimization / heating / equilibration / production) from content then path, and resolves the input-coordinate chain — all as explainable, one-click-undoable suggestions. |
 | **Continuity & sequence validation** | Per-file checks (atom-count agreement, box sanity) and whole-simulation checks (timing gaps between chained steps against a tolerance, missing members of a numbered run), with configurable per-step tolerances. |
-| **Manifest format v2** | A *tolerant reader* that opens v2 manifests natively and auto-migrates legacy v1 flat manifests in memory, plus a *canonical writer* (JSON or YAML). The GUI and CLI share the same document. |
+| **Manifest format v2** | One reader and one writer for the `Simulation → Phase → Step` document, in JSON or YAML. The GUI and CLI share the same document. |
 | **Reproducibility exports** | A full simulation/protocol summary (JSON/YAML), a Materials-&-Methods-ready summary that keeps the reproducibility-critical metadata and drops the noise, and a per-stage statistics CSV. |
 
 Two interfaces sit on one shared core:
@@ -44,11 +44,11 @@ python -m pip install -e .
 
 | Extra | Pulls in | Enables |
 |---|---|---|
-| _(base)_ | stdlib only | All parsers except NetCDF; JSON & CSV manifests; full CLI |
+| _(base)_ | stdlib only | All parsers except NetCDF; JSON manifests; full CLI |
 | `netcdf` | `netCDF4`, `scipy`, `numpy` | NetCDF trajectory (`.nc`) and NetCDF restart (`.ncrst`) parsing |
 | `gui` | `fastapi`, `uvicorn`, `websockets`, `python-multipart`, `pyyaml` | The browser GUI (`ambermeta gui`) |
 | `yaml` | `pyyaml` | YAML manifests |
-| `toml` | `tomli` (only on Python < 3.11; 3.11+ uses stdlib `tomllib`) | TOML manifests (legacy flat export only — see §4) |
+| `toml` | `tomli` (only on Python < 3.11) | Nothing any more — AmberMeta neither reads nor writes TOML. Retained so an existing `pip install ambermeta[toml]` keeps resolving |
 | `tests` | `pytest`, `pytest-cov`, `httpx` | Running the test suite |
 | `dev` | `black`, `ruff`, `mypy` | Linting and type checking |
 | `all` | everything runtime (netcdf + gui + yaml + toml) | The full feature set (does **not** include `tests`/`dev`) |
@@ -64,7 +64,7 @@ python -m pip install -e ".[gui]"     # just the GUI
 
 ## 3. Sixty-second quickstart (CLI)
 
-Every command below is run against the sample data in `tests/data/amber/md_test_files/` — a real 64,528-atom glycoprotein system with a six-member NPT production sequence.
+Every command below is run against the sample data in `tests/data/amber/md_test_files/` — a real 64,528-atom glycoprotein system with a five-run NPT production sequence (`ntp_prod_0001` … `ntp_prod_0005`).
 
 **Discover the directory into a Simulation draft and save it as a v2 manifest:**
 
@@ -80,10 +80,10 @@ Phases: 1
 
 Phase: Production [production]
   - ntp_prod_0001  topology=CH3L1_HUMAN_6NAG.top  input=starting structure  (mdin=ntp_prod_0001.mdin, mdout=ntp_prod_0001.mdout)
-  - ntp_prod_0002  topology=CH3L1_HUMAN_6NAG.top  input=step ffb5de6a  (mdin=ntp_prod_0002.mdin, mdout=ntp_prod_0002.mdout)
-  - ntp_prod_0003  topology=CH3L1_HUMAN_6NAG.top  input=step 295e0a9f  (mdin=ntp_prod_0003.mdin, mdout=ntp_prod_0003.mdout)
-  - ntp_prod_0004  topology=CH3L1_HUMAN_6NAG.top  input=step 9ab831d9  (mdin=ntp_prod_0004.mdin, mdout=ntp_prod_0004.mdout)
-  - ntp_prod_0005  topology=CH3L1_HUMAN_6NAG.top  input=step f0eb600f  (mdin=ntp_prod_0005.mdin, mdout=ntp_prod_0005.mdout)
+  - ntp_prod_0002  topology=CH3L1_HUMAN_6NAG.top  input=restart of ntp_prod_0001 (ntp_prod_0001.rst)  (mdin=ntp_prod_0002.mdin, mdout=ntp_prod_0002.mdout)
+  - ntp_prod_0003  topology=CH3L1_HUMAN_6NAG.top  input=restart of ntp_prod_0002 (ntp_prod_0002.rst)  (mdin=ntp_prod_0003.mdin, mdout=ntp_prod_0003.mdout)
+  - ntp_prod_0004  topology=CH3L1_HUMAN_6NAG.top  input=restart of ntp_prod_0003 (ntp_prod_0003.rst)  (mdin=ntp_prod_0004.mdin, mdout=ntp_prod_0004.mdout)
+  - ntp_prod_0005  topology=CH3L1_HUMAN_6NAG.top  input=restart of ntp_prod_0004 (ntp_prod_0004.rst)  (mdin=ntp_prod_0005.mdin, mdout=ntp_prod_0005.mdout)
 
 Suggestions:
   - [applied] CH3L1_HUMAN_6NAG.crd set as the starting structure
@@ -128,12 +128,12 @@ Simulation validation
 Validation: OK
 ```
 
-**Export the manifest — here, downgrading it to the legacy flat form some downstream tooling still expects:**
+**Re-emit the manifest — here, converting it from YAML to JSON:**
 
 ```text
-$ ambermeta export sim.yaml --to legacy -o legacy.yaml
+$ ambermeta export sim.yaml -o sim.json
 
-Wrote legacy manifest: tests/data/amber/md_test_files/legacy.yaml (yaml)
+Wrote v2 manifest: sim.json (json)
 ```
 
 The full, manifest-driven workflow — editing a manifest by hand, re-validating, and exporting reproducibility artifacts — is in the [CLI reference](docs/cli.md) and the [tutorials](docs/tutorials.md).
@@ -167,6 +167,7 @@ steps:
     input_coords: { source: starting_structure }
     mdin: min.in
     mdout: min.out
+    rst: min.rst                                  # the restart THIS step writes
   - id: st_prod_001
     name: prod_001
     phase: ph_prod
@@ -176,59 +177,38 @@ steps:
     mdin: prod_001.in
     mdout: prod_001.out
     mdcrd: prod_001.nc
+    rst: prod_001.rst
     gaps: { expected: null, tolerance: null }
 ```
 
-Each step's `input_coords.source` is one of `starting_structure`, `step` (with `ref: <step id>`), or `path` (with an explicit `path:`) — that's the continuity anchor the validator walks. `gaps.expected`/`gaps.tolerance` are the per-step expected inter-run gap and tolerance, in ps; both may be `null`.
+Each step's `input_coords.source` is one of `starting_structure`, `step` (with `ref: <step id>`), or `path` (with an explicit `path:`) — that's the continuity anchor the validator walks. A chained step names *only* the step it continues from: the restart file itself is recorded once, as `rst` on the step that wrote it, and `ref` is followed to reach it. `gaps.expected`/`gaps.tolerance` are the per-step expected inter-run gap and tolerance, in ps; both may be `null`.
 
-**v2 is written as JSON or YAML** (`write_simulation`). The legacy flat form (`export --to legacy`) can additionally write TOML or CSV, for tooling that hasn't moved to v2 yet.
+**v2 is read and written as JSON or YAML** (`load_simulation`/`write_simulation`) — those are the only manifest formats AmberMeta has. A `.toml` or `.csv` manifest is refused with a message saying so, rather than being half-parsed.
 
 ```bash
-ambermeta validate --manifest simulation.yaml --summary-path summary.json
+ambermeta validate --manifest simulation.yaml --format json
 ```
 
-The complete schema — every key, all input-coordinate sources, gap configuration, environment-variable expansion, role tokens, and the v1→v2 auto-migration table — is documented in the [manifest schema reference](docs/manifest.md).
+The complete schema — every key, all input-coordinate sources, gap configuration, environment-variable expansion, and role tokens — is documented in the [manifest schema reference](docs/manifest.md).
 
 ### Coming from v1?
 
-v1's flat `stages:` manifest — `global_prmtop`/`hmr_prmtop`, `initial_coordinates`, one stage per run — **still opens**. AmberMeta's reader detects it and auto-migrates it to a `Simulation` in memory: each stage becomes a step, contiguous same-role stages coalesce into a phase, `global_prmtop`/`hmr_prmtop` become pool entries, `initial_coordinates` becomes the starting structure, and the first step reads it while every later step chains from the previous step's restart. Saving always writes v2.
+**The v1 flat manifest file format has been removed.** A file whose top level is a `stages:` list (with `global_prmtop`/`hmr_prmtop`/`initial_coordinates`) no longer opens anywhere — not in `plan -m`, `validate --manifest`, `export`, or the GUI. Each of them fails cleanly, naming the file:
 
-Given this v1 manifest:
+```text
+$ ambermeta plan tests/data/amber/md_test_files -m old_manifest.yaml
 
-```yaml
-global_prmtop: CH3L1_HUMAN_6NAG.top
-stages:
-  - name: prod1
-    stage_role: production
-    mdin: ntp_prod_0001.mdin
-    mdout: ntp_prod_0001.mdout
-    inpcrd: ntp_prod_0000.rst
-  - name: prod2
-    stage_role: production
-    mdin: ntp_prod_0002.mdin
-    mdout: ntp_prod_0002.mdout
-    inpcrd: ntp_prod_0001.rst
+ERROR: old_manifest.yaml is not a v2 manifest (no 'steps' key). Rebuild it with `ambermeta discover <dir> --write <path>`.
 ```
 
-`ambermeta export protocol.yaml --to v2` prints the migrated v2 document:
+There is no migration command and no in-memory migration. Rebuild the document from the run directory it describes:
 
-```json
-{
-  "version": 2,
-  "simulation": { "topologies": [{"id": "top_0", "path": "CH3L1_HUMAN_6NAG.top", "kind": "normal"}], "starting_structure": null },
-  "phases": [{ "id": "ph_0", "name": "Production", "role": "production", "order": 0 }],
-  "steps": [
-    { "id": "st_0", "name": "prod1", "phase": "ph_0", "order": 0, "topology": "top_0",
-      "input_coords": {"source": "path", "path": "ntp_prod_0000.rst"},
-      "mdin": "ntp_prod_0001.mdin", "mdout": "ntp_prod_0001.mdout", "mdcrd": null, "notes": [] },
-    { "id": "st_1", "name": "prod2", "phase": "ph_0", "order": 1, "topology": "top_0",
-      "input_coords": {"source": "step", "ref": "st_0"},
-      "mdin": "ntp_prod_0002.mdin", "mdout": "ntp_prod_0002.mdout", "mdcrd": null, "notes": [] }
-  ]
-}
+```bash
+ambermeta discover runs/ --write sim.yaml     # a v2 draft from the files on disk
+ambermeta init runs/ -o sim.yaml              # or start from a blank v2 template
 ```
 
-Note that the second step's coordinate source resolved to `{"source": "step", "ref": "st_0"}` — the migrator recognized `ntp_prod_0001.rst` as the first step's own restart output and rewired it into an explicit continuity edge instead of leaving it as a bare path. `ambermeta plan`/`validate` still read v1 manifests directly too, and `ambermeta init --v2` generates a fresh v2 template if you'd rather start clean.
+`discover` reads the same files the old manifest pointed at, so the rebuilt document is derived from the runs themselves rather than from the stale paths in the v1 file. Check the inferred phase roles and the topology pool before relying on it.
 
 ---
 
@@ -239,7 +219,7 @@ The same engine is a library, with two layers. For the new model, work with `amb
 ```python
 from ambermeta.simulation import load_simulation
 
-sim = load_simulation("sim.yaml")   # v1 manifests auto-migrate on read
+sim = load_simulation("sim.yaml")   # a v2 manifest: JSON or YAML
 print(sim.topologies)
 # -> [Topology(id='top_CH3L1_HUMAN_6NAG', path='CH3L1_HUMAN_6NAG.top', kind='normal')]
 print(sim.starting_structure)
@@ -254,9 +234,9 @@ for phase in sim.phases:
 The retained parsing engine — file discovery, the flat `SimulationProtocol`/`SimulationStage` model, and the per-file parsers — is still the public top-level `ambermeta.*` surface, and still powers `discover`/`validate --manifest` under the hood via `ambermeta.gui.api.core_bridge`:
 
 ```python
-from ambermeta import auto_discover, load_protocol_from_manifest
+from ambermeta import auto_discover
 
-# Reconstruct a flat protocol from a directory (the legacy path `plan --recursive` uses)
+# Reconstruct a flat protocol from a directory (the path `plan --recursive` uses)
 protocol = auto_discover("runs/", recursive=True, auto_detect_restarts=True)
 print(len(protocol.stages), protocol.totals())
 
@@ -295,10 +275,10 @@ The server is server-authoritative (a single document held server-side; every mu
 | Command | Purpose |
 |---|---|
 | `ambermeta discover` | Scan a directory into a Simulation draft (topology pool, phases, steps with input-coord sources) and optionally write a v2 manifest |
-| `ambermeta plan` | Build and summarize a Simulation (v2, or auto-migrated v1) from a manifest, or a flat protocol via recursive discovery / interactive prompts; export summaries and stats |
+| `ambermeta plan` | Build and summarize a Simulation from a v2 manifest, or a flat protocol via recursive discovery / interactive prompts; export summaries and stats |
 | `ambermeta validate` | Validate individual files, or a whole Simulation manifest (`--manifest`) for continuity and sequence holes |
-| `ambermeta export` | Convert a manifest (v1 auto-migrated) to canonical v2, or to a legacy flat manifest for older tooling |
-| `ambermeta init` | Generate a manifest — v1 or v2 templates (`--v2`), or `--auto` to bootstrap a v1 flat manifest from a directory |
+| `ambermeta export` | Re-emit a v2 manifest as canonical v2, converting between JSON and YAML |
+| `ambermeta init` | Write a starting v2 manifest template (`--force` to overwrite) |
 | `ambermeta info` | Print parsed metadata for a single file (text / JSON / YAML) |
 | `ambermeta gui` | Launch the browser GUI |
 | `ambermeta completion` | Emit a shell-completion script (bash / zsh / fish) |
@@ -311,10 +291,10 @@ Global options (`--log-level`, `--log-file`, `-q/--quiet`) and every flag are do
 
 | Document | What's inside |
 |---|---|
-| [Architecture](docs/architecture.md) | How the engine is built: the Simulation → Phase → Step model, the topology pool and input-coordinate sources, continuity/sequence detection, manifest v2 and the auto-migrating reader, the shared role classifier, the parser layer, and the GUI's single-engine bridge |
+| [Architecture](docs/architecture.md) | How the engine is built: the Simulation → Phase → Step model, the topology pool and input-coordinate sources, continuity/sequence detection, manifest v2 and its reader, the shared role classifier, the parser layer, and the GUI's single-engine bridge |
 | [CLI reference](docs/cli.md) | Every command, flag, exit code, and environment variable |
 | [Python API reference](docs/api.md) | Classes, functions, parser metadata fields, and worked examples |
-| [Manifest schema](docs/manifest.md) | The full v2 schema, the four input formats, v1→v2 auto-migration, environment-variable expansion, and role tokens |
+| [Manifest schema](docs/manifest.md) | The full v2 schema, environment-variable expansion, and role tokens |
 | [GUI guide](docs/gui.md) | The browser app, its API surface, and its security model |
 | [Tutorials](docs/tutorials.md) | Task-oriented, step-by-step walkthroughs |
 | [Recipes](docs/recipes.md) | Copy-paste CLI one-liners for common jobs |
@@ -325,13 +305,13 @@ A single-page, fully offline HTML version of these docs lives at [`docs/ambermet
 
 ## 9. Compatibility & limitations
 
-- **v1 manifests still open.** A bare `stages:` list or a `global_prmtop`/`hmr_prmtop`/`initial_coordinates` manifest is auto-migrated to the v2 model on read; saving always writes v2. See [Coming from v1?](#coming-from-v1) above and the migration table in the [manifest reference](docs/manifest.md).
+- **v1 manifests no longer open.** A bare `stages:` list or a `global_prmtop`/`hmr_prmtop`/`initial_coordinates` manifest is refused with a clean error by every entry point, and there is no migration path. Rebuild from the run directory — see [Coming from v1?](#coming-from-v1) above.
 - **AMBER engines:** parses output from both `pmemd`/`pmemd.cuda` and `sander`. Completion detection, GPU model, wall-time, and ns/day are read from the `mdout` footer where present.
 - **NetCDF:** `.nc` trajectories and `.ncrst` restarts require the `netcdf` extra. Without it, ASCII trajectories/restarts still parse; NetCDF files are reported as unreadable rather than crashing the run.
 - **Fault tolerance:** `ambermeta plan` is fault-tolerant by default — an unreadable or malformed file is skipped, the error is recorded against its stage/step, and the run still completes (exit `0`). Pass `--strict` to make the first bad file a hard error.
 - **Role inference is heuristic.** When a phase or stage omits its role, AmberMeta infers it from the `mdin`/`mdout` content first, then the file/path name (word-boundary matching, via the shared classifier in `ambermeta/roles.py`) — and records that it did so. Verify inferred roles before publishing.
 - **The GUI's Inspector editors are stubs.** You can drag files onto slots and reorder phases/steps on the canvas, but there's no inline form yet for hand-editing a step's or phase's fields — do that in the manifest, or via the HTTP API.
-- **Manifest formats:** v2 is JSON or YAML only. The legacy flat form also supports TOML (needs `tomli` on Python < 3.11; stdlib `tomllib` on 3.11+) and CSV.
+- **Manifest formats:** JSON or YAML, in both directions. TOML and CSV are not manifest formats — a `.toml`/`.csv` manifest path is refused with a message that says so. (`--stats-csv` still writes a per-stage statistics CSV; that is a report, not a manifest.)
 
 ---
 

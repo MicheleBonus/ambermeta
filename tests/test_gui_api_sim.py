@@ -21,16 +21,16 @@ def test_get_document_empty(tmp_path):
     assert body["simulation"]["version"] == 2 and body["simulation"]["phases"] == []
 
 
-def test_open_v1_migrates_and_undo_redo(tmp_path):
+def test_open_v1_manifest_returns_a_clean_400(tmp_path):
+    """The v1 file format is gone; opening one must surface a clean error, not a 500."""
     v1 = {"global_prmtop": "wt.prmtop",
           "stages": [{"name": "min", "stage_role": "minimization", "mdin": "min.in"},
                      {"name": "prod_001", "stage_role": "production", "mdin": "prod_001.in"}]}
     (tmp_path / "legacy.json").write_text(json.dumps(v1))
     c = _client(tmp_path)
     r = c.post("/api/document/open", json={"path": "legacy.json"})
-    assert r.status_code == 200
-    roles = [p["role"] for p in r.json()["simulation"]["phases"]]
-    assert roles == ["minimization", "production"]
+    assert r.status_code == 400
+    assert "not a v2 manifest" in r.json()["detail"]
 
 
 def test_discover_returns_result_with_suggestions(sample_md_data_dir):
@@ -392,6 +392,28 @@ def test_plan_refuses_two_outputs_aimed_at_one_file(tmp_path):
 
     r = c.post("/api/plan", json={"summary_path": "b.json", "methods_summary_path": "b.json"})
     assert r.status_code == 400
+
+
+def test_plan_refuses_two_outputs_aimed_at_one_file_case_insensitively(tmp_path):
+    """The GUI's guard keys off os.path.normcase, like the CLI's: on Windows/NTFS S.json
+    and s.json are one file, so both artifacts "land" on distinct strings while one is
+    silently clobbered and the response still reports both as written. On POSIX they are
+    genuinely two files and must both be written. Assert what normcase actually reports
+    rather than guessing from the platform, so the real contract is exercised on either
+    OS instead of one of them being skipped."""
+    folds_case = os.path.normcase("A") == os.path.normcase("a")
+    c = _planned(tmp_path)
+    r = c.post("/api/plan", json={"summary_path": "S.json",
+                                  "methods_summary_path": "s.json"})
+    if folds_case:
+        assert r.status_code == 400
+        assert "own file" in r.json()["detail"]
+        assert not (tmp_path / "S.json").exists()
+        assert not (tmp_path / "s.json").exists()
+    else:
+        assert r.status_code == 200
+        assert [w["artifact"] for w in r.json()["written"]] == ["summary", "methods_summary"]
+        assert (tmp_path / "S.json").is_file() and (tmp_path / "s.json").is_file()
 
 
 def test_plan_validates_the_format_before_saving_the_manifest(tmp_path):

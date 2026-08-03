@@ -1,33 +1,5 @@
 """Regression tests for verified bugs (Task 7 of reliability hardening)."""
 
-import sys
-
-import pytest
-
-from ambermeta.manifest import _toml_escape, write_manifest
-
-
-# --- 7a: TOML export must escape backslashes (Windows paths) ---
-
-def test_toml_escape_backslashes_and_quotes():
-    assert _toml_escape(r"C:\data\file.prmtop") == r"C:\\data\\file.prmtop"
-    assert _toml_escape('quote"here') == 'quote\\"here'
-    assert _toml_escape(r"C:\a\"b") == r"C:\\a\\\"b"
-
-
-def test_toml_export_roundtrips_windows_path(tmp_path):
-    """A TOML manifest with a Windows path must be re-parseable."""
-    tomllib = pytest.importorskip(
-        "tomllib" if sys.version_info >= (3, 11) else "tomli"
-    )
-
-    payload = {"stages": [{"name": "prod", "prmtop": r"C:\runs\sys.prmtop"}]}
-    out = tmp_path / "m.toml"
-    write_manifest(payload, str(out), "toml")
-    with open(out, "rb") as fh:
-        parsed = tomllib.load(fh)
-    assert parsed["stages"][0]["prmtop"] == r"C:\runs\sys.prmtop"
-
 
 # --- 7d: inpcrd ASCII box line parses correctly with CRLF line endings ---
 

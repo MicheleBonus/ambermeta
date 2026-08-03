@@ -271,50 +271,21 @@ def test_load_protocol_from_gui_export_inherits_global_prmtop(tmp_path, monkeypa
     global_prmtop.write_text("")
     mdin_file.write_text("")
 
-    # Mirrors GUI export shape: top-level global_prmtop + stages list.
-    manifest_path = base_dir / "protocol.json"
-    manifest_path.write_text(
-        json.dumps(
-            {
-                "base_directory": ".",
-                "global_prmtop": "system.prmtop",
-                "stages": [
-                    {
-                        "name": "prod",
-                        "stage_role": "production",
-                        "mdin": "prod.mdin",
-                    }
-                ],
-            }
-        )
-    )
-
     monkeypatch.setattr(protocol, "PrmtopParser", _make_parser({"n_atoms": 10}))
     monkeypatch.setattr(protocol, "MdinParser", _make_parser({"stage_role": "production", "length_steps": 100}))
 
-    proto = protocol.load_protocol_from_manifest(manifest_path, skip_cross_stage_validation=True)
+    # Mirrors GUI export shape: top-level global_prmtop + stages list, fed straight
+    # to auto_discover's in-memory door (the file-reading upgrade path is gone).
+    proto = auto_discover(
+        str(base_dir),
+        manifest=[{"name": "prod", "stage_role": "production", "mdin": "prod.mdin"}],
+        global_prmtop="system.prmtop",
+        skip_cross_stage_validation=True,
+    )
 
     assert len(proto.stages) == 1
     assert proto.stages[0].prmtop is not None
     assert proto.stages[0].prmtop.filename == str(global_prmtop)
-
-
-def test_load_protocol_from_manifest_uses_parent_directory(tmp_path, monkeypatch):
-    stage_dir = tmp_path / "inputs"
-    stage_dir.mkdir()
-
-    (stage_dir / "alpha.mdin").write_text("")
-    manifest_path = tmp_path / "protocol.json"
-    manifest_path.write_text(
-        json.dumps({"alpha": {"files": {"mdin": "inputs/alpha.mdin"}, "stage_role": "prep"}})
-    )
-
-    monkeypatch.setattr(protocol, "MdinParser", _make_parser({"stage_role": "prep"}))
-
-    proto = protocol.load_protocol_from_manifest(manifest_path, skip_cross_stage_validation=True)
-
-    assert len(proto.stages) == 1
-    assert proto.stages[0].mdin.filename == str(stage_dir / "alpha.mdin")
 
 
 def test_manifest_stage_role_rules_are_applied(tmp_path, monkeypatch):
@@ -322,19 +293,15 @@ def test_manifest_stage_role_rules_are_applied(tmp_path, monkeypatch):
     stage_dir.mkdir()
 
     (stage_dir / "heat_01.mdin").write_text("")
-    manifest_path = stage_dir / "manifest.json"
-    manifest_path.write_text(
-        json.dumps(
-            {
-                "stage_role_rules": [{"pattern": "^heat", "role": "heating"}],
-                "stages": [{"name": "heat_01", "mdin": "heat_01.mdin"}],
-            }
-        )
-    )
 
     monkeypatch.setattr(protocol, "MdinParser", _make_parser({"stage_role": None}))
 
-    proto = protocol.load_protocol_from_manifest(manifest_path, skip_cross_stage_validation=True)
+    proto = auto_discover(
+        str(stage_dir),
+        manifest=[{"name": "heat_01", "mdin": "heat_01.mdin"}],
+        grouping_rules={"^heat": "heating"},
+        skip_cross_stage_validation=True,
+    )
 
     assert len(proto.stages) == 1
     stage = proto.stages[0]
@@ -352,34 +319,16 @@ def test_manifest_settings_strict_validation_controls_cross_stage_checks(tmp_pat
     monkeypatch.setattr(protocol, "MdcrdParser", _make_parser({"time_end": 20.0}))
     monkeypatch.setattr(protocol, "InpcrdParser", _make_parser({"time": 15.0}))
 
-    strict_manifest = stage_dir / "strict.json"
-    strict_manifest.write_text(
-        json.dumps(
-            {
-                "settings": {"strict_validation": True},
-                "stages": [
-                    {"name": "stage1", "mdcrd": "stage1.mdcrd"},
-                    {"name": "stage2", "inpcrd": "stage2.rst"},
-                ],
-            }
-        )
-    )
+    stages = [
+        {"name": "stage1", "mdcrd": "stage1.mdcrd"},
+        {"name": "stage2", "inpcrd": "stage2.rst"},
+    ]
 
-    relaxed_manifest = stage_dir / "relaxed.json"
-    relaxed_manifest.write_text(
-        json.dumps(
-            {
-                "settings": {"strict_validation": False},
-                "stages": [
-                    {"name": "stage1", "mdcrd": "stage1.mdcrd"},
-                    {"name": "stage2", "inpcrd": "stage2.rst"},
-                ],
-            }
-        )
-    )
-
-    strict_proto = protocol.load_protocol_from_manifest(strict_manifest)
-    relaxed_proto = protocol.load_protocol_from_manifest(relaxed_manifest)
+    # settings.strict_validation True/False used to translate to
+    # skip_cross_stage_validation False/True inside load_protocol_from_manifest;
+    # exercise that translation directly against auto_discover.
+    strict_proto = auto_discover(str(stage_dir), manifest=stages, skip_cross_stage_validation=False)
+    relaxed_proto = auto_discover(str(stage_dir), manifest=stages, skip_cross_stage_validation=True)
 
     assert any("overlap" in note.lower() for note in strict_proto.stages[1].continuity)
     assert relaxed_proto.stages[1].continuity == []
@@ -395,20 +344,15 @@ def test_manifest_settings_allow_gaps_marks_unexpected_gap_as_allowed(tmp_path, 
     monkeypatch.setattr(protocol, "MdcrdParser", _make_parser({"time_end": 10.0}))
     monkeypatch.setattr(protocol, "InpcrdParser", _make_parser({"time": 15.0}))
 
-    manifest_path = stage_dir / "manifest.json"
-    manifest_path.write_text(
-        json.dumps(
-            {
-                "settings": {"strict_validation": True, "allow_gaps": True},
-                "stages": [
-                    {"name": "stage1", "mdcrd": "stage1.mdcrd"},
-                    {"name": "stage2", "inpcrd": "stage2.rst"},
-                ],
-            }
-        )
-    )
+    stages = [
+        {"name": "stage1", "mdcrd": "stage1.mdcrd"},
+        {"name": "stage2", "inpcrd": "stage2.rst"},
+    ]
 
-    proto = protocol.load_protocol_from_manifest(manifest_path)
+    proto = auto_discover(
+        str(stage_dir), manifest=stages,
+        skip_cross_stage_validation=False, allow_unexpected_gaps=True,
+    )
     assert any("allowed by manifest settings.allow_gaps" in note for note in proto.stages[1].continuity)
 
 
@@ -572,3 +516,30 @@ def test_to_plain_converts_numpy_scalars_and_tuples_for_yaml():
     assert plain["name"] == "prod" and plain["untouched"] is None
     # The point of the exercise: it now round-trips through safe_dump.
     assert yaml.safe_load(yaml.safe_dump(plain))["nested"][0]["x"] == 1.5
+
+
+def test_write_protocol_outputs_creates_parent_directories(tmp_path):
+    """The CLI's old writer raised FileNotFoundError on a missing parent."""
+    from ambermeta.protocol import write_protocol_outputs
+    sim_protocol = protocol.SimulationProtocol()
+    target = tmp_path / "reports" / "deep" / "summary.json"
+
+    result = write_protocol_outputs(sim_protocol, {"summary": str(target)})
+
+    assert target.is_file()
+    assert result["written"] == [{"artifact": "summary", "path": str(target)}]
+    assert result["failed"] == []
+
+
+def test_write_protocol_outputs_rejects_an_unknown_artifact(tmp_path):
+    from ambermeta.protocol import write_protocol_outputs
+    with pytest.raises(ValueError, match="unknown plan artifact"):
+        write_protocol_outputs(protocol.SimulationProtocol(), {"nope": str(tmp_path / "x")})
+
+
+def test_write_protocol_outputs_rejects_an_unsupported_summary_format(tmp_path):
+    from ambermeta.protocol import write_protocol_outputs
+    with pytest.raises(ValueError, match="json or yaml"):
+        write_protocol_outputs(protocol.SimulationProtocol(),
+                               {"summary": str(tmp_path / "s.toml")},
+                               summary_format="toml")

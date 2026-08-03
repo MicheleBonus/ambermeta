@@ -19,12 +19,8 @@ from ambermeta.errors import AmberMetaError, FileLoadError, classify_exception
 from ambermeta.logging_config import get_logger
 from ambermeta.roles import classify_role
 from ambermeta.manifest import (
-    load_manifest,
     validate_manifest,
-    _expand_env_vars,
     _normalize_manifest,
-    normalize_stage_keys,
-    STAGE_FILE_KINDS,
 )
 
 logger = get_logger(__name__)
@@ -1565,132 +1561,6 @@ def auto_discover(
     return protocol
 
 
-def load_protocol_from_manifest(
-    manifest_path: str | os.PathLike[str],
-    *,
-    directory: Optional[str] = None,
-    include_roles: Optional[List[str]] = None,
-    include_stems: Optional[List[str]] = None,
-    restart_files: Optional[Dict[str, str]] = None,
-    skip_cross_stage_validation: Optional[bool] = None,
-    recursive: bool = False,
-    expand_env: bool = True,
-    global_prmtop: Optional[str] = None,
-    hmr_prmtop: Optional[str] = None,
-    progress_callback: Optional[Callable[[str, int, int], None]] = None,
-    strict: bool = False,
-) -> SimulationProtocol:
-    """Build a protocol using a manifest file.
-
-    The manifest can be YAML, JSON, TOML, or CSV. Relative file paths are
-    resolved against the provided ``directory`` or the manifest's parent
-    directory when omitted.
-
-    Parameters
-    ----------
-    manifest_path:
-        Path to the manifest file.
-    directory:
-        Base directory for resolving relative paths in the manifest.
-    include_roles:
-        Only include stages with these roles.
-    include_stems:
-        Only include stages with these names.
-    restart_files:
-        Mapping of stage name/role to restart file paths.
-    skip_cross_stage_validation:
-        If True, skip continuity checks between stages.
-    recursive:
-        If True, search subdirectories for files.
-    expand_env:
-        If True, expand environment variables in file paths.
-    global_prmtop:
-        Global prmtop file to use for stages without their own prmtop.
-    hmr_prmtop:
-        HMR prmtop file to use for stages with large timesteps (dt >= 0.004).
-    progress_callback:
-        Optional callback function(stage_name, current, total) for progress reporting.
-    """
-
-    manifest_data = load_manifest(manifest_path, expand_env=expand_env)
-    base_dir = directory or str(Path(manifest_path).parent)
-
-    # Extract global settings from manifest if present
-    manifest_global_prmtop = None
-    manifest_hmr_prmtop = None
-    manifest_stage_role_rules: Optional[Dict[str, str]] = None
-    manifest_skip_cross_stage_validation: Optional[bool] = None
-    manifest_allow_unexpected_gaps = False
-    stages_list = manifest_data
-
-    if isinstance(manifest_data, dict):
-        # Manifest may contain global settings
-        manifest_global_prmtop = manifest_data.get("global_prmtop")
-        if manifest_global_prmtop is None:
-            # Backward compatibility for older GUI exports.
-            manifest_global_prmtop = manifest_data.get("prmtop")
-        manifest_hmr_prmtop = manifest_data.get("hmr_prmtop")
-
-        settings = manifest_data.get("settings")
-        if isinstance(settings, dict):
-            if "strict_validation" in settings:
-                strict_validation = bool(settings.get("strict_validation"))
-                manifest_skip_cross_stage_validation = not strict_validation
-            if "allow_gaps" in settings:
-                manifest_allow_unexpected_gaps = bool(settings.get("allow_gaps"))
-
-        stage_role_rules = manifest_data.get("stage_role_rules")
-        if isinstance(stage_role_rules, list):
-            parsed_rules: Dict[str, str] = {}
-            for rule in stage_role_rules:
-                if not isinstance(rule, dict):
-                    continue
-                pattern = rule.get("pattern")
-                role = rule.get("role")
-                if isinstance(pattern, str) and isinstance(role, str):
-                    parsed_rules[pattern] = role
-            manifest_stage_role_rules = parsed_rules or None
-        elif isinstance(stage_role_rules, dict):
-            parsed_rules = {
-                str(pattern): str(role)
-                for pattern, role in stage_role_rules.items()
-                if pattern is not None and role is not None
-            }
-            manifest_stage_role_rules = parsed_rules or None
-
-        # Extract stages list
-        if "stages" in manifest_data and isinstance(manifest_data["stages"], list):
-            stages_list = manifest_data["stages"]
-        else:
-            # It's a dict with stage names as keys
-            stages_list = manifest_data
-
-    # CLI parameters override manifest settings
-    effective_global_prmtop = global_prmtop or manifest_global_prmtop
-    effective_hmr_prmtop = hmr_prmtop or manifest_hmr_prmtop
-    effective_skip_cross_stage_validation = (
-        skip_cross_stage_validation
-        if skip_cross_stage_validation is not None
-        else bool(manifest_skip_cross_stage_validation)
-    )
-
-    return auto_discover(
-        base_dir,
-        manifest=stages_list,
-        grouping_rules=manifest_stage_role_rules,
-        include_roles=include_roles,
-        include_stems=include_stems,
-        restart_files=restart_files,
-        skip_cross_stage_validation=effective_skip_cross_stage_validation,
-        recursive=recursive,
-        global_prmtop=effective_global_prmtop,
-        hmr_prmtop=effective_hmr_prmtop,
-        allow_unexpected_gaps=manifest_allow_unexpected_gaps,
-        progress_callback=progress_callback,
-        strict=strict,
-    )
-
-
 class ProtocolBuilder:
     """Fluent builder for constructing SimulationProtocol objects.
 
@@ -1711,8 +1581,6 @@ class ProtocolBuilder:
 
     def __init__(self) -> None:
         self._directory: Optional[str] = None
-        self._manifest: Optional[Dict[str, Any] | List[Dict[str, Any]]] = None
-        self._manifest_path: Optional[str] = None
         self._grouping_rules: Optional[Dict[str, str]] = None
         self._include_roles: Optional[List[str]] = None
         self._include_stems: Optional[List[str]] = None
@@ -1721,7 +1589,6 @@ class ProtocolBuilder:
         self._recursive: bool = False
         self._auto_detect_restarts: bool = False
         self._pattern_filter: Optional[str] = None
-        self._expand_env: bool = True
         self._stages: List[SimulationStage] = []
         self._stage_tolerances: Dict[str, tuple[float, float]] = {}
 
@@ -1737,29 +1604,6 @@ class ProtocolBuilder:
         """
         self._directory = os.path.abspath(directory)
         self._recursive = recursive
-        return self
-
-    def from_manifest(
-        self,
-        manifest_path: str,
-        directory: Optional[str] = None,
-        expand_env: bool = True,
-    ) -> "ProtocolBuilder":
-        """Load stages from a manifest file.
-
-        Parameters
-        ----------
-        manifest_path:
-            Path to YAML, JSON, TOML, or CSV manifest.
-        directory:
-            Base directory for relative paths (defaults to manifest location).
-        expand_env:
-            If True, expand environment variables in paths.
-        """
-        self._manifest_path = manifest_path
-        self._manifest = load_manifest(manifest_path, expand_env=expand_env)
-        self._directory = directory or str(Path(manifest_path).parent)
-        self._expand_env = expand_env
         return self
 
     def with_grouping_rules(self, rules: Dict[str, str]) -> "ProtocolBuilder":
@@ -1923,20 +1767,6 @@ class ProtocolBuilder:
         if self._stages:
             # Manual stages were added
             protocol = SimulationProtocol(stages=list(self._stages))
-        elif self._manifest is not None and self._directory:
-            # Use manifest
-            protocol = auto_discover(
-                self._directory,
-                manifest=self._manifest,
-                grouping_rules=self._grouping_rules,
-                include_roles=self._include_roles,
-                include_stems=self._include_stems,
-                restart_files=self._restart_files,
-                skip_cross_stage_validation=True,  # We'll validate after applying tolerances
-                recursive=self._recursive,
-                auto_detect_restarts=self._auto_detect_restarts,
-                pattern_filter=self._pattern_filter,
-            )
         elif self._directory:
             # Discover from directory
             protocol = auto_discover(
@@ -1951,7 +1781,7 @@ class ProtocolBuilder:
                 pattern_filter=self._pattern_filter,
             )
         else:
-            raise ValueError("No directory or manifest specified. Use from_directory() or from_manifest().")
+            raise ValueError("No directory specified. Use from_directory().")
 
         # Apply per-stage tolerances
         for stage in protocol.stages:
@@ -2030,11 +1860,75 @@ def write_stats_csv(protocol: "SimulationProtocol", filepath: str) -> None:
             writer.writerow({k: row.get(k, "") for k in STATS_CSV_COLUMNS})
 
 
+PLAN_ARTIFACTS = ("summary", "methods_summary", "stats_csv")
+
+
+def write_protocol_outputs(protocol: "SimulationProtocol", targets: Dict[str, str],
+                           summary_format: str = "json") -> Dict[str, Any]:
+    """Write the requested plan artifacts from one already-built protocol.
+
+    ``targets`` maps an artifact name from :data:`PLAN_ARTIFACTS` to an already-resolved
+    absolute path; the caller is responsible for containment. Shared by `ambermeta plan`
+    and the GUI's Plan action so the two cannot drift.
+    """
+    unknown = sorted(set(targets) - set(PLAN_ARTIFACTS))
+    if unknown:
+        raise ValueError(f"unknown plan artifact(s): {', '.join(unknown)}")
+    if summary_format not in ("json", "yaml"):
+        raise ValueError(f"summary format must be json or yaml, got: {summary_format}")
+
+    written: List[Dict[str, str]] = []
+    failed: List[Dict[str, str]] = []
+    warnings: List[str] = []
+    if not protocol.stages and targets:
+        warnings.append("The document has no steps, so the summaries describe nothing.")
+
+    def _dump(payload: Dict[str, Any], path: str, fmt: str) -> None:
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        plain = to_plain(payload)     # numpy scalars: safe_dump rejects them outright
+        with open(path, "w", encoding="utf-8") as fh:
+            if fmt == "yaml":
+                import yaml as _yaml
+                _yaml.safe_dump(plain, fh, sort_keys=False)
+            else:
+                json.dump(plain, fh, indent=2)
+
+    def _attempt(artifact: str, write) -> None:
+        """Record what each artifact did. One unwritable path must not hide the rest:
+        raising here discarded the list of files that had already landed, so the caller
+        was told only that something failed, not what survived."""
+        path = targets[artifact]
+        try:
+            write(path)
+        except OSError as exc:
+            failed.append({"artifact": artifact, "path": path, "error": str(exc)})
+        else:
+            written.append({"artifact": artifact, "path": path})
+
+    if "summary" in targets:
+        _attempt("summary", lambda p: _dump(protocol.to_dict(), p, summary_format))
+    if "methods_summary" in targets:
+        # Always JSON: it is the publication-facing artifact and the CLI writes JSON.
+        _attempt("methods_summary", lambda p: _dump(protocol.to_methods_dict(), p, "json"))
+    if "stats_csv" in targets:
+        def _stats(path: str) -> None:
+            os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+            write_stats_csv(protocol, path)
+        _attempt("stats_csv", _stats)
+        if protocol.stages and not any(s.mdout for s in protocol.stages):
+            # Rows are written for every stage either way; what is missing is their content.
+            warnings.append("No step has an mdout, so every row in the statistics CSV is empty.")
+
+    return {"written": written, "failed": failed, "warnings": warnings}
+
+
 __all__ = [
     "SimulationProtocol",
     "write_stats_csv",
     "STATS_CSV_COLUMNS",
     "to_plain",
+    "PLAN_ARTIFACTS",
+    "write_protocol_outputs",
     "SimulationStage",
     "ProtocolBuilder",
     "auto_discover",
@@ -2042,7 +1936,5 @@ __all__ = [
     "infer_stage_role_from_content",
     "auto_detect_restart_chain",
     "smart_group_files",
-    "load_manifest",
-    "load_protocol_from_manifest",
     "HMR_TIMESTEP_THRESHOLD_PS",
 ]

@@ -1,5 +1,9 @@
 # tests/test_gui_core_bridge_sim.py
 import json
+
+import pytest
+
+from ambermeta.errors import AmberMetaError
 from ambermeta.gui.api import core_bridge
 from ambermeta.simulation import Simulation, Phase, Step, Topology, resolve_input_coords
 
@@ -13,15 +17,15 @@ def _sim():
     )
 
 
-def test_open_v1_manifest_migrates(tmp_path):
+def test_open_v1_manifest_raises_a_clear_error(tmp_path):
+    """The v1 file format is gone; opening one must fail with a clear message, not a crash."""
     v1 = {"global_prmtop": "wt.prmtop",
           "stages": [{"name": "min", "stage_role": "minimization", "mdin": "min.in"},
                      {"name": "prod_001", "stage_role": "production", "mdin": "prod_001.in"}]}
     path = tmp_path / "legacy.json"
     path.write_text(json.dumps(v1))
-    sim = core_bridge.open_simulation(str(path), str(tmp_path))
-    assert sim.version == 2
-    assert [p.role for p in sim.phases] == ["minimization", "production"]
+    with pytest.raises(AmberMetaError, match="not a v2 manifest"):
+        core_bridge.open_simulation(str(path), str(tmp_path))
 
 
 def test_save_then_preview_round_trip(tmp_path):

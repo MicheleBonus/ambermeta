@@ -1,0 +1,62 @@
+name: Tests
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  python-tests:
+    name: pytest (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.9', '3.12']
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install package and test dependencies
+        # Both extras are required and neither is sufficient alone.
+        # [tests] gives pytest + httpx: without httpx, starlette.testclient
+        # raises on import and the ENTIRE collection aborts, running no tests.
+        # [all] gives fastapi, numpy and pyyaml, each imported unguarded at
+        # module level by a test file (test_gui_api_sim.py, test_parser_fixes.py,
+        # test_protocol.py) - so each missing one is a collection error, not a skip.
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[all,tests]"
+
+      - name: Run pytest
+        run: python -m pytest
+
+  frontend-tests:
+    name: vitest
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: ambermeta/gui/frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: ambermeta/gui/frontend
+        run: npm ci
+
+      - name: Run vitest
+        working-directory: ambermeta/gui/frontend
+        run: npm test

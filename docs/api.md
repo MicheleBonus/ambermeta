@@ -5,7 +5,7 @@
 There are **two layers**, and it matters which one you reach for:
 
 1. **`ambermeta.simulation`** — the new Simulation → Phase → Step model (plain dataclasses). Read/write manifest v2, round-trip a `Simulation` object, hand it to the GUI's own helpers. **Not yet re-exported at the `ambermeta` top level** — import it from `ambermeta.simulation` explicitly.
-2. **Top-level `ambermeta.*`** — the retained parsing/assembly engine that powers file parsing, the legacy flat `plan --recursive` path, and everything under the hood of layer 1. This is where the parsers, `SimulationProtocol`/`SimulationStage`, and the discovery utilities live. Nothing here was removed; it is still the public `__all__`.
+2. **Top-level `ambermeta.*`** — the retained parsing/assembly engine that powers file parsing, the flat `plan --recursive` path, and everything under the hood of layer 1. This is where the parsers, `SimulationProtocol`/`SimulationStage`, and the discovery utilities live. The manifest *file* readers that used to live here are gone: reading a manifest means `ambermeta.simulation.load_simulation`, layer 1.
 
 ```python
 # Layer 1 — the new model
@@ -18,8 +18,7 @@ from ambermeta.simulation import (
 # Layer 2 — the retained parsing/assembly engine (ambermeta/__init__.py __all__)
 from ambermeta import (
     SimulationProtocol, SimulationStage, ProtocolBuilder,
-    auto_discover, load_protocol_from_manifest, load_manifest,
-    detect_numeric_sequences, smart_group_files,
+    auto_discover, detect_numeric_sequences, smart_group_files,
     auto_detect_restart_chain, infer_stage_role_from_content,
     AmberMetaError, FileLoadError, __version__,
 )
@@ -39,7 +38,7 @@ from ambermeta.parsers import (
 >
 > Field names are AMBER-flavored and differ from intuition: `hmr_active` (not `is_hmr`), `residue_composition` (not `residue_counts`), `temp_control`/`press_control`/`stage_role` on `mdin`. The exact field list per file type is in [§7](#7-parser-metadata-fields).
 
-Examples below run against the sample data shipped in the repo: `tests/data/amber/md_test_files/` — a 64,528-atom glycoprotein system (`CH3L1_HUMAN_6NAG.top`/`.crd`) with a six-member NPT production sequence `ntp_prod_0000..0005`.
+Examples below run against the sample data shipped in the repo: `tests/data/amber/md_test_files/` — a 64,528-atom glycoprotein system (`CH3L1_HUMAN_6NAG.top`/`.crd`) with a five-run NPT production sequence `ntp_prod_0001..0005`. (`ntp_prod_0000.rst` also ships, but it is a bare restart with no `mdin`/`mdout`, so nothing turns it into a step.)
 
 ---
 
@@ -69,6 +68,7 @@ class Step:
     mdin: Optional[str] = None
     mdout: Optional[str] = None
     mdcrd: Optional[str] = None
+    rst: Optional[str] = None             # the restart this run WRITES (-r restrt)
     expected_gap_ps: Optional[float] = None
     gap_tolerance_ps: Optional[float] = None
     notes: List[str] = field(default_factory=list)
@@ -94,7 +94,9 @@ class Simulation:
 def load_simulation(path: str) -> Simulation
 ```
 
-Reads any manifest — v2, or a **v1 flat manifest**, which is auto-migrated in memory (each stage becomes a `Step`; contiguous same-role stages coalesce into one `Phase`; `global_prmtop`/`hmr_prmtop` become pool entries; `initial_coordinates` becomes the starting structure). See the [manifest schema](manifest.md) for the exact migration table.
+Reads a **v2 manifest** — YAML or JSON, chosen by the file extension. It is the only manifest reader AmberMeta has, and the one `plan -m`, `validate --manifest`, `export`, and the GUI all go through.
+
+Anything that isn't a v2 document raises `AmberMetaError` rather than returning an empty `Simulation`: a `.toml`/`.csv` path ("AmberMeta reads and writes manifests as YAML or JSON only"), a v1 flat `stages:` file ("is not a v2 manifest (no 'steps' key)"), and a v2 document whose `steps` list is absent ("is a v2 manifest but is missing its 'steps' list"). The v1 file format has no reader and no migration path.
 
 ### `write_simulation()`
 
@@ -102,7 +104,7 @@ Reads any manifest — v2, or a **v1 flat manifest**, which is auto-migrated in 
 def write_simulation(sim: Simulation, path: str, fmt: str) -> None
 ```
 
-Writes a `Simulation` as a v2 manifest. `fmt` is `"json"` or `"yaml"` **only** — v2 has no TOML/CSV writer (use `export --to legacy` for those, which flattens to the v1 shape first).
+Writes a `Simulation` as a v2 manifest. `fmt` is `"json"` or `"yaml"` **only** — those are the two manifest formats, in both directions, and both are lossless. Any other value raises `ValueError`.
 
 ### `simulation_to_payload()` / `payload_to_simulation()`
 
@@ -113,12 +115,30 @@ def payload_to_simulation(payload: Dict[str, Any]) -> Simulation
 
 The v2 dict round-trip `write_simulation`/`load_simulation` use internally — reach for these directly when you want the dict (e.g. to `json.dumps` it yourself, hand it to a web response, or inspect it without touching disk).
 
+### `resolve_input_coords()`
+
+```python
+def resolve_input_coords(sim: Simulation, step: Step) -> Optional[str]
+```
+
+Returns the path a step actually starts from, or `None` if it can't be resolved. This is the only correct way to answer "which file does this step read?", because the answer is not stored on the step itself:
+
+| `input_coords.source` | Resolves to |
+|---|---|
+| `starting_structure` | `sim.starting_structure` |
+| `step` | the `rst` of the step whose `id` equals `input_coords.ref`, falling back to `input_coords.path` if that lookup finds nothing |
+| `path` | `input_coords.path`, verbatim |
+
+For a chained step, `input_coords.path` is `None` and the filename lives on the *producing* step's `rst` — recorded once, so renaming or reordering either step cannot desynchronize the pair. Continuity checking and the CLI's `input=restart of <step> (<file>)` line both go through this function.
+
 ### Worked example: discover, inspect, round-trip
 
 ```python
 import os
 from ambermeta.gui.api.core_bridge import discover_draft
-from ambermeta.simulation import simulation_to_payload, write_simulation, load_simulation
+from ambermeta.simulation import (
+    simulation_to_payload, write_simulation, load_simulation, resolve_input_coords,
+)
 
 base = os.path.abspath("tests/data/amber/md_test_files")
 result = discover_draft(base)
@@ -137,7 +157,14 @@ sim.phases[0].steps[0].input_coords
 # InputCoords(source='starting_structure', ref=None, path=None)
 
 sim.phases[0].steps[1].input_coords
-# InputCoords(source='step', ref='4a09deaa', path='ntp_prod_0001.rst')
+# InputCoords(source='step', ref='4a09deaa', path=None)
+#   `ref` is steps[0].id — a uuid4 slice, regenerated on every discover run.
+
+sim.phases[0].steps[0].rst
+# 'ntp_prod_0001.rst'   <- the restart lives on the step that WROTE it
+
+resolve_input_coords(sim, sim.phases[0].steps[1])
+# 'ntp_prod_0001.rst'   <- ... and is reached by following `ref`
 
 write_simulation(sim, "simulation.json", "json")
 sim2 = load_simulation("simulation.json")
@@ -145,7 +172,7 @@ len(sim2.phases) == len(sim.phases)
 # True
 ```
 
-`input_coords` on the first step of a phase resolves to the Simulation's starting structure; every later step chains from the previous step's output restart — `discover_draft` already resolves that restart's path into `input_coords.path` so continuity can read its time without re-scanning the directory.
+`input_coords` on the first step of a phase resolves to the Simulation's starting structure; every later step chains from the previous step's output restart. That restart is recorded **once**, as `rst` on the step that produced it — a chained consumer stores only `ref`, and `input_coords.path` stays `None` (it is used only for `source == "path"`). Use [`resolve_input_coords()`](#resolve_input_coords) to go from a step to the file it actually starts from; that is what continuity and the `input=restart of ...` CLI line both call.
 
 ---
 
@@ -236,43 +263,7 @@ print(len(protocol.stages), protocol.totals())
 
 (Seven stages: the bare `CH3L1_HUMAN_6NAG` topology/coordinate pair, the starting `ntp_prod_0000` restart, and the five `ntp_prod_0001..0005` production runs.)
 
-### `load_protocol_from_manifest()`
-
-```python
-def load_protocol_from_manifest(
-    manifest_path: str | os.PathLike,
-    *,
-    directory: Optional[str] = None,
-    include_roles: Optional[List[str]] = None,
-    include_stems: Optional[List[str]] = None,
-    restart_files: Optional[Dict[str, str]] = None,
-    skip_cross_stage_validation: Optional[bool] = None,
-    recursive: bool = False,
-    expand_env: bool = True,
-    global_prmtop: Optional[str] = None,
-    hmr_prmtop: Optional[str] = None,
-    progress_callback: Optional[Callable[[str, int, int], None]] = None,
-    strict: bool = False,
-) -> SimulationProtocol
-```
-
-Load a **v1 flat** manifest (YAML / JSON / TOML / CSV) and build a protocol directly, bypassing the Simulation/Phase/Step model entirely. Relative paths resolve against `directory` (or the manifest's own directory). `skip_cross_stage_validation=None` defers to the manifest's `settings.strict_validation`.
-
-```python
-from ambermeta import load_protocol_from_manifest
-
-protocol = load_protocol_from_manifest("legacy_protocol.yaml", directory="runs/")
-```
-
-> To load a **v2** manifest (or a v1 manifest into the new model), use `ambermeta.simulation.load_simulation` instead ([§1](#1-the-ambermetasimulation-model)).
-
-### `load_manifest()`
-
-```python
-def load_manifest(manifest_path, expand_env: bool = True) -> Any
-```
-
-Parse a v1-shaped manifest file into normalized stage data (a list/dict) **without** building a protocol — format detected by extension, `${VAR}`/`$VAR` expanded unless `expand_env=False`, legacy keys normalized. Useful when you want the raw stage entries.
+> **Reading a manifest file is layer 1's job.** `auto_discover`'s `manifest=` argument takes an in-memory list of stage dicts, not a path. To go from a file on disk to a protocol, load it with `ambermeta.simulation.load_simulation` ([§1](#1-the-ambermetasimulation-model)) and flatten it — `core_bridge.build_protocol(core_bridge._flatten_simulation(sim), settings, directory)` is exactly what `plan -m` and the GUI do. The path-taking readers that used to sit here (`load_protocol_from_manifest`, `load_manifest`) were removed with the v1 file format.
 
 ### `ProtocolBuilder`
 
@@ -280,8 +271,7 @@ A fluent builder for the same assembly, when you want to compose options program
 
 | Method | Signature |
 |---|---|
-| `from_directory` | `(directory: str, recursive: bool = False)` |
-| `from_manifest` | `(manifest_path: str, directory: Optional[str] = None, expand_env: bool = True)` |
+| `from_directory` | `(directory: str, recursive: bool = False)` — the only source; `build()` raises `ValueError` without it (or without `add_stage`) |
 | `with_grouping_rules` | `(rules: Dict[str, str])` — regex → role |
 | `with_pattern_filter` | `(pattern: str)` — keep only matching files |
 | `include_roles` | `(roles: List[str])` |
@@ -420,7 +410,7 @@ result.details        # the metadata object (None if parsing failed hard)
 
 ## 7. Parser metadata fields
 
-These are the fields on `.details` — what `ambermeta info` prints and what your code reads. Each metadata class also carries `filename: str` and `warnings: List[str]`. This layer is unchanged from v1.
+These are the fields on `.details` — what `ambermeta info` prints and what your code reads. Each metadata class also carries `filename: str` and `warnings: List[str]`. The move to the Simulation model left this layer untouched.
 
 ### `PrmtopMetadata` (`prmtop`)
 
@@ -699,8 +689,8 @@ for d in Path("all_projects").iterdir():
 
 ## See also
 
-- [Architecture](architecture.md) — how these pieces fit together, and the v1→v2 migration mechanics
+- [Architecture](architecture.md) — how these pieces fit together
 - [CLI reference](cli.md) — the command-line surface over this API
-- [Manifest schema](manifest.md) — the v2 file format `load_simulation`/`write_simulation` read and write, and the v1 auto-migration table
+- [Manifest schema](manifest.md) — the v2 file format `load_simulation`/`write_simulation` read and write
 - [GUI](gui.md) — the HTTP API that wraps `core_bridge`
 - [Tutorials](tutorials.md) — task-oriented walkthroughs

@@ -149,13 +149,15 @@ def build_protocol(stages: List[Dict[str, Any]], settings: Dict[str, Any],
         hmr_prmtop=payload.get("hmr_prmtop"),
         skip_cross_stage_validation=not settings.get("strict_validation", True),
         allow_unexpected_gaps=settings.get("allow_gaps", False),
-        strict=False,
+        auto_detect_restarts=bool(settings.get("auto_detect_restarts", False)),
+        strict=bool(settings.get("strict", False)),
     )
 
 
 def build_validation_report(stages: List[Dict[str, Any]], settings: Dict[str, Any],
-                            base_directory: str) -> Dict[str, Any]:
-    protocol = build_protocol(stages, settings, base_directory)
+                            base_directory: str, protocol=None) -> Dict[str, Any]:
+    if protocol is None:
+        protocol = build_protocol(stages, settings, base_directory)
 
     # Per-document missing-file pass (resolved against base_directory).
     missing_by_name: Dict[str, List[Dict[str, str]]] = {}
@@ -355,9 +357,9 @@ def _continuity_gap_suggestions(flat, stage_issues, start_index=0):
     return out
 
 
-def validate_simulation(sim, settings, base_directory):
+def validate_simulation(sim, settings, base_directory, protocol=None):
     flat = _flatten_simulation(sim)
-    report = build_validation_report(flat, dict(settings), base_directory)
+    report = build_validation_report(flat, dict(settings), base_directory, protocol=protocol)
     suggestions = build_suggestions(sim, base_directory)
     suggestions.extend(_continuity_gap_suggestions(flat, report.get("stage_issues", []), start_index=len(suggestions)))
     report["suggestions"] = suggestions
@@ -368,73 +370,22 @@ def validate_simulation(sim, settings, base_directory):
 # plan outputs: the artifacts `ambermeta plan` writes, from the GUI's document
 # ---------------------------------------------------------------------------
 
-PLAN_ARTIFACTS = ("summary", "methods_summary", "stats_csv")
-
 
 def write_plan_outputs(sim, settings, base_directory, targets: Dict[str, str],
                        summary_format: str = "json") -> Dict[str, Any]:
-    """Write the requested plan artifacts and report what landed where.
+    """Build the protocol for `sim`, then write the requested artifacts.
 
-    ``targets`` maps an artifact name from :data:`PLAN_ARTIFACTS` to an already-resolved
-    absolute path; the caller is responsible for containment. The protocol is built once
-    and shared, because parsing every mdout three times to write three files derived from
-    the same parse would triple the cost of the slowest thing the GUI does.
+    The writing half lives in ambermeta.protocol so the CLI shares it; keeping a
+    second copy here is how the CLI ended up without mkdir and without per-artifact
+    failure capture.
     """
-    import json as _json
-
-    from ambermeta.protocol import to_plain, write_stats_csv
-
-    unknown = sorted(set(targets) - set(PLAN_ARTIFACTS))
-    if unknown:
-        raise ValueError(f"unknown plan artifact(s): {', '.join(unknown)}")
-    if summary_format not in ("json", "yaml"):
-        raise ValueError(f"summary format must be json or yaml, got: {summary_format}")
+    from ambermeta.protocol import write_protocol_outputs
 
     protocol = build_protocol(_flatten_simulation(sim), dict(settings), base_directory)
-    written: List[Dict[str, str]] = []
-    failed: List[Dict[str, str]] = []
-    warnings: List[str] = []
-    if not protocol.stages and targets:
-        warnings.append("The document has no steps, so the summaries describe nothing.")
-
-    def _dump(payload: Dict[str, Any], path: str, fmt: str) -> None:
-        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-        plain = to_plain(payload)     # numpy scalars: safe_dump rejects them outright
-        with open(path, "w", encoding="utf-8") as fh:
-            if fmt == "yaml":
-                import yaml as _yaml
-                _yaml.safe_dump(plain, fh, sort_keys=False)
-            else:
-                _json.dump(plain, fh, indent=2)
-
-    def _attempt(artifact: str, write) -> None:
-        """Record what each artifact did. One unwritable path must not hide the rest:
-        raising here discarded the list of files that had already landed, so the caller
-        was told only that something failed, not what survived."""
-        path = targets[artifact]
-        try:
-            write(path)
-        except OSError as exc:
-            failed.append({"artifact": artifact, "path": path, "error": str(exc)})
-        else:
-            written.append({"artifact": artifact, "path": path})
-
-    if "summary" in targets:
-        _attempt("summary", lambda p: _dump(protocol.to_dict(), p, summary_format))
-    if "methods_summary" in targets:
-        # Always JSON: it is the publication-facing artifact and the CLI writes JSON.
-        _attempt("methods_summary", lambda p: _dump(protocol.to_methods_dict(), p, "json"))
-    if "stats_csv" in targets:
-        def _stats(path: str) -> None:
-            os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-            write_stats_csv(protocol, path)
-        _attempt("stats_csv", _stats)
-        if protocol.stages and not any(s.mdout for s in protocol.stages):
-            # Rows are written for every stage either way; what is missing is their content.
-            warnings.append("No step has an mdout, so every row in the statistics CSV is empty.")
-
-    return {"written": written, "failed": failed, "warnings": warnings,
-            "totals": protocol.totals(), "stage_count": len(protocol.stages)}
+    result = write_protocol_outputs(protocol, targets, summary_format=summary_format)
+    result["totals"] = protocol.totals()
+    result["stage_count"] = len(protocol.stages)
+    return result
 
 
 def discover_draft(base_directory, recursive=True, pattern=None):
