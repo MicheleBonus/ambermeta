@@ -43,7 +43,9 @@ interface Output {
 const OUTPUTS: Output[] = [
   { key: "manifest", label: "Manifest",
     hint: "the document itself — what Open reads back",
-    defaultPath: "ambermeta.yaml" },
+    // Matches `ambermeta init`'s own default, so a file made here and a file made from the
+    // CLI land on the same name and the docs' `--manifest manifest.yaml` examples just work.
+    defaultPath: "manifest.yaml" },
   { key: "summary", label: "Protocol summary",
     hint: "every stage with its parsed parameters and timings",
     defaultPath: "summary.json" },

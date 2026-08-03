@@ -44,7 +44,7 @@ afterEach(() => {
 
 it("writes the manifest and both summaries in one action, which is the whole point", async () => {
   const plan = capturePlan([
-    { artifact: "manifest", path: "/work/ambermeta.yaml" },
+    { artifact: "manifest", path: "/work/manifest.yaml" },
     { artifact: "summary", path: "/work/summary.json" },
     { artifact: "methods_summary", path: "/work/methods_summary.json" },
   ]);
@@ -54,7 +54,9 @@ it("writes the manifest and both summaries in one action, which is the whole poi
 
   await waitFor(() => expect(plan.calls).toBe(1));
   expect(plan.body).toEqual({
-    save_manifest_path: "ambermeta.yaml",
+    // The GUI used to default to `ambermeta.yaml` while `ambermeta init` wrote
+    // `manifest.yaml`, so the two halves of the tool disagreed on the file's name.
+    save_manifest_path: "manifest.yaml",
     summary_path: "summary.json",
     methods_summary_path: "methods_summary.json",
     stats_csv_path: null,          // unticked by default: it needs mdout files
@@ -64,14 +66,14 @@ it("writes the manifest and both summaries in one action, which is the whole poi
 
 it("reports every file it wrote, so the user is not left guessing where they went", async () => {
   capturePlan([
-    { artifact: "manifest", path: "/work/ambermeta.yaml" },
+    { artifact: "manifest", path: "/work/manifest.yaml" },
     { artifact: "summary", path: "/work/summary.json" },
   ]);
   await renderPlan();
 
   await userEvent.click(screen.getByRole("button", { name: "Write" }));
 
-  expect(await screen.findByText("/work/ambermeta.yaml")).toBeInTheDocument();
+  expect(await screen.findByText("/work/manifest.yaml")).toBeInTheDocument();
   expect(screen.getByText("/work/summary.json")).toBeInTheDocument();
   expect(screen.getByText(/5 step\(s\)/)).toBeInTheDocument();
 });
@@ -154,7 +156,7 @@ it("blocks two outputs aimed at one file before the round trip", async () => {
   await renderPlan();
 
   await userEvent.clear(screen.getByLabelText("Protocol summary path"));
-  await userEvent.type(screen.getByLabelText("Protocol summary path"), "ambermeta.yaml");
+  await userEvent.type(screen.getByLabelText("Protocol summary path"), "manifest.yaml");
 
   expect(screen.getByRole("button", { name: "Write" })).toBeDisabled();
   expect(screen.getAllByText(/aimed at this file/)).toHaveLength(2);
