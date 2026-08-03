@@ -13,7 +13,7 @@ installed.
 from __future__ import annotations
 
 import re
-from typing import Any, Dict, FrozenSet, Iterable, List
+from typing import Any, Dict, FrozenSet, Iterable, List, Optional, Protocol, TypeVar
 
 from ambermeta.simulation import Simulation, Step, iter_steps
 
@@ -51,6 +51,37 @@ class _Untagged:
 UNTAGGED = _Untagged()
 
 
+class _Tagged(Protocol):
+    """Anything carrying the tag.
+
+    Two classes do: ``Step`` in the document and ``SimulationStage`` in the analysis
+    engine, which is handed the tag rather than re-deriving it. Bucketing is the same
+    question for both, and stating it structurally keeps it one implementation.
+    """
+
+    lineage: Optional[str]
+
+
+_T = TypeVar("_T", bound=_Tagged)
+
+
+def buckets(steps: Iterable[_T]) -> Dict[Any, List[_T]]:
+    """Group any run of tagged objects into membership buckets, in first-appearance order.
+
+    Takes a plain iterable rather than a ``Simulation`` because membership is asked about
+    a *part* of a document as often as the whole: whether one phase holds several members
+    decides whether a step appended to it may be chained to its neighbour, and the
+    continuity engine asks it of a flat stage list that never was a document.
+    """
+    out: Dict[Any, List[_T]] = {}
+    for step in steps:
+        # An empty tag is untagged. payload_to_simulation coerces "" on ingest, but an
+        # in-memory edit reaches the model without passing through it, and a nameless
+        # member is worse than no member — it counts, and it cannot be named.
+        out.setdefault(step.lineage if step.lineage else UNTAGGED, []).append(step)
+    return out
+
+
 def members(sim: Simulation) -> Dict[Any, List[Step]]:
     """Every membership bucket in the document, keyed in first-appearance order.
 
@@ -61,13 +92,7 @@ def members(sim: Simulation) -> Dict[Any, List[Step]]:
     The sentinel key is the reason this returns ``Dict[Any, ...]`` and :func:`lineages`
     does not: a caller that wants only what the user declared wants the other function.
     """
-    buckets: Dict[Any, List[Step]] = {}
-    for _, step in iter_steps(sim):
-        # An empty tag is untagged. payload_to_simulation coerces "" on ingest, but an
-        # in-memory edit reaches the model without passing through it, and a nameless
-        # member is worse than no member — it counts, and it cannot be named.
-        buckets.setdefault(step.lineage if step.lineage else UNTAGGED, []).append(step)
-    return buckets
+    return buckets(step for _, step in iter_steps(sim))
 
 
 def lineages(sim: Simulation) -> Dict[str, List[Step]]:

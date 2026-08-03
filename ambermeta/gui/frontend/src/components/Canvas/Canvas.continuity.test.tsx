@@ -200,3 +200,50 @@ it("draws the link between steps whose names share no numeric base", async () =>
   expect(links[0]).toHaveTextContent("01_min.rst");
   expect(links[1]).toHaveTextContent("02_nvt.rst");
 });
+
+it("puts a missing-run ghost in the band of the member the finding names", async () => {
+  // A multi-lineage phase, which is what discover now produces: same-role runs from every
+  // member share one phase. The finding is scoped to rep2, so rep1 -- which is complete --
+  // must gain nothing, and the ghost must read like the runs beside it.
+  const replicas: DocumentResponse = {
+    ...docWithGap,
+    simulation: {
+      ...docWithGap.simulation,
+      phases: [{
+        id: "p0", name: "Production", role: "production",
+        steps: [
+          makeStep({ id: "a1", name: "rep1/prod_0001", lineage: "rep1" }),
+          makeStep({ id: "a2", name: "rep1/prod_0002", lineage: "rep1" }),
+          makeStep({ id: "b1", name: "rep2/prod_0001", lineage: "rep2" }),
+        ],
+      }],
+    },
+  };
+  const shortMember: Suggestion[] = [{
+    id: "sug_1",
+    kind: "missing_run",
+    severity: "needs_you",
+    title: "rep2/prod sequence is missing member(s) 2",
+    evidence: "'rep2/prod' has no run at index(es) 2",
+    actions: ["Mark as expected gap", "Locate file", "Ignore"],
+    base: "prod",            // the server drops the directory; the group keeps it
+    missing: [2],
+    lineage: "rep2",
+  }];
+
+  queryClient.clear();
+  server.use(http.get("/api/document", () => HttpResponse.json(replicas)));
+  render(wrap(<Canvas />, shortMember));
+
+  await waitFor(() => expect(screen.getByText("rep2/prod_0001")).toBeInTheDocument());
+
+  // Exactly one ghost, named for rep2, and drawn after rep2's own first run rather than
+  // inside rep1's complete band.
+  const ghost = screen.getByText("rep2/prod_0002");
+  expect(ghost.closest("div")?.className).toMatch(/border-dashed/);
+  expect(screen.queryByText("rep1/prod_0003")).not.toBeInTheDocument();
+  expect(screen.queryAllByText(/^rep\d\/prod_0002$/)).toHaveLength(2); // rep1's real run + rep2's ghost
+
+  const rep2First = screen.getByText("rep2/prod_0001");
+  expect(rep2First.compareDocumentPosition(ghost) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+});

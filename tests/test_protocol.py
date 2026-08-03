@@ -434,6 +434,67 @@ def test_tiny_gap_without_expectation_is_ignored(tmp_path, monkeypatch):
     assert not stage2.continuity
 
 
+def _make_parser_by_file(details_by_name):
+    """Like `_make_parser`, but each file parses to its own details.
+
+    Continuity is a statement about two different stages, so a parser that answers the
+    same thing for every file cannot express the case at all.
+    """
+
+    class _Parser:
+        def __init__(self, filename):
+            self.filename = filename
+
+        def parse(self):
+            from pathlib import Path
+            from types import SimpleNamespace
+
+            details = details_by_name[Path(self.filename).name]
+            return SimpleNamespace(details=SimpleNamespace(**details), filename=self.filename)
+
+    return _Parser
+
+
+def test_a_tagged_manifest_partitions_continuity_end_to_end(tmp_path, monkeypatch):
+    """The partition must fire on stages the real pipeline built, not only hand-made ones.
+
+    `_manifest_to_stages` reads `lineage`/`step_id`/`parent_id` after construction, and a
+    tag that stops anywhere short of `SimulationStage` is a silent no-op that no
+    byte-identity check on a tagged fixture would catch.
+    """
+    stage_dir = tmp_path / "campaign"
+    stage_dir.mkdir()
+    for name in ("equil.mdcrd", "rep1.rst", "rep1.mdcrd", "rep2.rst", "rep2.mdcrd"):
+        (stage_dir / name).write_text("")
+
+    monkeypatch.setattr(protocol, "MdcrdParser", _make_parser_by_file({
+        "equil.mdcrd": {"time_end": 100.0},
+        "rep1.mdcrd": {"time_end": 200.0},
+        "rep2.mdcrd": {"time_end": 200.0},
+    }))
+    monkeypatch.setattr(protocol, "InpcrdParser", _make_parser_by_file({
+        "rep1.rst": {"time": 100.0},
+        "rep2.rst": {"time": 100.0},
+    }))
+
+    manifest = [
+        {"name": "common/equil", "step_id": "eq", "files": {"mdcrd": "equil.mdcrd"}},
+        {"name": "rep1/prod_0001", "lineage": "rep1", "step_id": "a", "parent_id": "eq",
+         "files": {"inpcrd": "rep1.rst", "mdcrd": "rep1.mdcrd"}},
+        {"name": "rep2/prod_0001", "lineage": "rep2", "step_id": "b", "parent_id": "eq",
+         "files": {"inpcrd": "rep2.rst", "mdcrd": "rep2.mdcrd"}},
+    ]
+
+    proto = auto_discover(str(stage_dir), manifest=manifest)
+
+    assert [s.lineage for s in proto.stages] == [None, "rep1", "rep2"]
+    # rep2 follows rep1's tail in document order and used to be reported as overlapping it
+    # by 100 ps. Measured against the equilibration it really continues, it is seamless.
+    assert [s.observed_gap_ps for s in proto.stages] == [None, 0.0, 0.0]
+    assert not [note for stage in proto.stages for note in stage.continuity
+                if not note.startswith("INFO:")]
+
+
 def test_methods_summary_prunes_stats_and_includes_reproducibility_metadata():
     from types import SimpleNamespace
 
@@ -499,6 +560,90 @@ def test_methods_summary_prunes_stats_and_includes_reproducibility_metadata():
 
     methods_json = json.dumps(methods)
     assert "stats" not in methods_json
+
+
+def _fan_out_protocol():
+    """One shared equilibration, three replicas branching off it.
+
+    Flat and ordered, `stage_sequence` reads as `equil -> rep1 -> rep2 -> rep3`; only the
+    first of those three arrows happened.
+    """
+    stage = protocol.SimulationStage
+    return protocol.SimulationProtocol(stages=[
+        stage("common/equil", stage_role="equilibration", step_id="eq"),
+        stage("rep1/prod_0001", stage_role="production", lineage="rep1",
+              step_id="a", parent_id="eq"),
+        stage("rep2/prod_0001", stage_role="production", lineage="rep2",
+              step_id="b", parent_id="eq"),
+        stage("rep3/prod_0001", stage_role="production", lineage="rep3",
+              step_id="c", parent_id="eq"),
+    ])
+
+
+def test_stage_sequence_names_the_member_each_entry_belongs_to():
+    """Ruling 13.1.3. Without the tag the list asserts rep1 ran, then rep2, then rep3."""
+    sequence = _fan_out_protocol().to_methods_dict()["stage_sequence"]
+
+    assert sequence == [
+        {"name": "common/equil", "role": "equilibration"},
+        {"name": "rep1/prod_0001", "role": "production", "lineage": "rep1"},
+        {"name": "rep2/prod_0001", "role": "production", "lineage": "rep2"},
+        {"name": "rep3/prod_0001", "role": "production", "lineage": "rep3"},
+    ]
+
+
+def test_an_untagged_stage_sequence_is_byte_identical():
+    """The control: additive only, so an untagged methods_summary.json cannot move."""
+    stage = protocol.SimulationStage
+    untagged = protocol.SimulationProtocol(stages=[
+        stage("min_0001", stage_role="minimization"),
+        stage("prod_0001", stage_role="production"),
+    ])
+
+    assert json.dumps(untagged.to_methods_dict()["stage_sequence"]) == json.dumps([
+        {"name": "min_0001", "role": "minimization"},
+        {"name": "prod_0001", "role": "production"},
+    ])
+
+
+def test_an_empty_lineage_is_not_a_member():
+    """`payload_to_simulation` and `_manifest_to_stages` both fold `""` to `None`.
+
+    A stage built directly does not pass through either, and an empty tag published into a
+    publication artifact would read as a member named nothing.
+    """
+    only = protocol.SimulationProtocol(
+        stages=[protocol.SimulationStage("x", stage_role="production", lineage="")]
+    ).to_methods_dict()["stage_sequence"]
+
+    assert only == [{"name": "x", "role": "production"}]
+
+
+def test_the_tagged_entry_states_a_graph_fact_and_nothing_statistical():
+    """Decision 4: which member a run belongs to, never how many or how independent."""
+    methods = _fan_out_protocol().to_methods_dict()
+
+    keys = {key for entry in methods["stage_sequence"] for key in entry}
+    assert keys == {"name", "role", "lineage"}
+    blob = json.dumps(methods)
+    assert "ensemble_size" not in blob and "independent" not in blob
+
+
+def test_a_tagged_manifest_carries_its_members_into_the_methods_summary(tmp_path):
+    """The tag has to survive the real pipeline, not just a hand-built protocol."""
+    stage_dir = tmp_path / "campaign"
+    stage_dir.mkdir()
+    manifest = [
+        {"name": "common/equil", "stage_role": "equilibration"},
+        {"name": "rep1/prod_0001", "stage_role": "production", "lineage": "rep1"},
+        {"name": "rep2/prod_0001", "stage_role": "production", "lineage": "rep2"},
+    ]
+
+    proto = auto_discover(str(stage_dir), manifest=manifest)
+
+    assert [entry.get("lineage") for entry in proto.to_methods_dict()["stage_sequence"]] == [
+        None, "rep1", "rep2",
+    ]
 
 
 def test_to_plain_converts_numpy_scalars_and_tuples_for_yaml():

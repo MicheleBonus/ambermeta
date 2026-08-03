@@ -1,9 +1,16 @@
 """Tests for CORE-D2/D7/H2/H3/D3/D4: natural stage ordering, single-digit sequence
 detection, shared global/HMR prmtop helper, and missing-file warning/raise."""
 import math
+import os
+from pathlib import Path
+
 import pytest
 
-from ambermeta.protocol import detect_numeric_sequences, _ordered_stems
+from ambermeta.protocol import (
+    auto_detect_restart_chain,
+    detect_numeric_sequences,
+    _ordered_stems,
+)
 
 
 def _write_prmtop(path, sections):
@@ -213,3 +220,242 @@ def test_restart_chain_scans_subdirs(tmp_path):
 
     # Secondary: signature sanity check
     assert "recursive" in inspect.signature(auto_detect_restart_chain).parameters
+
+
+# --- the second chainer: `plan --auto-detect-restarts` -------------------------------
+#
+# Everything this function finds is written back as a restart attribution, so a
+# cross-replica match is a false *file* as well as a false edge. Every tree below copies
+# ONE system's restart around and hands every stage ONE prmtop, because that is what a
+# replica set is — and it is exactly why the function's own atom-count check cannot help:
+# replicas of one system agree on every count. A fixture with differing counts would pass
+# for a reason that never holds in practice.
+
+
+@pytest.fixture(scope="module")
+def one_system(sample_md_data_dir):
+    """The repo's real prmtop, parsed once — it is 12 MB and 64528 atoms."""
+    from ambermeta.parsers.prmtop import PrmtopParser
+    return PrmtopParser(str(sample_md_data_dir / "CH3L1_HUMAN_6NAG.top")).parse()
+
+
+def _restart_tree(tmp_path, sample_md_data_dir, prmtop, runs, restarts):
+    """Build stages from `(name, lineage)` pairs and write `restarts` as .rst files.
+
+    Names and restart stems are posix, relative to `tmp_path`, matching the
+    path-prefixed stems `smart_group_files` produces.
+    """
+    import shutil
+    from ambermeta.protocol import SimulationStage
+
+    source = sample_md_data_dir / "ntp_prod_0001.rst"
+    for stem in restarts:
+        target = tmp_path / (stem + ".rst")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy(source, target)
+
+    stages = []
+    for name, lineage in runs:
+        stage = SimulationStage(name=name, lineage=lineage)
+        stage.prmtop = prmtop
+        stages.append(stage)
+    return stages
+
+
+def _detected(stages, tmp_path):
+    """The mapping, with every path back to a posix stem relative to the tree."""
+    found = auto_detect_restart_chain(stages, str(tmp_path), recursive=True)
+    return {name: Path(os.path.relpath(path, str(tmp_path))).as_posix()
+            for name, path in found.items()}
+
+
+def test_auto_detect_refuses_a_restart_another_replica_wrote(
+    tmp_path, sample_md_data_dir, one_system
+):
+    """rep2's head follows rep1's tail in document order, as replica-major trees arrive.
+
+    Measured before the guard: `{'rep2/prod_0001': 'rep1/prod_0002.rst'}` — the design
+    doc's opening failure, produced here by the name term alone (5.0, the threshold).
+    """
+    stages = _restart_tree(
+        tmp_path, sample_md_data_dir, one_system,
+        runs=[("rep1/prod_0001", "rep1"), ("rep1/prod_0002", "rep1"),
+              ("rep2/prod_0001", "rep2")],
+        restarts=["rep1/prod_0002"],
+    )
+    assert _detected(stages, tmp_path) == {}
+
+
+def test_auto_detect_refuses_a_restart_lying_in_another_replicas_directory(
+    tmp_path, sample_md_data_dir, one_system
+):
+    """The writing run need not be in the document for the file to be rep1's.
+
+    This is the common shape, not the exotic one: a restart is left behind by a run whose
+    mdout was never collected — a chunk that crashed, a queue job resumed by hand, a tree
+    the user only added the surviving runs of. Nothing then *claims* `rep1/prod_0001.rst`,
+    and a guard that reads only declared writers treats it as unowned and scores it for
+    rep2 exactly as if it lay in rep2's own directory.
+
+    Measured with the writer-only guard: `{'rep1/prod_0002': 'rep1/prod_0001.rst',
+    'rep2/prod_0002': 'rep1/prod_0001.rst'}`. The numeric term alone scores 10.0, twice the
+    threshold, and no other term is needed — so nothing else in this tree can refuse it.
+    """
+    stages = _restart_tree(
+        tmp_path, sample_md_data_dir, one_system,
+        runs=[("rep1/prod_0002", "rep1"), ("rep2/prod_0002", "rep2")],
+        restarts=["rep1/prod_0001"],
+    )
+    assert _detected(stages, tmp_path) == {
+        "rep1/prod_0002": "rep1/prod_0001.rst",
+    }
+
+
+def test_a_restart_in_a_directory_no_stage_occupies_still_feeds_a_replica(
+    tmp_path, sample_md_data_dir, one_system
+):
+    """The complement, and the reason the rule is "known to be another member's".
+
+    An `equil/` directory holding the shared restart and no collected run is the ordinary
+    way a campaign starts. No declared stage places a member there, so the directory says
+    nothing about membership and the edge stands — "different directory" is not evidence,
+    *another member's* directory is.
+    """
+    stages = _restart_tree(
+        tmp_path, sample_md_data_dir, one_system,
+        runs=[("rep1/prod_0001", "rep1")],
+        restarts=["equil/prod_0000"],
+    )
+    assert _detected(stages, tmp_path) == {
+        "rep1/prod_0001": "equil/prod_0000.rst",
+    }
+
+
+def test_auto_detect_prefers_a_replicas_own_restart_over_a_neighbours(
+    tmp_path, sample_md_data_dir, one_system
+):
+    """Both replicas hold a `prod_0001.rst`. Basename matching cannot separate them.
+
+    Measured before the guard: rep2's second chunk was assigned *rep1's* restart — the two
+    candidates scored 15.0 each and directory walk order broke the tie. Narrowing the
+    candidates does not merely refuse here, it recovers the true edge.
+    """
+    stages = _restart_tree(
+        tmp_path, sample_md_data_dir, one_system,
+        runs=[("rep1/prod_0001", "rep1"), ("rep1/prod_0002", "rep1"),
+              ("rep2/prod_0001", "rep2"), ("rep2/prod_0002", "rep2")],
+        restarts=["rep1/prod_0001", "rep2/prod_0001"],
+    )
+    assert _detected(stages, tmp_path) == {
+        "rep1/prod_0002": "rep1/prod_0001.rst",
+        "rep2/prod_0002": "rep2/prod_0001.rst",
+    }
+
+
+def test_the_same_tree_untagged_keeps_the_chain_it_always_had(
+    tmp_path, sample_md_data_dir, one_system
+):
+    """The control: with no tags the two replicas stay indistinguishable, as they always were.
+
+    A tag is what the user declares; without one there is nothing here to honour, and an
+    untagged document must come out of this function exactly as it did before lineages
+    existed. This test is green either side of the fix, deliberately.
+
+    "Exactly as before" is three things, and *not* a fourth. Both second chunks are
+    chained; both first chunks are left alone (3.0, below the 5.0 threshold); and both
+    winners are the **same** file, because untagged there is nothing whatever to tell the
+    two consumers apart — one shared answer for two different replicas is the false edge
+    this feature exists to stop, and
+    `test_auto_detect_prefers_a_replicas_own_restart_over_a_neighbours` runs this identical
+    tree tagged to show it stopped.
+
+    Which file wins is the fourth thing, and it is not asserted. Both candidates are named
+    `prod_0001.rst` and score 15.0 for both consumers (5.0 name + 10.0 sequence), so the
+    winner is whichever one `os.walk` yielded first — a property of the filesystem, not of
+    this function. Pinning it would pass here and flip on another OS or another filesystem.
+    """
+    stages = _restart_tree(
+        tmp_path, sample_md_data_dir, one_system,
+        runs=[("rep1/prod_0001", None), ("rep1/prod_0002", None),
+              ("rep2/prod_0001", None), ("rep2/prod_0002", None)],
+        restarts=["rep1/prod_0001", "rep2/prod_0001"],
+    )
+    detected = _detected(stages, tmp_path)
+
+    assert set(detected) == {"rep1/prod_0002", "rep2/prod_0002"}
+    assert detected["rep1/prod_0002"] == detected["rep2/prod_0002"]
+    assert detected["rep1/prod_0002"] in {"rep1/prod_0001.rst", "rep2/prod_0001.rst"}
+
+
+def test_a_shared_untagged_restart_still_feeds_a_tagged_replica(
+    tmp_path, sample_md_data_dir, one_system
+):
+    """One equilibration feeding N replicas is a real edge, and the commonest layout there is.
+
+    Only two *declared* tags are a boundary, so the untagged prep run continues into rep1
+    and the guard must not touch it.
+    """
+    stages = _restart_tree(
+        tmp_path, sample_md_data_dir, one_system,
+        runs=[("common/equil_0001", None), ("rep1/prod_0001", "rep1")],
+        restarts=["common/equil_0001"],
+    )
+    assert _detected(stages, tmp_path) == {
+        "rep1/prod_0001": "common/equil_0001.rst",
+    }
+
+
+def test_a_two_digit_directory_no_longer_eats_the_run_index(
+    tmp_path, sample_md_data_dir, one_system
+):
+    """`rep10/prod_0002` folded to `rep10_prod_0002` matched `\\d{2,}` on 10, not 0002.
+
+    Measured before the fix: `{'rep10/prod_0002': 'rep10/prod_0009.rst'}` — 9 read as the
+    predecessor of 10 and scored the ideal 10.0. Nothing else in this tree can refuse it:
+    prod_0009 is no stage's output, so the lineage guard does not see it.
+    """
+    stages = _restart_tree(
+        tmp_path, sample_md_data_dir, one_system,
+        runs=[("rep10/prod_0002", "rep10")],
+        restarts=["rep10/prod_0009"],
+    )
+    assert _detected(stages, tmp_path) == {}
+
+
+def test_a_two_digit_directory_finds_its_real_predecessor(
+    tmp_path, sample_md_data_dir, one_system
+):
+    """The other half of the same bug: measured before the fix, this returned `{}`.
+
+    Scoring against 10 meant replica ten's own chain scored zero, so `--auto-detect-restarts`
+    silently did nothing for it while working for replicas 1-9.
+
+    One stage, which is both the flag's primary use — *find the restart this run reads* —
+    and what isolates the arithmetic: with no predecessor stage there is no name term to
+    rescue the match, so only the numeric term can score.
+    """
+    stages = _restart_tree(
+        tmp_path, sample_md_data_dir, one_system,
+        runs=[("rep10/prod_0002", "rep10")],
+        restarts=["rep10/prod_0001"],
+    )
+    assert _detected(stages, tmp_path) == {
+        "rep10/prod_0002": "rep10/prod_0001.rst",
+    }
+
+
+def test_the_name_term_alone_still_meets_the_threshold(
+    tmp_path, sample_md_data_dir, one_system
+):
+    """`equil` carries no index, so only the name term scores: exactly 5.0, the threshold.
+
+    Raising the threshold is the obvious way to exclude a cross-replica name match and it
+    would have disabled auto-detect for every tree with no trajectory to time-match
+    against. The candidate scope was narrowed instead; this pins that it was.
+    """
+    stages = _restart_tree(
+        tmp_path, sample_md_data_dir, one_system,
+        runs=[("min_0001", None), ("equil", None)],
+        restarts=["min_0001"],
+    )
+    assert _detected(stages, tmp_path) == {"equil": "min_0001.rst"}

@@ -310,13 +310,16 @@ def create_step(phase_id: str, req: StepCreate) -> DocumentResponse:
         "name": req.name, "topology": req.topology,
         "input_coords": req.input_coords.model_dump() if req.input_coords else None,
         "mdin": req.mdin, "mdout": req.mdout, "mdcrd": req.mdcrd, "rst": req.rst,
+        "lineage": req.lineage,
         "expected_gap_ps": req.expected_gap_ps, "gap_tolerance_ps": req.gap_tolerance_ps,
         "notes": list(req.notes),
     }
     try:
-        store.add_step(phase_id, fields)
+        store.add_step(phase_id, fields, index=req.index)
     except KeyError:
         raise HTTPException(status_code=404, detail=f"Phase not found: {phase_id}")
+    except ValueError as exc:       # the same impossible "continues from" PUT /steps refuses
+        raise HTTPException(status_code=400, detail=str(exc))
     return store.to_response()
 
 
@@ -364,6 +367,8 @@ def update_step(step_id: str, req: StepUpdate) -> DocumentResponse:
         store.update_step(step_id, patch)
     except KeyError:
         raise HTTPException(status_code=404, detail=f"Step not found: {step_id}")
+    except ValueError as exc:       # a self-reference, or a "continues from" nobody holds
+        raise HTTPException(status_code=400, detail=str(exc))
     return store.to_response()
 
 

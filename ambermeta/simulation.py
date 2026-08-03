@@ -254,6 +254,33 @@ def predecessors(sim: Simulation) -> Dict[str, Optional[str]]:
     return out
 
 
+def crosses_lineage(producer: Optional[Step], consumer: Step) -> bool:
+    """True when linking ``consumer`` to ``producer`` would cross a declared boundary.
+
+    **No automatic operation may create an input_coords.ref that crosses one.** A restart
+    written by replica 2 was never read by replica 1; a tool that says otherwise has
+    invented the one fact this model exists to record.
+
+    Both tags must be set for a link to count as crossing. An untagged step is the
+    implicit single member and continues into, or out of, anything — one shared
+    equilibration feeding N replicas is the commonest layout there is, and it is a real
+    edge. Only two *different declared* tags are a boundary.
+
+    An empty tag reads as untagged, matching ``lineages.buckets`` and the ``""``->``None``
+    coercion in ``payload_to_simulation``. The rule is repeated here rather than imported
+    because ``ambermeta.lineages`` imports this module.
+    """
+    if producer is None:
+        return False
+    return (bool(producer.lineage) and bool(consumer.lineage)
+            and producer.lineage != consumer.lineage)
+
+
+def _same_lineage(a: Step, b: Step) -> bool:
+    """Whether two steps sit in the same membership bucket, untagged included."""
+    return (a.lineage or None) == (b.lineage or None)
+
+
 def relink_restarts(sim: Simulation, before: Dict[str, Optional[str]]) -> None:
     """Follow the order with the links the tool itself derived, and only those.
 
@@ -271,41 +298,106 @@ def relink_restarts(sim: Simulation, before: Dict[str, Optional[str]]) -> None:
       and is left exactly as it is.
 
     Steps absent from ``before`` are new and keep whatever they were created with.
+
+    "The order" means the document's order in a single-member document and each member's
+    own order in a multi-member one — which is the same rule, since one member's steps are
+    all of them. Both branches stop at a lineage boundary: measured on an interleaved
+    reorder of two replicas the *first* branch manufactured two cross-lineage edges and
+    the second none, and on a reorder that puts rep2 in front it is the second branch that
+    manufactures one. Neither is safe alone.
     """
-    prev_id: Optional[str] = None
+    seen: List[Step] = []
     for _, step in iter_steps(sim):
         ic = step.input_coords
         if step.id in before:
             was = before[step.id]
+            prev = seen[-1] if seen else None
+            # Whoever now precedes this step — but never across a lineage boundary, which
+            # would assert that one member continued from another. Where the neighbour is
+            # refused the step follows its own member's order instead: rep1's second chunk
+            # interleaved behind rep2's first still continues rep1's first chunk, and that
+            # link was true before the drag and is true after it. Only when the member has
+            # nothing earlier does the step become a head and read the starting structure.
+            new_prev = prev
+            if crosses_lineage(prev, step):
+                new_prev = next((p for p in reversed(seen) if _same_lineage(p, step)), None)
             if ic.source == "step" and ic.ref == was:
                 # Auto-chained. Follow the new order, keeping any legacy resolved path so
                 # a document written before `rst` existed does not lose its only record.
                 step.input_coords = (
-                    InputCoords(source="starting_structure") if prev_id is None
-                    else InputCoords(source="step", ref=prev_id, path=ic.path)
+                    InputCoords(source="starting_structure") if new_prev is None
+                    else InputCoords(source="step", ref=new_prev.id, path=ic.path)
                 )
-            elif ic.source == "starting_structure" and was is None and prev_id is not None:
+            elif ic.source == "starting_structure" and was is None and new_prev is not None:
                 # It was the head of the chain and no longer is. Without this the demotion
                 # above would be one-way: drag a step to the front and back again and the
                 # link it used to have would be gone for good.
-                step.input_coords = InputCoords(source="step", ref=prev_id)
-        prev_id = step.id
+                step.input_coords = InputCoords(source="step", ref=new_prev.id)
+        seen.append(step)
 
 
-def repair_dangling_refs(sim: Simulation) -> None:
+def repair_dangling_refs(sim: Simulation) -> List[str]:
     """Re-point steps whose ``input_coords.ref`` names a step that no longer exists.
 
     Deleting a step used to leave its successor pointing at a dead id, which silently
     resolved to no coordinates at all — the chain looked intact in the GUI while
-    validation saw a hole. Each orphan re-chains to whatever now precedes it.
+    validation saw a hole. Each orphan re-chains to the nearest preceding step of its
+    **own** lineage, or reads the starting structure if it has none.
+
+    Own lineage, not simply the step before: deleting one shared equilibration that three
+    replicas continued from used to splice them into a single six-step serial chain —
+    exactly the false claim this model exists to remove, manufactured by the tool while
+    tidying up after a delete. Falling back to the neighbour regardless of tag would also
+    pick, silently, one member as the successor of another.
+
+    Returns a warning per deleted step that more than one member continued from. No
+    re-chain can replace such a step — the fan-out it was is gone, and each consumer falls
+    back to its own member's order, which says something different from what the deleted
+    step said — so the caller has to be able to say so. An untagged document produces no
+    warnings and re-chains exactly as it always did: with one bucket, "the nearest
+    preceding step of my own lineage" *is* the step before.
     """
-    known = {s.id for _, s in iter_steps(sim)}
-    prev_id: Optional[str] = None
-    for _, step in iter_steps(sim):
+    steps = [s for _, s in iter_steps(sim)]
+    known = {s.id for s in steps}
+
+    def orphaned(step: Step) -> bool:
         ic = step.input_coords
-        if ic.source == "step" and (not ic.ref or ic.ref not in known):
-            if prev_id is None:
-                step.input_coords = InputCoords(source="starting_structure")
-            else:
-                step.input_coords = InputCoords(source="step", ref=prev_id, path=ic.path)
-        prev_id = step.id
+        return ic.source == "step" and (not ic.ref or ic.ref not in known)
+
+    # Collected before anything is re-pointed: once an orphan is re-chained its dead ref
+    # is gone and there is no way back to how many members shared the deleted producer.
+    by_dead_ref: Dict[str, List[Step]] = {}
+    for step in steps:
+        if orphaned(step) and step.input_coords.ref:
+            by_dead_ref.setdefault(step.input_coords.ref, []).append(step)
+
+    seen: List[Step] = []
+    for step in steps:
+        if orphaned(step):
+            parent = next((p for p in reversed(seen) if _same_lineage(p, step)), None)
+            step.input_coords = (
+                InputCoords(source="starting_structure") if parent is None
+                else InputCoords(source="step", ref=parent.id, path=step.input_coords.path)
+            )
+        seen.append(step)
+
+    notes: List[str] = []
+    for consumers in by_dead_ref.values():
+        tags = []
+        for c in consumers:
+            tag = c.lineage or "untagged"
+            if tag not in tags:
+                tags.append(tag)
+        if len(tags) < 2:
+            continue
+        # Not "they are now heads": a consumer with an earlier run of its own lineage
+        # re-chains to that one and is no such thing. The two outcomes are named because
+        # which of them happened is exactly what the user has to go and check.
+        notes.append(
+            "A deleted step was the input of {n} runs in different lineages ({tags}). "
+            "Each now continues from the nearest earlier run of its own lineage, or reads "
+            "the starting structure where its lineage has none: re-chaining any of them "
+            "to another would claim a continuation that never ran.".format(
+                n=len(consumers), tags=", ".join(tags))
+        )
+    return notes

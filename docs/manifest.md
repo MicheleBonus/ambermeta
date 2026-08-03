@@ -180,6 +180,7 @@ steps:
 | `input_coords` | no (default `{source: starting_structure}`) | Where this Step's initial coordinates come from — see §6. |
 | `mdin`, `mdout`, `mdcrd` | no | File paths for this run. Provide at least one parseable file for `plan`/`validate` to do anything useful with the Step. |
 | `rst` | no | The restart this run **writes** (`-r restrt`). It is what the next Step reads — see §6. Omitted entirely when unset, so a Step that records no restart round-trips as no key. |
+| `lineage` | no | Which run lineage — replica, branch, pose — this Step belongs to. Steps sharing a tag are one member; a Step with no tag belongs to the implicit single member. Any string; `""` reads as unset, and a number is read as its string form (`lineage: 1` → `"1"`). Omitted entirely when unset, so an untagged Step round-trips as no key. `ambermeta discover` writes it when the directory layout names the members; otherwise it is yours to declare. |
 | `notes` | no (default `[]`) | List of free-text strings. |
 | `gaps` | no | `{expected, tolerance}` in ps — see below. Omitted entirely when both are unset (round-trips as no key, not as `null`s, unless you write it explicitly as in the template). |
 
@@ -328,8 +329,12 @@ ambermeta gui runs/                         # build it in the browser, drag file
 
 `discover` and the GUI's **Discover** button run the same engine (`discover_draft` in
 `ambermeta/gui/api/core_bridge.py`): they classify every prmtop into the topology pool, find a starting
-structure, group runs into role-named phases, and chain each step's `input_coords` off the previous step —
-surfacing each inference as an explainable suggestion rather than silently guessing. It is the only thing
+structure, group runs into role-named phases, and chain each step's `input_coords` off the previous step of
+its own lineage — surfacing each inference as an explainable suggestion rather than silently guessing. When
+the layout names members (`rep1/`, `rep2/`, … running the same set of runs) each one is tagged, chained
+separately from the head of the starting structure, and reported as an `[applied]` `lineage_group`
+suggestion; an ambiguous layout is left untagged rather than guessed at, and is chained and grouped exactly
+as it was before lineages existed. It is the only thing
 that scans a directory into a *v2 draft* — `plan --recursive` also scans from scratch, but through the flat
 analysis engine (§10), and prints a Protocol summary rather than producing a manifest.
 

@@ -54,7 +54,7 @@ v1.0 modeled a run as a flat **Protocol → Stage** (two levels; a "stage" was o
 |---|---|---|
 | **Simulation** | `Simulation(version, topologies, starting_structure, phases)` | the whole document: a **topology pool** and one **starting structure** |
 | **Phase** | `Phase(id, name, role, steps)` | a named, role-bearing grouping (minimization / heating / equilibration / production / `""`) |
-| **Step** | `Step(id, name, topology, input_coords, mdin, mdout, mdcrd, rst, expected_gap_ps, gap_tolerance_ps, notes)` | one actual run — today's old "stage" |
+| **Step** | `Step(id, name, topology, input_coords, mdin, mdout, mdcrd, rst, lineage, expected_gap_ps, gap_tolerance_ps, notes)` | one actual run — today's old "stage" |
 
 A **Phase** is a convenience/grouping level: it carries a role but no files of its own. A **Step** is where the files live, and it binds exactly one topology **by id** out of the Simulation's pool.
 
@@ -78,7 +78,7 @@ Every step's starting coordinates resolve through `InputCoords(source, ref, path
 
 | `source` | Meaning |
 |---|---|
-| `starting_structure` | read the Simulation's single starting structure (only valid/typical for the first step) |
+| `starting_structure` | read the Simulation's single starting structure — what the **head of each lineage** reads, which in a document that declares none is just the first step |
 | `step` (with `ref: <step id>`) | chain from the referenced step's output restart (its `rst`, stored on the step that writes it) — the continuity anchor |
 | `path` (with `path: "..."`) | an explicit override, bypassing the chain |
 
@@ -116,7 +116,9 @@ if isinstance(prior_dt, (int, float)) and prior_dt > 0:
 
 A gap within an explicit `expected_gap_ps ± gap_tolerance_ps` window (or within the default floor, when no expectation is set) is logged as an `INFO` note — a **healthy transition is never flagged**. A gap outside that window, an overlap, or an unconfigured non-zero gap becomes a real (non-`INFO`) continuity note, which is what the GUI turns into a `continuity_gap` suggestion.
 
-**Sequence holes** are a separate, first-class finding: `detect_sequence_gaps(names)` looks at numbered-run families (`prod_0001`, `prod_0002`, `prod_0004`, …) and reports the missing indices — here, `{"prod": [3]}` — independent of whether any continuity gap was ever measured, because the file for index 3 simply doesn't exist to measure a gap against.
+"Consecutive" means consecutive **within one lineage**. When any step carries a `lineage` tag, `_check_continuity` partitions the stages by member first and compares pairs inside each member; each member's head is then measured against the step it actually continues from (its `input_coords.ref`, carried into the flat engine as `parent_id`), or gets an `INFO: Continuity for <name> was not measured (no producing stage resolved).` note where no producer resolves. A document that declares no lineage at all takes the original flat neighbour-by-neighbour path, unchanged.
+
+**Sequence holes** are a separate, first-class finding: `detect_sequence_gaps(names, lineages=None)` looks at numbered-run families (`prod_0001`, `prod_0002`, `prod_0004`, …) and reports the missing indices **per member**, keyed on `(member, base)` — here, `{(UNTAGGED, "prod"): [3]}` — independent of whether any continuity gap was ever measured, because the file for index 3 simply doesn't exist to measure a gap against. `lineages` is read positionally alongside `names`, one tag per run and `None` where a run carries none; omitting it puts every run in the one untagged bucket (`ambermeta.lineages.UNTAGGED`), which is the single family the detector always had. Inside a member, an index between its lowest and its highest that no run occupies is missing; across members of one base, only those whose numbering *overlaps* frame each other — so `rep2` stopping at `prod_0001` beside `rep1`'s `0001-0003` is reported, while a member numbered `0011-0012` on a scale of its own is not.
 
 Real output on the sample data (`tests/data/amber/md_test_files/`, a 64,528-atom glycoprotein system with a five-run NPT production sequence) with `ntp_prod_0003.*` removed:
 
@@ -239,7 +241,7 @@ per-stage validation + cross-stage continuity (§3)  →  stage_issues / protoco
 { ok, totals, stage_issues, protocol_issues, suggestions }
 ```
 
-Concretely, `core_bridge.validate_simulation(sim, settings, base_directory)` (called by `validate --manifest`, `plan -m <v2 manifest>`, and the GUI's Validate) does exactly this: flatten, run `auto_discover`, then layer on two v2-specific suggestion kinds — `missing_run` (from `detect_sequence_gaps`, §3) and `continuity_gap` (one per genuine, non-`INFO` continuity note, keyed off the engine's own healthy/problem classification rather than text-matching warning strings).
+Concretely, `core_bridge.validate_simulation(sim, settings, base_directory)` (called by `validate --manifest`, `plan -m <v2 manifest>`, and the GUI's Validate) does exactly this: flatten, run `auto_discover`, then layer on the v2-specific suggestion kinds — `missing_run` (from `detect_sequence_gaps`, §3), `continuity_gap` (one per genuine, non-`INFO` continuity note, keyed off the engine's own healthy/problem classification rather than text-matching warning strings), and `lineage_group` (an `[applied]` card naming each lineage the document declares, how many runs it holds, and how many runs carry no lineage at all).
 
 Underneath, validation is still two-tiered exactly as before:
 

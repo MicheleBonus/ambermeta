@@ -105,9 +105,15 @@ describe("selecting a step no longer lands on a placeholder pane", () => {
     const patch = capture("put", "/api/steps/:stepId");
     await renderInspector("step", "s1");
 
+    // Choosing the source opens the chooser and sends nothing: the server refuses a
+    // "continues from" that names nobody, so the request waits for the producer.
     await userEvent.selectOptions(screen.getByLabelText("Source"), "step");
+    await new Promise((r) => setTimeout(r, 20));
+    expect(patch.calls).toBe(0);
+
+    await userEvent.selectOptions(screen.getByLabelText("Continues from"), "s0");
     await waitFor(() => expect(patch.calls).toBe(1));
-    expect(patch.body).toEqual({ input_coords: { source: "step", ref: null, path: null } });
+    expect(patch.body).toEqual({ input_coords: { source: "step", ref: "s0", path: null } });
   });
 
   it("edits the continuity gap and the notes", async () => {

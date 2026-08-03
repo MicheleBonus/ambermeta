@@ -272,6 +272,181 @@ def test_lineage_survives_the_legacy_restart_path_rewrite():
     assert [s.lineage for s in steps] == ["rep1", "rep1", "rep1"]
 
 
+# --- the chain-maintenance invariant ----------------------------------------
+# No automatic operation may create an input_coords.ref crossing a declared boundary.
+
+def _replicas():
+    """Two tagged replicas of two chunks each, in replica-major document order."""
+    return Simulation(
+        starting_structure="wt.crd",
+        phases=[Phase(id="ph_0", name="Production", role="production", steps=[
+            Step(id="a1", name="rep1/prod_0001", lineage="rep1", rst="rep1/prod_0001.rst",
+                 input_coords=InputCoords(source="starting_structure")),
+            Step(id="a2", name="rep1/prod_0002", lineage="rep1", rst="rep1/prod_0002.rst",
+                 input_coords=InputCoords(source="step", ref="a1")),
+            Step(id="b1", name="rep2/prod_0001", lineage="rep2", rst="rep2/prod_0001.rst",
+                 input_coords=InputCoords(source="starting_structure")),
+            Step(id="b2", name="rep2/prod_0002", lineage="rep2", rst="rep2/prod_0002.rst",
+                 input_coords=InputCoords(source="step", ref="b1")),
+        ])],
+    )
+
+
+def _fan_out():
+    """One shared equilibration, then three tagged replicas of two chunks each."""
+    return Simulation(
+        starting_structure="wt.crd",
+        phases=[
+            Phase(id="ph_e", name="Equil", role="equilibration", steps=[
+                Step(id="eq", name="common/equil",
+                     input_coords=InputCoords(source="starting_structure"),
+                     rst="common/equil.rst")]),
+            Phase(id="ph_p", name="Production", role="production", steps=[
+                s for tag in ("rep1", "rep2", "rep3")
+                for s in (
+                    Step(id=f"{tag}_1", name=f"{tag}/prod_0001", lineage=tag,
+                         input_coords=InputCoords(source="step", ref="eq"),
+                         rst=f"{tag}/prod_0001.rst"),
+                    Step(id=f"{tag}_2", name=f"{tag}/prod_0002", lineage=tag,
+                         input_coords=InputCoords(source="step", ref=f"{tag}_1"),
+                         rst=f"{tag}/prod_0002.rst"),
+                )]),
+        ],
+    )
+
+
+def _cross_lineage_refs(sim):
+    """Every link claiming one declared member continued from another."""
+    by_id = {s.id: s for _, s in iter_steps(sim)}
+    out = []
+    for _, step in iter_steps(sim):
+        ic = step.input_coords
+        producer = by_id.get(ic.ref) if ic.source == "step" else None
+        if (producer is not None and producer.lineage and step.lineage
+                and producer.lineage != step.lineage):
+            out.append((producer.name, step.name))
+    return out
+
+
+def _links(sim):
+    return [(s.name, s.input_coords.source, s.input_coords.ref) for _, s in iter_steps(sim)]
+
+
+def test_interleaving_two_replicas_creates_no_link_between_them():
+    """The first branch's failure: reorder to rep1, rep2, rep1, rep2 and each chunk used
+    to be re-pointed at the OTHER replica's chunk — two fabricated continuations."""
+    sim = _replicas()
+    phase = sim.phases[0]
+    before = predecessors(sim)
+    phase.steps = [phase.steps[0], phase.steps[2], phase.steps[1], phase.steps[3]]
+    relink_restarts(sim, before)
+    assert _cross_lineage_refs(sim) == []
+    # Neighbour refused, so each chunk follows its OWN member's order — the link it
+    # already had, which the interleave did not change.
+    assert _links(sim) == [
+        ("rep1/prod_0001", "starting_structure", None),
+        ("rep2/prod_0001", "starting_structure", None),
+        ("rep1/prod_0002", "step", "a1"),
+        ("rep2/prod_0002", "step", "b1"),
+    ]
+
+
+def test_a_replica_head_is_not_promoted_onto_the_replica_now_in_front_of_it():
+    """The second branch's failure: it exists so drag-to-front is reversible, and it fires
+    on the step that WAS document-first — which is rep1's head in a replica tree."""
+    sim = _replicas()
+    phase = sim.phases[0]
+    before = predecessors(sim)
+    phase.steps = [phase.steps[2], phase.steps[3], phase.steps[0], phase.steps[1]]
+    relink_restarts(sim, before)
+    assert _cross_lineage_refs(sim) == []
+    assert phase.steps[2].input_coords == InputCoords(source="starting_structure")
+
+
+def test_a_shared_equilibration_that_is_deleted_does_not_serialise_the_replicas():
+    """Three members reading one restart, minus that restart, used to become one 6-step
+    serial chain: rep1 -> rep2 -> rep3. The exact false edge this model exists to remove,
+    manufactured by the tool while tidying up after a delete."""
+    sim = _fan_out()
+    del sim.phases[0].steps[0]
+    repair_dangling_refs(sim)
+    assert _cross_lineage_refs(sim) == []
+    assert [(n, src) for n, src, _ in _links(sim)] == [
+        ("rep1/prod_0001", "starting_structure"), ("rep1/prod_0002", "step"),
+        ("rep2/prod_0001", "starting_structure"), ("rep2/prod_0002", "step"),
+        ("rep3/prod_0001", "starting_structure"), ("rep3/prod_0002", "step"),
+    ]
+    # Each member keeps its own internal chain; only the link to the dead parent is gone.
+    assert [s.input_coords.ref for _, s in iter_steps(sim) if s.input_coords.ref] == \
+        ["rep1_1", "rep2_1", "rep3_1"]
+
+
+def test_deleting_a_parent_several_members_read_is_reported_not_papered_over():
+    sim = _fan_out()
+    del sim.phases[0].steps[0]
+    notes = repair_dangling_refs(sim)
+    assert len(notes) == 1
+    assert "rep1, rep2, rep3" in notes[0] and "3 runs" in notes[0]
+
+
+def test_the_report_does_not_call_a_re_chained_consumer_a_head():
+    """A shared parent in the MIDDLE of its consumers' members, not at the front of them.
+
+    Every consumer here has an earlier run of its own to continue from, so none of them
+    ends up a head — the warning has to describe what the repair did rather than assume
+    the fan-out was rooted at the start of each member.
+    """
+    sim = _fan_out()
+    for step_id in ("rep2_2", "rep3_2"):                 # a hand-set branch off rep1
+        next(s for _, s in iter_steps(sim) if s.id == step_id).input_coords = \
+            InputCoords(source="step", ref="rep1_2")
+    del sim.phases[1].steps[1]                           # rep1/prod_0002 goes
+
+    notes = repair_dangling_refs(sim)
+    assert [s.input_coords.ref for _, s in iter_steps(sim)
+            if s.id in ("rep2_2", "rep3_2")] == ["rep2_1", "rep3_1"]
+    assert len(notes) == 1 and "rep2, rep3" in notes[0]
+    assert "continues from the nearest earlier run of its own lineage" in notes[0]
+
+
+def test_an_untagged_document_repairs_exactly_as_it_always_did_and_says_nothing():
+    """The guarantee the whole feature is priced on: with one member, "the nearest
+    preceding step of my own lineage" is simply the step before."""
+    sim = _chain()
+    phase = sim.phases[0]
+    del phase.steps[0]                      # both survivors now reference dead ids
+    assert repair_dangling_refs(sim) == []
+    assert phase.steps[0].input_coords.source == "starting_structure"
+    assert phase.steps[1].input_coords.ref == "st_1"
+    # A fan-out inside one member is not a lineage boundary and raises nothing.
+    sim = _chain()
+    sim.phases[0].steps[2].input_coords = InputCoords(source="step", ref="st_0")
+    del sim.phases[0].steps[0]
+    assert repair_dangling_refs(sim) == []
+
+
+def test_a_shared_parent_feeding_one_member_twice_is_not_reported():
+    """Two consumers, one tag: the re-chain has an unambiguous answer, so there is
+    nothing to warn about and a warning would fire on ordinary chunked runs."""
+    sim = _fan_out()
+    for _, step in iter_steps(sim):
+        step.lineage = "rep1"
+    del sim.phases[0].steps[0]
+    assert repair_dangling_refs(sim) == []
+
+
+def test_an_untagged_step_continues_into_and_out_of_a_lineage():
+    """Only two DIFFERENT declared tags are a boundary. A shared equilibration feeding
+    three replicas is the commonest layout there is and every edge in it is real."""
+    sim = _fan_out()
+    phase = sim.phases[1]
+    before = predecessors(sim)
+    phase.steps = [phase.steps[1], phase.steps[0]] + phase.steps[2:]   # swap rep1's chunks
+    relink_restarts(sim, before)
+    assert _cross_lineage_refs(sim) == []
+    assert phase.steps[0].input_coords.ref == "eq"    # rep1's new head still reads it
+
+
 def test_loading_a_flat_manifest_says_so_instead_of_returning_nothing(tmp_path):
     """A v1 file used to migrate silently; now it must be a clear error.
 

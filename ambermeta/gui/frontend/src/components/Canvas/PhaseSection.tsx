@@ -18,6 +18,17 @@ function numericBase(name: string): string {
   return name.replace(/[-_.]?\d+$/, "");
 }
 
+/**
+ * The base as the server spells it. `protocol.detect_sequence_gaps` drops the directory
+ * before it counts a numbered family, because two members of one experiment number their
+ * runs on the same scale wherever they live; a group's base keeps the directory so two
+ * members are never drawn as one band. Both are right, and until they were reconciled
+ * every missing-run ghost in a multi-directory tree was silently dropped on the mismatch.
+ */
+function serverBase(base: string): string {
+  return base.slice(base.lastIndexOf("/") + 1);
+}
+
 function stepNumber(name: string): number {
   const m = name.match(/(\d+)$/);
   return m ? parseInt(m[1], 10) : Number.POSITIVE_INFINITY;
@@ -29,21 +40,27 @@ function numWidth(name: string): number {
   return m ? m[1].length : 0;
 }
 
+type StepGroup = { id: string; base: string; lineage: string | null; steps: StepModel[] };
+
 /**
- * Consecutive steps sharing a numeric base become one collapsible group. Each group carries the
- * id of its first step: `base` is not unique — two non-adjacent runs can share one ("step", "min",
- * "step") — so keying React children or the collapse set by it collides, and one group's toggle
- * would expand the other.
+ * Consecutive steps sharing a numeric base AND a lineage become one collapsible group. Each
+ * group carries the id of its first step: `base` is not unique — two non-adjacent runs can share
+ * one ("step", "min", "step") — so keying React children or the collapse set by it collides, and
+ * one group's toggle would expand the other.
+ *
+ * The lineage is part of the break so a group always belongs to exactly one member, which is what
+ * lets its missing-run ghosts be matched: a finding is scoped to `(lineage, base)` and a band that
+ * straddled two members could not be matched against either.
  */
-function groupSteps(steps: StepModel[]): { id: string; base: string; steps: StepModel[] }[] {
-  const groups: { id: string; base: string; steps: StepModel[] }[] = [];
+function groupSteps(steps: StepModel[]): StepGroup[] {
+  const groups: StepGroup[] = [];
   for (const step of steps) {
     const base = numericBase(step.name);
     const last = groups[groups.length - 1];
-    if (last && last.base === base) {
+    if (last && last.base === base && last.lineage === step.lineage) {
       last.steps.push(step);
     } else {
-      groups.push({ id: step.id, base, steps: [step] });
+      groups.push({ id: step.id, base, lineage: step.lineage, steps: [step] });
     }
   }
   return groups;
@@ -52,13 +69,20 @@ function groupSteps(steps: StepModel[]): { id: string; base: string; steps: Step
 type GhostItem = { id: string; name: string; num: number };
 
 /** Ghost nodes for a numbered-sequence group, derived from the structured
- * `base`/`missing` fields of missing_run suggestions (no free-text parsing). */
-function ghostsForBase(base: string, width: number, suggestions: Suggestion[]): GhostItem[] {
+ * `lineage`/`base`/`missing` fields of missing_run suggestions (no free-text parsing).
+ * Matched on the server's base, drawn with the group's, so the ghost sits in one member's
+ * band and reads like the runs beside it. */
+function ghostsForGroup(group: StepGroup, width: number, suggestions: Suggestion[]): GhostItem[] {
   const out: GhostItem[] = [];
   for (const s of suggestions) {
-    if (s.kind !== "missing_run" || s.base !== base || !s.missing) continue;
+    if (s.kind !== "missing_run" || s.base !== serverBase(group.base) || !s.missing) continue;
+    if ((s.lineage ?? null) !== group.lineage) continue;
     for (const idx of s.missing) {
-      out.push({ id: `${s.id}:${idx}`, name: `${base}_${String(idx).padStart(width, "0")}`, num: idx });
+      out.push({
+        id: `${s.id}:${idx}`,
+        name: `${group.base}_${String(idx).padStart(width, "0")}`,
+        num: idx,
+      });
     }
   }
   return out;
@@ -78,7 +102,7 @@ type SequenceItem =
 
 /** One group's render list, with the step that precedes each item anywhere in the phase. */
 interface RenderedGroup {
-  group: { id: string; base: string; steps: StepModel[] };
+  group: StepGroup;
   items: { item: SequenceItem; above: StepModel | null }[];
 }
 
@@ -91,14 +115,11 @@ interface RenderedGroup {
  * appear there at all. A collapsed group still advances the sequence, so the arrow that
  * follows it points at the right step.
  */
-function layOutPhase(
-  groups: { id: string; base: string; steps: StepModel[] }[],
-  suggestions: Suggestion[],
-): RenderedGroup[] {
+function layOutPhase(groups: StepGroup[], suggestions: Suggestion[]): RenderedGroup[] {
   let previous: StepModel | null = null;
   return groups.map((group) => {
     const width = Math.max(0, ...group.steps.map((s) => numWidth(s.name)));
-    const ghosts = ghostsForBase(group.base, width, suggestions);
+    const ghosts = ghostsForGroup(group, width, suggestions);
     const ordered: SequenceItem[] = [
       ...group.steps.map((step): SequenceItem => ({ kind: "step", num: stepNumber(step.name), step })),
       ...ghosts.map((gh): SequenceItem => ({ kind: "ghost", num: gh.num, id: gh.id, name: gh.name })),

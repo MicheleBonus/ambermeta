@@ -77,7 +77,7 @@ Each pane is resizable (drag the divider); widths persist across sessions.
 
 ## 3. A typical session
 
-1. **Discover.** Click **Discover**, optionally uncheck "Search subdirectories" or set a filename pattern, then **Run discover**. The server scans the launch directory, groups files by stem, classifies the topology pool (normal vs. HMR), picks a starting structure, and chains later steps' input coordinates to the previous step's output restart. This **replaces** the current draft (a confirmation guards unsaved changes) and repopulates the suggestions tray.
+1. **Discover.** Click **Discover**, optionally uncheck "Search subdirectories" or set a filename pattern, then **Run discover**. The server scans the launch directory, groups files by stem, classifies the topology pool (normal vs. HMR), picks a starting structure, and chains later steps' input coordinates to the previous step's output restart — the previous step **of the same lineage**, when the directory layout names members (`rep1/`, `rep2/`, … running the same set of runs); each member then starts from the starting structure and same-role steps of every member share one phase. This **replaces** the current draft (a confirmation guards unsaved changes) and repopulates the suggestions tray.
 2. **Assign & adjust.** Drag a file from **Files** onto the topology pool, the starting-structure slot, a step's `mdin`/`mdout`/`mdcrd`/`rst` slot, or a phase's/step's topology target. Or select a file in **Files** and use the Inspector's **Assign** actions (§6) — the same mutations, without dragging.
 3. **Arrange.** In the **Canvas**, drag a step's grip handle to reorder it within a phase or drop it onto another phase to move it; drag a phase's grip handle to reorder phases.
 4. **Validate.** Click **Validate**. The panel lists per-step issues (missing files, continuity/sequence problems) and protocol-level notes, and lets you jump to a step. A simulation with continuity notes shows as *valid, with N protocol note(s)* — never a silent clean pass when something is worth a look.
@@ -156,7 +156,7 @@ The Inspector's content depends on what's selected:
 Every inferred thing is surfaced as an explainable suggestion rather than applied silently — this is the draft-first design: roles, the HMR topology, the starting structure, sequence holes, and continuity gaps all show up here. Suggestions are grouped:
 
 - **Needs you** — something the tool can't resolve on its own (`missing_run`: a numbered-sequence hole; `continuity_gap`: a genuine start/end mismatch between consecutive steps; `topology_confirm`: more than one topology in the pool, confirm which is HMR). Each card offers **Accept** / **Adjust** / **Ignore**.
-- **Applied** — something already reflected in the draft, shown for transparency (`starting_structure`, `role_guess`). Each card offers **Dismiss**, plus **Undo** (calls the server's undo) when the suggestion says it can be undone.
+- **Applied** — something already reflected in the draft, shown for transparency (`starting_structure`, `role_guess`, `lineage_group`: the run lineages the document declares, how many runs each holds, and how many carry none). Each card offers **Dismiss**, plus **Undo** (calls the server's undo) when the suggestion says it can be undone.
 
 Every card shows a `title` and a monospace `evidence` string explaining the inference. Dismissing a card only hides it in this browser session — it does not mutate the document; **Undo** is the only action here that does.
 

@@ -42,6 +42,19 @@ def test_discover_returns_result_with_suggestions(sample_md_data_dir):
     assert body["document"]["simulation"]["phases"]
 
 
+def test_the_missing_run_card_names_its_member_on_the_wire(crashed_replica_tree):
+    """`Suggestion(**s)` is a pydantic model with the default `extra='ignore'`, so a
+    `lineage` key that build_suggestions sets but the schema does not declare is dropped
+    silently — the card would reach the canvas naming no member and nothing would say
+    why. Asserted over the route rather than on the dict for exactly that reason."""
+    c = _client(crashed_replica_tree)
+    r = c.post("/api/document/discover", json={"recursive": True})
+    assert r.status_code == 200
+    card, = [s for s in r.json()["suggestions"] if s["kind"] == "missing_run"]
+    assert card["lineage"] == "rep2"
+    assert card["base"] == "prod" and card["missing"] == [2, 3]
+
+
 def test_topology_routes(tmp_path):
     c = _client(tmp_path)
     r = c.post("/api/topologies", json={"path": "wt.prmtop", "kind": "hmr"})
@@ -200,6 +213,103 @@ def test_assigning_a_restart_to_the_rst_slot(tmp_path):
                                     "target_id": a, "slot": "rst"})
     assert r.status_code == 200
     assert _step(c, a)["rst"] == "01_min.rst"
+
+
+def test_an_impossible_continues_from_is_a_400_and_not_a_500(tmp_path):
+    """PUT /steps/{id} used to take a dead id and a self-reference verbatim, which made
+    every guard on the automatic chaining paths bypassable through this one route."""
+    c, _, a, b = _two_steps(tmp_path)
+    for ref, detail in ((b, "cannot continue from itself"),
+                        ("ghost", "no step to continue from")):
+        r = c.put(f"/api/steps/{b}", json={"input_coords": {"source": "step", "ref": ref}})
+        assert r.status_code == 400 and detail in r.json()["detail"]
+    assert _step(c, b)["input_coords"]["ref"] == a          # nothing was written
+
+
+def test_a_step_is_created_with_its_lineage_and_at_the_index_asked_for(tmp_path):
+    c, p, a, _ = _two_steps(tmp_path)
+    r = c.post(f"/api/phases/{p}/steps", json={"name": "rep2/prod_0001",
+                                               "lineage": "rep2", "index": 0})
+    steps = r.json()["simulation"]["phases"][0]["steps"]
+    assert [s["name"] for s in steps][0] == "rep2/prod_0001"
+    assert steps[0]["lineage"] == "rep2"                    # silently dropped before
+
+
+def _two_lineages(tmp_path):
+    """A phase holding one step of each of two declared members, built over the wire."""
+    c = _client(tmp_path)
+    p = c.post("/api/phases", json={"name": "Prod", "role": "production"}) \
+         .json()["simulation"]["phases"][0]["id"]
+    for tag in ("rep1", "rep2"):
+        c.post(f"/api/phases/{p}/steps", json={"name": f"{tag}/prod_0001", "lineage": tag})
+    a, b = [s["id"] for s in _phase(c, p)["steps"]]
+    return c, p, a, b
+
+
+def test_creating_a_step_applies_the_same_ref_checks_as_updating_one(tmp_path):
+    """POST /phases/{id}/steps took a caller-supplied `input_coords` verbatim, so it was a
+    second, unguarded way past every check PUT /steps/{id} had just gained.
+
+    Self-reference is absent from this list because the create path cannot express it: the
+    id is minted server-side and the caller has never seen it, so the nearest thing it can
+    spell is an id the document does not hold — the first case here.
+    """
+    c, p, _, _ = _two_lineages(tmp_path)
+    for ref, detail in (("deadbeef", "no step to continue from"),
+                        (None, "must name it"), ("", "must name it")):
+        r = c.post(f"/api/phases/{p}/steps",
+                   json={"name": "rep1/prod_0002", "lineage": "rep1",
+                         "input_coords": {"source": "step", "ref": ref}})
+        assert r.status_code == 400 and detail in r.json()["detail"]
+    assert len(_phase(c, p)["steps"]) == 2          # none of them was created
+    # And none of them was snapshotted either: one undo must reach past the refusals to
+    # the last edit that actually happened, not unwind three that reverse nothing.
+    c.post("/api/undo")
+    assert len(_phase(c, p)["steps"]) == 1
+
+
+def test_the_create_and_update_routes_refuse_a_bad_ref_identically(tmp_path):
+    """One helper rather than two copies of it, so a rule added to the edit path cannot go
+    missing from the create path — which is exactly how the hole opened."""
+    c, p, _, b = _two_lineages(tmp_path)
+    created = c.post(f"/api/phases/{p}/steps",
+                     json={"name": "x", "input_coords": {"source": "step", "ref": "ghost"}})
+    updated = c.put(f"/api/steps/{b}",
+                    json={"input_coords": {"source": "step", "ref": "ghost"}})
+    assert created.status_code == updated.status_code == 400
+    assert created.json()["detail"] == updated.json()["detail"]
+
+
+def test_a_step_created_across_two_members_is_kept_and_reported(tmp_path):
+    """A hand-written link between two declared lineages is the only way to record a
+    genuine branch, so creating one is a finding rather than a refusal — the same answer
+    the edit route gives, since a create that refused it would just be edited into place."""
+    c, p, a, _ = _two_lineages(tmp_path)
+    r = c.post(f"/api/phases/{p}/steps",
+               json={"name": "rep2/prod_0002", "lineage": "rep2",
+                     "input_coords": {"source": "step", "ref": a}})
+    assert r.status_code == 200
+    body = r.json()
+    made, = [s for s in body["simulation"]["phases"][0]["steps"]
+             if s["name"] == "rep2/prod_0002"]
+    assert made["input_coords"]["ref"] == a         # kept, not silently dropped
+    assert len(body["warnings"]) == 1
+    assert "rep1/prod_0001" in body["warnings"][0] and "rep2/prod_0002" in body["warnings"][0]
+
+
+def test_a_continues_from_that_names_nothing_is_refused_on_both_routes(tmp_path):
+    """`source: "step"` with no ref says the run continued from something and declines to
+    say what. It used to be stored on both routes, resolving to no coordinates while the
+    chain still read as intact; "reads the starting structure" is a source of its own."""
+    c, p, _, b = _two_lineages(tmp_path)
+    for ref in (None, ""):
+        r = c.put(f"/api/steps/{b}", json={"input_coords": {"source": "step", "ref": ref}})
+        assert r.status_code == 400 and "must name it" in r.json()["detail"]
+        r = c.post(f"/api/phases/{p}/steps",
+                   json={"name": "x", "input_coords": {"source": "step", "ref": ref}})
+        assert r.status_code == 400 and "must name it" in r.json()["detail"]
+    assert _step(c, b)["input_coords"]["source"] == "starting_structure"   # untouched
+    assert len(_phase(c, p)["steps"]) == 2
 
 
 def test_deleting_a_step_does_not_leave_its_successor_pointing_at_a_dead_id(tmp_path):

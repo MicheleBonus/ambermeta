@@ -30,6 +30,8 @@ export interface Suggestion {
   id: string; kind: string; severity: "needs_you" | "applied" | "info";
   title: string; evidence: string; actions: string[];
   step_id?: string; phase_id?: string; base?: string; missing?: number[];
+  /** missing_run: the lineage the finding is scoped to, null for the untagged bucket. */
+  lineage?: string | null;
 }
 export interface MissingFile { kind: string; path: string; }
 export interface StageIssue {

@@ -69,6 +69,7 @@ class Step:
     mdout: Optional[str] = None
     mdcrd: Optional[str] = None
     rst: Optional[str] = None             # the restart this run WRITES (-r restrt)
+    lineage: Optional[str] = None         # which run member (replica/branch/pose); None = untagged
     expected_gap_ps: Optional[float] = None
     gap_tolerance_ps: Optional[float] = None
     notes: List[str] = field(default_factory=list)
@@ -190,7 +191,7 @@ def discover_draft(
 ) -> Dict[str, Any]   # {"simulation": Simulation, "suggestions": [...], "warnings": [...]}
 ```
 
-Scans a directory into a **Simulation draft**: builds the topology pool (HMR detected from timestep, `ambermeta.topology_pool.classify_topology_pool`), finds a starting structure (a single-frame coordinate file outside any run group), groups runs into phases by inferred role (`ambermeta.roles.classify_role` — the one classifier shared by CLI and GUI), and chains each step's `input_coords` off the previous step. This is what `ambermeta discover` calls; see [§1](#1-the-ambermetasimulation-model) for a full run.
+Scans a directory into a **Simulation draft**: builds the topology pool (HMR detected from timestep, `ambermeta.topology_pool.classify_topology_pool`), finds a starting structure (a single-frame coordinate file outside any run group), groups runs into phases by inferred role (`ambermeta.roles.classify_role` — the one classifier shared by CLI and GUI), and chains each step's `input_coords` off the previous step **of its own lineage**. Where the directory layout names members (`rep1/`, `rep2/`, … running the same set of runs — `ambermeta.lineages.infer_lineages_from_layout`), each member gets its own chain starting from the starting structure and same-role steps share one phase across members; where it does not, the result is the single chain and contiguous phases it always was. This is what `ambermeta discover` calls; see [§1](#1-the-ambermetasimulation-model) for a full run.
 
 ### `validate_simulation()`
 
@@ -219,7 +220,7 @@ report["suggestions"]
 #   'evidence': 'Production->production', 'actions': ['Undo']}]
 ```
 
-Each suggestion carries a `kind` (`missing_run`, `topology_confirm`, `starting_structure`, `role_guess`, `continuity_gap`), a `severity` (`applied` — already assumed, reversible; `needs_you` — a real decision), and `evidence` explaining why it fired. This is the same list the GUI's suggestions tray renders.
+Each suggestion carries a `kind` (`missing_run`, `topology_confirm`, `starting_structure`, `role_guess`, `continuity_gap`, `lineage_group`), a `severity` (`applied` — already assumed, reversible; `needs_you` — a real decision), and `evidence` explaining why it fired. This is the same list the GUI's suggestions tray renders.
 
 Other `core_bridge` entry points worth knowing about: `file_metadata(path)` (parse-and-serialize one file by extension), `read_file_head(path, max_bytes=4096)` (raw text preview), and `open_simulation`/`save_simulation`/`preview_simulation` (thin wrappers over `load_simulation`/`write_simulation` behind the GUI's document endpoints — see the [GUI guide](gui.md) for the HTTP API surface).
 
@@ -343,6 +344,13 @@ class SimulationStage:
     mdout:  Optional[MdoutData]  = None
     mdcrd:  Optional[MdcrdData]  = None
     restart_path: Optional[str] = None
+    # Carried over from the v2 document, never derived here: the run member this stage
+    # belongs to, and the document step ids of this stage and of the step it continues
+    # from. Continuity partitions on `lineage` and measures each member's head against
+    # `parent_id`; all three are absent (None) on the directory-scan path.
+    lineage: Optional[str] = None
+    step_id: Optional[str] = None
+    parent_id: Optional[str] = None
     validation: List[str] = field(default_factory=list)
     continuity: List[str] = field(default_factory=list)
     load_errors: List[FileLoadError] = field(default_factory=list)
