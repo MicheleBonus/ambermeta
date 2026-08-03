@@ -6,6 +6,9 @@ export const emptyDocument: DocumentResponse = {
   base_directory: "/work", manifest_path: null, dirty: false, can_undo: false, can_redo: false,
   settings: { auto_link_restarts: true, strict_validation: true, allow_gaps: false, use_relative_paths: true },
   simulation: { version: 2, topologies: [], starting_structure: null, phases: [] },
+  // The edit that produced this document had nothing to warn about — the ordinary case,
+  // and what every handler here stands in for.
+  warnings: [],
 };
 
 export const emptyValidationReport: ValidationReport = {

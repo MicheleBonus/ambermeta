@@ -25,6 +25,16 @@ export interface RuntimeSettings {
 export interface DocumentResponse {
   base_directory: string; manifest_path: string | null; dirty: boolean;
   can_undo: boolean; can_redo: boolean; settings: RuntimeSettings; simulation: SimulationModel;
+  /**
+   * What the edit that produced this document could not do without inventing a link nobody
+   * declared: a shared parent deleted out from under several lineages, a hand-set
+   * "continues from" that crosses one. It describes the edit rather than the document — the
+   * server clears it on the next mutation — so it is never a running total of anything.
+   *
+   * Required, not optional: the server always sends the key, and a fixture allowed to omit
+   * it is a surface that silently reports nothing (see `makeStep`'s note in test/factories).
+   */
+  warnings: string[];
 }
 export interface Suggestion {
   id: string; kind: string; severity: "needs_you" | "applied" | "info";

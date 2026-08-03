@@ -85,6 +85,8 @@ Each pane is resizable (drag the divider); widths persist across sessions.
 
 Undo/redo (**Ctrl+Z** / **Ctrl+Shift+Z**, **Ctrl+Y**) and a dirty-state dot live in the top bar; history is kept on the server (100 steps). **Open** resets it — a different manifest is a new editing session — while **Discover** does not, so a discovery run on the wrong directory is one undo away. Removing something (a step, a phase, a topology, the starting structure) reports itself with an **Undo** button; that offer disappears as soon as you make another change, because undo always reverses the most recent one.
 
+An edit that the chain rules let through but could not honour in full reports itself in the same place, as a **warning-toned message** — deleting a step that runs in several lineages continued from (which also carries an Undo offer), or setting a "continues from" that crosses a lineage boundary (which does not; `lineage` in [`docs/manifest.md` §5](manifest.md#5-steps) says what a member is). It is not an error: the edit landed, and the message says what it cost so you can go and look. It has the same lifetime as an Undo offer and for the same reason — it describes one edit, so the next one clears it.
+
 ---
 
 ## 4. Files pane
@@ -378,11 +380,14 @@ $ curl -s -o /dev/null -w '%{http_code}\n' 'http://127.0.0.1:8799/api/nonexisten
             "expected_gap_ps": null, "gap_tolerance_ps": null, "notes": [] }
         ] }
     ]
-  }
+  },
+  "warnings": []
 }
 ```
 
 This is `ambermeta.gui.api.schemas.DocumentResponse` — the same shape the frontend renders and the shape `simulation_to_payload`/`payload_to_simulation` round-trip to a v2 manifest (`docs/manifest.md`).
+
+`warnings` is the one field that describes the **request** rather than the document: what the edit just made could not do without inventing a link nobody declared — a step several lineages continued from deleted, a `ref` set across a lineage boundary. The server clears it on the next mutation, so it is never a running total; a `GET /api/document` in between still shows the last edit's, since a read is not an edit. The GUI announces it as a warning-toned message on the edit that raised it (§3); a script driving the API should read it off the mutation's own response.
 
 One field here has no counterpart on disk: **`resolved_input_coords` is read-only and API-only**. The server resolves the chain (`starting_structure`, or `ref` → that step's `rst`, or an explicit `path`) and hands the answer over so the frontend never re-implements the rules. Sending it back is not how you change what a step reads — set `input_coords` instead. `rst`, by contrast, is a real manifest field: the restart this step produces.
 

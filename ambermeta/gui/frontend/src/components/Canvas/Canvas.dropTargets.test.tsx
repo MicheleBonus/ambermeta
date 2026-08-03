@@ -45,6 +45,7 @@ const doc: DocumentResponse = {
   dirty: false,
   can_undo: false,
   can_redo: false,
+  warnings: [],
   settings: { auto_link_restarts: true, strict_validation: true, allow_gaps: false, use_relative_paths: true },
   simulation: {
     version: 2,

@@ -1,7 +1,7 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { api, type SaveResult, type SettingsPatch } from "./client";
 import { DOCUMENT_KEY, queryClient, setDocument } from "./queryClient";
-import { pushToast } from "@/lib/toast";
+import { pushToast, pushEditWarning } from "@/lib/toast";
 import type {
   DocumentResponse, AddTopology, UpdateTopology, PhaseCreate, PhaseUpdate,
   StepCreatePayload, StepUpdatePayload, StepMovePayload, AssignRequest, ExportFormat,
@@ -10,10 +10,22 @@ import type {
 
 export function useDocument() { return useQuery({ queryKey: DOCUMENT_KEY, queryFn: api.getDocument }); }
 function docMutation<V>(fn: (v: V) => Promise<DocumentResponse>) {
-  // setDocument retires any outstanding "Undo" offer, for every writer of the document —
-  // see queryClient.ts. It runs before this mutation's own onSuccess callback, so a
-  // caller that raises a fresh offer there still gets to keep it.
-  return useMutation({ mutationFn: fn, onSuccess: (doc) => setDocument(doc) });
+  // setDocument retires whatever the previous edit had to say — its "Undo" offer, its
+  // warnings — for every writer of the document; see queryClient.ts. It runs before this
+  // mutation's own onSuccess callback, so a caller that raises a fresh offer there still
+  // gets to keep it, and so do the warnings raised immediately below.
+  return useMutation({
+    mutationFn: fn,
+    onSuccess: (doc) => {
+      setDocument(doc);
+      // The server's report on the edit that just landed: a shared parent deleted out from
+      // under several lineages, a hand-set link across two of them. Announced here and
+      // nowhere else, because a document mutation is the only response on which this field
+      // describes the request that produced it — save, plan and discover echo the store's
+      // warnings back untouched, and re-announcing them would report one edit twice.
+      doc.warnings.forEach((w) => pushEditWarning(w));
+    },
+  });
 }
 
 export const useOpen = () => docMutation((path: string) => api.openDocument(path));

@@ -7,6 +7,7 @@ it("document response nests a simulation", () => {
     base_directory: "/w", manifest_path: null, dirty: false, can_undo: false, can_redo: false,
     settings: { auto_link_restarts: true, strict_validation: true, allow_gaps: false, use_relative_paths: true },
     simulation: { version: 2, topologies: [], starting_structure: null, phases: [] },
+    warnings: [],
   };
   expect(doc.simulation.version).toBe(2);
   const sim: SimulationModel = doc.simulation;
