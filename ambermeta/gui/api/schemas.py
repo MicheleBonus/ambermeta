@@ -208,6 +208,16 @@ class StepUpdate(BaseModel):
     notes: Optional[List[str]] = None
 
 
+class StepsLineage(BaseModel):
+    """Tag many steps at once. `lineage: null` clears the tag on all of them.
+
+    An explicit id list, not a phase: `discover` groups same-role runs from every member
+    into one phase, so a phase-scoped write would give every replica the same tag.
+    """
+    ids: List[str]
+    lineage: Optional[str] = None
+
+
 class StepMove(BaseModel):
     phase_id: str
     index: int = -1   # -1 appends

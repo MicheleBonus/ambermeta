@@ -29,6 +29,9 @@ export function ContinuityArrow({
   const hasGap = !!gap;
   return (
     <div
+      // Counted in tests: how many arrows a phase draws is the whole assertion for band
+      // boundaries, and an arrow is otherwise an icon with no accessible name to find.
+      data-testid="continuity-arrow"
       className={`flex min-w-0 items-center justify-center gap-1 py-0.5 text-xs ${
         hasGap ? "text-warning" : "text-ink-muted"
       }`}

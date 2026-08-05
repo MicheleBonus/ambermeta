@@ -12,7 +12,7 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
-from ambermeta.lineages import buckets
+from ambermeta.lineages import buckets, infer_lineages_from_layout
 from ambermeta.simulation import (
     Simulation, Phase, Step, Topology, InputCoords, crosses_lineage, same_lineage,
     iter_steps, predecessors, relink_restarts, repair_dangling_refs, resolve_input_coords,
@@ -493,8 +493,85 @@ class DocumentStore:
                 s.gap_tolerance_ps = patch["gap_tolerance_ps"]
             if patch.get("notes") is not None:
                 s.notes = list(patch["notes"])
+            if "lineage" in patch:                  # present => set (None clears)
+                s.lineage = patch["lineage"] or None
+                notes += self._sever_crossed_refs()
             self._warnings = notes          # after _snapshot(), which clears them
             self._doc.dirty = True
+
+    def set_lineages(self, step_ids: List[str], lineage: Optional[str]) -> None:
+        """Tag many steps in one edit, and one undo entry.
+
+        Bulk rather than a loop of `PUT /steps/{id}` because the loop is not merely slow:
+        every per-step write deep-copies the whole document onto the undo stack, so a
+        20 x 10 campaign is 200 snapshots against a `history_limit` of 100 and the
+        Discover result being annotated is evicted before the annotating is finished. It
+        also leaves the user 200 Ctrl+Z presses away from where they started.
+
+        Scoped to an explicit id list rather than to a phase, which is the shape the
+        topology fan-out uses: `discover` emits phase-major documents, so one Production
+        phase spans every replica and a phase-scoped tag would stamp them all the same.
+        """
+        with self.lock:
+            # Every lookup before the snapshot, so one bad id leaves neither a
+            # half-applied tag nor an undo frame that reverses nothing.
+            steps = [self._find_step(step_id)[1] for step_id in step_ids]
+            self._snapshot()
+            for step in steps:
+                step.lineage = lineage or None
+            self._warnings = self._sever_crossed_refs()
+            self._doc.dirty = True
+
+    def apply_inferred_lineages(self) -> int:
+        """Tag the steps whose names give the directory layout away. Returns how many.
+
+        The same inference `discover` reports as `[applied]`, offered again because a
+        document reaches the canvas by other routes than a fresh scan — an opened manifest,
+        a tree `discover` was run on before the steps were renamed — and because it refuses
+        far more layouts than it accepts. Everything it refuses stays for the user to tag
+        by hand, which is the point of the tag being declared rather than derived.
+        """
+        with self.lock:
+            steps = [s for _, s in iter_steps(self._doc.simulation)]
+            tags = infer_lineages_from_layout([s.name for s in steps])
+            if not tags:
+                return 0
+            self._snapshot()
+            for step in steps:
+                step.lineage = tags.get(step.name) or None
+            self._warnings = self._sever_crossed_refs()
+            self._doc.dirty = True
+            return len(tags)
+
+    def _sever_crossed_refs(self) -> List[str]:
+        """Drop any restart link the new tags have turned into a cross-member claim.
+
+        Retagging is the one edit that can invalidate a link without touching it.
+        `_check_continues_from` fires when a `ref` is *set*; here the ref does not move —
+        the boundary does. A chain `s1 -> s2 -> s3 -> s4` retagged `rep1,rep1,rep2,rep2`
+        leaves `s3` reading `s2`'s restart, which is now a claim that one member continues
+        another. Nothing else in the document would ever catch it, and because
+        `resolve_input_coords` turns a ref into a real path, that claim becomes a file from
+        the wrong replica in the manifest, in `resolved_input_coords` and in the methods
+        summary.
+
+        Reverting to `starting_structure` rather than guessing a new producer: silence is
+        recoverable and a false edge is not, and the user has just said something about
+        membership, which is exactly when the tool should stop inferring.
+        """
+        by_id = {s.id: s for _, s in iter_steps(self._doc.simulation)}
+        severed: List[str] = []
+        for _, step in iter_steps(self._doc.simulation):
+            ic = step.input_coords
+            if ic is None or ic.source != "step" or not ic.ref:
+                continue
+            producer = by_id.get(ic.ref)
+            if producer is not None and crosses_lineage(producer, step):
+                step.input_coords = InputCoords(source="starting_structure")
+                severed.append(
+                    f"{step.name} no longer continues {producer.name}: they are now "
+                    "different lineages. Set its input coordinates if that is wrong.")
+        return severed
 
     def delete_step(self, step_id: str) -> None:
         with self.lock:

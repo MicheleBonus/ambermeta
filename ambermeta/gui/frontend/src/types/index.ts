@@ -110,13 +110,19 @@ export interface StepFilesPatch { mdin?: string; mdout?: string; mdcrd?: string;
 export interface StepCreatePayload {
   name: string; topology?: string | null; input_coords?: InputCoordsModel;
   mdin?: string; mdout?: string; mdcrd?: string; rst?: string;
+  lineage?: string | null;
   expected_gap_ps?: number; gap_tolerance_ps?: number; notes?: string[];
 }
 /** A gap sent as null is cleared; omit the key to leave it alone. */
 export interface StepUpdatePayload {
   name?: string; topology?: string | null; input_coords?: InputCoordsModel; files?: StepFilesPatch;
+  /** Present (including null) sets or clears the tag; omit to leave it alone. */
+  lineage?: string | null;
   expected_gap_ps?: number | null; gap_tolerance_ps?: number | null; notes?: string[];
 }
+/** Tag many steps in one request and one undo entry. An explicit id list, because
+ *  `discover` puts every member's same-role runs in one phase. */
+export interface StepsLineagePayload { ids: string[]; lineage: string | null; }
 export interface StepMovePayload { phase_id: string; index: number; }
 export type AssignTarget = "pool" | "starting_structure" | "phase_topology" | "step_topology" | "step_slot";
 export type SlotName = "mdin" | "mdout" | "mdcrd" | "rst";

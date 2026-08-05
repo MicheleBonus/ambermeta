@@ -2,7 +2,7 @@ import type {
   DocumentResponse, ValidationReport, DiscoverResult,
   RuntimeSettings, FileInfo, FileMetadata, RawFile, ExportFormat,
   AddTopology, UpdateTopology, PhaseCreate, PhaseUpdate,
-  StepCreatePayload, StepUpdatePayload, StepMovePayload, AssignRequest,
+  StepCreatePayload, StepUpdatePayload, StepsLineagePayload, StepMovePayload, AssignRequest,
   PlanRequest, PlanResult,
 } from "@/types";
 // (SaveResult / PreviewResponse / SettingsPatch are client-response shapes, not part of @/types)
@@ -44,6 +44,8 @@ const post = <T>(path: string, body?: unknown) =>
   request<T>(path, { method: "POST", body: body ? JSON.stringify(body) : undefined });
 const put = <T>(path: string, body: unknown) =>
   request<T>(path, { method: "PUT", body: JSON.stringify(body) });
+const patch = <T>(path: string, body: unknown) =>
+  request<T>(path, { method: "PATCH", body: JSON.stringify(body) });
 
 const del = <T>(path: string) => request<T>(path, { method: "DELETE" });
 
@@ -74,6 +76,8 @@ export const api = {
   createStep: (phaseId: string, b: StepCreatePayload) => post<DocumentResponse>(`/phases/${phaseId}/steps`, b),
   reorderSteps: (phaseId: string, step_ids: string[]) => post<DocumentResponse>(`/phases/${phaseId}/steps/reorder`, { step_ids }),
   updateStep: (id: string, b: StepUpdatePayload) => put<DocumentResponse>(`/steps/${id}`, b),
+  setLineages: (b: StepsLineagePayload) => patch<DocumentResponse>("/steps/lineage", b),
+  inferLineages: () => post<DocumentResponse>("/steps/infer-lineages", {}),
   deleteStep: (id: string) => del<DocumentResponse>(`/steps/${id}`),
   moveStep: (id: string, b: StepMovePayload) => post<DocumentResponse>(`/steps/${id}/move`, b),
 

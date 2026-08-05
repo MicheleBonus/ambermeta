@@ -4,7 +4,7 @@ import { DOCUMENT_KEY, queryClient, setDocument } from "./queryClient";
 import { pushToast, pushEditWarning } from "@/lib/toast";
 import type {
   DocumentResponse, AddTopology, UpdateTopology, PhaseCreate, PhaseUpdate,
-  StepCreatePayload, StepUpdatePayload, StepMovePayload, AssignRequest, ExportFormat,
+  StepCreatePayload, StepUpdatePayload, StepsLineagePayload, StepMovePayload, AssignRequest, ExportFormat,
   PlanRequest, PlanResult,
 } from "@/types";
 
@@ -47,6 +47,8 @@ export const useDeletePhase = () => docMutation((a: { id: string; reassignTo?: s
 
 export const useCreateStep = () => docMutation((a: { phaseId: string; body: StepCreatePayload }) => api.createStep(a.phaseId, a.body));
 export const useUpdateStep = () => docMutation((a: { id: string; body: StepUpdatePayload }) => api.updateStep(a.id, a.body));
+export const useSetLineages = () => docMutation((b: StepsLineagePayload) => api.setLineages(b));
+export const useInferLineages = () => docMutation(() => api.inferLineages());
 export const useDeleteStep = () => docMutation((id: string) => api.deleteStep(id));
 export const useMoveStep = () => docMutation((a: { id: string; body: StepMovePayload }) => api.moveStep(a.id, a.body));
 export const useReorderSteps = () => docMutation((a: { phaseId: string; ids: string[] }) => api.reorderSteps(a.phaseId, a.ids));
