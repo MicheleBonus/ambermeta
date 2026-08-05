@@ -46,10 +46,18 @@ export interface Suggestion {
 export interface MissingFile { kind: string; path: string; }
 export interface StageIssue {
   name: string; ok: boolean; degraded: boolean;
-  errors: string[]; warnings: string[]; info: string[]; missing_files: MissingFile[];
+  errors: string[]; warnings: string[]; info: string[];
+  /** Non-INFO continuity notes for this stage. Emitted by the server since the beginning
+   *  and dropped by the response model until it was declared there. */
+  continuity: string[];
+  missing_files: MissingFile[];
 }
+/** One declared member's share of the document. Absent from an untagged one. */
+export interface LineageTotals { steps: number; time_ps: number; step_count: number; }
 export interface ValidationReport {
-  ok: boolean; totals: Record<string, number>; protocol_issues: string[];
+  ok: boolean; totals: Record<string, number>;
+  lineages: Record<string, LineageTotals> | null;
+  protocol_issues: string[];
   stage_issues: StageIssue[]; suggestions: Suggestion[];
 }
 export interface DiscoverResult { document: DocumentResponse; suggestions: Suggestion[]; warnings: string[]; }
@@ -72,6 +80,7 @@ export interface PlanResult {
   stage_count: number; totals: Record<string, number>; document: DocumentResponse;
   /** What the run found, in the same shape /validate returns. */
   suggestions: Suggestion[];
+  lineages: Record<string, LineageTotals> | null;
 }
 
 export type FileType = "prmtop" | "mdin" | "mdout" | "mdcrd" | "inpcrd" | "folder" | "other";

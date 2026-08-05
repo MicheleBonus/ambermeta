@@ -518,10 +518,18 @@ class SimulationProtocol:
             else:
                 current._add_continuity_note("Gap detected without stated expectation; verify continuity.")
 
-    def totals(self) -> Dict[str, float]:
+    @staticmethod
+    def _sum_stages(stages: List[SimulationStage]) -> Dict[str, float]:
+        """`steps` and `time_ps` over any set of stages.
+
+        Accumulated with ``+=`` rather than ``sum()`` on purpose: CPython 3.12 made
+        ``builtins.sum`` compensated, and CI's matrix is 3.9 *and* 3.12, so a float total
+        built with ``sum()`` can differ in its last bits between the two jobs — on the one
+        artifact every lineage change is told to keep byte-stable.
+        """
         total_steps = 0.0
         total_time = 0.0
-        for stage in self.stages:
+        for stage in stages:
             if stage.mdin and stage.mdin.details:
                 length = getattr(stage.mdin.details, "length_steps", 0) or 0
                 dt = getattr(stage.mdin.details, "dt", 0) or 0
@@ -529,6 +537,55 @@ class SimulationProtocol:
                     total_steps += float(length)
                     total_time += float(length) * float(dt)
         return {"steps": total_steps, "time_ps": total_time}
+
+    def _members(self) -> Dict[Any, List[SimulationStage]]:
+        """This protocol's membership buckets, sentinel included.
+
+        `buckets` is structurally typed on ``.lineage``, so the same grouping the document
+        uses applies to the flat stage list without either side re-deriving it.
+        """
+        return buckets(self.stages)
+
+    def totals(self) -> Dict[str, float]:
+        out = self._sum_stages(self.stages)
+        members = self._members()
+        # `lineage_count` counts what the user *declared*: the untagged bucket is a member
+        # (it is why a half-tagged document is multi-lineage at all) but it is not a
+        # lineage, and counting it reported four members for the canonical three-replica
+        # campaign — the miscount the membership predicate exists to prevent, coming back
+        # through the totals.
+        #
+        # Emitted only when the document holds more than one member, so an untagged
+        # summary.json is the file it always was. Note the value arrives on the wire as a
+        # float: `PlanResult.totals` and `ValidationReport.totals` are `Dict[str, float]`
+        # and pydantic coerces, exactly as it already does for `stage_count`.
+        if len(members) >= 2:
+            out["lineage_count"] = float(len(members) - (1 if UNTAGGED in members else 0))
+        return out
+
+    def lineage_totals(self) -> Dict[str, Dict[str, float]]:
+        """Per declared member: its own `steps`, `time_ps` and `step_count`.
+
+        Empty for a document that declares nothing, and for one whose only member is the
+        untagged bucket — there is no breakdown of a single member, and `totals` already
+        says it.
+
+        A member that is all minimisation reports `steps: 0.0`: minimisation stages carry
+        no `nstlim`/`dt`, so they contribute nothing to either sum. That is the same
+        arithmetic `totals` has always done, made visible per member rather than hidden in
+        one number.
+        """
+        members = self._members()
+        if len(members) < 2:
+            return {}
+        out: Dict[str, Dict[str, float]] = {}
+        for tag, stages in members.items():
+            if tag is UNTAGGED:
+                continue
+            entry: Dict[str, float] = dict(self._sum_stages(stages))
+            entry["step_count"] = len(stages)
+            out[tag] = entry
+        return out
 
     def sequence_findings(self) -> List[Dict[str, Any]]:
         """The numbered-sequence holes in this protocol, as ``missing_run`` cards.
@@ -552,6 +609,13 @@ class SimulationProtocol:
         findings = self.sequence_findings()
         if findings:
             out["findings"] = findings
+        # Beside `totals`, not inside it: `totals` is a flat `Dict[str, float]` on both
+        # pydantic models and a nested dict raises there, which on `/api/plan` — which
+        # builds its response only after the files have been written — is an HTTP 500 over
+        # artifacts that already landed.
+        lineages = self.lineage_totals()
+        if lineages:
+            out["lineages"] = lineages
         return out
 
     def to_methods_dict(self) -> Dict[str, Any]:

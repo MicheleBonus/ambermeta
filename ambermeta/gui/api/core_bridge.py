@@ -231,6 +231,10 @@ def build_validation_report(stages: List[Dict[str, Any]], settings: Dict[str, An
     return {
         "ok": all(s["ok"] for s in stage_issues),
         "totals": totals,
+        # None rather than {} for a single-member document: the field is Optional on the
+        # model and "the document declares no members" and "every member is empty" are
+        # different answers.
+        "lineages": protocol.lineage_totals() or None,
         "protocol_issues": protocol_issues,
         "stage_issues": stage_issues,
     }
@@ -421,6 +425,7 @@ def write_plan_outputs(sim, settings, base_directory, targets: Dict[str, str],
     protocol = build_protocol(_flatten_simulation(sim), dict(settings), base_directory)
     result = write_protocol_outputs(protocol, targets, summary_format=summary_format)
     result["totals"] = protocol.totals()
+    result["lineages"] = protocol.lineage_totals() or None
     result["stage_count"] = len(protocol.stages)
     # The response says what the artifacts say. The GUI ends up with these anyway, via the
     # revalidate its document-changed effect fires after a plan — but "the client happens

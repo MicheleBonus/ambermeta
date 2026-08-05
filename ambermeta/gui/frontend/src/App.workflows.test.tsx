@@ -72,6 +72,7 @@ describe("top-bar workflows", () => {
     const report: ValidationReport = {
       ok: true,
       totals: { stage_count: 0 },
+      lineages: null,
       protocol_issues: [],
       stage_issues: [],
       suggestions: [

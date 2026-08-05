@@ -175,6 +175,7 @@ def plan_document(req: PlanRequest) -> PlanResult:
                       warnings=warnings + out["warnings"],
                       stage_count=out["stage_count"], totals=out["totals"],
                       suggestions=[Suggestion(**s) for s in out["suggestions"]],
+                      lineages=out["lineages"],
                       document=store.to_response())
 
 
