@@ -248,3 +248,42 @@ it("puts a missing-run ghost in the band of the member the finding names", async
   const rep2First = screen.getByText("rep2/prod_0001");
   expect(rep2First.compareDocumentPosition(ghost) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 });
+
+it("spells a ghost the way the band around it is spelled", async () => {
+  // A ghost is a filename the user is being sent to look for, so `prod_0002` beside runs
+  // called `prod.0001` and `prod.0003` is a wrong answer, not a cosmetic one. The
+  // separator was hardcoded to "_", which stayed invisible while the server detected no
+  // dot-numbered sequences at all and so produced no findings to draw ghosts from.
+  const dotted: DocumentResponse = {
+    ...docWithGap,
+    simulation: {
+      ...docWithGap.simulation,
+      phases: [{
+        id: "p0", name: "Production", role: "production",
+        steps: [
+          makeStep({ id: "a1", name: "prod.0001" }),
+          makeStep({ id: "a3", name: "prod.0003" }),
+        ],
+      }],
+    },
+  };
+  const hole: Suggestion[] = [{
+    id: "sug_1",
+    kind: "missing_run",
+    severity: "needs_you",
+    title: "prod sequence is missing member(s) 2",
+    evidence: "present members of 'prod' skip index(es) 2",
+    actions: ["Mark as expected gap", "Locate file", "Ignore"],
+    base: "prod",
+    missing: [2],
+    lineage: null,
+  }];
+
+  queryClient.clear();
+  server.use(http.get("/api/document", () => HttpResponse.json(dotted)));
+  render(wrap(<Canvas />, hole));
+
+  await waitFor(() => expect(screen.getByText("prod.0001")).toBeInTheDocument());
+  expect(screen.getByText("prod.0002")).toBeInTheDocument();
+  expect(screen.queryByText("prod_0002")).not.toBeInTheDocument();
+});

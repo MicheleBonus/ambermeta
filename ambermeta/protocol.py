@@ -1164,6 +1164,38 @@ class _TaggedRun(NamedTuple):
     lineage: Optional[str]
 
 
+def _numbered_stem(name: str) -> str:
+    """The part of a run name a numbered-sequence base is read from.
+
+    Two separate jobs, kept separate because `Path().stem` did both at once and got the
+    second one wrong:
+
+    * **Drop the directory.** Two directories are one member until something says
+      otherwise, so an untagged document with runs in `rep1/` and `rep2/` groups exactly as
+      it always did. The base this yields is bare (`prod`, never `rep1/prod`), which the
+      canvas depends on — `PhaseSection.serverBase` strips the directory from the client's
+      spelling to match it.
+    * **Drop the file extension, unless it is the index.** `Path().stem` cannot tell
+      `prod.0001` (chunk one of a dot-numbered chain) from `prod.out` (a file extension),
+      and ate the index: `prod.0001/prod.0002/prod.0004` reported no sequence at all, so
+      the hole at 3 went unreported, and with it the crashed-replica finding that is the
+      whole point of the feature. A purely numeric final suffix is an index and is kept;
+      anything else is an extension and goes.
+
+    "Purely numeric" rather than "ends in a digit" because `.rst7` and `.parm7` are real
+    AMBER extensions and the regex's separator is optional, so `system.rst7` would split as
+    `('system.rst', '7')` and two restarts would be reported as a sequence missing index 6.
+    No extension in `ext_map` is purely numeric, so the discriminator holds.
+
+    `prod.0001.out` keeps working: the final suffix `.out` is not numeric and goes, leaving
+    `prod.0001` for the regex to split. That case worked before this function existed and
+    is why the fix is not simply "stop stripping extensions".
+    """
+    run = name.rpartition("/")[2].rpartition("\\")[2]
+    head, _, tail = run.rpartition(".")
+    return run if not head or tail.isdigit() else head
+
+
 def detect_numeric_sequences(
     filenames: List[str],
     lineages: Optional[List[Optional[str]]] = None,
@@ -1199,6 +1231,8 @@ def detect_numeric_sequences(
     # Pattern to detect numeric suffixes: name_001, name.001, name001, name-001
     # \d+ (not \d{2,}) so single-digit sequences (prod_1, prod_2, prod_3) are detected.
     # The base group (.+?) ensures a stem that is *only* a number never matches here.
+    # `name.001` reaches this pattern only because `_numbered_stem` keeps a numeric final
+    # suffix; `Path().stem` used to eat it, so the dot spelling matched nothing.
     suffix_pattern = re.compile(r'^(.+?)[-_.]?(\d+)$')
 
     # Pattern to detect numeric prefixes: 01_name, 01.name, 01-name
@@ -1213,10 +1247,7 @@ def detect_numeric_sequences(
     for member, runs in buckets(_TaggedRun(n, t) for n, t in zip(filenames, tags)).items():
         for run in runs:
             filename = run.name
-            # `Path().stem` discards the directory for the reason `detect_sequence_gaps`
-            # spells out: two directories are one member until something says otherwise,
-            # so an untagged document groups exactly as it always did.
-            stem = Path(filename).stem
+            stem = _numbered_stem(filename)
 
             # Try suffix pattern first (prod_001, prod_002)
             match = suffix_pattern.match(stem)
@@ -1323,11 +1354,7 @@ def detect_sequence_gaps(
     present: Dict[str, Dict[Any, set]] = {}
     for member, runs in buckets(_TaggedRun(n, t) for n, t in zip(names, tags)).items():
         for run in runs:
-            # `Path().stem` keeps discarding the directory on purpose: an untagged
-            # document with runs in two directories is one member, and splitting it by
-            # directory here would start reporting findings — and `--strict` exit codes —
-            # for manifests that never opted into anything.
-            stem = Path(run.name).stem
+            stem = _numbered_stem(run.name)
             match = suffix_pattern.match(stem)
             if not match:
                 continue

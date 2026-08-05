@@ -40,6 +40,23 @@ function numWidth(name: string): number {
   return m ? m[1].length : 0;
 }
 
+/**
+ * The character this band puts between a base and its index — "_" for `prod_0001`, "." for
+ * `prod.0001`, "" for `prod0001`.
+ *
+ * A ghost is a filename the user is being told to go and look for, so spelling it the way
+ * the runs beside it are spelled is the whole of its usefulness. It was hardcoded to "_",
+ * which was invisible until the server learned to detect dot-numbered families at all;
+ * before that a dot-numbered band produced no findings and so no ghosts to misspell.
+ */
+function numSeparator(names: string[]): string {
+  for (const name of names) {
+    const m = name.match(/([-_.]?)\d+$/);
+    if (m) return m[1];
+  }
+  return "_";
+}
+
 type StepGroup = { id: string; base: string; lineage: string | null; steps: StepModel[] };
 
 /**
@@ -74,13 +91,14 @@ type GhostItem = { id: string; name: string; num: number };
  * band and reads like the runs beside it. */
 function ghostsForGroup(group: StepGroup, width: number, suggestions: Suggestion[]): GhostItem[] {
   const out: GhostItem[] = [];
+  const sep = numSeparator(group.steps.map((s) => s.name));
   for (const s of suggestions) {
     if (s.kind !== "missing_run" || s.base !== serverBase(group.base) || !s.missing) continue;
     if ((s.lineage ?? null) !== group.lineage) continue;
     for (const idx of s.missing) {
       out.push({
         id: `${s.id}:${idx}`,
-        name: `${group.base}_${String(idx).padStart(width, "0")}`,
+        name: `${group.base}${sep}${String(idx).padStart(width, "0")}`,
         num: idx,
       });
     }

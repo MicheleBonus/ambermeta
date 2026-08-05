@@ -516,6 +516,45 @@ def test_different_bases_do_not_frame_each_other():
     assert detect_sequence_gaps(names, tags) == {("rep2", "prod"): [2]}
 
 
+def test_a_dot_numbered_chain_is_a_numbered_sequence():
+    """`prod.0001` is chunk one, not a file called `prod` with a `.0001` extension.
+
+    `Path().stem` could not tell the two apart and dropped the index, so a dot-numbered
+    tree produced no sequence, no `INFO: Part of sequence` note, no missing-run card and no
+    canvas ghost — including for a crashed replica, the one failure the feature exists to
+    expose. Everything else about such a tree already worked: `infer_lineages_from_layout`
+    tagged it and the canvas grouped it, which is what made the silence so quiet.
+    """
+    assert detect_sequence_gaps(["prod.0001", "prod.0002", "prod.0004"]) == {
+        (UNTAGGED, "prod"): [3]}
+    names = ["rep1/prod.0001", "rep1/prod.0002", "rep1/prod.0003", "rep2/prod.0001"]
+    assert detect_sequence_gaps(names, ["rep1", "rep1", "rep1", "rep2"]) == {
+        ("rep2", "prod"): [2, 3]}
+
+
+def test_a_dot_index_under_a_real_extension_still_works():
+    """The case that worked before the fix and had to keep working.
+
+    `.stem` strips only the last suffix, so `prod.0001.out` already arrived at the regex as
+    `prod.0001`. That is why the fix could not be "stop stripping extensions" — doing that
+    leaves `prod.0001.out`, which the regex cannot split at all.
+    """
+    assert detect_sequence_gaps(["prod.0001.out", "prod.0002.out", "prod.0004.out"]) == {
+        (UNTAGGED, "prod"): [3]}
+
+
+def test_an_extension_that_ends_in_a_digit_is_not_an_index():
+    """`.rst7` and `.parm7` are why the rule is "purely numeric", not "ends in a digit".
+
+    The suffix regex's separator is optional, so `system.rst7` splits as
+    `('system.rst', '7')`. Left unguarded, two restarts beside each other are reported as a
+    sequence missing index 6 — a fabricated finding, and under `--strict` a fabricated
+    exit code 1. No extension in `ext_map` is purely numeric, so the discriminator holds.
+    """
+    assert detect_sequence_gaps(["system.rst5", "system.rst7"]) == {}
+    assert detect_sequence_gaps(["wt.parm7", "wt.parm5"]) == {}
+
+
 def test_a_member_on_its_own_scale_does_not_excuse_the_others():
     # rep3 shares no index with anybody, so nothing relates it to rep1/rep2 — but it also
     # must not answer for them. One all-or-nothing test across the base let it: rep2's

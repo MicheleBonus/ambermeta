@@ -114,6 +114,24 @@ def crashed_replica_tree(tmp_path) -> Path:
 
 
 @pytest.fixture
+def dot_numbered_crashed_tree(tmp_path) -> Path:
+    """The same crash, numbered `prod.0001` instead of `prod_0001`.
+
+    Every other fixture in this file and every committed one under `tests/data/` uses an
+    underscore, which is how the dot spelling stayed broken through two PRs: it was tagged
+    correctly, grouped correctly on the canvas, and silently produced no sequence at all.
+
+    Built through `write_run_tree`, which concatenates strings. Do not reach for
+    `Path.with_suffix` here — `Path("prod.0001").with_suffix(".mdin")` is `prod.mdin`, so
+    the fixture would write the wrong files and pass for the wrong reason.
+    """
+    return write_run_tree(tmp_path, [
+        *(f"{rep}/prod.{i:04d}" for rep in ("rep1", "rep3") for i in (1, 2, 3)),
+        "rep2/prod.0001",
+    ])
+
+
+@pytest.fixture
 def nested_sweep_tree(tmp_path) -> Path:
     """A temperature sweep crossed with replicas: two segments vary at once.
 

@@ -22,6 +22,13 @@ from ambermeta.simulation import Simulation, Step, iter_steps
 # membership predicate below and the sequence-gap detector must agree on what counts as
 # the same run in two different directories, or a replica family passes one and fails the
 # other.
+#
+# The regex was always identical; what was not was what reached it. This module applies it
+# to the raw run name, while both detectors first ran it through `Path().stem`, which ate a
+# dot-numbered index — so `prod.0001` was one member's chunk one here and an unnumbered run
+# there, and the agreement this comment claimed was false for exactly the spelling nobody
+# had a fixture for. `protocol._numbered_stem` is now the shared answer to "which part of
+# the name does the regex see", and it keeps a purely numeric final suffix.
 _NUMBERED = re.compile(r"^(.+?)[-_.]?(\d+)$")
 
 
