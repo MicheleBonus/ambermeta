@@ -2,7 +2,8 @@ import { useState } from "react";
 import { useDroppable } from "@dnd-kit/core";
 import { useSelection } from "@/state/selection";
 import {
-  useAddTopology, useRemoveTopology, useSetStartingStructure, useUpdateTopology,
+  useAddTopology, useInferLineages, useRemoveTopology, useSetStartingStructure,
+  useUpdateTopology,
 } from "@/api/hooks";
 import { FilePicker } from "@/components/FilePicker";
 import { FileLabel, Plus, X } from "@/components/common";
@@ -97,19 +98,37 @@ export function SimHeader({
   const { setNodeRef: setStartRef, isOver: startOver } = useDroppable({ id: "starting" });
   const setStartingStructure = useSetStartingStructure();
   const addTopology = useAddTopology();
+  const inferLineages = useInferLineages();
   const offerUndo = useUndoOffer();
   const [picking, setPicking] = useState<"prmtop" | "inpcrd" | null>(null);
   const isSimSelected = sel.kind === "sim";
 
   return (
     <div className="bg-surface border-b border-hairline p-3 space-y-2">
-      <button
-        type="button"
-        onClick={() => select("sim", null)}
-        className={`text-sm font-medium ${isSimSelected ? "text-accent" : "text-ink"}`}
-      >
-        Simulation
-      </button>
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={() => select("sim", null)}
+          className={`text-sm font-medium ${isSimSelected ? "text-accent" : "text-ink"}`}
+        >
+          Simulation
+        </button>
+        {/* The same inference `discover` reports as [applied], offered again because a
+            document reaches this canvas by other routes than a fresh scan — an opened
+            manifest, or a tree whose steps have since been renamed. It refuses far more
+            layouts than it accepts, and everything it refuses is left for the band headers
+            to tag by hand, which is the point of the tag being declared rather than
+            derived. */}
+        <button
+          type="button"
+          disabled={sim.phases.every((p) => p.steps.length === 0)}
+          onClick={() => inferLineages.mutate(undefined)}
+          title="Tag runs by the directory segment that distinguishes them"
+          className="ml-auto text-xs text-ink-muted hover:text-ink disabled:opacity-50"
+        >
+          Infer lineages
+        </button>
+      </div>
 
       <div
         ref={setPoolRef}

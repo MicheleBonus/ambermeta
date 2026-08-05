@@ -263,7 +263,7 @@ protocol.auto_discover(directory, manifest=flat_stages, ...)   # SimulationProto
 per-stage validation + cross-stage continuity (§3)  →  stage_issues / protocol_issues
         │  core_bridge.build_suggestions() + _continuity_gap_suggestions()
         ▼
-{ ok, totals, stage_issues, protocol_issues, suggestions }
+{ ok, totals, lineages, coherence, stage_issues, protocol_issues, suggestions }
 ```
 
 Concretely, `core_bridge.validate_simulation(sim, settings, base_directory)` (called by `validate --manifest`, `plan -m <v2 manifest>`, and the GUI's Validate) does exactly this: flatten, run `auto_discover`, then layer on the v2-specific suggestion kinds — `missing_run` (from `detect_sequence_gaps`, §3), `continuity_gap` (one per genuine, non-`INFO` continuity note, keyed off the engine's own healthy/problem classification rather than text-matching warning strings), and `lineage_group` (an `[applied]` card naming each lineage the document declares, how many runs it holds, and how many runs carry no lineage at all).
@@ -292,7 +292,7 @@ The upshot: **one continuity engine, one sequence-hole detector, one role classi
 | Export | Producer | Contents |
 |---|---|---|
 | v2 manifest | `simulation.write_simulation()` / `ambermeta export` / `discover --write` | Canonical Simulation → Phase → Step, JSON or YAML |
-| Protocol summary | `SimulationProtocol.to_dict()` | `totals` + every stage's full metadata, validation, and continuity (the classic `plan` report, written by `--summary-path`) |
+| Protocol summary | `SimulationProtocol.to_dict()` | `totals` + every stage's full metadata, validation, and continuity, plus `findings` and `lineages` where there is something to report (the classic `plan` report, written by `--summary-path`) |
 | Methods summary | `SimulationProtocol.to_methods_dict()` | Reproducibility-critical metadata only — software/version, MD engine settings (ensemble, thermostat, barostat, cutoff, constraints), system composition, restraints — with energies and bulk arrays dropped |
 | Statistics CSV | `plan --stats-csv` | One row per stage: time range, duration, and temperature/pressure/density/energy as mean ± σ |
 

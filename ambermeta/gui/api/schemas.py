@@ -208,6 +208,16 @@ class StepUpdate(BaseModel):
     notes: Optional[List[str]] = None
 
 
+class StepsLineage(BaseModel):
+    """Tag many steps at once. `lineage: null` clears the tag on all of them.
+
+    An explicit id list, not a phase: `discover` groups same-role runs from every member
+    into one phase, so a phase-scoped write would give every replica the same tag.
+    """
+    ids: List[str]
+    lineage: Optional[str] = None
+
+
 class StepMove(BaseModel):
     phase_id: str
     index: int = -1   # -1 appends
@@ -249,17 +259,6 @@ class FailedFile(BaseModel):
     error: str
 
 
-class PlanResult(BaseModel):
-    written: List[WrittenFile] = Field(default_factory=list)
-    # One unwritable path does not hide the artifacts that did land: the response names
-    # both, so the user is never told "it failed" about a run that wrote three files.
-    failed: List[FailedFile] = Field(default_factory=list)
-    warnings: List[str] = Field(default_factory=list)
-    stage_count: int = 0
-    totals: Dict[str, float] = Field(default_factory=dict)
-    document: DocumentResponse
-
-
 class Suggestion(BaseModel):
     id: str
     kind: str        # missing_run|continuity_gap|topology_confirm|restart_link|role_guess|starting_structure|lineage_group
@@ -278,6 +277,37 @@ class Suggestion(BaseModel):
     lineage: Optional[str] = None
 
 
+class LineageTotals(BaseModel):
+    """One declared member's share of the document.
+
+    Its own model rather than a reuse of `totals`' `Dict[str, float]`: `step_count` is a
+    count of steps and belongs as an int, and a nested dict raises inside a float map
+    anyway — which is why the breakdown sits beside `totals` and not inside it.
+    """
+    steps: float = 0.0
+    time_ps: float = 0.0
+    step_count: int = 0
+
+
+class PlanResult(BaseModel):
+    written: List[WrittenFile] = Field(default_factory=list)
+    # One unwritable path does not hide the artifacts that did land: the response names
+    # both, so the user is never told "it failed" about a run that wrote three files.
+    failed: List[FailedFile] = Field(default_factory=list)
+    warnings: List[str] = Field(default_factory=list)
+    stage_count: int = 0
+    totals: Dict[str, float] = Field(default_factory=dict)
+    # Declared, not incidental: pydantic's extra='ignore' would drop the key silently and
+    # the response would look correct while saying nothing about the replica that stopped
+    # early. `StageIssue.continuity` is already lost that way.
+    suggestions: List[Suggestion] = Field(default_factory=list)
+    # Null, not absent, when the document declares no members: no route sets
+    # `exclude_none`, so an Optional field always serialises. `to_dict()`/summary.json can
+    # and does omit it — a plain dict is not bound by that.
+    lineages: Optional[Dict[str, LineageTotals]] = None
+    document: DocumentResponse
+
+
 class MissingFile(BaseModel):
     kind: str
     path: str
@@ -290,12 +320,31 @@ class StageIssue(BaseModel):
     errors: List[str] = Field(default_factory=list)
     warnings: List[str] = Field(default_factory=list)
     info: List[str] = Field(default_factory=list)
+    # `build_validation_report` has always emitted this and the model has always dropped
+    # it, because pydantic's default `extra='ignore'` says nothing when a key it does not
+    # know about arrives. The continuity notes are the one part of a stage's output that
+    # is about the *lineage*, so losing them on the wire is not a cosmetic gap.
+    continuity: List[str] = Field(default_factory=list)
     missing_files: List[MissingFile] = Field(default_factory=list)
+
+
+class CoherenceFinding(BaseModel):
+    """What the declared members do and do not agree about.
+
+    Carries its own severity, which is the point of it: `protocol_issues` is a
+    `List[str]` the panel renders uniformly as a warning, so a category error routed
+    through it showed a yellow "Valid, with 1 protocol note(s)" while the CLI exited 1.
+    """
+    severity: str    # error | warning | info
+    kind: str        # atom_count | run_type | parameter | seed | fan_out
+    message: str
 
 
 class ValidationReport(BaseModel):
     ok: bool
     totals: Dict[str, float] = Field(default_factory=dict)
+    lineages: Optional[Dict[str, LineageTotals]] = None
+    coherence: List[CoherenceFinding] = Field(default_factory=list)
     protocol_issues: List[str] = Field(default_factory=list)
     stage_issues: List[StageIssue] = Field(default_factory=list)
     suggestions: List[Suggestion] = Field(default_factory=list)

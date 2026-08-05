@@ -13,7 +13,8 @@ from .schemas import (
     DocumentResponse, RuntimeSettings, SettingsPatch, OpenRequest, SaveRequest, SaveResult,
     DiscoverRequest, DiscoverResult, PreviewRequest, PreviewResponse,
     AddTopology, UpdateTopology, SetStartingStructure, PhaseCreate, PhaseUpdate, PhaseReorder,
-    StepCreate, StepUpdate, StepMove, StepReorder, AssignRequest, ValidationReport,
+    StepCreate, StepUpdate, StepMove, StepReorder, StepsLineage, AssignRequest,
+    ValidationReport,
     FileMetadata, FileInfo, RawFile, Suggestion, PlanRequest, PlanResult,
 )
 
@@ -174,6 +175,8 @@ def plan_document(req: PlanRequest) -> PlanResult:
     return PlanResult(written=written, failed=out["failed"],
                       warnings=warnings + out["warnings"],
                       stage_count=out["stage_count"], totals=out["totals"],
+                      suggestions=[Suggestion(**s) for s in out["suggestions"]],
+                      lineages=out["lineages"],
                       document=store.to_response())
 
 
@@ -351,6 +354,8 @@ def update_step(step_id: str, req: StepUpdate) -> DocumentResponse:
         patch["name"] = req.name
     if "topology" in req.model_fields_set:      # present (incl. null) => set/clear
         patch["topology"] = req.topology
+    if "lineage" in req.model_fields_set:       # present (incl. null) => set/clear
+        patch["lineage"] = req.lineage
     if req.input_coords is not None:
         patch["input_coords"] = req.input_coords.model_dump()
     if req.files is not None:
@@ -370,6 +375,42 @@ def update_step(step_id: str, req: StepUpdate) -> DocumentResponse:
     except ValueError as exc:       # a self-reference, or a "continues from" nobody holds
         raise HTTPException(status_code=400, detail=str(exc))
     return store.to_response()
+
+
+@router.patch("/steps/lineage", response_model=DocumentResponse)
+def set_step_lineages(req: StepsLineage) -> DocumentResponse:
+    """Tag every step in `ids` in one edit and one undo entry.
+
+    PATCH rather than PUT because the collection is not being replaced, and because it
+    keeps this path from competing with `/steps/{step_id}`: `lineage` is a perfectly good
+    step id as far as that pattern is concerned, and FastAPI resolves in declaration order
+    within a method. Should a PATCH on a single step ever be added, it must be declared
+    after this one.
+    """
+    store = get_store()
+    try:
+        store.set_lineages(req.ids, req.lineage)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=f"Step not found: {exc.args[0]}")
+    return store.to_response()
+
+
+@router.post("/steps/infer-lineages", response_model=DocumentResponse)
+def infer_lineages() -> DocumentResponse:
+    """Apply the directory-layout inference to the open document, in one undo entry.
+
+    Reports through the same warnings channel every other edit uses, including when it
+    tagged nothing: a layout this refuses is the common case, and an action that appears
+    to do nothing and says nothing reads as broken.
+    """
+    store = get_store()
+    tagged = store.apply_inferred_lineages()
+    response = store.to_response()
+    if not tagged:
+        response.warnings = list(response.warnings) + [
+            "No lineages inferred: the run names do not distinguish members by one "
+            "directory segment. Tag the bands by hand."]
+    return response
 
 
 @router.delete("/steps/{step_id}", response_model=DocumentResponse)

@@ -124,7 +124,11 @@ The canvas is a continuous vertical timeline, not a flat list of cards.
 - Four dashed drop-target slots: `mdin`, `mdout`, `mdcrd` and `rst`, each showing its filename or `—` and a × to clear it. `rst` is the restart this run **writes**; the next step reads it.
 - A grip handle to drag the step within the phase or onto another phase.
 
-**Continuity arrows** sit between consecutive steps in a sequence. When the lower step continues from the upper one, the arrow is labelled with the restart file that passes between them — that file belongs to neither card alone, so the edge is where it is shown. An amber arrow annotated with the gap magnitude (e.g. `20 ps`) marks a real continuity gap.
+**Lineage bands** — where the document declares members, each member's runs sit in their own band with a header naming it and how many runs it holds. The band name is editable: click it to rename the member, which retags every run in the band in one request and one undo entry, or **clear** to untag them. Bands are the outer grouping level and the numeric grouping above stays as the inner one, so collapsing and ghosts keep working. A document that declares nothing gets no band chrome at all.
+
+**Infer lineages** in the Simulation header applies the directory-layout inference to the open document — the same rule `discover` reports as `[applied]`, offered again because a document also arrives here by being opened rather than scanned. It refuses far more layouts than it accepts, and says so when it does; everything it refuses is yours to tag by band.
+
+**Continuity arrows** sit between consecutive steps in a sequence. When the lower step continues from the upper one, the arrow is labelled with the restart file that passes between them — that file belongs to neither card alone, so the edge is where it is shown. An amber arrow annotated with the gap magnitude (e.g. `20 ps`) marks a real continuity gap. **No arrow is drawn between bands**: what precedes a member's first run in document order is another member's last run, and that adjacency means nothing. Where the members all branch from one run, a line above the bands names it (`3 lineages branch from common/equil`) rather than drawing three arrows across boundaries the bands exist to keep apart.
 
 **Missing-run ghosts** — a dashed, muted card labeled `<name> missing` is inserted at the correct position in a numbered sequence when a member is absent (e.g. `ntp_prod_0003` between `0002` and `0004`), driven by the same sequence-hole detection the CLI uses.
 
@@ -255,16 +259,27 @@ Note `discover` here only found one `prmtop`, so it became the sole (`normal`) p
 
 ## 9. Validation
 
-**Validate** builds a report against the same engine the CLI uses. Real output (`POST /api/validate` after Discover, on the sample data):
+**Validate** builds a report against the same engine the CLI uses. Where a document declares more
+than one member it also carries a **Lineages** section: what the members do and do not agree about,
+each finding with its own severity. Only a category error — different atom counts, or a member that
+ran no dynamics beside one that did — turns the badge red and `ok` false; a difference in `temp0` or
+`cut` is a note, and a statement like `3 steps read the restart written by common/equil and carry 3
+distinct resolved seeds` is neither. The badge used to read a flat green "All checks passed" for a
+document the CLI exited `1` on, because it counted only per-stage errors and a category error is not
+attached to any one stage.
+
+Real output (`POST /api/validate` after Discover, on the sample data):
 
 ```json
 {
   "ok": true,
   "totals": { "steps": 25000000.0, "time_ps": 100000.0, "stage_count": 5.0 },
+  "lineages": null,
+  "coherence": [],
   "protocol_issues": [],
   "stage_issues": [
     { "name": "ntp_prod_0001", "ok": true, "degraded": false,
-      "errors": [], "warnings": [], "info": [], "missing_files": [] }
+      "errors": [], "warnings": [], "info": [], "continuity": [], "missing_files": [] }
   ],
   "suggestions": [
     { "id": "sug_1", "kind": "starting_structure", "severity": "applied",
@@ -361,10 +376,31 @@ created reading the starting structure rather than continuing whichever step hap
 is recoverable, a false edge is not — pass `lineage` and it is inserted after that member's last step and
 chained to it instead.
 
-`lineage` is **read-only at this surface in this release.** `StepCreate` honours it, so a step can be born
-into a member; `StepUpdate` declares the field but no route writes it, so `PUT /api/steps/{id}` with
-`{"lineage": "..."}` returns `200` and leaves the tag unchanged. Retag by editing the manifest and
-reopening it, or let `discover` infer it.
+`lineage` is writable at three places. `StepCreate` honours it, so a step can be born into a member.
+`PUT /api/steps/{id}` takes it with `topology`'s presence semantics — **absent leaves the tag, `null`
+clears it** — rather than the file slots' `""`-clears rule, because a lineage is a label and not a
+file slot. And `PATCH /api/steps/lineage` tags many steps at once:
+
+| Method | Path | Body | Returns |
+|---|---|---|---|
+| `PATCH` | `/api/steps/lineage` | `{ ids[], lineage }` — `lineage: null` clears | Document (`404` naming the first unknown id) |
+| `POST` | `/api/steps/infer-lineages` | — | Document; `warnings[]` says so when the layout was too ambiguous to tag |
+
+The bulk route exists because a loop of per-step `PUT`s is not merely slower: every write deep-copies
+the document onto the undo stack, and `history_limit` is 100, so annotating a 20 × 10 campaign evicts
+the Discover result being annotated — and leaves you 200 Ctrl+Z presses from where you started. It is
+scoped to an **explicit id list**, not to a phase: `discover` emits phase-major documents, so one
+Production phase spans every replica and a phase-scoped write would stamp them all the same. Every id
+is looked up before anything is written, so one bad id changes nothing.
+
+**Retagging can sever a link.** The `ref` does not move; the boundary does. Retag a chain
+`s1 → s2 → s3 → s4` as `rep1, rep1, rep2, rep2` and `s3` still claims to continue `s2`, which is now a
+claim that one member continues another — and since `resolve_input_coords` turns a `ref` into a real
+path, that claim would become a file from the wrong replica in the manifest, in
+`resolved_input_coords` and in the methods summary. Any link the new tags have made cross a boundary
+reverts to `starting_structure`, and `warnings[]` names both steps. A link *from* an untagged step is
+left alone: an untagged run is nobody's member, so a shared equilibration feeding N replicas claims
+nothing about membership.
 
 ### Unified assignment, settings, history, validation
 
@@ -373,7 +409,7 @@ reopening it, or let `discover` infer it.
 | `POST` | `/api/assign` | `{ path, target_type, target_id?, kind?, slot? }` — `target_type` ∈ `pool \| starting_structure \| phase_topology \| step_topology \| step_slot` (`step_slot` also needs `slot` ∈ `mdin\|mdout\|mdcrd\|rst`) | Document (`404`/`400`) |
 | `GET` / `PUT` | `/api/settings` | _(GET)_ / `{ auto_link_restarts?, strict_validation?, allow_gaps?, use_relative_paths? }` | Settings / Document |
 | `POST` | `/api/undo` · `/api/redo` | — | Document |
-| `POST` | `/api/plan` | `{ save_manifest_path?, summary_path?, methods_summary_path?, stats_csv_path?, summary_format? }` — a `null` path skips that artifact; `summary_format` is `json`\|`yaml` and the methods summary is always JSON | `{ written[], failed[], warnings[], stage_count, totals, document }` — `failed[]` names any artifact that could not be written, so a partial success is reported rather than implied (`400` if nothing was selected or a format is unsupported, `403` outside the launch directory) |
+| `POST` | `/api/plan` | `{ save_manifest_path?, summary_path?, methods_summary_path?, stats_csv_path?, summary_format? }` — a `null` path skips that artifact; `summary_format` is `json`\|`yaml` and the methods summary is always JSON | `{ written[], failed[], warnings[], stage_count, totals, lineages, suggestions[], document }` — `failed[]` names any artifact that could not be written, so a partial success is reported rather than implied (`400` if nothing was selected or a format is unsupported, `403` outside the launch directory) |
 | `POST` | `/api/validate` | — | Validation report (§9) |
 
 ### Files

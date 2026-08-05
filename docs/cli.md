@@ -15,7 +15,7 @@ Eight commands sit under one entry point:
 | [`gui`](#gui) | Launch the browser GUI |
 | [`completion`](#completion) | Emit a shell-completion script |
 
-> The help blocks below are generated directly from `ambermeta/cli.py::build_parser()` (or `ambermeta <cmd> --help`) and kept accurate to the shipped parser. `plan`/`init`/`validate`/`gui`/`info`/`completion` are checked in CI (`scripts/export_cli_help.py --check`); `discover`/`export` are newer commands whose help text is reproduced here from the live `--help` output but not yet wired into that checker.
+> The help blocks below are generated directly from `ambermeta/cli.py::build_parser()` and checked in CI (`scripts/export_cli_help.py --check`) — every command, `discover` and `export` included. The generator pins Python 3.11, because argparse renders help differently across releases and the output is embedded verbatim; run it on 3.11 or the check fails on a diff you did not write.
 
 ---
 
@@ -167,8 +167,9 @@ options:
                         Skip the continuity checks between consecutive stages
                         (they run by default)
   --strict              Abort on the first unreadable/malformed input file
-                        instead of skipping it. Default is to skip the file
-                        and continue.
+                        instead of skipping it, and exit 1 if any continuity
+                        or sequence finding was reported. Default is to skip
+                        the file, print the findings and exit 0.
   --recursive           Auto-discover simulation files recursively (no
                         interactive prompts). Files are grouped by stem
                         (filename without extension) and stage roles are
@@ -235,6 +236,8 @@ stage_name,stage_role,time_start_ps,time_end_ps,duration_ns,frame_count,temp_avg
 ### Behavior
 
 - **Fault-tolerant by default.** A missing/malformed/unreadable file is skipped, the error is recorded against its stage, a skip summary is printed, and the run exits `0`. `--strict` makes the first bad file a hard error (clean message, exit `1`, no traceback). A stage keeps every file that *did* parse.
+- **Findings are reported on every mode.** A continuity or sequence finding — a gap, or a member that stopped early — is printed under "Continuity / sequence findings" by `--manifest`, `--recursive` and `--interactive` alike, and lands in `summary.json` under `findings` when there is one. The key is absent when there is nothing to report, so a summary for a document with no holes is the file it always was.
+- **`--strict` also fails on a finding.** It exits `1` when any `continuity_gap` or `missing_run` was reported, which is what `validate --manifest --strict` has always done. Before this the two commands disagreed about the same manifest: `validate --strict` exited `1` on a crashed replica and `plan --strict` exited `0`. The artifacts are still written either way — a pipeline that stops on a finding still wants the summary that names it.
 - **Cross-stage validation** runs by default; `--skip-cross-stage-validation` turns it off. A manifest cannot switch it on or off — a v2 manifest has no `settings` block, so this is a CLI-flag decision only.
 
 #### `--recursive` (flat discovery, retained engine)
@@ -577,8 +580,40 @@ $ ambermeta validate --manifest sim.yaml --format json
   (`rep2/prod sequence is missing member(s) 2, 3`, with `"lineage": "rep2"` on the suggestion) instead of
   being hidden by its siblings' indices, and members numbered on offset scales raise nothing.
 
-An `[applied]` `lineage_group` suggestion lists what the document declares. Note it describes the
-**document**, not an inference: a manifest whose tags you typed by hand is reported the same way.
+An `[applied]` `lineage_group` suggestion lists what the document declares, and `discover` prints its
+evidence — each member and how many runs it holds. Note it describes the **document**, not an
+inference: a manifest whose tags you typed by hand is reported the same way.
+
+**The per-member breakdown.** `plan` and `validate --manifest` print each member's own share, so a
+replica that stopped early is visible as a quantity beside the finding that names it:
+
+```
+Per lineage:
+  rep1  3 run(s), 15000000 steps, 60000.000 ps
+  rep2  1 run(s),  5000000 steps, 20000.000 ps
+  rep3  3 run(s), 15000000 steps, 60000.000 ps
+```
+
+The same numbers reach `summary.json` under a top-level `lineages` key, and `totals.lineage_count`
+counts the **declared** members — untagged runs form their own bucket but are not a lineage, so the
+canonical `common/{min,heat,equil}` + `rep1..3/prod_*` campaign reports 3, not 4. Both keys are
+absent from an untagged document's summary.
+
+**Lineage coherence.** Where a document declares more than one member, `plan` and
+`validate --manifest` also report what the members do and do not agree about:
+
+```
+Lineage coherence:
+  WARN Members differ in temp0 (rep1: 300.0; rep2: 310.0).
+  INFO 3 steps read the restart written by common/equil and carry 3 distinct resolved seeds.
+```
+
+Only a **category error** is fatal — different atom counts, or a member that ran no dynamics beside
+one that did. Those exit `1` with or without `--strict`, because members that differ that way are not
+runs of one experiment. Everything else (`temp0`, `cut`, `ntt`, `ntp`, `dt`, a repeated seed) is a
+finding `--strict` escalates. The output states graph facts and never a statistical property: it will
+tell you three runs read one restart and carry three distinct seeds, and it will not tell you they are
+independent samples.
 
 `--allow-gaps` is **not** the way to handle replicas — it suppresses every unstated gap in the document
 including real ones inside a member, and it does not suppress overlap findings at all. Declare the members
@@ -875,8 +910,8 @@ The generated scripts complete all eight subcommands, including `discover` and `
 
 | Code | Command(s) | Meaning |
 |---|---|---|
-| `0` | all | Success (including a fault-tolerant `plan` that skipped bad files, or `validate --manifest`/`validate <files>` with no failing findings) |
-| `1` | `plan`, `discover`, `validate`, `export`, `init`, `info`, `gui` | Runtime failure: unreadable/missing input, parse failure, nothing discovered, manifest not found/invalid, validation findings, a `--strict` hard stop, or a missing extra/directory (`gui`) |
+| `0` | all | Success (including a fault-tolerant `plan` that skipped bad files, or a `plan`/`validate` run that reported continuity or sequence findings without `--strict`) |
+| `1` | `plan`, `discover`, `validate`, `export`, `init`, `info`, `gui` | Runtime failure: unreadable/missing input, parse failure, nothing discovered, manifest not found/invalid, validation findings, a `--strict` hard stop, `--strict` with any continuity/sequence finding (on `plan` as well as `validate`), or a missing extra/directory (`gui`) |
 | `2` | `plan`, `validate` | Bad invocation: `plan` with no mode selected (`--manifest`/`--recursive`/`--interactive`); `validate` with neither `files` nor `--manifest` |
 
 ---

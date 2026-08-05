@@ -13,6 +13,7 @@ installed.
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from typing import Any, Dict, FrozenSet, Iterable, List, Optional, Protocol, TypeVar
 
 from ambermeta.simulation import Simulation, Step, iter_steps
@@ -22,6 +23,13 @@ from ambermeta.simulation import Simulation, Step, iter_steps
 # membership predicate below and the sequence-gap detector must agree on what counts as
 # the same run in two different directories, or a replica family passes one and fails the
 # other.
+#
+# The regex was always identical; what was not was what reached it. This module applies it
+# to the raw run name, while both detectors first ran it through `Path().stem`, which ate a
+# dot-numbered index — so `prod.0001` was one member's chunk one here and an unnumbered run
+# there, and the agreement this comment claimed was false for exactly the spelling nobody
+# had a fixture for. `protocol._numbered_stem` is now the shared answer to "which part of
+# the name does the regex see", and it keeps a purely numeric final suffix.
 _NUMBERED = re.compile(r"^(.+?)[-_.]?(\d+)$")
 
 
@@ -116,6 +124,194 @@ def is_multi_lineage(sim: Simulation) -> bool:
     and the tool ignores it.
     """
     return len(members(sim)) >= 2
+
+
+# ---------------------------------------------------------------------------
+# Coherence: what the declared members do and do not agree on
+# ---------------------------------------------------------------------------
+
+#: The mdin `&cntrl` keys compared across members, in the order they are reported.
+#: Read from ``cntrl_parameters`` — the raw echo of what the user wrote — and never from
+#: the normalized fields beside it. ``MdinMetadata.target_temp`` defaults to 300.0 when the
+#: mdin omits ``temp0``, so comparing that field manufactures agreement between two runs
+#: neither of which stated a temperature.
+COMPARED_PARAMETERS = ("dt", "temp0", "cut", "ntt", "ntp")
+
+
+@dataclass(frozen=True)
+class Finding:
+    """One thing the members do or do not agree about.
+
+    ``severity`` is ``error`` only for a category error — a difference that means the
+    members are not runs of the same thing at all (decision 5). Everything else is a
+    ``warning`` the user may well have intended, escalated by ``--strict``, or an ``info``
+    that states a graph fact without judging it.
+    """
+
+    severity: str          # error | warning | info
+    kind: str              # atom_count | run_type | parameter | seed | fan_out
+    message: str
+
+
+def _parameters_of(stage: Any) -> Dict[str, Any]:
+    """One stage's raw `&cntrl` echo, or `{}` when it has no readable mdin.
+
+    A document of mdouts with no mdins is a legitimate `discover` result — a run group
+    needs an mdin *or* an mdout — and for those none of these values exists. Inferring
+    ``ntt`` back out of the mdout's thermostat name would be a different fact wearing this
+    one's label, so such a stage simply contributes nothing.
+    """
+    details = getattr(getattr(stage, "mdin", None), "details", None)
+    return dict(getattr(details, "cntrl_parameters", None) or {})
+
+
+def _atom_count_of(stage: Any) -> Optional[int]:
+    details = getattr(getattr(stage, "mdout", None), "details", None)
+    count = getattr(details, "natoms", None)
+    return int(count) if isinstance(count, int) and count > 0 else None
+
+
+def varying_axis(stages: Iterable[Any]) -> Dict[str, Dict[str, Any]]:
+    """Per compared parameter, the value each declared member holds — when they differ.
+
+    A parameter every member states identically is not an axis and is left out, so the
+    result reads as "this is what distinguishes the members" rather than as a dump. A
+    parameter some member does not state is left out too: unstated is not a value, and an
+    axis built from an absence is an axis the user never varied.
+
+    Takes stages rather than a ``Simulation`` because the values do not exist on a
+    ``Step``. ``temp0``/``cut``/``ntt``/``ntp``/``dt`` live in the parsed mdin, which only
+    exists after the analysis engine has read the files; the document holds paths.
+    """
+    members = {tag: group for tag, group in buckets(stages).items() if tag is not UNTAGGED}
+    axis: Dict[str, Dict[str, Any]] = {}
+    for key in COMPARED_PARAMETERS:
+        held: Dict[str, Any] = {}
+        for tag, group in members.items():
+            values = {_comparable(p[key]) for p in map(_parameters_of, group) if key in p}
+            # A member that disagrees with itself has no single value to compare, and
+            # saying so is a different finding from saying two members disagree.
+            if len(values) == 1:
+                held[tag] = values.pop()
+        if len(held) == len(members) and len(set(held.values())) > 1:
+            axis[key] = held
+    return axis
+
+
+def _comparable(value: Any) -> Any:
+    """A value in a form two members can be compared on.
+
+    Numbers are compared as numbers. `cntrl_parameters` is a raw echo of what the user
+    wrote, so one member's `temp0 = 300` and another's `temp0 = 300.0` arrive as an int and
+    a float — the same temperature, typed two ways. Comparing their reprs reported them as
+    an axis the experiment varies, and under ``--strict`` failed the run over a decimal
+    point. `bool` is excluded because `True == 1` and `ntt = 1` is not `ntt = true`.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return value
+    return float(value)
+
+
+def coherence(stages: Iterable[Any]) -> List[Finding]:
+    """What the declared members agree and disagree about.
+
+    Emits graph facts, never statistical ones (decision 4): "3 steps read the restart
+    written by st_7 and carry 3 distinct resolved seeds" is a statement about files, and
+    whether that makes them independent samples is not a question any file inspection can
+    answer.
+
+    Silent for a document with fewer than two declared members — there is nothing to
+    compare — which is every untagged document.
+    """
+    stages = list(stages)
+    members = {tag: group for tag, group in buckets(stages).items() if tag is not UNTAGGED}
+    out: List[Finding] = []
+    if len(members) < 2:
+        return out
+
+    # --- category errors: the members are not runs of the same thing ------------
+    counts = {tag: {c for c in map(_atom_count_of, group) if c is not None}
+              for tag, group in members.items()}
+    stated = {tag: values for tag, values in counts.items() if len(values) == 1}
+    if len({next(iter(v)) for v in stated.values()}) > 1:
+        spelled = "; ".join(f"{tag}: {next(iter(stated[tag]))}"
+                            for tag in sorted(stated))
+        out.append(Finding("error", "atom_count",
+                           f"Members do not hold the same number of atoms ({spelled})."))
+
+    # Only members that STATED what they ran take part. A member whose mdins are missing or
+    # unreadable has said nothing, and reading that silence as "ran no dynamics" turns an
+    # absence into a fatal claim — which on `plan` would also break the fault tolerance
+    # Spec 1 exists for, since a skipped file is supposed to cost a note and exit 0.
+    # `imin` absent from a stated mdin is AMBER's own default of 0, i.e. dynamics.
+    dynamics: Dict[str, bool] = {}
+    for tag, group in members.items():
+        stated = [p for p in map(_parameters_of, group) if p]
+        if stated:
+            dynamics[tag] = any(p.get("imin", 0) == 0 for p in stated)
+    if len(dynamics) > 1 and len(set(dynamics.values())) > 1:
+        minimisation_only = sorted(tag for tag, has in dynamics.items() if not has)
+        out.append(Finding(
+            "error", "run_type",
+            "Members mix minimisation with dynamics ("
+            + ", ".join(minimisation_only) + " ran no dynamics)."))
+
+    # --- differences the user may well have meant --------------------------------
+    for key, held in varying_axis(stages).items():
+        spelled = "; ".join(f"{tag}: {held[tag]}" for tag in sorted(held))
+        out.append(Finding("warning", "parameter",
+                           f"Members differ in {key} ({spelled})."))
+
+    # --- seeds, and the branch point they hang off -------------------------------
+    out.extend(_seed_findings(stages, members))
+    return out
+
+
+def _seed_findings(stages: List[Any], members: Dict[str, List[Any]]) -> List[Finding]:
+    """What the resolved seeds say, per shared producer.
+
+    Scoped to a branch point rather than to the whole document because that is the shape
+    of the claim worth making: N runs that read one restart start from identical
+    coordinates *and* identical velocities, so the seed is the only thing that separates
+    them. Two runs that share no producer have no such relationship and repeating a seed
+    between them says nothing.
+
+    A seed is read only where the mdout stated one. Absent is unknown — never "the same".
+    """
+    out: List[Finding] = []
+    tag_of = {id(s): tag for tag, group in members.items() for s in group}
+    by_producer: Dict[Any, List[Any]] = {}
+    for stage in stages:
+        parent = getattr(stage, "parent_id", None)
+        if parent and id(stage) in tag_of:
+            by_producer.setdefault(parent, []).append(stage)
+
+    names = {getattr(s, "step_id", None): getattr(s, "name", "?") for s in stages}
+    for parent, consumers in by_producer.items():
+        if len({tag_of[id(s)] for s in consumers}) < 2:
+            continue
+        seeds = [s.mdout_header.resolved_ig for s in consumers
+                 if getattr(s, "mdout_header", None) is not None
+                 and s.mdout_header.resolved_ig is not None]
+        producer = names.get(parent, parent)
+        if len(seeds) < len(consumers):
+            out.append(Finding(
+                "info", "fan_out",
+                f"{len(consumers)} steps read the restart written by {producer}; "
+                f"{len(consumers) - len(seeds)} of them state no resolved seed."))
+            continue
+        distinct = len(set(seeds))
+        if distinct == len(seeds):
+            out.append(Finding(
+                "info", "fan_out",
+                f"{len(consumers)} steps read the restart written by {producer} "
+                f"and carry {distinct} distinct resolved seeds."))
+        else:
+            out.append(Finding(
+                "warning", "seed",
+                f"{len(consumers)} steps read the restart written by {producer} "
+                f"but carry only {distinct} distinct resolved seed(s)."))
+    return out
 
 
 def infer_lineages_from_layout(run_names: Iterable[str]) -> Dict[str, str]:

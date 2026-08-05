@@ -22,15 +22,30 @@ export function ValidationPanel(
   }, [open]);
 
   const report = validate.data;
-  const errorCount = report?.stage_issues.filter((s) => !s.ok).length ?? 0;
-  const noteCount = report?.protocol_issues.length ?? 0;
+  const coherence = report?.coherence ?? [];
+  const coherenceErrors = coherence.filter((f) => f.severity === "error");
+  const stageErrors = report?.stage_issues.filter((s) => !s.ok).length ?? 0;
+  const noteCount = (report?.protocol_issues.length ?? 0)
+    + coherence.filter((f) => f.severity === "warning").length;
 
+  // A category error -- members holding different atom counts, or minimisation mixed with
+  // dynamics -- is not attached to any one stage, so the old ladder (which read only
+  // `stage_issues`) showed "All checks passed" for a document the CLI exits 1 on.
   let status: { tone: "valid" | "warning" | "error"; label: string } | null = null;
   if (report) {
-    if (errorCount > 0) status = { tone: "error", label: `${errorCount} stage(s) with errors` };
-    else if (noteCount > 0) status = { tone: "warning", label: `Valid, with ${noteCount} protocol note(s)` };
-    else status = { tone: "valid", label: "All checks passed" };
+    if (coherenceErrors.length > 0) {
+      status = { tone: "error", label: `${coherenceErrors.length} lineage error(s)` };
+    } else if (stageErrors > 0) {
+      status = { tone: "error", label: `${stageErrors} stage(s) with errors` };
+    } else if (noteCount > 0) {
+      status = { tone: "warning", label: `Valid, with ${noteCount} note(s)` };
+    } else {
+      status = { tone: "valid", label: "All checks passed" };
+    }
   }
+
+  const toneOf = (severity: string) =>
+    severity === "error" ? "text-error" : severity === "warning" ? "text-warning" : "text-ink-muted";
 
   const jump = (name: string) => {
     const step = doc?.simulation.phases.flatMap((p) => p.steps).find((s) => s.name === name);
@@ -43,6 +58,16 @@ export function ValidationPanel(
       {status && (
         <div className="mb-3"><Badge tone={status.tone}>{status.label}</Badge></div>
       )}
+      {coherence.length ? (
+        <section className="mb-3">
+          <h3 className="text-sm font-semibold mb-1">Lineages</h3>
+          <ul className="text-sm space-y-0.5">
+            {coherence.map((f, i) => (
+              <li key={i} className={toneOf(f.severity)}>{f.message}</li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
       {report?.protocol_issues.length ? (
         <section className="mb-3">
           <h3 className="text-sm font-semibold mb-1">Protocol notes</h3>

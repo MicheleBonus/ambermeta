@@ -231,7 +231,21 @@ def _input_source_label(sim, step) -> str:
     return ic.path or "?"
 
 
-def _print_simulation(sim, report=None, *, verbose: bool = False) -> None:
+def _print_findings(findings) -> None:
+    """The 'Continuity / sequence findings' block, from a bare list of cards.
+
+    Split out of :func:`_sim_findings` so `plan --recursive` — which never builds a
+    ``Simulation`` and so has no report — prints the same block in the same words. Two
+    printers is how the two plan modes end up describing one directory differently.
+    """
+    if findings:
+        _out("\nContinuity / sequence findings:")
+        for s in findings:
+            _out(f"  - {s.get('title')}: {s.get('evidence')}")
+
+
+def _print_simulation(sim, report=None, *, verbose: bool = False,
+                      strict: bool = False) -> None:
     """Print the three-level Simulation structure (pool, starting structure, phases→steps)."""
     _out("\nSimulation summary")
     _out("==================")
@@ -248,7 +262,11 @@ def _print_simulation(sim, report=None, *, verbose: bool = False) -> None:
             files = ", ".join(
                 f"{k}={getattr(step, k)}" for k in ("mdin", "mdout", "mdcrd") if getattr(step, k)
             )
-            line = f"  - {step.name}  topology={topo}  input={_input_source_label(sim, step)}"
+            # Emit-when-set, like every other spelling of the tag: an untagged document's
+            # output is unchanged character for character.
+            tag = f"  lineage={step.lineage}" if step.lineage else ""
+            line = (f"  - {step.name}  topology={topo}"
+                    f"  input={_input_source_label(sim, step)}{tag}")
             _out(line + (f"  ({files})" if files else ""))
     if report is not None:
         if verbose:
@@ -257,23 +275,57 @@ def _print_simulation(sim, report=None, *, verbose: bool = False) -> None:
                          + (issue.get("info") or []))
                 for line in lines:
                     _out(f"    {issue['name']}: {line}")
-        _sim_findings(report)
+        _sim_findings(report, strict=strict)
 
 
-def _sim_findings(report) -> None:
-    """Print continuity/sequence findings + protocol notes + an overall status line."""
-    suggestions = report.get("suggestions", []) or []
-    findings = [s for s in suggestions if s.get("kind") in ("continuity_gap", "missing_run")]
-    if findings:
-        _out("\nContinuity / sequence findings:")
-        for s in findings:
-            _out(f"  - {s.get('title')}: {s.get('evidence')}")
+def _coherence_errors(report):
+    """Category errors: the members are not runs of the same thing (decision 5)."""
+    return [f for f in (report.get("coherence") or []) if f.get("severity") == "error"]
+
+
+def _problem_suggestions(report):
+    """The two suggestion kinds that are problems, never the `[applied]` ones."""
+    return [s for s in (report.get("suggestions") or [])
+            if s.get("kind") in ("continuity_gap", "missing_run")]
+
+
+def _report_findings(report):
+    """Everything a `--strict` run fails on.
+
+    The problem suggestions plus coherence warnings, which are differences between declared
+    members that the user may well have meant. Coherence *errors* are not here: those are
+    category errors and already fail with or without `--strict`.
+
+    Returns two shapes of dict — a suggestion has `title`/`evidence`, a coherence finding
+    has `severity`/`message` — so callers that print rather than count must pick the list
+    they mean rather than filtering this one. Both shapes carry a `kind`.
+    """
+    return _problem_suggestions(report) + [
+        f for f in (report.get("coherence") or []) if f.get("severity") == "warning"]
+
+
+def _sim_findings(report, *, strict: bool = False) -> None:
+    """Print continuity/sequence findings + protocol notes + an overall status line.
+
+    `strict` is taken because the status line is otherwise a lie: the report's own `ok` is
+    about validity, and a sequence hole does not make a document invalid — so a `--strict`
+    run printed `Validation: OK` and then exited 1. Saying OK and failing is worse than
+    either alone.
+    """
+    _print_lineage_totals(report.get("lineages"))
+    _print_findings(_problem_suggestions(report))
+    coherence = report.get("coherence") or []
+    if coherence:
+        _out("\nLineage coherence:")
+        for f in coherence:
+            _out(_coherence_line(f.get("severity"), f.get("message")))
     issues = report.get("protocol_issues", []) or []
     if issues:
         _out("\nProtocol notes:")
         for note in issues:
             _out(f"  - {note}")
-    _out(f"\nValidation: {'OK' if report.get('ok') else 'ISSUES FOUND'}")
+    ok = bool(report.get("ok")) and not (strict and _report_findings(report))
+    _out(f"\nValidation: {'OK' if ok else 'ISSUES FOUND'}")
 
 
 def _resolve_sim_format(path: str, requested: Optional[str]) -> str:
@@ -306,7 +358,16 @@ def _discover_command(args: argparse.Namespace) -> int:
     if suggestions:
         _out("\nSuggestions:")
         for s in suggestions:
-            _out(f"  - [{s.get('severity')}] {s.get('title')}")
+            line = f"  - [{s.get('severity')}] {s.get('title')}"
+            # The evidence is printed for the grouping card and for that card only. It is
+            # the per-member breakdown — `rep1: 3 run(s); rep2: 1 run(s); …` — and the
+            # title alone ("Runs carry 3 declared lineage(s)") states a count without
+            # saying which runs it covers, on the one card that is reported as `[applied]`
+            # rather than asked about. Appending evidence to every kind would also dump
+            # `role_guess`'s full `Equilibration->equilibration; …` mapping into the block.
+            if s.get("kind") == "lineage_group" and s.get("evidence"):
+                line += f"\n      {s['evidence']}"
+            _out(line)
 
     if getattr(args, "write", None):
         from ambermeta.simulation import write_simulation
@@ -339,6 +400,46 @@ def _export_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def _coherence_line(severity: str, message: str) -> str:
+    label = {"error": Colors.error("ERROR"),
+             "warning": Colors.warning("WARN")}.get(severity, "INFO")
+    return f"  {label} {message}"
+
+
+def _print_coherence(protocol):
+    """Print the lineage-coherence block for a protocol, and hand back the findings.
+
+    The scan paths have stages but no `Simulation`, so they cannot go through
+    `validate_simulation`; `coherence` needs only the stages, so they can still say the
+    same things about the same directory.
+    """
+    from ambermeta.lineages import coherence
+
+    findings = coherence(protocol.stages)
+    if findings:
+        _out("\nLineage coherence:")
+        for f in findings:
+            _out(_coherence_line(f.severity, f.message))
+    return findings
+
+
+def _print_lineage_totals(lineages) -> None:
+    """The per-member breakdown, when there is one.
+
+    A single number for a three-replica campaign answers a question nobody asked: 300 ns
+    of *what*? The breakdown is what makes the crashed replica visible as a quantity
+    rather than only as a finding — rep2 ran a third of what its siblings ran.
+    """
+    if not lineages:
+        return
+    _out("\nPer lineage:")
+    width = max(len(tag) for tag in lineages)
+    for tag in lineages:
+        entry = lineages[tag]
+        _out(f"  {tag:<{width}}  {entry['step_count']} run(s), "
+             f"{entry['steps']:.0f} steps, {entry['time_ps']:.3f} ps")
+
+
 def _print_protocol(protocol: SimulationProtocol, verbose: bool = False) -> None:
     totals = protocol.totals()
     _out("\nProtocol summary")
@@ -346,6 +447,9 @@ def _print_protocol(protocol: SimulationProtocol, verbose: bool = False) -> None
     _out(f"Stages: {len(protocol.stages)}")
     _out(f"Total steps: {totals['steps']:.0f}")
     _out(f"Total simulated time (ps): {totals['time_ps']:.3f}")
+    if "lineage_count" in totals:
+        _out(f"Declared lineages: {totals['lineage_count']:.0f}")
+    _print_lineage_totals(protocol.lineage_totals())
 
     for stage in protocol.stages:
         summary = stage.summary()
@@ -723,13 +827,11 @@ def _validate_manifest(args: argparse.Namespace, manifest: str) -> int:
         for stage in report.get("stage_issues", []):
             for err in stage.get("errors", []):
                 _out(f"  {Colors.error('ERROR')} {stage['name']}: {err}")
-        _sim_findings(report)
+        _sim_findings(report, strict=bool(args.strict))
 
-    ok = bool(report.get("ok", True))
-    findings = [s for s in report.get("suggestions", []) if s.get("kind") in ("continuity_gap", "missing_run")]
-    if not ok:
+    if not bool(report.get("ok", True)):
         return 1
-    if args.strict and findings:
+    if args.strict and _report_findings(report):
         return 1
     return 0
 
@@ -1109,10 +1211,27 @@ def _plan_v2(args: argparse.Namespace, directory: str) -> int:
         print(Colors.error("ERROR: nothing to plan: 0 stages."), file=sys.stderr)
         return 1
 
+    strict = bool(getattr(args, "strict", False))
     report = validate_simulation(sim, settings, directory, protocol=protocol)
-    _print_simulation(sim, report, verbose=bool(getattr(args, "verbose", False)))
+    _print_simulation(sim, report, verbose=bool(getattr(args, "verbose", False)),
+                      strict=strict)
 
-    return _write_plan_artifacts(args, protocol)
+    written = _write_plan_artifacts(args, protocol)
+    # The artifacts are written either way. The exit code decides what a pipeline does
+    # next, not whether the run happens: a run that stops on a finding still wants the
+    # summary that names it.
+    #
+    # A category error fails with or without `--strict` (decision 5): members that hold
+    # different atom counts, or that mix minimisation with dynamics, are not runs of one
+    # experiment and no flag makes them so.
+    #
+    # Keyed on the coherence errors specifically, NOT on `report["ok"]`. `ok` is false for
+    # any stage with a missing or unreadable file, and `plan` is fault-tolerant about
+    # those by design — it records them, prints a skip summary and exits 0 unless
+    # `--strict`. Failing on `ok` would silently undo that.
+    if _coherence_errors(report):
+        return 1
+    return written or (1 if strict and _report_findings(report) else 0)
 
 
 def _plan_command(args: argparse.Namespace) -> int:
@@ -1200,7 +1319,25 @@ def _plan_command(args: argparse.Namespace) -> int:
 
     _print_protocol(protocol, verbose=args.verbose)
 
-    return _write_plan_artifacts(args, protocol)
+    # The scan paths never build a `Simulation`, so `build_suggestions` cannot run here —
+    # it reads `sim.phases` and raises on a protocol. The sequence half needs only the
+    # names and the tags, and both are on the stages, so the crashed replica is reported
+    # here in the same words `plan --manifest` uses. The other suggestion kinds
+    # (topology_confirm, starting_structure, role_guess, lineage_group) need document
+    # state `auto_discover` never produces and are not faked.
+    findings = protocol.sequence_findings()
+    _print_findings(findings)
+    # Coherence needs only the parsed stages, which this path has. Leaving it to the
+    # manifest path alone meant one directory passed `plan --recursive` and failed
+    # `plan --manifest` on the same category error — the two modes disagreeing about the
+    # same files is the defect this whole task exists to remove.
+    coherence = _print_coherence(protocol)
+
+    written = _write_plan_artifacts(args, protocol)
+    if any(f.severity == "error" for f in coherence):
+        return 1
+    warnings = [f for f in coherence if f.severity == "warning"]
+    return written or (1 if strict and (findings or warnings) else 0)
 
 
 def _gui_command(args: argparse.Namespace) -> int:
@@ -1321,7 +1458,8 @@ For documentation, visit: https://github.com/MicheleBonus/ambermeta
         "--strict",
         action="store_true",
         help="Abort on the first unreadable/malformed input file instead of "
-             "skipping it. Default is to skip the file and continue.",
+             "skipping it, and exit 1 if any continuity or sequence finding was "
+             "reported. Default is to skip the file, print the findings and exit 0.",
     )
     plan_parser.add_argument(
         "--recursive",

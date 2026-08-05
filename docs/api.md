@@ -106,6 +106,33 @@ without the GUI extra.
 | `buckets` | `(steps) -> Dict[Any, List[T]]` | The same grouping over any iterable of tag-carrying objects (`Step`, or `SimulationStage` in the flat engine), so a *part* of a document can be asked the question too. |
 | `infer_lineages_from_layout` | `(run_names) -> Dict[str, str]` | `{run_name: tag}` for the runs a directory layout names — see [manifest §9.1](manifest.md#91-how-discover-infers-members). Holds only the runs it could tag, so `.get(name)` → `None` matches `Step.lineage`. |
 | `UNTAGGED` | sentinel object | The key of the shared untagged bucket. An object, not a string, so it cannot collide with a tag someone typed. |
+| `varying_axis` | `(stages) -> Dict[str, Dict[str, Any]]` | Per compared `&cntrl` key, the value each declared member holds — **only** where they differ and every member states one. |
+| `coherence` | `(stages) -> List[Finding]` | What the members do and do not agree about. Silent below two declared members. |
+| `Finding` | dataclass | `severity` (`error`/`warning`/`info`), `kind`, `message`. |
+
+`varying_axis` and `coherence` take **stages, not a `Simulation`**. A `Step` carries no parsed
+parameters at all: `temp0`, `cut`, `ntt`, `ntp` and `dt` exist only on
+`SimulationStage.mdin.details.cntrl_parameters` once the analysis engine has read the files, and the
+resolved seed only in the mdout header. They read the raw `cntrl_parameters` echo and never
+`MdinMetadata.target_temp`, which defaults to `300.0` when the mdin omits `temp0` — comparing it
+would report agreement between two runs neither of which declared a temperature.
+
+Severity follows design decision 5. A **category error** means the members are not runs of the same
+thing — different atom counts, or a member that ran no dynamics beside one that did — and exits `1`
+with or without `--strict`. Everything else is a warning `--strict` escalates. Seed findings are
+scoped to a shared producer: N runs reading one restart inherit identical coordinates *and*
+velocities, so the seed is all that separates them, while two runs sharing no producer have no such
+relationship and a repeated seed between them says nothing. An unstated seed reads as unknown, never
+as shared.
+
+```python
+from ambermeta.lineages import coherence, varying_axis
+
+protocol = auto_discover("campaign/", recursive=True)
+varying_axis(protocol.stages)     # {'temp0': {'rep1': 300.0, 'rep2': 310.0}}
+[(f.severity, f.message) for f in coherence(protocol.stages)]
+# [('warning', 'Members differ in temp0 (rep1: 300.0; rep2: 310.0).')]
+```
 
 `UNTAGGED`, `members`, `is_multi_lineage` and `infer_lineages_from_layout` are re-exported from the
 package root. **`lineages` and `buckets` are not**, and `lineages` deliberately so: binding that name
@@ -362,8 +389,10 @@ class SimulationProtocol:
 | Member | Signature | Returns |
 |---|---|---|
 | `validate` | `(cross_stage: bool = True, allow_unexpected_gaps: bool = False) -> None` | Runs per-stage + (optionally) cross-stage checks, attaching notes to each stage |
-| `totals` | `() -> Dict[str, float]` | `{"steps": float, "time_ps": float}` summed across stages |
-| `to_dict` | `() -> Dict[str, Any]` | `totals` + each stage's `to_dict()` — the full protocol summary |
+| `totals` | `() -> Dict[str, float]` | `{"steps": float, "time_ps": float}` summed across stages, plus `lineage_count` when the document holds more than one member |
+| `lineage_totals` | `() -> Dict[str, Dict[str, float]]` | Per declared member: its own `steps`, `time_ps` and `step_count`. Empty for a single-member document |
+| `sequence_findings` | `() -> List[Dict[str, Any]]` | The numbered-sequence holes, as `missing_run` cards |
+| `to_dict` | `() -> Dict[str, Any]` | `totals` + each stage's `to_dict()`, plus `findings` and `lineages` when there is something to report — the full protocol summary |
 | `to_methods_dict` | `() -> Dict[str, Any]` | Publication-oriented summary (see [§8](#8-export-structures)) |
 
 ```python

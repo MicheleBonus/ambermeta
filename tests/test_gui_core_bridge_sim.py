@@ -94,6 +94,22 @@ def test_a_crashed_replica_is_reported_once_and_scoped_to_the_short_member():
     assert "skip" not in card["evidence"]  # it stopped; it did not skip
 
 
+def test_a_dot_numbered_crashed_replica_reaches_the_card(dot_numbered_crashed_tree):
+    """End to end, from a directory on disk rather than a hand-built Simulation.
+
+    The unit test on the detector proves the base is parsed; this proves the whole path
+    survives — `smart_group_files` keeps the index in the stem, the layout inference tags
+    the members, the detector finds rep2 short, and the card carries the bare base and the
+    tag the canvas matches a ghost on. Every one of those steps already worked for
+    underscores; only the detector's view of the name did not.
+    """
+    result = core_bridge.discover_draft(str(dot_numbered_crashed_tree), recursive=True)
+    card, = [s for s in result["suggestions"] if s["kind"] == "missing_run"]
+    assert card["lineage"] == "rep2"
+    assert card["base"] == "prod"
+    assert card["missing"] == [2, 3]
+
+
 def test_members_numbered_from_different_offsets_produce_no_card():
     assert _missing_run(_members({"rep1": [1, 2], "rep2": [11, 12]})) == []
 

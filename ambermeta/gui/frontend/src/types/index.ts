@@ -46,10 +46,26 @@ export interface Suggestion {
 export interface MissingFile { kind: string; path: string; }
 export interface StageIssue {
   name: string; ok: boolean; degraded: boolean;
-  errors: string[]; warnings: string[]; info: string[]; missing_files: MissingFile[];
+  errors: string[]; warnings: string[]; info: string[];
+  /** Non-INFO continuity notes for this stage. Emitted by the server since the beginning
+   *  and dropped by the response model until it was declared there. */
+  continuity: string[];
+  missing_files: MissingFile[];
+}
+/** One declared member's share of the document. Absent from an untagged one. */
+export interface LineageTotals { steps: number; time_ps: number; step_count: number; }
+/** What the declared members do and do not agree about. `error` means they are not runs
+ *  of the same thing; `warning` is a difference the user may well have meant. */
+export interface CoherenceFinding {
+  severity: "error" | "warning" | "info";
+  kind: string;
+  message: string;
 }
 export interface ValidationReport {
-  ok: boolean; totals: Record<string, number>; protocol_issues: string[];
+  ok: boolean; totals: Record<string, number>;
+  lineages: Record<string, LineageTotals> | null;
+  coherence: CoherenceFinding[];
+  protocol_issues: string[];
   stage_issues: StageIssue[]; suggestions: Suggestion[];
 }
 export interface DiscoverResult { document: DocumentResponse; suggestions: Suggestion[]; warnings: string[]; }
@@ -70,6 +86,9 @@ export interface PlanResult {
   failed: FailedFile[];
   warnings: string[];
   stage_count: number; totals: Record<string, number>; document: DocumentResponse;
+  /** What the run found, in the same shape /validate returns. */
+  suggestions: Suggestion[];
+  lineages: Record<string, LineageTotals> | null;
 }
 
 export type FileType = "prmtop" | "mdin" | "mdout" | "mdcrd" | "inpcrd" | "folder" | "other";
@@ -91,13 +110,19 @@ export interface StepFilesPatch { mdin?: string; mdout?: string; mdcrd?: string;
 export interface StepCreatePayload {
   name: string; topology?: string | null; input_coords?: InputCoordsModel;
   mdin?: string; mdout?: string; mdcrd?: string; rst?: string;
+  lineage?: string | null;
   expected_gap_ps?: number; gap_tolerance_ps?: number; notes?: string[];
 }
 /** A gap sent as null is cleared; omit the key to leave it alone. */
 export interface StepUpdatePayload {
   name?: string; topology?: string | null; input_coords?: InputCoordsModel; files?: StepFilesPatch;
+  /** Present (including null) sets or clears the tag; omit to leave it alone. */
+  lineage?: string | null;
   expected_gap_ps?: number | null; gap_tolerance_ps?: number | null; notes?: string[];
 }
+/** Tag many steps in one request and one undo entry. An explicit id list, because
+ *  `discover` puts every member's same-role runs in one phase. */
+export interface StepsLineagePayload { ids: string[]; lineage: string | null; }
 export interface StepMovePayload { phase_id: string; index: number; }
 export type AssignTarget = "pool" | "starting_structure" | "phase_topology" | "step_topology" | "step_slot";
 export type SlotName = "mdin" | "mdout" | "mdcrd" | "rst";

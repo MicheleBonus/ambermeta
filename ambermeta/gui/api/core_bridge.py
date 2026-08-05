@@ -226,11 +226,25 @@ def build_validation_report(stages: List[Dict[str, Any]], settings: Dict[str, An
             "missing_files": miss,
         })
 
+    from ambermeta.lineages import coherence
+
     totals = protocol.totals()
     totals["stage_count"] = len(protocol.stages)
+    findings = [{"severity": f.severity, "kind": f.kind, "message": f.message}
+                for f in coherence(protocol.stages)]
     return {
-        "ok": all(s["ok"] for s in stage_issues),
+        # A category error means the members are not runs of the same thing, which is not
+        # a per-stage problem and so has nowhere to go in `stage_issues` — and `ok` read
+        # only that. A document whose members hold different atom counts reported
+        # "All checks passed".
+        "ok": all(s["ok"] for s in stage_issues)
+        and not any(f["severity"] == "error" for f in findings),
+        "coherence": findings,
         "totals": totals,
+        # None rather than {} for a single-member document: the field is Optional on the
+        # model and "the document declares no members" and "every member is empty" are
+        # different answers.
+        "lineages": protocol.lineage_totals() or None,
         "protocol_issues": protocol_issues,
         "stage_issues": stage_issues,
     }
@@ -281,35 +295,17 @@ def preview_simulation(sim, base_directory, fmt):
 
 
 def build_suggestions(sim, base_directory):
-    from ambermeta.lineages import UNTAGGED, lineages
-    from ambermeta.protocol import detect_sequence_gaps
-    out = []
+    from ambermeta.lineages import lineages
+    from ambermeta.protocol import sequence_findings
+
+    steps = [s for p in sim.phases for s in p.steps]
+    # Shared with the `plan --recursive` path, which has stages rather than a document and
+    # so cannot come through here at all. One producer, one wording.
+    out = sequence_findings([s.name for s in steps], [s.lineage for s in steps])
 
     def _sug(kind, severity, title, evidence, actions):
         return {"id": f"sug_{len(out) + 1}", "kind": kind, "severity": severity,
                 "title": title, "evidence": evidence, "actions": actions}
-
-    steps = [s for p in sim.phases for s in p.steps]
-    gaps = detect_sequence_gaps([s.name for s in steps], [s.lineage for s in steps])
-    for (member, base), missing in gaps.items():
-        tag = None if member is UNTAGGED else member
-        idxs = ", ".join(str(i) for i in missing)
-        # The member is named in the prose only when there is one, so an untagged document
-        # reads exactly as it always did. `base` stays the bare run base either way: it is
-        # what the canvas matches a ghost against, and it is shared by every member.
-        scope = f"{tag}/{base}" if tag else base
-        # A short member did not skip anything — it stopped. Saying "skip" of a run that
-        # crashed would be the same kind of unearned claim this keying exists to remove.
-        evidence = (f"'{scope}' has no run at index(es) {idxs}" if tag
-                    else f"present members of '{base}' skip index(es) {idxs}")
-        sug = _sug("missing_run", "needs_you",
-                    f"{scope} sequence is missing member(s) {idxs}",
-                    evidence,
-                    ["Mark as expected gap", "Locate file", "Ignore"])
-        sug["base"] = base
-        sug["missing"] = missing
-        sug["lineage"] = tag
-        out.append(sug)
 
     hmr = [t for t in sim.topologies if t.kind == "hmr"]
     if hmr and len(sim.topologies) > 1:
@@ -439,7 +435,12 @@ def write_plan_outputs(sim, settings, base_directory, targets: Dict[str, str],
     protocol = build_protocol(_flatten_simulation(sim), dict(settings), base_directory)
     result = write_protocol_outputs(protocol, targets, summary_format=summary_format)
     result["totals"] = protocol.totals()
+    result["lineages"] = protocol.lineage_totals() or None
     result["stage_count"] = len(protocol.stages)
+    # The response says what the artifacts say. The GUI ends up with these anyway, via the
+    # revalidate its document-changed effect fires after a plan — but "the client happens
+    # to ask again" is not the same as the plan result being honest about what it found.
+    result["suggestions"] = build_suggestions(sim, base_directory)
     return result
 
 

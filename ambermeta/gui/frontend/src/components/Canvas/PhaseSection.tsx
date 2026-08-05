@@ -1,10 +1,11 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { useDraggable, useDroppable } from "@dnd-kit/core";
 import { useSelection } from "@/state/selection";
 import { useCreateStep, useDeletePhase, useUpdatePhase } from "@/api/hooks";
 import { ChevronDown, ChevronRight, GripVertical, Plus, Trash2 } from "@/components/common";
 import { ROLE_OPTIONS } from "@/lib/roles";
-import { linkBetween, type StepIndex } from "@/lib/chain";
+import { linkBetween, producerOf, type StepIndex } from "@/lib/chain";
+import { FanOutNote, LineageBand } from "./LineageBand";
 import { useInlineRename } from "@/lib/useInlineRename";
 import { useUndoOffer } from "@/lib/useUndoOffer";
 import type { PhaseModel, StageRole, StepModel, Suggestion, TopologyModel } from "@/types";
@@ -38,6 +39,23 @@ function stepNumber(name: string): number {
 function numWidth(name: string): number {
   const m = name.match(/(\d+)$/);
   return m ? m[1].length : 0;
+}
+
+/**
+ * The character this band puts between a base and its index — "_" for `prod_0001`, "." for
+ * `prod.0001`, "" for `prod0001`.
+ *
+ * A ghost is a filename the user is being told to go and look for, so spelling it the way
+ * the runs beside it are spelled is the whole of its usefulness. It was hardcoded to "_",
+ * which was invisible until the server learned to detect dot-numbered families at all;
+ * before that a dot-numbered band produced no findings and so no ghosts to misspell.
+ */
+function numSeparator(names: string[]): string {
+  for (const name of names) {
+    const m = name.match(/([-_.]?)\d+$/);
+    if (m) return m[1];
+  }
+  return "_";
 }
 
 type StepGroup = { id: string; base: string; lineage: string | null; steps: StepModel[] };
@@ -74,13 +92,14 @@ type GhostItem = { id: string; name: string; num: number };
  * band and reads like the runs beside it. */
 function ghostsForGroup(group: StepGroup, width: number, suggestions: Suggestion[]): GhostItem[] {
   const out: GhostItem[] = [];
+  const sep = numSeparator(group.steps.map((s) => s.name));
   for (const s of suggestions) {
     if (s.kind !== "missing_run" || s.base !== serverBase(group.base) || !s.missing) continue;
     if ((s.lineage ?? null) !== group.lineage) continue;
     for (const idx of s.missing) {
       out.push({
         id: `${s.id}:${idx}`,
-        name: `${group.base}_${String(idx).padStart(width, "0")}`,
+        name: `${group.base}${sep}${String(idx).padStart(width, "0")}`,
         num: idx,
       });
     }
@@ -117,6 +136,7 @@ interface RenderedGroup {
  */
 function layOutPhase(groups: StepGroup[], suggestions: Suggestion[]): RenderedGroup[] {
   let previous: StepModel | null = null;
+  let previousLineage: string | null | undefined = undefined;
   // One finding, one set of ghosts. `serverBase` drops the directory, so two bands in
   // different directories that share a base and a lineage both match the same suggestion —
   // reachable whenever the layout was too ambiguous to tag, since untagged bands all carry
@@ -134,6 +154,14 @@ function layOutPhase(groups: StepGroup[], suggestions: Suggestion[]): RenderedGr
       ...group.steps.map((step): SequenceItem => ({ kind: "step", num: stepNumber(step.name), step })),
       ...ghosts.map((gh): SequenceItem => ({ kind: "ghost", num: gh.num, id: gh.id, name: gh.name })),
     ].sort((a, b) => a.num - b.num);
+    // The one place a lineage boundary breaks the thread. Keyed on the LINEAGE changing,
+    // not on the group changing: `01_min`, `02_nvt`, `03_npt` are three groups of one --
+    // an equilibration folder -- and an arrow drawn only within a group would vanish
+    // there entirely. Between two members there is no arrow to draw, because there is no
+    // claim to make: what precedes a member's first run in document order is another
+    // member's last run, and that adjacency means nothing.
+    if (previousLineage !== undefined && previousLineage !== group.lineage) previous = null;
+    previousLineage = group.lineage;
     const items = ordered.map((item) => {
       const above = previous;
       if (item.kind === "step") previous = item.step;
@@ -141,6 +169,61 @@ function layOutPhase(groups: StepGroup[], suggestions: Suggestion[]): RenderedGr
     });
     return { group, items };
   });
+}
+
+/** Consecutive groups that belong to one member, in document order. */
+interface Band { lineage: string | null; groups: RenderedGroup[] }
+
+/**
+ * Fold the laid-out groups into bands, one per contiguous run of a member.
+ *
+ * Contiguous rather than gathered: `discover` emits phase-major documents, so a phase
+ * holds each member's same-role runs in turn and one pass produces one band per member.
+ * A hand-built document that interleaves members would show a member twice, which is what
+ * its own order says and is not this view's to silently rearrange.
+ */
+function bandsOf(rendered: RenderedGroup[]): Band[] {
+  const bands: Band[] = [];
+  for (const entry of rendered) {
+    const last = bands[bands.length - 1];
+    if (last && last.lineage === entry.group.lineage) last.groups.push(entry);
+    else bands.push({ lineage: entry.group.lineage, groups: [entry] });
+  }
+  return bands;
+}
+
+/**
+ * The one step every band in this phase branches from, when they all branch from one.
+ *
+ * Read off the bands' first steps rather than off the whole phase: the claim being made is
+ * "these members share an origin", and a producer that only some of them read is not that.
+ * Silent unless at least two bands agree, and silent for an untagged phase, where a single
+ * band's producer is just the step before it.
+ */
+function fanOutOf(bands: Band[], stepIndex: StepIndex): { name: string; count: number } | null {
+  // Keyed by lineage, not by band: a document that interleaves its members renders one
+  // band per contiguous run, so counting bands reported "4 lineages branch from
+  // common/equil" for two members that each appear twice. The count has to be of what the
+  // document declares, or it contradicts every other surface that states it.
+  const firstStepOf = new Map<string, StepModel>();
+  for (const band of bands) {
+    const head = band.groups[0]?.group.steps[0];
+    if (band.lineage === null || !head || firstStepOf.has(band.lineage)) continue;
+    firstStepOf.set(band.lineage, head);
+  }
+  if (firstStepOf.size < 2) return null;
+  const producers = [...firstStepOf.values()].map((s) => producerOf(s, stepIndex));
+  const first = producers[0];
+  if (!first || !producers.every((p) => p && p.id === first.id)) return null;
+  return { name: first.name, count: firstStepOf.size };
+}
+
+/** A band with its header, or the steps bare when nothing in the phase is tagged. */
+function MaybeBand({ show, lineage, steps, children }: {
+  show: boolean; lineage: string | null; steps: StepModel[]; children: ReactNode;
+}) {
+  if (!show) return <div className="space-y-1.5">{children}</div>;
+  return <LineageBand lineage={lineage} steps={steps}>{children}</LineageBand>;
 }
 
 /** Sentinel for "the steps of this phase do not agree on a topology".
@@ -182,9 +265,14 @@ export function PhaseSection({
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const rename = useInlineRename(phase.name, (name) => updatePhase.mutate({ id: phase.id, body: { name } }));
   const isSelected = sel.kind === "phase" && sel.id === phase.id;
-  const groups = groupSteps(phase.steps);
   const suggestions = useSuggestions();
   const effectiveTopology = effectiveTopologyOf(phase);
+  const bands = bandsOf(layOutPhase(groupSteps(phase.steps), suggestions));
+  // No band chrome for a document that declares nothing: an untagged phase renders exactly
+  // as it did before members existed, which is the guarantee every path in this feature
+  // owes the manifests that came before it.
+  const showBands = bands.some((b) => b.lineage !== null);
+  const fanOut = fanOutOf(bands, stepIndex);
 
   return (
     // The droppable covers the whole section -- header AND step list -- so a file dropped
@@ -327,7 +415,15 @@ export function PhaseSection({
         </button>
       </header>
       <div className="px-3 pb-2 space-y-1.5">
-        {layOutPhase(groups, suggestions).map(({ group: g, items }) =>
+        {fanOut && <FanOutNote producerName={fanOut.name} count={fanOut.count} />}
+        {bands.map((band, bandIndex) => (
+          <MaybeBand
+            key={`${band.lineage ?? "untagged"}:${bandIndex}`}
+            show={showBands}
+            lineage={band.lineage}
+            steps={band.groups.flatMap((entry) => entry.group.steps)}
+          >
+            {band.groups.map(({ group: g, items }) =>
           g.steps.length >= COLLAPSE_THRESHOLD && !expanded.has(g.id) ? (
             <div
               key={g.id}
@@ -386,6 +482,8 @@ export function PhaseSection({
             </div>
           ),
         )}
+          </MaybeBand>
+        ))}
         {/* Makes the section-wide drop target discoverable: the whole phase accepts the file,
             this row is just where the affordance is spelled out. */}
         <div className="px-2 py-1.5 rounded border border-dashed border-hairline text-center text-xs text-ink-muted">

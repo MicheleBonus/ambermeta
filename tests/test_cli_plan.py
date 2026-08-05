@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import shutil
-from types import SimpleNamespace
 
 import ambermeta.cli as cli
+from ambermeta.protocol import SimulationProtocol, SimulationStage
 
 
 def test_plan_requires_explicit_mode(capsys, tmp_path):
@@ -33,14 +33,13 @@ def test_plan_interactive_mode_runs_only_with_opt_in(monkeypatch, tmp_path):
     parser = cli.build_parser()
     args = parser.parse_args(["plan", "--interactive", str(tmp_path)])
 
-    fake_stage = SimpleNamespace(degraded=False)
+    # A real protocol rather than a SimpleNamespace: the scan paths now ask it for its
+    # sequence findings, and a duck that answers only the three methods this test happened
+    # to need would fail the next time the command learns to ask a fourth question.
+    fake_stage = SimulationStage(name="prod")
     monkeypatch.setattr(cli, "_interactive_manifest", lambda directory: [{"name": "prod"}])
     monkeypatch.setattr(
-        cli,
-        "auto_discover",
-        lambda *a, **k: SimpleNamespace(
-            stages=[fake_stage], to_dict=lambda: {}, to_methods_dict=lambda: {}
-        ),
+        cli, "auto_discover", lambda *a, **k: SimulationProtocol(stages=[fake_stage]),
     )
     monkeypatch.setattr(cli, "_print_protocol", lambda protocol, verbose=False: None)
 

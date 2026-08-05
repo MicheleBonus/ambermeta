@@ -11,6 +11,7 @@ import re
 from ambermeta.parsers.inpcrd import InpcrdData, InpcrdParser
 from ambermeta.parsers.mdcrd import MdcrdData, MdcrdParser
 from ambermeta.parsers.mdin import MdinData, MdinParser
+from ambermeta.mdout_header import MdoutHeader, read_mdout_header
 from ambermeta.parsers.mdout import MdoutData, MdoutParser
 from ambermeta.parsers.prmtop import PrmtopData, PrmtopParser
 from ambermeta.legacy_extractors.prmtop import ION_RESNAMES, WATER_RESNAMES
@@ -146,6 +147,12 @@ class SimulationStage:
     lineage: Optional[str] = None
     step_id: Optional[str] = None
     parent_id: Optional[str] = None
+    # What the mdout stated before the run started: the resolved seed, the authoritative
+    # begin time, and the chain AMBER itself asserts through File Assignments. Kept beside
+    # `mdout` rather than on `MdoutData.details`, because that dataclass is serialised with
+    # `asdict()` straight into summary.json and every field added to it appears there.
+    # `to_dict()` below emits a fixed key list, so this one does not.
+    mdout_header: Optional[MdoutHeader] = None
     validation: List[str] = field(default_factory=list)
     continuity: List[str] = field(default_factory=list)
     load_errors: List[FileLoadError] = field(default_factory=list)
@@ -436,6 +443,18 @@ class SimulationProtocol:
         start_time = None
         if current.inpcrd and current.inpcrd.details:
             start_time = getattr(current.inpcrd.details, "time", None)
+        if start_time is None and current.mdout_header is not None:
+            # The mdout says when the run began, and says it whether or not the restart it
+            # read is machine-readable here. On a bare install `netCDF4`/`scipy` are
+            # optional extras, so a NetCDF restart parses to `time=None` and continuity was
+            # simply not checked — the header is the only reading left.
+            #
+            # Fallback rather than preference: where both exist they agree, and the inpcrd
+            # is what the existing goldens were generated from. Note the mdout's *stats*
+            # are not an alternative — `stats.time_start` is the first printed frame, one
+            # `ntpr` interval later (1020.0 against a true 920.0), so reaching for it
+            # manufactures a gap on every chunked run.
+            start_time = current.mdout_header.begin_time_ps
 
         if end_time is None or start_time is None:
             # Add informational note when continuity check is skipped
@@ -518,10 +537,18 @@ class SimulationProtocol:
             else:
                 current._add_continuity_note("Gap detected without stated expectation; verify continuity.")
 
-    def totals(self) -> Dict[str, float]:
+    @staticmethod
+    def _sum_stages(stages: List[SimulationStage]) -> Dict[str, float]:
+        """`steps` and `time_ps` over any set of stages.
+
+        Accumulated with ``+=`` rather than ``sum()`` on purpose: CPython 3.12 made
+        ``builtins.sum`` compensated, and CI's matrix is 3.9 *and* 3.12, so a float total
+        built with ``sum()`` can differ in its last bits between the two jobs — on the one
+        artifact every lineage change is told to keep byte-stable.
+        """
         total_steps = 0.0
         total_time = 0.0
-        for stage in self.stages:
+        for stage in stages:
             if stage.mdin and stage.mdin.details:
                 length = getattr(stage.mdin.details, "length_steps", 0) or 0
                 dt = getattr(stage.mdin.details, "dt", 0) or 0
@@ -530,11 +557,85 @@ class SimulationProtocol:
                     total_time += float(length) * float(dt)
         return {"steps": total_steps, "time_ps": total_time}
 
+    def _members(self) -> Dict[Any, List[SimulationStage]]:
+        """This protocol's membership buckets, sentinel included.
+
+        `buckets` is structurally typed on ``.lineage``, so the same grouping the document
+        uses applies to the flat stage list without either side re-deriving it.
+        """
+        return buckets(self.stages)
+
+    def totals(self) -> Dict[str, float]:
+        out = self._sum_stages(self.stages)
+        members = self._members()
+        # `lineage_count` counts what the user *declared*: the untagged bucket is a member
+        # (it is why a half-tagged document is multi-lineage at all) but it is not a
+        # lineage, and counting it reported four members for the canonical three-replica
+        # campaign — the miscount the membership predicate exists to prevent, coming back
+        # through the totals.
+        #
+        # Emitted only when the document holds more than one member, so an untagged
+        # summary.json is the file it always was. Note the value arrives on the wire as a
+        # float: `PlanResult.totals` and `ValidationReport.totals` are `Dict[str, float]`
+        # and pydantic coerces, exactly as it already does for `stage_count`.
+        if len(members) >= 2:
+            out["lineage_count"] = float(len(members) - (1 if UNTAGGED in members else 0))
+        return out
+
+    def lineage_totals(self) -> Dict[str, Dict[str, float]]:
+        """Per declared member: its own `steps`, `time_ps` and `step_count`.
+
+        Empty for a document that declares nothing, and for one whose only member is the
+        untagged bucket — there is no breakdown of a single member, and `totals` already
+        says it.
+
+        A member that is all minimisation reports `steps: 0.0`: minimisation stages carry
+        no `nstlim`/`dt`, so they contribute nothing to either sum. That is the same
+        arithmetic `totals` has always done, made visible per member rather than hidden in
+        one number.
+        """
+        members = self._members()
+        if len(members) < 2:
+            return {}
+        out: Dict[str, Dict[str, float]] = {}
+        for tag, stages in members.items():
+            if tag is UNTAGGED:
+                continue
+            entry: Dict[str, float] = dict(self._sum_stages(stages))
+            entry["step_count"] = len(stages)
+            out[tag] = entry
+        return out
+
+    def sequence_findings(self) -> List[Dict[str, Any]]:
+        """The numbered-sequence holes in this protocol, as ``missing_run`` cards.
+
+        The same finding `validate --manifest` reports, reachable from a protocol — which
+        is what `plan --recursive` has and a `Simulation` is what it does not have.
+        """
+        return sequence_findings([s.name for s in self.stages],
+                                 [s.lineage for s in self.stages])
+
     def to_dict(self) -> Dict[str, Any]:
-        return {
+        out: Dict[str, Any] = {
             "totals": self.totals(),
             "stages": [stage.to_dict() for stage in self.stages],
         }
+        # Emitted only when there is something to report, so a summary.json for a document
+        # with no holes is the file it always was. `plan` printed this finding on the
+        # manifest path and then dropped it: the artifact a user keeps said nothing about
+        # the replica that stopped early, and the artifact is the part that outlives the
+        # terminal.
+        findings = self.sequence_findings()
+        if findings:
+            out["findings"] = findings
+        # Beside `totals`, not inside it: `totals` is a flat `Dict[str, float]` on both
+        # pydantic models and a nested dict raises there, which on `/api/plan` — which
+        # builds its response only after the files have been written — is an HTTP 500 over
+        # artifacts that already landed.
+        lineages = self.lineage_totals()
+        if lineages:
+            out["lineages"] = lineages
+        return out
 
     def to_methods_dict(self) -> Dict[str, Any]:
         def _collect_software(stage: SimulationStage) -> List[Dict[str, str]]:
@@ -984,6 +1085,26 @@ def _safe_parse(parser_cls, path, kind, stage, *, strict):
         return None
 
 
+def _parse_mdout(path, stage, *, strict):
+    """Parse an mdout and read its header, recording both on `stage`.
+
+    One call site for both so the header can never be attached on one path into the engine
+    and not the other — the failure mode `lineage` itself hit in PR 2a, where a field set
+    in one constructor was silently absent from every stage built by the other.
+
+    The header read is not routed through `_safe_parse`: it is a best-effort extra, and a
+    file that failed to parse has already recorded its FileLoadError. A second error for
+    the same file would double-count the same problem.
+    """
+    parsed = _safe_parse(MdoutParser, path, "mdout", stage, strict=strict)
+    if parsed is not None:
+        try:
+            stage.mdout_header = read_mdout_header(path)
+        except (OSError, UnicodeDecodeError, ValueError):
+            stage.mdout_header = None
+    return parsed
+
+
 def _manifest_to_stages(
     manifest: Dict[str, Dict[str, str]] | List[Dict[str, str]],
     directory: Optional[str],
@@ -1071,7 +1192,7 @@ def _manifest_to_stages(
                 stage.stage_role = inferred_role
                 stage.validation.append(f"INFO: stage_role '{inferred_role}' inferred from mdin content")
         if "mdout" in resolved:
-            stage.mdout = _safe_parse(MdoutParser, resolved["mdout"], "mdout", stage, strict=strict)
+            stage.mdout = _parse_mdout(resolved["mdout"], stage, strict=strict)
         if "mdcrd" in resolved:
             stage.mdcrd = _safe_parse(MdcrdParser, resolved["mdcrd"], "mdcrd", stage, strict=strict)
         if "inpcrd" in resolved:
@@ -1164,6 +1285,49 @@ class _TaggedRun(NamedTuple):
     lineage: Optional[str]
 
 
+def _numbered_stem(name: str) -> str:
+    """The part of a run name a numbered-sequence base is read from.
+
+    Two separate jobs, kept separate because `Path().stem` did both at once and got the
+    second one wrong:
+
+    * **Drop the directory.** Two directories are one member until something says
+      otherwise, so an untagged document with runs in `rep1/` and `rep2/` groups exactly as
+      it always did. The base this yields is bare (`prod`, never `rep1/prod`), which the
+      canvas depends on — `PhaseSection.serverBase` strips the directory from the client's
+      spelling to match it.
+    * **Drop the file extension, unless it is the index.** `Path().stem` cannot tell
+      `prod.0001` (chunk one of a dot-numbered chain) from `prod.out` (a file extension),
+      and ate the index: `prod.0001/prod.0002/prod.0004` reported no sequence at all, so
+      the hole at 3 went unreported, and with it the crashed-replica finding that is the
+      whole point of the feature. A purely numeric final suffix is an index and is kept;
+      anything else is an extension and goes.
+
+    "Purely numeric" rather than "ends in a digit" because `.rst7` and `.parm7` are real
+    AMBER extensions and the regex's separator is optional, so `system.rst7` would split as
+    `('system.rst', '7')` and two restarts would be reported as a sequence missing index 6.
+    No extension in `ext_map` is purely numeric, so the discriminator holds.
+
+    `prod.0001.out` keeps working: the final suffix `.out` is not numeric and goes, leaving
+    `prod.0001` for the regex to split. That case worked before this function existed and
+    is why the fix is not simply "stop stripping extensions".
+
+    **A dot after a digit is a decimal point, not a separator.** `win_0.1`, `win_0.2`,
+    `win_0.4` are three TI lambda windows, not chunks 1, 2 and 4 of a family called
+    `win_0` — reading them that way reports a missing window 0.3 that was never meant to
+    exist, and under `--strict` fails the run. So a numeric final suffix is an index only
+    when what precedes it is not itself a digit, which is exactly the case `prod.0001`
+    (`d`) is and `win_0.1` (`0`) is not.
+    """
+    run = name.rpartition("/")[2].rpartition("\\")[2]
+    head, _, tail = run.rpartition(".")
+    if not head:
+        return run
+    if tail.isdigit() and not head[-1].isdigit():
+        return run
+    return head
+
+
 def detect_numeric_sequences(
     filenames: List[str],
     lineages: Optional[List[Optional[str]]] = None,
@@ -1199,6 +1363,8 @@ def detect_numeric_sequences(
     # Pattern to detect numeric suffixes: name_001, name.001, name001, name-001
     # \d+ (not \d{2,}) so single-digit sequences (prod_1, prod_2, prod_3) are detected.
     # The base group (.+?) ensures a stem that is *only* a number never matches here.
+    # `name.001` reaches this pattern only because `_numbered_stem` keeps a numeric final
+    # suffix; `Path().stem` used to eat it, so the dot spelling matched nothing.
     suffix_pattern = re.compile(r'^(.+?)[-_.]?(\d+)$')
 
     # Pattern to detect numeric prefixes: 01_name, 01.name, 01-name
@@ -1213,10 +1379,7 @@ def detect_numeric_sequences(
     for member, runs in buckets(_TaggedRun(n, t) for n, t in zip(filenames, tags)).items():
         for run in runs:
             filename = run.name
-            # `Path().stem` discards the directory for the reason `detect_sequence_gaps`
-            # spells out: two directories are one member until something says otherwise,
-            # so an untagged document groups exactly as it always did.
-            stem = Path(filename).stem
+            stem = _numbered_stem(filename)
 
             # Try suffix pattern first (prod_001, prod_002)
             match = suffix_pattern.match(stem)
@@ -1251,6 +1414,48 @@ def detect_numeric_sequences(
             result[(member, clean_base)] = [filename for _, filename in items]
 
     return result
+
+
+def sequence_findings(
+    names: List[str],
+    lineages: Optional[List[Optional[str]]] = None,
+    start_index: int = 1,
+) -> List[Dict[str, Any]]:
+    """:func:`detect_sequence_gaps`' output as ``missing_run`` cards.
+
+    Lives here rather than in the GUI bridge because three surfaces need the same words
+    about the same hole: `validate --manifest` and `plan --manifest` reach it through
+    ``build_suggestions``, and `plan --recursive` cannot — it never builds a ``Simulation``
+    at all, and ``build_suggestions`` raises on a ``SimulationProtocol``. Two spellings of
+    "rep2 stopped early" is how the two plan modes end up saying different things about one
+    directory.
+
+    ``start_index`` continues an id sequence a caller has already begun.
+    """
+    out: List[Dict[str, Any]] = []
+    for (member, base), missing in detect_sequence_gaps(names, lineages).items():
+        tag = None if member is UNTAGGED else member
+        idxs = ", ".join(str(i) for i in missing)
+        # The member is named in the prose only when there is one, so an untagged document
+        # reads exactly as it always did. `base` stays the bare run base either way: it is
+        # what the canvas matches a ghost against, and it is shared by every member.
+        scope = f"{tag}/{base}" if tag else base
+        # A short member did not skip anything — it stopped. Saying "skip" of a run that
+        # crashed would be the same kind of unearned claim this keying exists to remove.
+        evidence = (f"'{scope}' has no run at index(es) {idxs}" if tag
+                    else f"present members of '{base}' skip index(es) {idxs}")
+        out.append({
+            "id": f"sug_{start_index + len(out)}",
+            "kind": "missing_run",
+            "severity": "needs_you",
+            "title": f"{scope} sequence is missing member(s) {idxs}",
+            "evidence": evidence,
+            "actions": ["Mark as expected gap", "Locate file", "Ignore"],
+            "base": base,
+            "missing": missing,
+            "lineage": tag,
+        })
+    return out
 
 
 def _overlapping_cohorts(by_member: Dict[Any, set]) -> List[List[Any]]:
@@ -1323,11 +1528,7 @@ def detect_sequence_gaps(
     present: Dict[str, Dict[Any, set]] = {}
     for member, runs in buckets(_TaggedRun(n, t) for n, t in zip(names, tags)).items():
         for run in runs:
-            # `Path().stem` keeps discarding the directory on purpose: an untagged
-            # document with runs in two directories is one member, and splitting it by
-            # directory here would start reporting findings — and `--strict` exit codes —
-            # for manifests that never opted into anything.
-            stem = Path(run.name).stem
+            stem = _numbered_stem(run.name)
             match = suffix_pattern.match(stem)
             if not match:
                 continue
@@ -1813,7 +2014,7 @@ def auto_discover(
                 stage.stage_role = inferred_role
                 stage.validation.append(f"INFO: stage_role '{inferred_role}' inferred from mdin file")
         if "mdout" in file_kinds:
-            stage.mdout = _safe_parse(MdoutParser, file_kinds["mdout"], "mdout", stage, strict=strict)
+            stage.mdout = _parse_mdout(file_kinds["mdout"], stage, strict=strict)
         if "mdcrd" in file_kinds:
             stage.mdcrd = _safe_parse(MdcrdParser, file_kinds["mdcrd"], "mdcrd", stage, strict=strict)
         if "inpcrd" in file_kinds:
