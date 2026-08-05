@@ -283,18 +283,25 @@ def _coherence_errors(report):
     return [f for f in (report.get("coherence") or []) if f.get("severity") == "error"]
 
 
+def _problem_suggestions(report):
+    """The two suggestion kinds that are problems, never the `[applied]` ones."""
+    return [s for s in (report.get("suggestions") or [])
+            if s.get("kind") in ("continuity_gap", "missing_run")]
+
+
 def _report_findings(report):
     """Everything a `--strict` run fails on.
 
-    The two problem suggestion kinds, never the `[applied]` ones — plus coherence
-    warnings, which are differences between declared members that the user may well have
-    meant. Coherence *errors* are not here: those are category errors and already make the
-    report not-ok, which fails with or without `--strict`.
+    The problem suggestions plus coherence warnings, which are differences between declared
+    members that the user may well have meant. Coherence *errors* are not here: those are
+    category errors and already fail with or without `--strict`.
+
+    Returns two shapes of dict — a suggestion has `title`/`evidence`, a coherence finding
+    has `severity`/`message` — so callers that print rather than count must pick the list
+    they mean rather than filtering this one. Both shapes carry a `kind`.
     """
-    return ([s for s in (report.get("suggestions") or [])
-             if s.get("kind") in ("continuity_gap", "missing_run")]
-            + [f for f in (report.get("coherence") or [])
-               if f.get("severity") == "warning"])
+    return _problem_suggestions(report) + [
+        f for f in (report.get("coherence") or []) if f.get("severity") == "warning"]
 
 
 def _sim_findings(report, *, strict: bool = False) -> None:
@@ -306,8 +313,7 @@ def _sim_findings(report, *, strict: bool = False) -> None:
     either alone.
     """
     _print_lineage_totals(report.get("lineages"))
-    findings = _report_findings(report)
-    _print_findings([s for s in findings if "kind" in s and "title" in s])
+    _print_findings(_problem_suggestions(report))
     coherence = report.get("coherence") or []
     if coherence:
         _out("\nLineage coherence:")
@@ -320,7 +326,7 @@ def _sim_findings(report, *, strict: bool = False) -> None:
         _out("\nProtocol notes:")
         for note in issues:
             _out(f"  - {note}")
-    ok = bool(report.get("ok")) and not (strict and findings)
+    ok = bool(report.get("ok")) and not (strict and _report_findings(report))
     _out(f"\nValidation: {'OK' if ok else 'ISSUES FOUND'}")
 
 
