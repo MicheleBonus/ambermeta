@@ -124,6 +124,22 @@ it("says nothing about a branch point the members do not share", async () => {
   expect(screen.queryByText(/lineages branch from/)).not.toBeInTheDocument();
 });
 
+it("counts lineages, not bands, when a member appears twice", async () => {
+  // A document that interleaves its members renders one band per contiguous run, so
+  // counting bands said "4 lineages branch from common/equil" about a document the
+  // server reports as holding 2. Every other surface states the real number.
+  await show([
+    makeStep({ id: "e", name: "common/equil" }),
+    makeStep({ id: "a1", name: "rep1/min", lineage: "rep1",
+               input_coords: { source: "step", ref: "e", path: null } }),
+    makeStep({ id: "b1", name: "rep2/min", lineage: "rep2",
+               input_coords: { source: "step", ref: "e", path: null } }),
+    makeStep({ id: "a2", name: "rep1/prod", lineage: "rep1" }),
+    makeStep({ id: "b2", name: "rep2/prod", lineage: "rep2" }),
+  ]);
+  expect(screen.getByText("2 lineages branch from common/equil")).toBeInTheDocument();
+});
+
 it("retags a whole band in one request", async () => {
   // Not a loop of per-step PUTs: each of those deep-copies the document onto the undo
   // stack, so annotating a 200-step campaign evicts the Discover result being annotated.

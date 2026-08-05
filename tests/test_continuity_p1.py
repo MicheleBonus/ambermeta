@@ -543,6 +543,22 @@ def test_a_dot_index_under_a_real_extension_still_works():
         (UNTAGGED, "prod"): [3]}
 
 
+def test_a_dot_after_a_digit_is_a_decimal_point():
+    """`win_0.1`, `win_0.2`, `win_0.4` are three TI lambda windows, not chunks 1, 2 and 4
+    of a family called `win_0`.
+
+    Reading them the second way reports a missing window `0.3` that was never meant to
+    exist, and under `--strict` fails the run — a false finding invented by the very fix
+    that was supposed to stop losing real ones. `Path().stem` got this right by accident,
+    so the rule has to be stated rather than inherited.
+    """
+    assert detect_sequence_gaps(["win_0.1", "win_0.2", "win_0.4"]) == {}
+    assert detect_sequence_gaps(["lambda_0.05", "lambda_0.10", "lambda_0.20"]) == {}
+    # And the discriminator really is the character before the dot, not the dot itself:
+    assert detect_sequence_gaps(["prod.0001", "prod.0002", "prod.0004"]) == {
+        (UNTAGGED, "prod"): [3]}
+
+
 def test_an_extension_that_ends_in_a_digit_is_not_an_index():
     """`.rst7` and `.parm7` are why the rule is "purely numeric", not "ends in a digit".
 

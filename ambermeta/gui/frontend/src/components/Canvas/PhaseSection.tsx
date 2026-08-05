@@ -201,15 +201,21 @@ function bandsOf(rendered: RenderedGroup[]): Band[] {
  * band's producer is just the step before it.
  */
 function fanOutOf(bands: Band[], stepIndex: StepIndex): { name: string; count: number } | null {
-  const heads = bands
-    .filter((b) => b.lineage !== null)
-    .map((b) => b.groups[0]?.group.steps[0])
-    .filter((s): s is StepModel => Boolean(s));
-  if (heads.length < 2) return null;
-  const producers = heads.map((s) => producerOf(s, stepIndex));
+  // Keyed by lineage, not by band: a document that interleaves its members renders one
+  // band per contiguous run, so counting bands reported "4 lineages branch from
+  // common/equil" for two members that each appear twice. The count has to be of what the
+  // document declares, or it contradicts every other surface that states it.
+  const firstStepOf = new Map<string, StepModel>();
+  for (const band of bands) {
+    const head = band.groups[0]?.group.steps[0];
+    if (band.lineage === null || !head || firstStepOf.has(band.lineage)) continue;
+    firstStepOf.set(band.lineage, head);
+  }
+  if (firstStepOf.size < 2) return null;
+  const producers = [...firstStepOf.values()].map((s) => producerOf(s, stepIndex));
   const first = producers[0];
   if (!first || !producers.every((p) => p && p.id === first.id)) return null;
-  return { name: first.name, count: heads.length };
+  return { name: first.name, count: firstStepOf.size };
 }
 
 /** A band with its header, or the steps bare when nothing in the phase is tagged. */

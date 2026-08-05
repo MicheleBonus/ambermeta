@@ -318,9 +318,7 @@ def _sim_findings(report, *, strict: bool = False) -> None:
     if coherence:
         _out("\nLineage coherence:")
         for f in coherence:
-            label = {"error": Colors.error("ERROR"),
-                     "warning": Colors.warning("WARN")}.get(f.get("severity"), "INFO")
-            _out(f"  {label} {f.get('message')}")
+            _out(_coherence_line(f.get("severity"), f.get("message")))
     issues = report.get("protocol_issues", []) or []
     if issues:
         _out("\nProtocol notes:")
@@ -400,6 +398,29 @@ def _export_command(args: argparse.Namespace) -> int:
     else:
         print(json.dumps(simulation_to_payload(sim), indent=2))
     return 0
+
+
+def _coherence_line(severity: str, message: str) -> str:
+    label = {"error": Colors.error("ERROR"),
+             "warning": Colors.warning("WARN")}.get(severity, "INFO")
+    return f"  {label} {message}"
+
+
+def _print_coherence(protocol):
+    """Print the lineage-coherence block for a protocol, and hand back the findings.
+
+    The scan paths have stages but no `Simulation`, so they cannot go through
+    `validate_simulation`; `coherence` needs only the stages, so they can still say the
+    same things about the same directory.
+    """
+    from ambermeta.lineages import coherence
+
+    findings = coherence(protocol.stages)
+    if findings:
+        _out("\nLineage coherence:")
+        for f in findings:
+            _out(_coherence_line(f.severity, f.message))
+    return findings
 
 
 def _print_lineage_totals(lineages) -> None:
@@ -1306,9 +1327,17 @@ def _plan_command(args: argparse.Namespace) -> int:
     # state `auto_discover` never produces and are not faked.
     findings = protocol.sequence_findings()
     _print_findings(findings)
+    # Coherence needs only the parsed stages, which this path has. Leaving it to the
+    # manifest path alone meant one directory passed `plan --recursive` and failed
+    # `plan --manifest` on the same category error — the two modes disagreeing about the
+    # same files is the defect this whole task exists to remove.
+    coherence = _print_coherence(protocol)
 
     written = _write_plan_artifacts(args, protocol)
-    return written or (1 if strict and findings else 0)
+    if any(f.severity == "error" for f in coherence):
+        return 1
+    warnings = [f for f in coherence if f.severity == "warning"]
+    return written or (1 if strict and (findings or warnings) else 0)
 
 
 def _gui_command(args: argparse.Namespace) -> int:

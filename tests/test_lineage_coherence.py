@@ -137,6 +137,37 @@ def test_a_member_with_no_readable_mdin_contributes_nothing():
     assert varying_axis(stages) == {}
 
 
+def test_silence_is_never_a_category_error():
+    """A member that said nothing did not say it ran no dynamics.
+
+    Reading an absent mdin as `imin != 0` made a **fatal** claim out of a file that was
+    merely missing — and on `plan`, which is fault-tolerant about unreadable files by
+    design, it turned a skipped file into exit 1 without `--strict`. That is Spec 1's
+    guarantee, undone by a `.get()` default.
+    """
+    stages = [_stage("rep1/prod", "rep1", cntrl=MD), _stage("rep2/prod", "rep2")]
+    assert coherence(stages) == []
+
+
+def test_an_absent_imin_is_amber_s_own_default_of_dynamics():
+    """`imin` omitted means `imin = 0`. A member that omits it has not opted out of
+    dynamics, so it must not be reported against one that states it."""
+    stated = {k: v for k, v in MD.items() if k != "imin"}
+    stages = [_stage("rep1/prod", "rep1", cntrl=MD),
+              _stage("rep2/prod", "rep2", cntrl=stated)]
+    assert [f for f in coherence(stages) if f.kind == "run_type"] == []
+
+
+def test_the_same_number_typed_two_ways_is_not_a_difference():
+    """`cntrl_parameters` is a raw echo, so one member's `temp0 = 300` and another's
+    `temp0 = 300.0` arrive as an int and a float. Comparing their reprs made an axis out
+    of a decimal point, and under `--strict` failed the run over it."""
+    stages = [_stage("rep1/prod", "rep1", cntrl={**MD, "temp0": 300}),
+              _stage("rep2/prod", "rep2", cntrl={**MD, "temp0": 300.0})]
+    assert varying_axis(stages) == {}
+    assert coherence(stages) == []
+
+
 # ---------------------------------------------------------------------------
 # Seeds, scoped to the branch point
 # ---------------------------------------------------------------------------
@@ -226,6 +257,64 @@ def test_plan_reports_the_same_difference(differing_members, capsys):
     assert main(["plan", str(differing_members), "-m",
                  str(differing_members / "sim.yaml")]) == 0
     assert "Members differ in temp0" in capsys.readouterr().out
+
+
+DIFFERING_MDIN = "prod\n &cntrl\n  imin = 0, nstlim = 1000, dt = 0.002, temp0 = {t},\n /\n"
+
+
+@pytest.fixture
+def differing_tree(tmp_path):
+    """The same disagreement, discoverable from a directory rather than a manifest."""
+    for rep, temp in (("rep1", 300.0), ("rep2", 310.0)):
+        run = tmp_path / rep
+        run.mkdir()
+        (run / "prod_0001.mdin").write_text(DIFFERING_MDIN.format(t=temp), encoding="utf-8")
+    return tmp_path
+
+
+def test_the_scan_path_reports_coherence_too(differing_tree, capsys):
+    """`plan --recursive` has stages, and coherence needs nothing else. Leaving it to the
+    manifest path meant one directory passed one plan mode and failed the other on the
+    same files — the disagreement this whole task exists to remove."""
+    assert main(["plan", "--recursive", str(differing_tree)]) == 0
+    out = capsys.readouterr().out
+    assert "Lineage coherence:" in out
+    assert "Members differ in temp0" in out
+    assert main(["plan", "--recursive", "--strict", str(differing_tree)]) == 1
+
+
+MDOUT_ONLY = "|   MDOUT: x\n   1.  RESOURCE   USE:\n NATOM  =   100\n   4.  RESULTS\n"
+
+
+def test_a_member_that_kept_only_its_mdout_is_not_an_error(tmp_path, capsys):
+    """The reachable form of the worst defect this feature can have.
+
+    `discover` counts a run group holding an mdin **or** an mdout, so a replica whose mdin
+    was tidied away is a perfectly ordinary tree — and reading its silence as `imin != 0`
+    made `plan` exit 1 on it, without `--strict`, on the strength of a file that simply was
+    not there. That is a fabricated claim and a breach of the fault tolerance Spec 1 built.
+    """
+    for rep in ("rep1", "rep2", "rep3"):
+        run = tmp_path / rep
+        run.mkdir()
+        if rep == "rep3":
+            (run / "prod_0001.mdout").write_text(MDOUT_ONLY, encoding="utf-8")
+        else:
+            (run / "prod_0001.mdin").write_text(MDIN.format(t=300.0), encoding="utf-8")
+    assert main(["plan", "--recursive", str(tmp_path)]) == 0
+    assert "Members mix minimisation with dynamics" not in capsys.readouterr().out
+
+
+def test_a_category_error_fails_the_scan_path_without_strict(tmp_path, capsys):
+    """Decision 5: no flag makes two members that ran different things one experiment."""
+    for rep, imin in (("rep1", 0), ("rep2", 1)):
+        run = tmp_path / rep
+        run.mkdir()
+        (run / "prod_0001.mdin").write_text(
+            f"run\n &cntrl\n  imin = {imin}, nstlim = 1000, dt = 0.002,\n /\n",
+            encoding="utf-8")
+    assert main(["plan", "--recursive", str(tmp_path)]) == 1
+    assert "Members mix minimisation with dynamics" in capsys.readouterr().out
 
 
 def test_the_report_carries_the_findings_and_ok_reflects_them(differing_members):

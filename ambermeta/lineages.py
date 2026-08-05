@@ -188,14 +188,28 @@ def varying_axis(stages: Iterable[Any]) -> Dict[str, Dict[str, Any]]:
     for key in COMPARED_PARAMETERS:
         held: Dict[str, Any] = {}
         for tag, group in members.items():
-            values = {p[key] for p in map(_parameters_of, group) if key in p}
+            values = {_comparable(p[key]) for p in map(_parameters_of, group) if key in p}
             # A member that disagrees with itself has no single value to compare, and
             # saying so is a different finding from saying two members disagree.
             if len(values) == 1:
                 held[tag] = values.pop()
-        if len(held) == len(members) and len(set(map(repr, held.values()))) > 1:
+        if len(held) == len(members) and len(set(held.values())) > 1:
             axis[key] = held
     return axis
+
+
+def _comparable(value: Any) -> Any:
+    """A value in a form two members can be compared on.
+
+    Numbers are compared as numbers. `cntrl_parameters` is a raw echo of what the user
+    wrote, so one member's `temp0 = 300` and another's `temp0 = 300.0` arrive as an int and
+    a float — the same temperature, typed two ways. Comparing their reprs reported them as
+    an axis the experiment varies, and under ``--strict`` failed the run over a decimal
+    point. `bool` is excluded because `True == 1` and `ntt = 1` is not `ntt = true`.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return value
+    return float(value)
 
 
 def coherence(stages: Iterable[Any]) -> List[Finding]:
@@ -225,10 +239,17 @@ def coherence(stages: Iterable[Any]) -> List[Finding]:
         out.append(Finding("error", "atom_count",
                            f"Members do not hold the same number of atoms ({spelled})."))
 
-    dynamics = {tag: any(p.get("imin") in (0, None) for p in map(_parameters_of, group)
-                         if p)
-                for tag, group in members.items()}
-    if len(set(dynamics.values())) > 1:
+    # Only members that STATED what they ran take part. A member whose mdins are missing or
+    # unreadable has said nothing, and reading that silence as "ran no dynamics" turns an
+    # absence into a fatal claim — which on `plan` would also break the fault tolerance
+    # Spec 1 exists for, since a skipped file is supposed to cost a note and exit 0.
+    # `imin` absent from a stated mdin is AMBER's own default of 0, i.e. dynamics.
+    dynamics: Dict[str, bool] = {}
+    for tag, group in members.items():
+        stated = [p for p in map(_parameters_of, group) if p]
+        if stated:
+            dynamics[tag] = any(p.get("imin", 0) == 0 for p in stated)
+    if len(dynamics) > 1 and len(set(dynamics.values())) > 1:
         minimisation_only = sorted(tag for tag, has in dynamics.items() if not has)
         out.append(Finding(
             "error", "run_type",

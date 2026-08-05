@@ -20,6 +20,9 @@ from ambermeta.simulation import (
 
 _STEP_SLOTS = ("mdin", "mdout", "mdcrd", "rst")
 
+#: "not supplied", distinct from a supplied None (which clears a tag).
+_UNSET = object()
+
 
 def _default_settings() -> Dict[str, Any]:
     return {
@@ -397,7 +400,8 @@ class DocumentStore:
             self._doc.dirty = True
             return sid
 
-    def _check_continues_from(self, consumer: Step, ic: Dict[str, Any]) -> List[str]:
+    def _check_continues_from(self, consumer: Step, ic: Dict[str, Any],
+                              consumer_lineage: Any = _UNSET) -> List[str]:
         """Validate a hand-set ``continues from``. Raises ValueError on an impossible one.
 
         Editing a step and creating one are the two ways a caller states a link the tool
@@ -427,7 +431,15 @@ class DocumentStore:
         seen it, so a create cannot deliberately name itself — the check costs nothing and
         stays shared, and a ref that did somehow equal the fresh id would be refused by
         the existence check below anyway, the new step not being in the document yet.
+
+        ``consumer_lineage`` continues that idea for the update path, where the step *is*
+        in the document and so cannot be handed over pre-modified: a request that sets a
+        tag and a producer together must be judged against the tag it is setting. Judged
+        against the old one, declaring "this is rep2 and it branches off rep1" reported no
+        branch at all, because at the moment of the check the step was still untagged.
         """
+        if consumer_lineage is _UNSET:
+            consumer_lineage = consumer.lineage
         if ic.get("source") != "step":
             return []
         ref = ic.get("ref")
@@ -454,13 +466,14 @@ class DocumentStore:
             seen.add(cur.id)
             cur = (by_id.get(cur.input_coords.ref)
                    if cur.input_coords.source == "step" else None)
-        if not crosses_lineage(producer, consumer):
+        if not (producer.lineage and consumer_lineage
+                and producer.lineage != consumer_lineage):
             return []
         return [
             "{c} (lineage {ct}) now continues from {p} (lineage {pt}). A link between two "
             "declared lineages is a branch, not a continuation: no automatic operation "
             "will create or maintain it.".format(
-                c=consumer.name or consumer.id, ct=consumer.lineage,
+                c=consumer.name or consumer.id, ct=consumer_lineage,
                 p=producer.name or producer.id, pt=producer.lineage)
         ]
 
@@ -471,7 +484,12 @@ class DocumentStore:
             if patch.get("input_coords") is not None:
                 # Validate before mutating, so a rejected edit leaves neither a changed
                 # document nor an undo entry that reverses nothing.
-                notes = self._check_continues_from(s, patch["input_coords"])
+                notes = self._check_continues_from(
+                    s, patch["input_coords"],
+                    # Judged against the tag this same request sets, not the one
+                    # the step is about to stop having.
+                    patch["lineage"] or None if "lineage" in patch else _UNSET)
+            crossing_before = self._crossing_refs() if "lineage" in patch else {}
             self._snapshot()
             if patch.get("name") is not None:
                 s.name = patch["name"]
@@ -495,7 +513,9 @@ class DocumentStore:
                 s.notes = list(patch["notes"])
             if "lineage" in patch:                  # present => set (None clears)
                 s.lineage = patch["lineage"] or None
-                notes += self._sever_crossed_refs()
+                notes += self._sever_crossed_refs(
+                    crossing_before,
+                    declared=s.id if patch.get("input_coords") is not None else None)
             self._warnings = notes          # after _snapshot(), which clears them
             self._doc.dirty = True
 
@@ -516,10 +536,11 @@ class DocumentStore:
             # Every lookup before the snapshot, so one bad id leaves neither a
             # half-applied tag nor an undo frame that reverses nothing.
             steps = [self._find_step(step_id)[1] for step_id in step_ids]
+            crossing_before = self._crossing_refs()
             self._snapshot()
             for step in steps:
                 step.lineage = lineage or None
-            self._warnings = self._sever_crossed_refs()
+            self._warnings = self._sever_crossed_refs(crossing_before)
             self._doc.dirty = True
 
     def apply_inferred_lineages(self) -> int:
@@ -536,15 +557,36 @@ class DocumentStore:
             tags = infer_lineages_from_layout([s.name for s in steps])
             if not tags:
                 return 0
+            crossing_before = self._crossing_refs()
             self._snapshot()
             for step in steps:
-                step.lineage = tags.get(step.name) or None
-            self._warnings = self._sever_crossed_refs()
+                # Only the runs the inference actually named. Assigning `tags.get(...)`
+                # across the board would clear every tag the user typed by hand that the
+                # layout does not also imply — silently, since the inference refuses far
+                # more layouts than it accepts and would then report having "applied"
+                # nothing while deleting everything.
+                if step.name in tags:
+                    step.lineage = tags[step.name] or None
+            self._warnings = self._sever_crossed_refs(crossing_before)
             self._doc.dirty = True
             return len(tags)
 
-    def _sever_crossed_refs(self) -> List[str]:
-        """Drop any restart link the new tags have turned into a cross-member claim.
+    def _crossing_refs(self) -> Dict[str, str]:
+        """`{step id: ref}` for every link that currently crosses a declared boundary."""
+        by_id = {s.id: s for _, s in iter_steps(self._doc.simulation)}
+        out: Dict[str, str] = {}
+        for _, step in iter_steps(self._doc.simulation):
+            ic = step.input_coords
+            if ic is None or ic.source != "step" or not ic.ref:
+                continue
+            producer = by_id.get(ic.ref)
+            if producer is not None and crosses_lineage(producer, step):
+                out[step.id] = ic.ref
+        return out
+
+    def _sever_crossed_refs(self, before: Dict[str, str],
+                            declared: Optional[str] = None) -> List[str]:
+        """Drop the restart links *this edit* turned into a cross-member claim.
 
         Retagging is the one edit that can invalidate a link without touching it.
         `_check_continues_from` fires when a `ref` is *set*; here the ref does not move —
@@ -555,22 +597,33 @@ class DocumentStore:
         the wrong replica in the manifest, in `resolved_input_coords` and in the methods
         summary.
 
+        `before` is the same map taken before the tags moved, and it is what keeps this
+        from being a document-wide purge. A **declared** cross-lineage branch is legal —
+        `_check_continues_from` accepts one on purpose, warning rather than refusing,
+        because "rep2 branches off rep1's equilibration" is a real topology somebody may
+        mean. Such a link is already crossing before this edit, so it is left alone; only a
+        link this edit *made* cross is dropped. Without that, any lineage write anywhere —
+        including one that changed nothing at all — deleted every declared branch in the
+        document.
+
+        `declared` is a step whose `input_coords` this same request supplied. Setting a tag
+        and a producer together is one statement, not a statement followed by a retraction.
+
         Reverting to `starting_structure` rather than guessing a new producer: silence is
         recoverable and a false edge is not, and the user has just said something about
         membership, which is exactly when the tool should stop inferring.
         """
         by_id = {s.id: s for _, s in iter_steps(self._doc.simulation)}
         severed: List[str] = []
-        for _, step in iter_steps(self._doc.simulation):
-            ic = step.input_coords
-            if ic is None or ic.source != "step" or not ic.ref:
+        for step_id, ref in self._crossing_refs().items():
+            if before.get(step_id) == ref or step_id == declared:
                 continue
-            producer = by_id.get(ic.ref)
-            if producer is not None and crosses_lineage(producer, step):
-                step.input_coords = InputCoords(source="starting_structure")
-                severed.append(
-                    f"{step.name} no longer continues {producer.name}: they are now "
-                    "different lineages. Set its input coordinates if that is wrong.")
+            step = by_id[step_id]
+            producer = by_id[ref]
+            step.input_coords = InputCoords(source="starting_structure")
+            severed.append(
+                f"{step.name} no longer continues {producer.name}: they are now "
+                "different lineages. Set its input coordinates if that is wrong.")
         return severed
 
     def delete_step(self, step_id: str) -> None:

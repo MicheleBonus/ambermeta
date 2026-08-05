@@ -1311,10 +1311,21 @@ def _numbered_stem(name: str) -> str:
     `prod.0001.out` keeps working: the final suffix `.out` is not numeric and goes, leaving
     `prod.0001` for the regex to split. That case worked before this function existed and
     is why the fix is not simply "stop stripping extensions".
+
+    **A dot after a digit is a decimal point, not a separator.** `win_0.1`, `win_0.2`,
+    `win_0.4` are three TI lambda windows, not chunks 1, 2 and 4 of a family called
+    `win_0` — reading them that way reports a missing window 0.3 that was never meant to
+    exist, and under `--strict` fails the run. So a numeric final suffix is an index only
+    when what precedes it is not itself a digit, which is exactly the case `prod.0001`
+    (`d`) is and `win_0.1` (`0`) is not.
     """
     run = name.rpartition("/")[2].rpartition("\\")[2]
     head, _, tail = run.rpartition(".")
-    return run if not head or tail.isdigit() else head
+    if not head:
+        return run
+    if tail.isdigit() and not head[-1].isdigit():
+        return run
+    return head
 
 
 def detect_numeric_sequences(
