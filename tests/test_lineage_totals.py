@@ -134,6 +134,51 @@ def test_an_untagged_document_reports_a_null_breakdown_on_the_wire(sample_md_dat
     assert "lineage_count" not in body["totals"]
 
 
+# ---------------------------------------------------------------------------
+# The terminal
+# ---------------------------------------------------------------------------
+
+def test_the_breakdown_is_printed_by_plan_and_validate(
+        crashed_replica_tree, tmp_path, capsys):
+    """One number for a three-replica campaign answers a question nobody asked: 300 ns of
+    *what*? The breakdown makes the crashed replica visible as a quantity, beside the
+    finding that names it."""
+    manifest = crashed_replica_tree / "manifest.yaml"
+    assert main(["discover", str(crashed_replica_tree), "--write", str(manifest)]) == 0
+    capsys.readouterr()
+
+    assert main(["validate", "--manifest", str(manifest)]) == 0
+    out = capsys.readouterr().out
+    assert "Per lineage:" in out
+    assert "rep2  1 run(s)" in out
+    assert "rep1  3 run(s)" in out
+
+    assert main(["plan", "--recursive", str(crashed_replica_tree)]) == 0
+    scan = capsys.readouterr().out
+    assert "Declared lineages: 3" in scan
+    assert "rep2  1 run(s)" in scan
+
+
+def test_discover_prints_which_runs_each_member_holds(crashed_replica_tree, capsys):
+    """The count alone ("Runs carry 3 declared lineage(s)") says nothing about which runs
+    it covers, and docs/cli.md already claimed the card names each member. The evidence is
+    printed for this card and no other — appending it everywhere would dump role_guess's
+    whole phase->role mapping into the same block."""
+    assert main(["discover", "--recursive", str(crashed_replica_tree)]) == 0
+    out = capsys.readouterr().out
+    assert "Runs carry 3 declared lineage(s)" in out
+    assert "rep1: 3 run(s); rep2: 1 run(s); rep3: 3 run(s)" in out
+    assert "Equilibration->" not in out
+
+
+def test_an_untagged_document_prints_no_lineage_chrome(sample_md_data_dir, capsys):
+    assert main(["plan", "--recursive", str(sample_md_data_dir)]) == 0
+    out = capsys.readouterr().out
+    assert "Per lineage:" not in out
+    assert "Declared lineages:" not in out
+    assert "lineage=" not in out
+
+
 def test_lineage_count_is_a_float_on_the_wire_and_an_int_in_the_artifact(replica_tree, tmp_path):
     """A wart, pinned rather than hidden: `totals` is `Dict[str, float]` on both models, so
     pydantic coerces the count to 3.0. `stage_count` has always arrived the same way. The

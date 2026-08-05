@@ -262,7 +262,11 @@ def _print_simulation(sim, report=None, *, verbose: bool = False,
             files = ", ".join(
                 f"{k}={getattr(step, k)}" for k in ("mdin", "mdout", "mdcrd") if getattr(step, k)
             )
-            line = f"  - {step.name}  topology={topo}  input={_input_source_label(sim, step)}"
+            # Emit-when-set, like every other spelling of the tag: an untagged document's
+            # output is unchanged character for character.
+            tag = f"  lineage={step.lineage}" if step.lineage else ""
+            line = (f"  - {step.name}  topology={topo}"
+                    f"  input={_input_source_label(sim, step)}{tag}")
             _out(line + (f"  ({files})" if files else ""))
     if report is not None:
         if verbose:
@@ -301,6 +305,7 @@ def _sim_findings(report, *, strict: bool = False) -> None:
     run printed `Validation: OK` and then exited 1. Saying OK and failing is worse than
     either alone.
     """
+    _print_lineage_totals(report.get("lineages"))
     findings = _report_findings(report)
     _print_findings([s for s in findings if "kind" in s and "title" in s])
     coherence = report.get("coherence") or []
@@ -349,7 +354,16 @@ def _discover_command(args: argparse.Namespace) -> int:
     if suggestions:
         _out("\nSuggestions:")
         for s in suggestions:
-            _out(f"  - [{s.get('severity')}] {s.get('title')}")
+            line = f"  - [{s.get('severity')}] {s.get('title')}"
+            # The evidence is printed for the grouping card and for that card only. It is
+            # the per-member breakdown — `rep1: 3 run(s); rep2: 1 run(s); …` — and the
+            # title alone ("Runs carry 3 declared lineage(s)") states a count without
+            # saying which runs it covers, on the one card that is reported as `[applied]`
+            # rather than asked about. Appending evidence to every kind would also dump
+            # `role_guess`'s full `Equilibration->equilibration; …` mapping into the block.
+            if s.get("kind") == "lineage_group" and s.get("evidence"):
+                line += f"\n      {s['evidence']}"
+            _out(line)
 
     if getattr(args, "write", None):
         from ambermeta.simulation import write_simulation
@@ -382,6 +396,23 @@ def _export_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def _print_lineage_totals(lineages) -> None:
+    """The per-member breakdown, when there is one.
+
+    A single number for a three-replica campaign answers a question nobody asked: 300 ns
+    of *what*? The breakdown is what makes the crashed replica visible as a quantity
+    rather than only as a finding — rep2 ran a third of what its siblings ran.
+    """
+    if not lineages:
+        return
+    _out("\nPer lineage:")
+    width = max(len(tag) for tag in lineages)
+    for tag in lineages:
+        entry = lineages[tag]
+        _out(f"  {tag:<{width}}  {entry['step_count']} run(s), "
+             f"{entry['steps']:.0f} steps, {entry['time_ps']:.3f} ps")
+
+
 def _print_protocol(protocol: SimulationProtocol, verbose: bool = False) -> None:
     totals = protocol.totals()
     _out("\nProtocol summary")
@@ -389,6 +420,9 @@ def _print_protocol(protocol: SimulationProtocol, verbose: bool = False) -> None
     _out(f"Stages: {len(protocol.stages)}")
     _out(f"Total steps: {totals['steps']:.0f}")
     _out(f"Total simulated time (ps): {totals['time_ps']:.3f}")
+    if "lineage_count" in totals:
+        _out(f"Declared lineages: {totals['lineage_count']:.0f}")
+    _print_lineage_totals(protocol.lineage_totals())
 
     for stage in protocol.stages:
         summary = stage.summary()
