@@ -530,11 +530,29 @@ class SimulationProtocol:
                     total_time += float(length) * float(dt)
         return {"steps": total_steps, "time_ps": total_time}
 
+    def sequence_findings(self) -> List[Dict[str, Any]]:
+        """The numbered-sequence holes in this protocol, as ``missing_run`` cards.
+
+        The same finding `validate --manifest` reports, reachable from a protocol — which
+        is what `plan --recursive` has and a `Simulation` is what it does not have.
+        """
+        return sequence_findings([s.name for s in self.stages],
+                                 [s.lineage for s in self.stages])
+
     def to_dict(self) -> Dict[str, Any]:
-        return {
+        out: Dict[str, Any] = {
             "totals": self.totals(),
             "stages": [stage.to_dict() for stage in self.stages],
         }
+        # Emitted only when there is something to report, so a summary.json for a document
+        # with no holes is the file it always was. `plan` printed this finding on the
+        # manifest path and then dropped it: the artifact a user keeps said nothing about
+        # the replica that stopped early, and the artifact is the part that outlives the
+        # terminal.
+        findings = self.sequence_findings()
+        if findings:
+            out["findings"] = findings
+        return out
 
     def to_methods_dict(self) -> Dict[str, Any]:
         def _collect_software(stage: SimulationStage) -> List[Dict[str, str]]:
@@ -1282,6 +1300,48 @@ def detect_numeric_sequences(
             result[(member, clean_base)] = [filename for _, filename in items]
 
     return result
+
+
+def sequence_findings(
+    names: List[str],
+    lineages: Optional[List[Optional[str]]] = None,
+    start_index: int = 1,
+) -> List[Dict[str, Any]]:
+    """:func:`detect_sequence_gaps`' output as ``missing_run`` cards.
+
+    Lives here rather than in the GUI bridge because three surfaces need the same words
+    about the same hole: `validate --manifest` and `plan --manifest` reach it through
+    ``build_suggestions``, and `plan --recursive` cannot — it never builds a ``Simulation``
+    at all, and ``build_suggestions`` raises on a ``SimulationProtocol``. Two spellings of
+    "rep2 stopped early" is how the two plan modes end up saying different things about one
+    directory.
+
+    ``start_index`` continues an id sequence a caller has already begun.
+    """
+    out: List[Dict[str, Any]] = []
+    for (member, base), missing in detect_sequence_gaps(names, lineages).items():
+        tag = None if member is UNTAGGED else member
+        idxs = ", ".join(str(i) for i in missing)
+        # The member is named in the prose only when there is one, so an untagged document
+        # reads exactly as it always did. `base` stays the bare run base either way: it is
+        # what the canvas matches a ghost against, and it is shared by every member.
+        scope = f"{tag}/{base}" if tag else base
+        # A short member did not skip anything — it stopped. Saying "skip" of a run that
+        # crashed would be the same kind of unearned claim this keying exists to remove.
+        evidence = (f"'{scope}' has no run at index(es) {idxs}" if tag
+                    else f"present members of '{base}' skip index(es) {idxs}")
+        out.append({
+            "id": f"sug_{start_index + len(out)}",
+            "kind": "missing_run",
+            "severity": "needs_you",
+            "title": f"{scope} sequence is missing member(s) {idxs}",
+            "evidence": evidence,
+            "actions": ["Mark as expected gap", "Locate file", "Ignore"],
+            "base": base,
+            "missing": missing,
+            "lineage": tag,
+        })
+    return out
 
 
 def _overlapping_cohorts(by_member: Dict[Any, set]) -> List[List[Any]]:

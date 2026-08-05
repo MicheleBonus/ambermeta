@@ -70,6 +70,8 @@ export interface PlanResult {
   failed: FailedFile[];
   warnings: string[];
   stage_count: number; totals: Record<string, number>; document: DocumentResponse;
+  /** What the run found, in the same shape /validate returns. */
+  suggestions: Suggestion[];
 }
 
 export type FileType = "prmtop" | "mdin" | "mdout" | "mdcrd" | "inpcrd" | "folder" | "other";

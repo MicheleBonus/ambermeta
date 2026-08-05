@@ -249,17 +249,6 @@ class FailedFile(BaseModel):
     error: str
 
 
-class PlanResult(BaseModel):
-    written: List[WrittenFile] = Field(default_factory=list)
-    # One unwritable path does not hide the artifacts that did land: the response names
-    # both, so the user is never told "it failed" about a run that wrote three files.
-    failed: List[FailedFile] = Field(default_factory=list)
-    warnings: List[str] = Field(default_factory=list)
-    stage_count: int = 0
-    totals: Dict[str, float] = Field(default_factory=dict)
-    document: DocumentResponse
-
-
 class Suggestion(BaseModel):
     id: str
     kind: str        # missing_run|continuity_gap|topology_confirm|restart_link|role_guess|starting_structure|lineage_group
@@ -276,6 +265,21 @@ class Suggestion(BaseModel):
     # build_suggestions' dict silently, so the card would name no member and nothing
     # would say why.
     lineage: Optional[str] = None
+
+
+class PlanResult(BaseModel):
+    written: List[WrittenFile] = Field(default_factory=list)
+    # One unwritable path does not hide the artifacts that did land: the response names
+    # both, so the user is never told "it failed" about a run that wrote three files.
+    failed: List[FailedFile] = Field(default_factory=list)
+    warnings: List[str] = Field(default_factory=list)
+    stage_count: int = 0
+    totals: Dict[str, float] = Field(default_factory=dict)
+    # Declared, not incidental: pydantic's extra='ignore' would drop the key silently and
+    # the response would look correct while saying nothing about the replica that stopped
+    # early. `StageIssue.continuity` is already lost that way.
+    suggestions: List[Suggestion] = Field(default_factory=list)
+    document: DocumentResponse
 
 
 class MissingFile(BaseModel):

@@ -174,6 +174,7 @@ def plan_document(req: PlanRequest) -> PlanResult:
     return PlanResult(written=written, failed=out["failed"],
                       warnings=warnings + out["warnings"],
                       stage_count=out["stage_count"], totals=out["totals"],
+                      suggestions=[Suggestion(**s) for s in out["suggestions"]],
                       document=store.to_response())
 
 

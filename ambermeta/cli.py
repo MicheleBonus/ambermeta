@@ -231,7 +231,21 @@ def _input_source_label(sim, step) -> str:
     return ic.path or "?"
 
 
-def _print_simulation(sim, report=None, *, verbose: bool = False) -> None:
+def _print_findings(findings) -> None:
+    """The 'Continuity / sequence findings' block, from a bare list of cards.
+
+    Split out of :func:`_sim_findings` so `plan --recursive` — which never builds a
+    ``Simulation`` and so has no report — prints the same block in the same words. Two
+    printers is how the two plan modes end up describing one directory differently.
+    """
+    if findings:
+        _out("\nContinuity / sequence findings:")
+        for s in findings:
+            _out(f"  - {s.get('title')}: {s.get('evidence')}")
+
+
+def _print_simulation(sim, report=None, *, verbose: bool = False,
+                      strict: bool = False) -> None:
     """Print the three-level Simulation structure (pool, starting structure, phases→steps)."""
     _out("\nSimulation summary")
     _out("==================")
@@ -257,23 +271,32 @@ def _print_simulation(sim, report=None, *, verbose: bool = False) -> None:
                          + (issue.get("info") or []))
                 for line in lines:
                     _out(f"    {issue['name']}: {line}")
-        _sim_findings(report)
+        _sim_findings(report, strict=strict)
 
 
-def _sim_findings(report) -> None:
-    """Print continuity/sequence findings + protocol notes + an overall status line."""
-    suggestions = report.get("suggestions", []) or []
-    findings = [s for s in suggestions if s.get("kind") in ("continuity_gap", "missing_run")]
-    if findings:
-        _out("\nContinuity / sequence findings:")
-        for s in findings:
-            _out(f"  - {s.get('title')}: {s.get('evidence')}")
+def _report_findings(report):
+    """The suggestions a `--strict` run fails on: the two problem kinds, never the applied ones."""
+    return [s for s in (report.get("suggestions") or [])
+            if s.get("kind") in ("continuity_gap", "missing_run")]
+
+
+def _sim_findings(report, *, strict: bool = False) -> None:
+    """Print continuity/sequence findings + protocol notes + an overall status line.
+
+    `strict` is taken because the status line is otherwise a lie: the report's own `ok` is
+    about validity, and a sequence hole does not make a document invalid — so a `--strict`
+    run printed `Validation: OK` and then exited 1. Saying OK and failing is worse than
+    either alone.
+    """
+    findings = _report_findings(report)
+    _print_findings(findings)
     issues = report.get("protocol_issues", []) or []
     if issues:
         _out("\nProtocol notes:")
         for note in issues:
             _out(f"  - {note}")
-    _out(f"\nValidation: {'OK' if report.get('ok') else 'ISSUES FOUND'}")
+    ok = bool(report.get("ok")) and not (strict and findings)
+    _out(f"\nValidation: {'OK' if ok else 'ISSUES FOUND'}")
 
 
 def _resolve_sim_format(path: str, requested: Optional[str]) -> str:
@@ -723,13 +746,11 @@ def _validate_manifest(args: argparse.Namespace, manifest: str) -> int:
         for stage in report.get("stage_issues", []):
             for err in stage.get("errors", []):
                 _out(f"  {Colors.error('ERROR')} {stage['name']}: {err}")
-        _sim_findings(report)
+        _sim_findings(report, strict=bool(args.strict))
 
-    ok = bool(report.get("ok", True))
-    findings = [s for s in report.get("suggestions", []) if s.get("kind") in ("continuity_gap", "missing_run")]
-    if not ok:
+    if not bool(report.get("ok", True)):
         return 1
-    if args.strict and findings:
+    if args.strict and _report_findings(report):
         return 1
     return 0
 
@@ -1109,10 +1130,16 @@ def _plan_v2(args: argparse.Namespace, directory: str) -> int:
         print(Colors.error("ERROR: nothing to plan: 0 stages."), file=sys.stderr)
         return 1
 
+    strict = bool(getattr(args, "strict", False))
     report = validate_simulation(sim, settings, directory, protocol=protocol)
-    _print_simulation(sim, report, verbose=bool(getattr(args, "verbose", False)))
+    _print_simulation(sim, report, verbose=bool(getattr(args, "verbose", False)),
+                      strict=strict)
 
-    return _write_plan_artifacts(args, protocol)
+    written = _write_plan_artifacts(args, protocol)
+    # The artifacts are written either way. `--strict` decides the exit code, not whether
+    # the run happens: a pipeline that stops on a finding still wants the summary that
+    # names it.
+    return written or (1 if strict and _report_findings(report) else 0)
 
 
 def _plan_command(args: argparse.Namespace) -> int:
@@ -1200,7 +1227,17 @@ def _plan_command(args: argparse.Namespace) -> int:
 
     _print_protocol(protocol, verbose=args.verbose)
 
-    return _write_plan_artifacts(args, protocol)
+    # The scan paths never build a `Simulation`, so `build_suggestions` cannot run here —
+    # it reads `sim.phases` and raises on a protocol. The sequence half needs only the
+    # names and the tags, and both are on the stages, so the crashed replica is reported
+    # here in the same words `plan --manifest` uses. The other suggestion kinds
+    # (topology_confirm, starting_structure, role_guess, lineage_group) need document
+    # state `auto_discover` never produces and are not faked.
+    findings = protocol.sequence_findings()
+    _print_findings(findings)
+
+    written = _write_plan_artifacts(args, protocol)
+    return written or (1 if strict and findings else 0)
 
 
 def _gui_command(args: argparse.Namespace) -> int:
@@ -1321,7 +1358,8 @@ For documentation, visit: https://github.com/MicheleBonus/ambermeta
         "--strict",
         action="store_true",
         help="Abort on the first unreadable/malformed input file instead of "
-             "skipping it. Default is to skip the file and continue.",
+             "skipping it, and exit 1 if any continuity or sequence finding was "
+             "reported. Default is to skip the file, print the findings and exit 0.",
     )
     plan_parser.add_argument(
         "--recursive",
