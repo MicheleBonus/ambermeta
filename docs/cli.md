@@ -580,8 +580,40 @@ $ ambermeta validate --manifest sim.yaml --format json
   (`rep2/prod sequence is missing member(s) 2, 3`, with `"lineage": "rep2"` on the suggestion) instead of
   being hidden by its siblings' indices, and members numbered on offset scales raise nothing.
 
-An `[applied]` `lineage_group` suggestion lists what the document declares. Note it describes the
-**document**, not an inference: a manifest whose tags you typed by hand is reported the same way.
+An `[applied]` `lineage_group` suggestion lists what the document declares, and `discover` prints its
+evidence — each member and how many runs it holds. Note it describes the **document**, not an
+inference: a manifest whose tags you typed by hand is reported the same way.
+
+**The per-member breakdown.** `plan` and `validate --manifest` print each member's own share, so a
+replica that stopped early is visible as a quantity beside the finding that names it:
+
+```
+Per lineage:
+  rep1  3 run(s), 15000000 steps, 60000.000 ps
+  rep2  1 run(s),  5000000 steps, 20000.000 ps
+  rep3  3 run(s), 15000000 steps, 60000.000 ps
+```
+
+The same numbers reach `summary.json` under a top-level `lineages` key, and `totals.lineage_count`
+counts the **declared** members — untagged runs form their own bucket but are not a lineage, so the
+canonical `common/{min,heat,equil}` + `rep1..3/prod_*` campaign reports 3, not 4. Both keys are
+absent from an untagged document's summary.
+
+**Lineage coherence.** Where a document declares more than one member, `plan` and
+`validate --manifest` also report what the members do and do not agree about:
+
+```
+Lineage coherence:
+  WARN Members differ in temp0 (rep1: 300.0; rep2: 310.0).
+  INFO 3 steps read the restart written by common/equil and carry 3 distinct resolved seeds.
+```
+
+Only a **category error** is fatal — different atom counts, or a member that ran no dynamics beside
+one that did. Those exit `1` with or without `--strict`, because members that differ that way are not
+runs of one experiment. Everything else (`temp0`, `cut`, `ntt`, `ntp`, `dt`, a repeated seed) is a
+finding `--strict` escalates. The output states graph facts and never a statistical property: it will
+tell you three runs read one restart and carry three distinct seeds, and it will not tell you they are
+independent samples.
 
 `--allow-gaps` is **not** the way to handle replicas — it suppresses every unstated gap in the document
 including real ones inside a member, and it does not suppress overlap findings at all. Declare the members
