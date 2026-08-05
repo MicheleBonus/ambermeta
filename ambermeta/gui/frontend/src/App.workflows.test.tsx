@@ -73,6 +73,7 @@ describe("top-bar workflows", () => {
       ok: true,
       totals: { stage_count: 0 },
       lineages: null,
+      coherence: [],
       protocol_issues: [],
       stage_issues: [],
       suggestions: [

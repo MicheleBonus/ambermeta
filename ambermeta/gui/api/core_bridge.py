@@ -226,10 +226,20 @@ def build_validation_report(stages: List[Dict[str, Any]], settings: Dict[str, An
             "missing_files": miss,
         })
 
+    from ambermeta.lineages import coherence
+
     totals = protocol.totals()
     totals["stage_count"] = len(protocol.stages)
+    findings = [{"severity": f.severity, "kind": f.kind, "message": f.message}
+                for f in coherence(protocol.stages)]
     return {
-        "ok": all(s["ok"] for s in stage_issues),
+        # A category error means the members are not runs of the same thing, which is not
+        # a per-stage problem and so has nowhere to go in `stage_issues` — and `ok` read
+        # only that. A document whose members hold different atom counts reported
+        # "All checks passed".
+        "ok": all(s["ok"] for s in stage_issues)
+        and not any(f["severity"] == "error" for f in findings),
+        "coherence": findings,
         "totals": totals,
         # None rather than {} for a single-member document: the field is Optional on the
         # model and "the document declares no members" and "every member is empty" are

@@ -12,7 +12,8 @@ export const emptyDocument: DocumentResponse = {
 };
 
 export const emptyValidationReport: ValidationReport = {
-  ok: true, totals: {}, lineages: null, protocol_issues: [], stage_issues: [],
+  ok: true, totals: {}, lineages: null, coherence: [], protocol_issues: [],
+  stage_issues: [],
   suggestions: [],
 };
 

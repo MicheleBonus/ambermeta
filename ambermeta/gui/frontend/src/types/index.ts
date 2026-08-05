@@ -54,9 +54,17 @@ export interface StageIssue {
 }
 /** One declared member's share of the document. Absent from an untagged one. */
 export interface LineageTotals { steps: number; time_ps: number; step_count: number; }
+/** What the declared members do and do not agree about. `error` means they are not runs
+ *  of the same thing; `warning` is a difference the user may well have meant. */
+export interface CoherenceFinding {
+  severity: "error" | "warning" | "info";
+  kind: string;
+  message: string;
+}
 export interface ValidationReport {
   ok: boolean; totals: Record<string, number>;
   lineages: Record<string, LineageTotals> | null;
+  coherence: CoherenceFinding[];
   protocol_issues: string[];
   stage_issues: StageIssue[]; suggestions: Suggestion[];
 }

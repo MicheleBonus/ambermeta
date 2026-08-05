@@ -274,10 +274,23 @@ def _print_simulation(sim, report=None, *, verbose: bool = False,
         _sim_findings(report, strict=strict)
 
 
+def _coherence_errors(report):
+    """Category errors: the members are not runs of the same thing (decision 5)."""
+    return [f for f in (report.get("coherence") or []) if f.get("severity") == "error"]
+
+
 def _report_findings(report):
-    """The suggestions a `--strict` run fails on: the two problem kinds, never the applied ones."""
-    return [s for s in (report.get("suggestions") or [])
-            if s.get("kind") in ("continuity_gap", "missing_run")]
+    """Everything a `--strict` run fails on.
+
+    The two problem suggestion kinds, never the `[applied]` ones — plus coherence
+    warnings, which are differences between declared members that the user may well have
+    meant. Coherence *errors* are not here: those are category errors and already make the
+    report not-ok, which fails with or without `--strict`.
+    """
+    return ([s for s in (report.get("suggestions") or [])
+             if s.get("kind") in ("continuity_gap", "missing_run")]
+            + [f for f in (report.get("coherence") or [])
+               if f.get("severity") == "warning"])
 
 
 def _sim_findings(report, *, strict: bool = False) -> None:
@@ -289,7 +302,14 @@ def _sim_findings(report, *, strict: bool = False) -> None:
     either alone.
     """
     findings = _report_findings(report)
-    _print_findings(findings)
+    _print_findings([s for s in findings if "kind" in s and "title" in s])
+    coherence = report.get("coherence") or []
+    if coherence:
+        _out("\nLineage coherence:")
+        for f in coherence:
+            label = {"error": Colors.error("ERROR"),
+                     "warning": Colors.warning("WARN")}.get(f.get("severity"), "INFO")
+            _out(f"  {label} {f.get('message')}")
     issues = report.get("protocol_issues", []) or []
     if issues:
         _out("\nProtocol notes:")
@@ -1136,9 +1156,20 @@ def _plan_v2(args: argparse.Namespace, directory: str) -> int:
                       strict=strict)
 
     written = _write_plan_artifacts(args, protocol)
-    # The artifacts are written either way. `--strict` decides the exit code, not whether
-    # the run happens: a pipeline that stops on a finding still wants the summary that
-    # names it.
+    # The artifacts are written either way. The exit code decides what a pipeline does
+    # next, not whether the run happens: a run that stops on a finding still wants the
+    # summary that names it.
+    #
+    # A category error fails with or without `--strict` (decision 5): members that hold
+    # different atom counts, or that mix minimisation with dynamics, are not runs of one
+    # experiment and no flag makes them so.
+    #
+    # Keyed on the coherence errors specifically, NOT on `report["ok"]`. `ok` is false for
+    # any stage with a missing or unreadable file, and `plan` is fault-tolerant about
+    # those by design — it records them, prints a skip summary and exits 0 unless
+    # `--strict`. Failing on `ok` would silently undo that.
+    if _coherence_errors(report):
+        return 1
     return written or (1 if strict and _report_findings(report) else 0)
 
 

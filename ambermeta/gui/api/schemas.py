@@ -318,10 +318,23 @@ class StageIssue(BaseModel):
     missing_files: List[MissingFile] = Field(default_factory=list)
 
 
+class CoherenceFinding(BaseModel):
+    """What the declared members do and do not agree about.
+
+    Carries its own severity, which is the point of it: `protocol_issues` is a
+    `List[str]` the panel renders uniformly as a warning, so a category error routed
+    through it showed a yellow "Valid, with 1 protocol note(s)" while the CLI exited 1.
+    """
+    severity: str    # error | warning | info
+    kind: str        # atom_count | run_type | parameter | seed | fan_out
+    message: str
+
+
 class ValidationReport(BaseModel):
     ok: bool
     totals: Dict[str, float] = Field(default_factory=dict)
     lineages: Optional[Dict[str, LineageTotals]] = None
+    coherence: List[CoherenceFinding] = Field(default_factory=list)
     protocol_issues: List[str] = Field(default_factory=list)
     stage_issues: List[StageIssue] = Field(default_factory=list)
     suggestions: List[Suggestion] = Field(default_factory=list)
