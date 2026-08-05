@@ -11,6 +11,7 @@ import re
 from ambermeta.parsers.inpcrd import InpcrdData, InpcrdParser
 from ambermeta.parsers.mdcrd import MdcrdData, MdcrdParser
 from ambermeta.parsers.mdin import MdinData, MdinParser
+from ambermeta.mdout_header import MdoutHeader, read_mdout_header
 from ambermeta.parsers.mdout import MdoutData, MdoutParser
 from ambermeta.parsers.prmtop import PrmtopData, PrmtopParser
 from ambermeta.legacy_extractors.prmtop import ION_RESNAMES, WATER_RESNAMES
@@ -146,6 +147,12 @@ class SimulationStage:
     lineage: Optional[str] = None
     step_id: Optional[str] = None
     parent_id: Optional[str] = None
+    # What the mdout stated before the run started: the resolved seed, the authoritative
+    # begin time, and the chain AMBER itself asserts through File Assignments. Kept beside
+    # `mdout` rather than on `MdoutData.details`, because that dataclass is serialised with
+    # `asdict()` straight into summary.json and every field added to it appears there.
+    # `to_dict()` below emits a fixed key list, so this one does not.
+    mdout_header: Optional[MdoutHeader] = None
     validation: List[str] = field(default_factory=list)
     continuity: List[str] = field(default_factory=list)
     load_errors: List[FileLoadError] = field(default_factory=list)
@@ -436,6 +443,18 @@ class SimulationProtocol:
         start_time = None
         if current.inpcrd and current.inpcrd.details:
             start_time = getattr(current.inpcrd.details, "time", None)
+        if start_time is None and current.mdout_header is not None:
+            # The mdout says when the run began, and says it whether or not the restart it
+            # read is machine-readable here. On a bare install `netCDF4`/`scipy` are
+            # optional extras, so a NetCDF restart parses to `time=None` and continuity was
+            # simply not checked — the header is the only reading left.
+            #
+            # Fallback rather than preference: where both exist they agree, and the inpcrd
+            # is what the existing goldens were generated from. Note the mdout's *stats*
+            # are not an alternative — `stats.time_start` is the first printed frame, one
+            # `ntpr` interval later (1020.0 against a true 920.0), so reaching for it
+            # manufactures a gap on every chunked run.
+            start_time = current.mdout_header.begin_time_ps
 
         if end_time is None or start_time is None:
             # Add informational note when continuity check is skipped
@@ -1066,6 +1085,26 @@ def _safe_parse(parser_cls, path, kind, stage, *, strict):
         return None
 
 
+def _parse_mdout(path, stage, *, strict):
+    """Parse an mdout and read its header, recording both on `stage`.
+
+    One call site for both so the header can never be attached on one path into the engine
+    and not the other — the failure mode `lineage` itself hit in PR 2a, where a field set
+    in one constructor was silently absent from every stage built by the other.
+
+    The header read is not routed through `_safe_parse`: it is a best-effort extra, and a
+    file that failed to parse has already recorded its FileLoadError. A second error for
+    the same file would double-count the same problem.
+    """
+    parsed = _safe_parse(MdoutParser, path, "mdout", stage, strict=strict)
+    if parsed is not None:
+        try:
+            stage.mdout_header = read_mdout_header(path)
+        except (OSError, UnicodeDecodeError, ValueError):
+            stage.mdout_header = None
+    return parsed
+
+
 def _manifest_to_stages(
     manifest: Dict[str, Dict[str, str]] | List[Dict[str, str]],
     directory: Optional[str],
@@ -1153,7 +1192,7 @@ def _manifest_to_stages(
                 stage.stage_role = inferred_role
                 stage.validation.append(f"INFO: stage_role '{inferred_role}' inferred from mdin content")
         if "mdout" in resolved:
-            stage.mdout = _safe_parse(MdoutParser, resolved["mdout"], "mdout", stage, strict=strict)
+            stage.mdout = _parse_mdout(resolved["mdout"], stage, strict=strict)
         if "mdcrd" in resolved:
             stage.mdcrd = _safe_parse(MdcrdParser, resolved["mdcrd"], "mdcrd", stage, strict=strict)
         if "inpcrd" in resolved:
@@ -1964,7 +2003,7 @@ def auto_discover(
                 stage.stage_role = inferred_role
                 stage.validation.append(f"INFO: stage_role '{inferred_role}' inferred from mdin file")
         if "mdout" in file_kinds:
-            stage.mdout = _safe_parse(MdoutParser, file_kinds["mdout"], "mdout", stage, strict=strict)
+            stage.mdout = _parse_mdout(file_kinds["mdout"], stage, strict=strict)
         if "mdcrd" in file_kinds:
             stage.mdcrd = _safe_parse(MdcrdParser, file_kinds["mdcrd"], "mdcrd", stage, strict=strict)
         if "inpcrd" in file_kinds:
