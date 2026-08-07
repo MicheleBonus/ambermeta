@@ -360,6 +360,48 @@ class SimulationStage:
         }
 
 
+def _elapsed_ps(stage: "SimulationStage") -> Optional[float]:
+    """How much simulated time this stage actually produced, or None.
+
+    None means "contributed nothing", and it covers four different situations that all
+    have to be told apart by the caller for the note it writes, but not here:
+
+    * queued -- an mdin with no mdout. The run was set up and never executed. Counting it
+      was the bug: on the campaign this was written against it was 25 ns of simulation
+      that never happened, reported with ok: true;
+    * minimisation -- a min mdout prints `NSTEP ENERGY RMS GMAX`, never `TIME(PS)`, so it
+      has no elapsed time and never had one. It contributed 0 under the old rule too
+      (no nstlim/dt in the mdin), so this is not a change;
+    * unreadable -- `parse_mdout` catches nothing and returns a default-valued object
+      rather than raising, so a malformed-but-present mdout arrives as `stats.count == 0`
+      rather than as `stage.mdout is None`;
+    * no stated begin -- the `begin time read from input coords` line is absent for
+      irest=0 runs. Falling back to 0.0 would make an absolute time look like an elapsed
+      one, which is the 304,600-ps-against-100,000 bug, so silence is the only truthful
+      answer.
+
+    `time_end` is ABSOLUTE. `time_end - time_start` is NOT the alternative: `time_start`
+    is the first PRINTED frame, one ntpr interval after the true begin, which is short by
+    one interval per run -- the trap already documented at `_check_stage_pair`.
+    """
+    if stage.mdout is None or stage.mdout.details is None:
+        return None
+    details = stage.mdout.details
+    if getattr(details, "run_type", None) == "Minimization":
+        return None
+    stats = getattr(details, "stats", None)
+    if stats is None or getattr(stats, "count", 0) == 0:
+        return None
+    if stage.mdout_header is None:
+        return None
+    begin = getattr(stage.mdout_header, "begin_time_ps", None)
+    end = getattr(stats, "time_end", None)
+    if begin is None or end is None:
+        return None
+    elapsed = float(end) - float(begin)
+    return elapsed if elapsed > 0 else None
+
+
 @dataclass
 class SimulationProtocol:
     stages: List[SimulationStage] = field(default_factory=list)
@@ -539,22 +581,32 @@ class SimulationProtocol:
 
     @staticmethod
     def _sum_stages(stages: List[SimulationStage]) -> Dict[str, float]:
-        """`steps` and `time_ps` over any set of stages.
+        """`steps` and `time_ps` over any set of stages, counting only what ran.
+
+        Sourced from the mdout, not the mdin: the mdin states intent and a run that was
+        queued and never started, or started and was killed at 60%, states the same
+        intent as one that finished. See `_elapsed_ps` for what "ran" means and for why
+        the formula is `time_end - begin_time_ps`.
 
         Accumulated with ``+=`` rather than ``sum()`` on purpose: CPython 3.12 made
         ``builtins.sum`` compensated, and CI's matrix is 3.9 *and* 3.12, so a float total
-        built with ``sum()`` can differ in its last bits between the two jobs — on the one
+        built with ``sum()`` can differ in its last bits between the two jobs -- on the one
         artifact every lineage change is told to keep byte-stable.
         """
         total_steps = 0.0
         total_time = 0.0
         for stage in stages:
-            if stage.mdin and stage.mdin.details:
-                length = getattr(stage.mdin.details, "length_steps", 0) or 0
-                dt = getattr(stage.mdin.details, "dt", 0) or 0
-                if isinstance(length, (int, float)) and isinstance(dt, (int, float)):
-                    total_steps += float(length)
-                    total_time += float(length) * float(dt)
+            elapsed = _elapsed_ps(stage)
+            if elapsed is None:
+                continue
+            total_time += elapsed
+            dt = None
+            if stage.mdout and stage.mdout.details:
+                dt = getattr(stage.mdout.details, "dt", None)
+            if not dt and stage.mdin and stage.mdin.details:
+                dt = getattr(stage.mdin.details, "dt", None)
+            if isinstance(dt, (int, float)) and dt > 0:
+                total_steps += elapsed / float(dt)
         return {"steps": total_steps, "time_ps": total_time}
 
     def _members(self) -> Dict[Any, List[SimulationStage]]:

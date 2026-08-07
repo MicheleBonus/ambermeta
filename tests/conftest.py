@@ -182,10 +182,19 @@ def crashed_replica_tree(tmp_path) -> Path:
     nothing of while it pooled every member's indices into a single `prod` family. rep2 has
     no hole of its own to find — it simply ends — so it is only short relative to its
     siblings, which is what the family frame is for.
+
+    Written through the `RunSpec` pair form rather than the bare-stem shorthand. Totals
+    now come from the mdout (Task 2's `_sum_stages`), and the bare form writes an mdin and
+    NO mdout — which, post-Task-2, reads as entirely `queued`. Every member's `time_ps`
+    would collapse to 0.0 and `rep2 shorter than rep1` would degenerate to `0.0 < 0.0`,
+    true for the wrong reason and passing even if the totals rule broke. Each chunk here is
+    a real 1000 ps, so the three-chunk members genuinely outran the one-chunk member.
     """
     return write_run_tree(tmp_path, [
-        *(f"{rep}/prod_{i:04d}" for rep in ("rep1", "rep3") for i in (1, 2, 3)),
-        "rep2/prod_0001",
+        *((f"{rep}/prod_{i:04d}",
+           RunSpec(mdin=_PROD_MDIN, elapsed_ps=1000.0, begin_ps=1000.0 * i))
+          for rep in ("rep1", "rep3") for i in (1, 2, 3)),
+        ("rep2/prod_0001", RunSpec(mdin=_PROD_MDIN, elapsed_ps=1000.0, begin_ps=1000.0)),
     ])
 
 
