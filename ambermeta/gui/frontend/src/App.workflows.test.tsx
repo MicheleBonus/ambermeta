@@ -151,8 +151,9 @@ describe("lineage proposal wiring (P2.2/P2.3)", () => {
         if (body.segment_index == null) {
           const declined: LineageProposalResponse = {
             proposal: null,
-            warnings: ["No lineages inferred: the run names do not distinguish members by "
-              + "one directory segment. Tag the bands by hand."],
+            warnings: ["No lineages inferred: the directory layout could not be resolved into "
+              + "one unambiguous set of members. Use Define replicas… to pick the segment "
+              + "yourself."],
           };
           return HttpResponse.json(declined);
         }
