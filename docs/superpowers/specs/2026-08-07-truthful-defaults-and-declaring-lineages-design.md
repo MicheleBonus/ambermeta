@@ -336,6 +336,20 @@ with no `else`). That card is built in `discover_draft` and appended, **not** ad
 `build_suggestions` — the latter is called from three places and has no access to the scan, which
 its own comment at `:331-335` already records.
 
+**This applies to the GUI only. `ambermeta discover` keeps applying inference.** A pre-flight
+audit caught that propose-never-write was designed around a confirmation surface only the GUI
+has. The CLI shares `discover_draft`, so withholding tags there would mean a CLI user's manifest
+comes back untagged with no way to accept — a straight regression — and it would silence the
+per-lineage sequence-gap finding (the crashed-replica detection that is the lineages feature's
+headline payoff) on the discover path for everyone.
+
+Each surface confirms at the moment it can. The CLI already prints `[applied]` for every
+inference and writes a YAML the user inspects before using: the file *is* the confirmation step.
+The GUI shows a canvas acted on immediately, so it proposes first.
+
+Mechanically this is one parameter on `discover_draft`, defaulting to today's behaviour so every
+existing CLI test and script is unaffected; only the GUI route turns it off.
+
 **The proposal still drives phase layout; it just writes no tags.** `multi_lineage`
 (`core_bridge.py:495`) currently gates phase-major grouping *and* chaining off written tags. If
 Discover stopped tagging, phase-major grouping would vanish for every tree and
