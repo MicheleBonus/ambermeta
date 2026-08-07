@@ -489,8 +489,9 @@ def infer_lineages(req: InferLineagesRequest = InferLineagesRequest()) -> Lineag
     proposal = core_bridge.build_lineage_proposal(sim, segment_index=req.segment_index)
     if proposal is None:
         return LineageProposalResponse(proposal=None, warnings=[
-            "No lineages inferred: the run names do not distinguish members by one "
-            "directory segment. Tag the bands by hand."])
+            "No lineages inferred: the directory layout could not be resolved into one "
+            "unambiguous set of members. Use Define replicas… to pick the segment "
+            "yourself."])
     return LineageProposalResponse(proposal=LineageProposal(**proposal), warnings=[])
 
 
