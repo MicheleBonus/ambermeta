@@ -1162,6 +1162,11 @@ def _totals_delta(previous: Any, current: Dict[str, float], path: str) -> Option
     """A line for each of `steps`/`time_ps` that moved since the summary at `path`, or
     None if nothing did (including: there was no readable prior summary).
 
+    Reports the CHANGE and refuses to name its cause. Two `summary.json` artifacts carry
+    totals, not a per-stage ledger, so which runs moved and why is not in evidence here --
+    see the comment on the note lines below for what was claimed before and why it was
+    wrong in both directions.
+
     Compared against a prior `summary.json`-shaped artifact rather than against the v2
     manifest, because the manifest stores no totals to compare against —
     `simulation_to_payload` emits version/simulation/phases/steps and nothing else — and
@@ -1191,16 +1196,32 @@ def _totals_delta(previous: Any, current: Dict[str, float], path: str) -> Option
             lines.append(f"  {key:<9} {float(old):.3f} -> {float(new):.3f}")
     if not lines:
         return None
-    # `queued_count` is what makes "smaller than before" legible as "this many runs never
-    # executed" rather than "the arithmetic broke": every existing project that holds a
-    # queued or truncated run now totals less than it used to (see protocol.totals()), and
-    # this is the one sentence that tells a researcher which of those two stories is true.
-    queued = int(current.get("queued_count") or 0)
-    reason = (f"  reason    {queued} queued run(s) no longer counted "
-              f"(mdin present, no mdout)" if queued else
-              "  reason    totals now come from elapsed mdout time, not the mdin")
+    # NOT a causal claim, and it used to be one it had not established. The line read
+    # "{queued_count} queued run(s) no longer counted", built from the CURRENT ABSOLUTE
+    # queued count rather than from any decomposition of the delta -- so a single run that
+    # changed still got "5 queued run(s) no longer counted" attached to it (observed live),
+    # and a total that ROSE because new chunks finished got the same sentence, which is a
+    # non-sequitur. It is attached to the one sentence a researcher reads before quoting a
+    # number, which is exactly where a plausible-sounding wrong cause does the most damage.
+    #
+    # Nothing here CAN decompose the delta: two `summary.json` artifacts carry totals, not
+    # a per-stage ledger, so which runs moved and why is not in evidence. So the two things
+    # that are honestly available are said instead -- what the numbers MEAN (which is what
+    # makes "smaller than before" legible as something other than broken arithmetic), and
+    # the one component both artifacts really do carry, stated as a transition rather than
+    # as a cause.
+    lines.append("  note      totals count what each run's mdout shows it RAN, not what "
+                 "its mdin declared")
+    before_queued, current_queued = before.get("queued_count"), current.get("queued_count")
+    if isinstance(before_queued, (int, float)) or isinstance(current_queued, (int, float)):
+        # `queued_count` is emitted only when there is at least one, so an absent key on
+        # either side means zero rather than "unknown" -- but only once the OTHER side has
+        # stated one, which is what this guard is for. Two artifacts that both omit it say
+        # nothing about queued runs and get no line at all.
+        lines.append(f"  queued    {int(before_queued or 0)} -> "
+                     f"{int(current_queued or 0)} run(s) with an mdin and no mdout")
     return (f"totals changed since the last summary.json ({path}):\n"
-            + "\n".join(lines) + "\n" + reason)
+            + "\n".join(lines))
 
 
 def _write_plan_artifacts(args: argparse.Namespace, protocol: SimulationProtocol) -> int:
