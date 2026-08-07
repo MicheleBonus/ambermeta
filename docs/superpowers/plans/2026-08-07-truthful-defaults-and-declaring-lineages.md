@@ -1286,7 +1286,24 @@ Expected: FAIL — `KeyError: 'handoffs'`.
 
 - [ ] **Step 3: Implement**
 
-In `discover_draft`, after the steps are built, read each run's mdout header and match its `INPCRD` assignment to a step that writes that file:
+> **CORRECTED after measuring the real tree — do not implement the block below as first written.**
+> AMBER records `INPCRD: 18_ntp_equi.restrt`: a **bare relative filename**, resolving against the
+> consumer's *own* directory, and **all five replicas record the identical string**. A
+> `{Path(s.rst).name: s.id}` lookup therefore collapses all five equil tails into one entry and
+> points every prod head at whichever was seen last — five wrong edges, worse than the nine being
+> removed. Verified on `/store7/gentile/data/simulations/sys021`.
+>
+> **Use the lineage proposal as the disambiguator.** For each proposed member, propose
+> `equil tail → prod head` only when the head's `INPCRD` basename matches a file the **same
+> member's** tail wrote. Structure identifies the pair; AMBER's record corroborates that a handoff
+> happened. A document with no member proposal gets no handoffs — correct, since without knowing
+> which directories form one replica there is nothing to justify pairing them. **Task 8 therefore
+> hard-depends on Task 7.**
+>
+> Everything else below still stands: propose-never-write, skip pairs inside one directory, treat a
+> clipped `assignment()` as no evidence, and match `discover_draft`'s existing fault tolerance.
+
+In `discover_draft`, after the steps are built, read each run's mdout header and match its `INPCRD` assignment **within each proposed member**:
 
 ```python
     # AMBER wrote down which restart it actually read. `read_mdout_header` has parsed that

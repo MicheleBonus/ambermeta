@@ -68,9 +68,9 @@ Replace with a four-way rule sourced from the mdout:
 
 | State | Contributes | Detection |
 | --- | --- | --- |
-| Ran (complete or truncated) | `elapsed_ps` (below), and `elapsed_ps / dt` steps | `stage.mdout` and `stage.mdout_header` both present, `stats.count > 0`, `begin_time_ps` not None |
+| Ran (complete or truncated) | `elapsed_ps` (below), and `elapsed_ps / dt` steps | `stage.mdout` present, `stats.count > 0`, and an elapsed time is derivable |
 | Minimisation | nothing, no note | `mdout.details.run_type == "Minimization"` — a min mdout prints `NSTEP ENERGY RMS GMAX`, never `TIME(PS)`, so it has no elapsed time and never had one |
-| Ran, mdout unusable | nothing, plus a note | `stage.mdout is not None` but `stats.count == 0`, or `mdout_header is None`, or `begin_time_ps is None` |
+| Ran, mdout unusable | nothing, plus a note | `stage.mdout is not None` but `stats.count == 0`, or no elapsed time is derivable by either route below |
 | Queued | nothing, plus the `queued` status (P1.2) | `stage.mdin` present, `stage.mdout is None` |
 
 **The formula is `elapsed_ps = stats.time_end - mdout_header.begin_time_ps`.** This is
@@ -88,9 +88,41 @@ load-bearing and was verified against the repo's own fixtures before being writt
   expected**, and any movement in those files is a signal the formula is wrong, not a routine
   rebase.
 
-"The final NSTEP" is **not** retrievable — `ThermoStats.add_frame` parses the NSTEP key and
-discards it, and `MdoutMetadata.nstlim` is the control-data *intent*, identical to the mdin's.
-Steps-that-ran are therefore derived as `elapsed_ps / dt`.
+**A second route is required, because the header value overflows on long campaigns.** AMBER
+prints the begin time into a fixed-width Fortran field. Once accumulated simulated time passes
+roughly 1e6 ps the value no longer fits and AMBER writes:
+
+```
+ begin time read from input coords =********** ps
+```
+
+`begin_time_ps` then parses as `None`. On the real campaign this happens to
+`prod/01/nvt_prod_0201` — a **healthy completed run**, same `.out` size as its neighbours, full
+TIMINGS block, trajectory and restart both written — whose 5000 ps would silently vanish from the
+totals. That is the failure P1.1 exists to prevent, pointed the other way, and it worsens with
+campaign length: only one replica has crossed 1 µs so far, and the rest will.
+
+So when the header is unusable but frames were parsed, fall back to the **fencepost** quantity:
+
+```
+interval = (time_end - time_start) / (count - 1)
+elapsed  = time_end - time_start + interval
+```
+
+This is what `ThermoStats.true_coverage_ns` already computes, and it is the same quantity by a
+different route: `time_start` is the first *printed* frame, one `ntpr` interval after the true
+begin, so adding one interval back recovers it. Measured against healthy runs on the real tree
+(`0001`, `0100`, `0200`) it agrees with the header formula to the digit — 5000.0 in every case —
+and recovers 5000.0 for the overflowed `0201`.
+
+The two routes are not interchangeable in authority: the header states what AMBER read, while
+the fencepost value is inferred from output spacing and assumes regular `ntpr` output. It is
+therefore the fallback, never the primary, and a stage measured by it **carries a note saying
+so**, so a reader can tell a stated duration from a derived one.
+
+"The final NSTEP" is **not** retrievable by either route — `ThermoStats.add_frame` parses the
+NSTEP key and discards it, and `MdoutMetadata.nstlim` is the control-data *intent*, identical to
+the mdin's. Steps-that-ran are therefore derived as `elapsed_ps / dt`.
 
 The `+=`-not-`sum()` accumulation in the current docstring must survive the rewrite: CPython
 3.12's `sum` is compensated, CI runs 3.9 *and* 3.12, and the goldens compare floats.
@@ -114,7 +146,7 @@ so before writing:
 
 ```
 totals changed since the last summary.json in this directory:
-  time_ps  5,055,000 → 5,030,000
+  time_ps  5,055,000 → 5,034,000
   reason   5 queued runs no longer counted (mdin present, no mdout)
   runs     1006 → 1001 completed, +5 queued
 ```
@@ -379,9 +411,36 @@ retags it correctly.
 including the `INPCRD:` line. Its own docstring at `:14` calls it *"the chain AMBER itself
 asserts."* It has **zero call sites** outside its own module and tests.
 
-That is the ground truth for "which equil feeds which prod", parsed on every mdout since before
-this work began and thrown away. On `sys021`, every `prod/NN` head's mdout names
-`equil/NN/18_ntp_equi.restrt`.
+It has been parsed on every mdout since before this work began and read by nothing.
+
+**It is corroboration, not identification — corrected after measuring the real tree.** An
+earlier draft of this section claimed each `prod/NN` head's mdout "names
+`equil/NN/18_ntp_equi.restrt`". It does not. AMBER records a **bare relative filename**:
+
+```
+| INPCRD: 18_ntp_equi.restrt
+```
+
+which resolves against the run's own working directory — `prod/NN/18_ntp_equi.restrt`, the
+*copy* — and **all five replicas record the identical string**. The basename carries no member
+information at all. Keying a lookup on it, as the first draft of the implementation plan did,
+collapses all five equil tails into one entry and points every prod head at whichever was seen
+last: five wrong edges in place of the nine being removed, which is worse than doing nothing.
+
+The copy is byte-identical to the equil original (verified, md5 `f72591be…`), but establishing
+that requires content hashing, which this spec does not introduce — and the justification the
+first draft gave for not needing it ("AMBER's record is better evidence than a byte comparison")
+is exactly backwards here: AMBER's record is the ambiguous part.
+
+**The member grouping is what disambiguates.** The handoff proposal is computed *from the
+lineage proposal*, which already exists by the time it runs: for each proposed member, if that
+member's production head names — by basename — a file that the **same member's** equilibration
+tail wrote, propose the edge. Structure identifies the pair; AMBER's record corroborates that a
+handoff happened at all. Where the names do not correspond, nothing is proposed.
+
+This makes the handoff proposal strictly dependent on a member grouping existing. A tree with no
+proposal gets no handoffs, which is correct: without knowing which directories are one replica,
+there is nothing to justify pairing one directory's tail with another's head.
 
 Wire it into the proposal — not into the manifest. A second strip line:
 
@@ -512,7 +571,7 @@ synthetic mdins/mdouts and no trajectories — asserting:
 2. Exactly five cross-directory edges are *proposed* from INPCRD evidence, and **zero**
    cross-directory edges are written (P1.3, P2.4).
 3. Within-directory chaining is unchanged for a single-directory chunked run (P1.3 regression).
-4. Five steps carry status `queued`; totals are 5,030,000 ps, not 5,055,000 (P1.1, P1.2).
+4. Five steps carry status `queued`; totals are 5,034,000 ps, not 5,055,000 (21,000 ps of never-executed simulation) (P1.1, P1.2).
 5. A truncated mdout counts its actual `time_end`, not `nstlim × dt` (P1.1).
 6. `validate` on a manifest with stored older totals reports the delta and the reason (P1.1).
 7. Re-running Discover preserves tags (P2.5).
