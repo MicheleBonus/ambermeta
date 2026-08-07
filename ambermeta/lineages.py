@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Any, Dict, FrozenSet, Iterable, List, Optional, Protocol, TypeVar
+from typing import Any, Dict, FrozenSet, Iterable, List, Optional, Protocol, Tuple, TypeVar
 
 from ambermeta.simulation import Simulation, Step, iter_steps
 
@@ -330,19 +330,33 @@ def infer_lineages_from_layout(run_names: Iterable[str]) -> Dict[str, str]:
     * runs at the tree root carry no segment to be tagged by, and one directory has
       nothing to differ from — either way, nothing is tagged;
     * **the membership predicate**: only directories running the same set of *run bases*
-      are members of one another. ``common/{min,heat,equil}`` beside ``rep1..3/prod_*``
-      matches nothing and stays untagged. Without this, the canonical campaign reports
-      four members for three and hands ``lineage_count`` the prep runs as a replica.
+      are grouped into a cohort together. ``common/{min,heat,equil}`` beside
+      ``rep1..3/prod_*`` matches nothing and stays untagged. Without this, the canonical
+      campaign reports four members for three and hands ``lineage_count`` the prep runs
+      as a replica.
 
       Bases, not whole run names, because **a replica that died early is the single most
       important thing this feature has to catch**. ``rep1/prod_0001..0003`` beside
       ``rep2/prod_0001`` is one crashed member, not two unrelated directories; keying the
       predicate on exact run-name sets refuses to tag it, and a refusal here silently
       disables the very sequence-hole finding that would have reported the crash;
-    * two rival families that each pass the predicate are two experiments in one
-      manifest, which this model does not represent. Neither is tagged;
+    * two rival families whose tag sets are **disjoint** are two experiments in one
+      manifest, which this model does not represent. Neither is tagged. Sets that
+      **nest**, though, are one campaign with a short member: ``equil/01..05`` beside
+      ``prod/02..05`` is a replica that never reached production, and refusing it would
+      disable the very finding that reports the crash. The reconciled tag set is the
+      largest; every cohort's set must be a subset of it;
+    * cohorts each report their **own** varying segment and must agree on the segment
+      **index**. A cohort that cannot name one segment contributes nothing rather than
+      refusing the whole tree, so a prep directory at another depth cannot veto the
+      replicas;
+    * a directory left **alone** in its cohort — ``prod/01``, whose stray ``cpptraj.in``
+      gives it a run-base set of its own — is absorbed only when the tree has already
+      decided what the tags are and its segment at the agreed index is one of them.
+      ``common/`` is not absorbed: its segment is ``common``, not a tag;
     * the tag must be **one** segment: a nested sweep (``300K/rep1``, ``310K/rep2``)
-      varies in two places at once and there is no way to tell which one names the member.
+      varies in two places at once *within its cohort* and there is no way to tell which
+      one names the member.
 
     Ambiguity resolves to untagged, never to a guess — an inference reported as
     ``[applied]`` is a claim, and a wrong claim here is exactly what this feature exists
@@ -366,19 +380,63 @@ def infer_lineages_from_layout(run_names: Iterable[str]) -> Dict[str, str]:
     cohorts: Dict[FrozenSet[str], List[str]] = {}
     for directory, runs in candidates.items():
         cohorts.setdefault(frozenset(_run_base(r) for r in runs), []).append(directory)
-    matched = [dirs for dirs in cohorts.values() if len(dirs) > 1]
-    if len(matched) != 1:
-        return {}
-    family = matched[0]
 
-    segments = {d: d.split("/") for d in family}
-    depths = {len(s) for s in segments.values()}
-    if len(depths) != 1:
-        return {}
-    varying = [i for i in range(depths.pop())
-               if len({segments[d][i] for d in family}) > 1]
-    if len(varying) != 1:
-        return {}
-    index = varying[0]
+    # Each cohort of more than one directory reports its OWN varying segment, and a cohort
+    # that cannot report one contributes nothing rather than refusing the whole tree -- a
+    # prep directory at a different depth must not be able to veto the replicas. This is
+    # why the canonical layout (a prep tree beside a production tree) can be tagged at all:
+    # `equil/*` and `prod/*` run different run bases, so they are two cohorts, not one, and
+    # each is free to name its own member without the other's shape constraining it.
+    #
+    # Per cohort, never on the union: `equil/01..05` unioned with `prod/01..05` varies in
+    # TWO segments at once (equil|prod at index 0, 01..05 at index 1), and the
+    # single-varying-segment rule below would refuse it one line later. Reconciled per
+    # cohort, each cohort varies in exactly one segment and the two agree on which one.
+    reports: List[Tuple[int, Dict[str, str]]] = []
+    for dirs in cohorts.values():
+        if len(dirs) < 2:
+            continue
+        segments = {d: d.split("/") for d in dirs}
+        depths = {len(s) for s in segments.values()}
+        if len(depths) != 1:
+            continue
+        varying = [i for i in range(depths.pop())
+                   if len({segments[d][i] for d in dirs}) > 1]
+        if len(varying) != 1:
+            continue
+        reports.append((varying[0], {d: segments[d][varying[0]] for d in dirs}))
 
-    return {f"{d}/{run}": segments[d][index] for d in family for run in candidates[d]}
+    if not reports:
+        return {}
+    # Two cohorts naming their member at different segment indices are not one campaign --
+    # merging them would tag two unrelated axes as though they were the same replica.
+    if len({index for index, _ in reports}) != 1:
+        return {}
+    index = reports[0][0]
+
+    # Nested, not equal. A member that never reached production appears in the equil
+    # cohort and not the prod one, and that is one campaign with a short member -- exactly
+    # the crashed replica this feature exists to surface. Two DISJOINT sets are still two
+    # experiments and are still refused, because neither contains the other.
+    tag_sets = [set(mapping.values()) for _, mapping in reports]
+    reconciled = max(tag_sets, key=len)
+    if any(not tags <= reconciled for tags in tag_sets):
+        return {}
+
+    tagged = {d: tag for _, mapping in reports for d, tag in mapping.items()}
+
+    # A directory alone in its cohort was dropped above -- `len(dirs) < 2` -- so it never
+    # got a chance to report a varying segment of its own. It is absorbed only when the
+    # tree has already decided what the tags are AND this directory's segment at the agreed
+    # index is one of them. That is how a stray `cpptraj.in` stops costing `prod/01` its
+    # membership (its segment, "01", is already a reconciled tag), while a genuine
+    # `common/` prep directory is not absorbed: its segment is "common", which is not a tag
+    # anybody's cohort reported, so it stays untagged and out of the count.
+    for dirs in cohorts.values():
+        if len(dirs) != 1:
+            continue
+        parts = dirs[0].split("/")
+        if len(parts) > index and parts[index] in reconciled:
+            tagged[dirs[0]] = parts[index]
+
+    return {f"{d}/{run}": tag for d, tag in tagged.items() for run in candidates[d]}

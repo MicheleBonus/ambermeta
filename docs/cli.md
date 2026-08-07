@@ -370,7 +370,7 @@ Suggestions:
 
 ### Replica trees
 
-When the layout names members — sibling directories running the same set of runs — `discover` tags each
+When the layout names members — sibling directories whose run sets the inference can reconcile — `discover` tags each
 step with a `lineage` and chains each member separately from the starting structure:
 
 ```text

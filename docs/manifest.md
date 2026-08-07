@@ -354,7 +354,8 @@ ambermeta gui runs/                         # build it in the browser, drag file
 `ambermeta/gui/api/core_bridge.py`): they classify every prmtop into the topology pool, find a starting
 structure, group runs into role-named phases, and chain each step's `input_coords` off the previous step of
 its own lineage — surfacing each inference as an explainable suggestion rather than silently guessing. When
-the layout names members (`rep1/`, `rep2/`, … running the same set of runs) each one is tagged, chained
+the layout names members (`rep1/`, `rep2/`, … sibling directories whose run sets the inference can
+reconcile) each one is tagged, chained
 separately from the head of the starting structure, and reported as an `[applied]` `lineage_group`
 suggestion; an ambiguous layout is left untagged rather than guessed at, and is chained and grouped exactly
 as it was before lineages existed. It is the only thing
@@ -375,10 +376,16 @@ See the [GUI guide](gui.md) and [CLI reference](cli.md).
 A lineage is normally **declared** — you write `lineage:` on the steps (§5). `discover` is the one thing
 that will propose one for you, and it does so only from **directory layout**, never from file contents.
 
-**The rule.** Group the runs by their directory. A directory is a candidate member only if it sits beside
-at least one other directory running *the same set of run bases* — where the base of `prod_0001` is `prod`
-(the same stripping `detect_sequence_gaps` uses). Exactly one such cohort must exist, its directories must
-all be at the same depth, and exactly one path segment must vary across them. That segment becomes the tag.
+**The rule.** Group the runs by their directory, then group the directories into **cohorts** by the set of
+*run bases* they hold — where the base of `prod_0001` is `prod` (the same stripping `detect_sequence_gaps`
+uses). Every cohort holding more than one directory reports its own varying path segment: its directories
+must all be at the same depth and exactly one segment must vary across them, and a cohort that cannot
+report one contributes nothing rather than refusing the whole tree. All reporting cohorts must name the
+member at the **same** segment index, and their tag sets must **nest** — every set a subset of the largest,
+which becomes the reconciled tag set. Two disjoint sets are still two experiments and are still refused.
+Finally, a directory left alone in its cohort is **absorbed** when its segment at the agreed index is
+already a reconciled tag: `prod/01`, whose stray `cpptraj.in` gives it a run-base set of its own, is
+tagged `01` this way, while `common/` is not, because `common` is not a tag.
 
 Bases, not whole run names, is deliberate: **a replica that died early is the single most important thing
 this feature has to catch.** `rep1/prod_0001..0003` beside `rep2/prod_0001` is one crashed member, not two
@@ -399,6 +406,9 @@ is a claim, and a wrong claim here is exactly what lineages exist to stop:
 | One lineage in one subdirectory (`rep1/` alone) | nothing to differ from — untagged |
 | `300K/rep1/`, `300K/rep2/`, `310K/rep1/`, `310K/rep2/` (a nested sweep) | two segments vary at once; neither can be shown to name the member — untagged |
 | `a1/prod`, `a2/prod` beside `b1/heat`, `b2/heat` (two rival cohorts) | two experiments in one manifest, which this model does not represent — untagged |
+| `equil/01..05/*` beside `prod/01..05/*` (a prep tree feeding a production tree) | tagged `01..05` — the cohorts run different bases but agree on the segment and their tag sets nest |
+| `equil/01..05` beside `prod/02..05` (a replica that never reached production) | tagged `01..05`; `{02..05}` nests inside `{01..05}` |
+| `prod/01` also holding a stray `cpptraj.in` | still tagged `01` — a directory alone in its cohort is absorbed when its segment is already a reconciled tag |
 | `rep1/prod_0001` beside `x/rep2/prod_0001` (mismatched depth) | untagged |
 | `rep1_prod_0001`, `rep2_prod_0001` — flat, replica in the **filename** | **untagged.** Only directory segments are read |
 | `01_min_rep1`, `01_min_rep2` — flat, replica as a filename *suffix* | **untagged**, same reason |
