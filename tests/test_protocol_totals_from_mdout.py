@@ -5,10 +5,17 @@ Pins the arithmetic of `SimulationProtocol._sum_stages` after it stopped reading
 mdin. What is deliberately NOT asserted here: which steps carry the `queued` marker (that
 is test_protocol_queued.py) and anything about lineages.
 
-The formula is `stats.time_end - mdout_header.begin_time_ps`. The two obvious wrong
-answers both have a test below, because both produce plausible-looking numbers:
-summing `time_end` treats an absolute clock reading as a duration, and
-`time_end - time_start` is short by one ntpr interval per run.
+The formula is `stats.time_end - <the run's clock origin>`, where the origin comes from
+`_origin_time_ps` -- the header's begin time on a continuation, the CONTROL DATA `t` on a
+fresh `irest=0` run whose header begin time is a meaningless 0.000. THREE wrong answers
+have a test below, because all three produce plausible-looking numbers:
+
+* summing `time_end` treats an absolute clock reading as a duration;
+* `time_end - time_start` is short by one ntpr interval per continuation run;
+* `nstlim x dt` reports what the run SAID it would do, not what it did -- see
+  `test_a_truncated_run_contributes_what_it_ran_not_what_it_declared`, which is the first
+  test in this repo able to tell those two apart at all (`conftest._mdout_text` wrote
+  `nstlim = elapsed_ps / dt` into every fixture until `RunSpec.stated_ps` existed).
 """
 from __future__ import annotations
 
@@ -19,13 +26,17 @@ from ambermeta.protocol import auto_discover, _elapsed_ps, write_stats_csv
 
 # --- the core arithmetic ---
 
+# 5 equil x 3200 (a fresh irest=0 run: clock origin 1800, ends at 5000) + 11 prod chunks
+# x 5000. The scaled equivalent of the real campaign's 5,030,000 ps.
+_SYS021_TIME_PS = 5 * 3200.0 + 11 * 5000.0
+
+
 def test_a_queued_run_contributes_no_time(sys021_tree):
     """Five chunks were set up and never executed. The old rule read nstlim x dt off the
     mdin and counted all five, which on the real campaign was 25 ns of simulation that
     never happened, reported with ok: true."""
     totals = auto_discover(str(sys021_tree), recursive=True).totals()
-    # 5 equil x 5000 + (3 + 2 + 2 + 2 + 2) prod x 5000
-    assert totals["time_ps"] == 80000.0
+    assert totals["time_ps"] == _SYS021_TIME_PS
 
 
 def test_the_total_is_not_the_sum_of_absolute_end_times(sys021_tree):
@@ -37,15 +48,85 @@ def test_the_total_is_not_the_sum_of_absolute_end_times(sys021_tree):
         5000.0 * i for reps in ((3,), (2,), (2,), (2,), (2,)) for ran in reps
         for i in range(2, ran + 2))
     assert totals["time_ps"] != absolute_sum
-    assert totals["time_ps"] == 80000.0
+    assert totals["time_ps"] == _SYS021_TIME_PS
 
 
 def test_steps_are_derived_from_elapsed_time_and_dt(sys021_tree):
-    """The final NSTEP is not retrievable -- ThermoStats parses the key and discards it,
-    and MdoutMetadata.nstlim is the control-data intent, identical to the mdin's. So
-    steps-that-ran is elapsed/dt and there is no other source."""
+    """The final NSTEP is not retrievable -- ThermoStats parses the key and discards it --
+    so steps-that-ran is elapsed/dt and there is no other source.
+
+    This pins the CAMPAIGN number only. It cannot, on its own, tell that rule from
+    `sum(nstlim)`: every run in this tree ran exactly what it declared, so the two agree at
+    35,500,000 and the assertion holds under either. The discrimination lives in
+    `test_a_truncated_run_contributes_what_it_ran_not_what_it_declared` below, which is the
+    first fixture in the repo where intent and execution differ at all.
+    """
     totals = auto_discover(str(sys021_tree), recursive=True).totals()
-    assert totals["steps"] == 80000.0 / 0.002
+    assert totals["steps"] == _SYS021_TIME_PS / 0.002
+
+
+def test_a_truncated_run_contributes_what_it_ran_not_what_it_declared(truncated_run_tree):
+    """"Ran, but not to the end" -- the run state the branch had no fixture for.
+
+    `prod_0002` declares `nstlim = 2500000, dt = 0.002` (5000 ps) in both its mdin and its
+    mdout, and its frames stop at 3000 ps: a wall-clock kill or a dead node, which is how
+    most long chunks actually end. It must contribute 3000. `prod_0001` beside it declares
+    and delivers the same 5000, so a rule that clipped every run to its frame span rather
+    than reading the origin correctly would also have to survive that.
+
+    This is the assertion the mutation "a ran stage contributes its own nstlim x dt" fails
+    on, for both published numbers. Before `RunSpec.stated_ps` no fixture in the repo could
+    express it: `_mdout_text` wrote `nstlim = elapsed_ps / dt`, making intent and execution
+    identical everywhere.
+    """
+    protocol = auto_discover(str(truncated_run_tree), recursive=True)
+    by_name = {s.name: s for s in protocol.stages}
+    assert _elapsed_ps(by_name["prod_0001"]) == 5000.0
+    assert _elapsed_ps(by_name["prod_0002"]) == 3000.0
+    # Both stated 5000, so the pair totals 10000 under the intent rule and 8000 under the
+    # execution rule. Only one of those is what the machine did.
+    totals = protocol.totals()
+    assert totals["time_ps"] == 8000.0
+    assert totals["steps"] == 8000.0 / 0.002
+    # Spelled out rather than left implicit: 5,000,000 is what the intent rule reports.
+    assert totals["steps"] != 2 * 2500000.0
+
+
+def test_steps_use_the_mdins_timestep_when_the_mdout_stated_none(tmp_path):
+    """`steps` doubled, silently, whenever the mdout's CONTROL DATA block did not parse.
+
+    `MdoutMetadata.dt` defaults to **0.001** -- truthy, and a perfectly ordinary real
+    timestep -- so the guard `if not dt: <fall back to the mdin>` was dead code and the
+    default sailed straight through. A 0.002 run whose control block the legacy parser
+    missed published exactly TWICE its true step count, with the mdin sitting beside it
+    stating 0.002 in plain text. `steps` is a published number: it is in `summary.json`'s
+    totals, in every per-lineage breakdown, and in what the CLI prints.
+
+    `MdoutHeader.control_dt_ps` is `None` when the file stated nothing, which is what makes
+    the fallback reachable at all. The mdout here keeps its frames and its begin-time line
+    and loses only the control block, which is the shape a truncated or unusually laid out
+    mdout actually has.
+    """
+    from tests.conftest import RunSpec, _PROD_MDIN, _mdout_text
+
+    text = _mdout_text(RunSpec(mdin=_PROD_MDIN, elapsed_ps=5000.0, begin_ps=0.0))
+    head, _, rest = text.partition("   2.  CONTROL  DATA  FOR  THE  RUN\n")
+    _, _, tail = rest.partition("   3.  ATOMIC COORDINATES AND VELOCITIES\n")
+    (tmp_path / "prod_0001.mdin").write_text(_PROD_MDIN, encoding="utf-8")
+    (tmp_path / "prod_0001.mdout").write_text(head + tail, encoding="utf-8")
+
+    protocol = auto_discover(str(tmp_path), recursive=True)
+    stage, = protocol.stages
+    # Grounds the scenario: the mdout really did state no timestep, and the value that
+    # would be read off it instead is the class default rather than anything in the file.
+    assert stage.mdout_header.control_dt_ps is None
+    assert stage.mdout.details.dt == 0.001
+    assert stage.mdin.details.dt == 0.002
+
+    assert _elapsed_ps(stage) == 5000.0
+    assert protocol.totals()["steps"] == 5000.0 / 0.002
+    # 5,000,000 is the number the dead guard published: twice the truth.
+    assert protocol.totals()["steps"] != 5000.0 / 0.001
 
 
 # --- two ways to contribute zero, and why they must not be confused ---

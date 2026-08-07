@@ -27,7 +27,7 @@ def test_plan_reports_the_delta_when_it_contradicts_an_earlier_summary(sys021_tr
           "--summary-path", str(out / "summary.json")])
     printed = capsys.readouterr().out
     assert "totals changed since the last summary.json" in printed
-    assert "100000.000" in printed and "80000.000" in printed
+    assert "100000.000" in printed and "71000.000" in printed
 
 
 def test_plan_says_nothing_when_there_is_no_earlier_summary(sys021_tree, capsys):
@@ -84,7 +84,7 @@ def test_plan_reads_a_yaml_prior_summary_instead_of_permanently_forgetting_it(sy
     main(["plan", "--recursive", str(sys021_tree), "--summary-path", str(summary_path)])
     printed = capsys.readouterr().out
     assert "totals changed since the last summary.json" in printed
-    assert "100000.000" in printed and "80000.000" in printed
+    assert "100000.000" in printed and "71000.000" in printed
 
 
 def test_plan_with_only_stats_csv_requested_does_not_try_to_read_a_summary(sys021_tree, tmp_path):

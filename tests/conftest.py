@@ -48,6 +48,26 @@ class RunSpec(NamedTuple):
     (AMBER's internal clock did not overflow, only the fixed-width field it was printed
     into), so a caller reproducing the real failure passes a `begin_ps` at or past the
     overflow threshold (e.g. `999999.992`, the real tree's own value) alongside it.
+
+    `stated_ps` is what the run said it would do, when that DIFFERS from what it did.
+    Left `None` the mdout's `nstlim` is written as `elapsed_ps / dt`, which makes intent and
+    execution identical by construction -- and for the whole life of this branch every
+    fixture in the repo was built that way, so no test anywhere could tell a rule that reads
+    the mdout's elapsed time apart from one that reads its `nstlim x dt`. A run killed at
+    60% of its wall clock, or by a node failure, is the commonest way those two come apart
+    on real data; `stated_ps=5000.0, elapsed_ps=3000.0` is that run. Keep `stated_ps` equal
+    to the `mdin`'s own `nstlim x dt` -- they are the same claim, and `_validate_timing`
+    compares them and notes a "Step count differs" if they disagree.
+
+    `irest` is what AMBER was told about the clock, and it decides what the begin-time line
+    below MEANS. `irest=1` (the default, a continuation) makes AMBER take the clock from the
+    coordinate file, and the header's begin time is authoritative. `irest=0` -- a fresh run
+    under `ntx=1` -- makes it take the clock from the mdin's `t` instead and read NO time
+    from the coordinates, so it prints `begin time read from input coords = 0.000` while the
+    trajectory starts at `t` and it emits an `NSTEP = 0` record carrying that real origin.
+    `begin_ps` is that origin in both cases (it is where the frames start); only the printed
+    header line differs. This shape is the one the branch's totals over-reported by 1800 ps
+    on five real runs, and no fixture modelled it until this field existed.
     """
     mdin: str
     elapsed_ps: Optional[float] = None
@@ -56,18 +76,34 @@ class RunSpec(NamedTuple):
     inpcrd: Optional[str] = None
     frames: int = 5
     begin_overflowed: bool = False
+    stated_ps: Optional[float] = None
+    irest: int = 1
 
 
 def _mdout_text(spec: RunSpec) -> str:
     """The smallest mdout carrying everything the engine reads off one.
 
-    Three blocks, in AMBER's own order: the File Assignments block `read_mdout_header`
-    parses, a CONTROL DATA block giving `imin`/`nstlim`/`dt`, and `frames` NSTEP records.
+    Four blocks, in AMBER's own order: the File Assignments block `read_mdout_header`
+    parses, a CONTROL DATA block giving `imin`/`ntx`/`irest`/`nstlim`/`t`/`dt`, the
+    `3. ATOMIC COORDINATES` banner with the begin-time line under it, and `frames` NSTEP
+    records.
 
-    The NSTEP times are ABSOLUTE, spanning `begin_ps` (exclusive) to
-    `begin_ps + elapsed_ps` (inclusive) -- which is the whole reason `_sum_stages` cannot
-    sum `time_end` directly. A fixture that wrote elapsed times here would let the wrong
-    formula pass.
+    The CONTROL DATA block is laid out the way real AMBER lays it out -- one field group
+    per line, `t` and `dt` sharing the `Molecular dynamics:` line -- rather than compressed
+    onto one. `read_mdout_header` reads `irest`/`t`/`dt` from inside this block ONLY,
+    because the mdin echo above it carries the same names with the user's unresolved
+    values; a fixture that compressed the block would exercise a parse the real files never
+    present. The `3.` banner is what closes the block, so the begin-time line under it can
+    never be read as control data.
+
+    The NSTEP times are ABSOLUTE, spanning `begin_ps` (exclusive, or INCLUSIVE via the
+    extra `NSTEP = 0` record an `irest=0` run prints) to `begin_ps + elapsed_ps`
+    (inclusive) -- which is the whole reason `_sum_stages` cannot sum `time_end` directly.
+    A fixture that wrote elapsed times here would let the wrong formula pass.
+
+    The final NSTEP is `elapsed_ps / dt` while `nstlim` is `stated_ps / dt`: on a truncated
+    run those differ, which is the only way a test can tell "what it did" from "what it
+    said it would do".
 
     Real AMBER pads every File Assignments value with trailing spaces up to a fixed column
     width; `read_mdout_header` treats a value with NO trailing whitespace as possibly
@@ -92,27 +128,53 @@ def _mdout_text(spec: RunSpec) -> str:
             f"| INPCRD: {spec.inpcrd:<74}\n"
             "|   PARM: prmtop                                                                 \n"
         )
+    # What AMBER PRINTS on the begin-time line. An `irest=0` run read no time from its
+    # coordinates and says so with a literal 0.000, however far along the clock `t` put it
+    # -- reading that 0.000 as the clock origin is the 1800-ps-per-replica over-count.
+    printed_begin = 0.0 if spec.irest == 0 else spec.begin_ps
     begin_line = (
         " begin time read from input coords =********** ps\n\n" if spec.begin_overflowed
-        else f" begin time read from input coords = {spec.begin_ps:.3f} ps\n\n"
+        else f" begin time read from input coords = {printed_begin:.3f} ps\n\n"
     )
+    stated_ps = spec.stated_ps if spec.stated_ps is not None else spec.elapsed_ps
     head = (
         f"{assign}\n"
         "   2.  CONTROL  DATA  FOR  THE  RUN\n"
-        f"     imin    = 0, nstlim  = {int(spec.elapsed_ps / spec.dt)}, dt = {spec.dt:.5f}\n"
+        "General flags:\n"
+        "     imin    =       0, nmropt  =       0\n"
+        "\n"
+        "Nature and format of input:\n"
+        f"     ntx     =       {5 if spec.irest else 1}, irest   =       {spec.irest},"
+        "  ntrx    =       1\n"
+        "\n"
+        "Molecular dynamics:\n"
+        f"     nstlim  = {int(stated_ps / spec.dt):>9}, nscm    =         0,"
+        "  nrespa  =         1\n"
+        f"     t       = {spec.begin_ps:.5f}, dt      = {spec.dt:.5f},"
+        "  vlimit  =  -1.00000\n"
+        "\n"
+        "   3.  ATOMIC COORDINATES AND VELOCITIES\n"
         f"{begin_line}"
         "   4.  RESULTS\n\n"
     )
-    step_of = spec.elapsed_ps / spec.frames
-    body = ""
-    for i in range(1, spec.frames + 1):
-        t = spec.begin_ps + step_of * i
-        body += (
-            f" NSTEP = {int(step_of * i / spec.dt):>8}   TIME(PS) = {t:>11.3f}"
+
+    def frame(nstep: int, t: float) -> str:
+        return (
+            f" NSTEP = {nstep:>8}   TIME(PS) = {t:>11.3f}"
             f"  TEMP(K) =   300.00  PRESS =     0.0\n"
             " Etot   =    -1000.0000  EKtot   =      200.0000  EPtot      =    -1200.0000\n"
             "  ----------------------------------------------------------------\n"
         )
+
+    step_of = spec.elapsed_ps / spec.frames
+    # An `irest=0` run prints its starting energies as an `NSTEP = 0` record before it
+    # integrates anything, so its first PRINTED frame is the clock origin itself rather
+    # than one output interval past it. That is what makes the fencepost correction
+    # (`time_end - time_start + interval`) overshoot by exactly one interval on such a run,
+    # and it is why `_origin_time_ps` never routes an irest=0 run through the fencepost.
+    body = frame(0, spec.begin_ps) if spec.irest == 0 else ""
+    for i in range(1, spec.frames + 1):
+        body += frame(int(step_of * i / spec.dt), spec.begin_ps + step_of * i)
     return head + body + "\n      5.  TIMINGS\n"
 
 
@@ -291,7 +353,13 @@ def nested_sweep_tree(tmp_path) -> Path:
 
 _PROD_MDIN = ("production\n &cntrl\n  imin = 0, irest = 1, nstlim = 2500000,\n"
               "  dt = 0.002, ntb = 2,\n /\n")
-_EQUI_MDIN = ("equilibrate\n &cntrl\n  imin = 0, nstlim = 2500000, dt = 0.002,\n"
+# The real `equil/NN/18_ntp_equi.in`, field for field: a FRESH run (`ntx=1`, `irest=0`)
+# that sets its own clock to `t = 1800.0` and integrates 1600000 x 0.002 = 3200 ps, ending
+# at 5000 where production picks up. Every one of those numbers is load-bearing -- this is
+# the deck whose mdout says `begin time read from input coords = 0.000` while the
+# trajectory runs 1800 -> 5000, and which the branch counted as 5000 ps of dynamics.
+_EQUI_MDIN = ("equilibrate\n &cntrl\n  imin = 0, ntx = 1, irest = 0,\n"
+              "  nstlim = 1600000, t = 1800.0, dt = 0.002,\n"
               "  temp0 = 300.0, ntb = 2,\n /\n")
 _CPPTRAJ_IN = "trajin nvt_prod_0001.nc\nautoimage\ntrajout stripped.nc\n"
 
@@ -311,15 +379,24 @@ def sys021_tree(tmp_path) -> Path:
     * replica 01 completed one chunk more than 02-05, which is the only genuine asymmetry
       in the campaign and must survive as a finding rather than as a phantom missing run.
 
+    A fourth thing is reproduced exactly as of the C1 fix, and it is the one that had been
+    wrong here: `equil/NN/18_ntp_equi` is a FRESH run (`irest=0`) that sets its own clock to
+    1800 ps and integrates 3200 ps, ending at 5000. This fixture used to encode it as
+    `elapsed_ps=5000.0, begin_ps=0.0` -- the defect's OWN arithmetic, baked into the
+    fixture -- so no test built on it could see that the engine was over-counting these five
+    runs by 1800 ps each. The campaign total is 71,000 ps here (5 x 3200 + 11 x 5000), the
+    scaled equivalent of the real campaign's 5,030,000.
+
     Each prod chunk is 5000 ps, matching the real `nstlim=2500000, dt=0.002`. Times are
     absolute and continuous within a replica, so a totals rule that sums `time_end`
     instead of elapsed time gives a visibly wrong number here.
     """
     runs = []
     for n in ("01", "02", "03", "04", "05"):
-        # Equilibration: one 5000 ps run, ending where production picks up.
+        # Equilibration: 3200 ps of dynamics from a self-set clock origin of 1800, ending
+        # at 5000 where production picks up. See `_EQUI_MDIN` and `RunSpec.irest`.
         runs.append((f"equil/{n}/18_ntp_equi",
-                     RunSpec(mdin=_EQUI_MDIN, elapsed_ps=5000.0, begin_ps=0.0,
+                     RunSpec(mdin=_EQUI_MDIN, elapsed_ps=3200.0, begin_ps=1800.0, irest=0,
                              inpcrd="17_ntp_equi.restrt")))
         ran = 3 if n == "01" else 2
         for i in range(1, ran + 1):
@@ -338,6 +415,58 @@ def sys021_tree(tmp_path) -> Path:
     # production runs instead of being ignored as an unrecognised file.
     (tree / "prod" / "01" / "cpptraj.in").write_text(_CPPTRAJ_IN, encoding="utf-8")
     return tree
+
+
+@pytest.fixture
+def truncated_run_tree(tmp_path) -> Path:
+    """Two chunks that both RAN: one finished, one was killed at 60%.
+
+    The fixture the whole branch was missing, and the reason C1 was unreachable by any
+    test. `_mdout_text` writes `nstlim = elapsed_ps / dt` unless told otherwise, so before
+    `RunSpec.stated_ps` existed EVERY fixture in this repo made intent and execution
+    identical by construction -- and a rule that (wrongly) counted a ran stage's own
+    `nstlim x dt` instead of its measured elapsed time passed all 548 tests.
+
+    Here they differ by 2000 ps on one run and by nothing on the other, in one tree, so a
+    test can pin both halves at once: the truncated chunk must contribute 3000 (what it
+    did), never 5000 (what it said), and the complete chunk must still contribute its full
+    5000 rather than being clipped by whatever rule catches the first.
+
+    `stated_ps` matches `_PROD_MDIN`'s own `nstlim=2500000, dt=0.002` deliberately: the
+    mdin and the mdout state the SAME intent, so `_validate_timing` sees no disagreement
+    and the only thing that differs is what actually came out -- which is exactly the shape
+    a node failure or a wall-clock kill leaves behind, and is not a mis-declared deck.
+    """
+    return write_run_tree(tmp_path, [
+        ("prod_0001", RunSpec(mdin=_PROD_MDIN, elapsed_ps=5000.0, begin_ps=0.0)),
+        ("prod_0002", RunSpec(mdin=_PROD_MDIN, elapsed_ps=3000.0, stated_ps=5000.0,
+                              begin_ps=5000.0)),
+    ])
+
+
+@pytest.fixture
+def fresh_start_tree(tmp_path) -> Path:
+    """A fresh run that set its own clock, and the continuation that follows it.
+
+    `equi` is `equil/NN/18_ntp_equi`'s shape reduced to one directory: `irest=0`, so AMBER
+    took the clock from the mdin's `t = 1800.0` rather than from the coordinates, printed
+    `begin time read from input coords = 0.000` because it read none, emitted an
+    `NSTEP = 0` record at 1800.000, and ran to 5000.000. It did 3200 ps. Reading that
+    printed 0.000 as the origin says 5000, which is what the branch published for five real
+    runs; applying the fencepost correction instead says 3220, because the `NSTEP = 0`
+    record means the first printed frame IS the origin and there is no missing interval to
+    add back. Only `t` gives 3200.
+
+    `prod` beside it is an ordinary `irest=1` continuation from 5000 to 10000, whose header
+    begin time IS authoritative -- so one tree holds both routes and a rule that fixed one
+    by breaking the other cannot pass.
+    """
+    return write_run_tree(tmp_path, [
+        ("equi", RunSpec(mdin=_EQUI_MDIN, elapsed_ps=3200.0, begin_ps=1800.0, irest=0,
+                         frames=160)),
+        ("prod_0001", RunSpec(mdin=_PROD_MDIN, elapsed_ps=5000.0, begin_ps=5000.0,
+                              frames=250)),
+    ])
 
 
 @pytest.fixture
