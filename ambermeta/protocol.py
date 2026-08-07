@@ -338,15 +338,32 @@ class SimulationStage:
           mdout legitimately has no elapsed time and never had one; noting it would send a
           user to go investigate a stage with nothing wrong with it, which is the test
           `test_a_minimisation_gets_no_note_despite_never_having_an_elapsed_time` pins.
+
+        A third outcome lives here too, added alongside `_fenced_elapsed_ps`: a stage whose
+        elapsed time WAS produced, but not read off the header -- the header's begin time
+        overflowed AMBER's fixed-width field and `_elapsed_ps_and_source` fell back to the
+        fencepost estimate. That is not "unusable" (a real number reached `totals()`), so
+        it must not get the note above; but silently substituting a derived number for a
+        stated one would erase precisely the distinction that matters most on a long
+        campaign, where the estimate's small error compounds across many overflowed
+        chunks. Reusing the established `INFO:` convention here, rather than inventing a
+        second mechanism, is what keeps this note showing up in the same places (
+        `stage.validation`, `to_dict()`'s `summary.evidence`) a reader already knows to
+        check for the first one.
         """
         if self.mdout is None or self.mdout.details is None:
             return []
         if getattr(self.mdout.details, "run_type", None) == "Minimization":
             return []
-        if _elapsed_ps(self) is not None:
-            return []
-        return [f"INFO: Elapsed time for {self.name} could not be measured "
-                "(mdout present but unusable)."]
+        elapsed, derived = _elapsed_ps_and_source(self)
+        if elapsed is None:
+            return [f"INFO: Elapsed time for {self.name} could not be measured "
+                    "(mdout present but unusable)."]
+        if derived:
+            return [f"INFO: Elapsed time for {self.name} was derived from frame spacing, "
+                    "not read from the header (its stated begin time overflowed AMBER's "
+                    "fixed-width field)."]
+        return []
 
     def _add_continuity_note(self, message: str) -> None:
         self.continuity.append(message)
@@ -411,11 +428,87 @@ class SimulationStage:
         return out
 
 
-def _elapsed_ps(stage: "SimulationStage") -> Optional[float]:
-    """How much simulated time this stage actually produced, or None.
+def _fenced_elapsed_ps(stats: Optional["ThermoStats"]) -> Optional[float]:
+    """The fencepost estimate of `time_end - begin_time_ps`, used only when the header
+    itself cannot say what `begin_time_ps` was.
 
-    None means "contributed nothing", and it covers four different situations that all
-    have to be told apart by the caller for the note it writes, but not here:
+    AMBER prints `begin time read from input coords` into a fixed-width Fortran field.
+    Once a restarted chain's accumulated simulated time passes roughly 1e6 ps the value no
+    longer fits and AMBER writes `**********` instead of a number -- `mdout_header.py`'s
+    `_BEGIN_TIME` requires a digit and simply does not match, so `begin_time_ps` comes back
+    `None` for a run that is otherwise perfectly healthy: same file size as its neighbours,
+    a full TIMINGS block, both a trajectory and a restart written. Reporting `None` here
+    unconditionally would make that run's whole elapsed time vanish from every total --
+    exactly the failure this module exists to prevent, pointed the other way, and it gets
+    worse with campaign length rather than better.
+
+    `ThermoStats` already carries what is needed to recover the number WITHOUT the header:
+    frames print at `begin+iv, begin+2*iv, ..., begin+count*iv = time_end`, so the first
+    PRINTED frame is `time_start = begin+iv`, and therefore
+    `time_end - time_start + iv = count*iv = time_end - begin` -- the same quantity the
+    header would have given, recovered purely from output spacing.
+
+    This is NOT the bare `stats.time_start` substitution `_check_stage_pair` documents and
+    rejects elsewhere in this module: using `time_start` alone is short by exactly one
+    `+iv`, which is what "manufactures a gap on every chunked run" there (1020.0 against a
+    true 920.0). The `+ iv` term is precisely what was missing from that rejected
+    substitution -- this is a different, complete formula, not a second attempt at the
+    same one.
+
+    `ThermoStats.true_coverage_ns` already computes this fencepost quantity (in ns), so it
+    is reused here rather than re-derived in ps -- but only once `count >= 2`, checked
+    BEFORE the call: `avg_interval_ps` (and therefore `true_coverage_ns`) returns exactly
+    `0.0` for a single-frame chunk, and a `0.0` returned from THIS function would be read
+    by every caller as "this stage really did contribute zero elapsed time" -- a false
+    zero indistinguishable from "the estimate could not be made" at all, which defeats the
+    whole point of falling back instead of reporting `None`. `count < 2` therefore has to
+    return `None` here, explicitly, before `true_coverage_ns` is ever asked.
+
+    The result is an INFERENCE, not a reading: it assumes `ntpr` (the coordinate/energy
+    print interval) was constant for the life of the run, which is standard AMBER
+    behaviour but not something a parser can verify from the file alone. Every caller that
+    substitutes this value for a missing header reading is expected to say so -- see the
+    "derived from frame spacing" notes in `_validate_elapsed_time` and `_check_stage_pair`.
+    """
+    if stats is None or getattr(stats, "count", 0) < 2:
+        return None
+    coverage_ns = stats.true_coverage_ns
+    if coverage_ns <= 0:
+        return None
+    # `true_coverage_ns` is ps/1000; undo that conversion rather than re-deriving
+    # `time_end - time_start + interval` in ps ourselves, so there is exactly one place
+    # that computes the fencepost quantity and this function only ever converts its units.
+    return coverage_ns * 1000.0
+
+
+def _fenced_begin_time_ps(stats: Optional["ThermoStats"]) -> Optional[float]:
+    """The fencepost estimate of the run's ABSOLUTE begin time, for `_check_stage_pair`'s
+    own independent read of `begin_time_ps` -- used for the continuity/gap check, separate
+    from `_elapsed_ps_and_source`'s read of the same header field for the totals.
+
+    `_fenced_elapsed_ps` already recovers `time_end - begin`; solving for `begin` given
+    `time_end` is one subtraction. Reusing it here rather than re-deriving
+    `time_start - interval` independently keeps the two call sites -- totals and
+    continuity -- agreeing on what "header unavailable" and "single frame" mean, instead
+    of risking two guards that quietly drift apart under a future edit to one of them.
+    """
+    if stats is None:
+        return None
+    fenced_elapsed = _fenced_elapsed_ps(stats)
+    if fenced_elapsed is None:
+        return None
+    end = getattr(stats, "time_end", None)
+    if end is None:
+        return None
+    return float(end) - fenced_elapsed
+
+
+def _elapsed_ps_and_source(stage: "SimulationStage") -> Tuple[Optional[float], bool]:
+    """How much simulated time this stage actually produced, and whether that number was
+    READ from the header or DERIVED from frame spacing because the header could not say.
+
+    The `Optional[float]` half is `None` for four different situations that all have to be
+    told apart by the caller for the note it writes, but not here:
 
     * queued -- an mdin with no mdout. The run was set up and never executed. Counting it
       was the bug: on the campaign this was written against it was 25 ns of simulation
@@ -426,31 +519,68 @@ def _elapsed_ps(stage: "SimulationStage") -> Optional[float]:
     * unreadable -- `parse_mdout` catches nothing and returns a default-valued object
       rather than raising, so a malformed-but-present mdout arrives as `stats.count == 0`
       rather than as `stage.mdout is None`;
-    * no stated begin -- the `begin time read from input coords` line is absent for
-      irest=0 runs. Falling back to 0.0 would make an absolute time look like an elapsed
-      one, which is the 304,600-ps-against-100,000 bug, so silence is the only truthful
-      answer.
+    * no elapsed time derivable by EITHER route -- the header's `begin time read from
+      input coords` line is absent (irest=0) or unreadable (overflowed to `**********`),
+      AND `_fenced_elapsed_ps` also could not estimate one (fewer than two frames).
+      Falling back to 0.0 for either route would make an absolute time look like an
+      elapsed one, which is the 304,600-ps-against-100,000 bug, so silence is the only
+      truthful answer left.
 
     `time_end` is ABSOLUTE. `time_end - time_start` is NOT the alternative: `time_start`
     is the first PRINTED frame, one ntpr interval after the true begin, which is short by
     one interval per run -- the trap already documented at `_check_stage_pair`.
+
+    The header stays PRIMARY: `begin_time_ps` is only replaced by the fencepost estimate
+    when the header did not state one at all, never merely preferred one over the other,
+    because the header states what AMBER read while the fencepost value is an inference
+    from output spacing (see `_fenced_elapsed_ps`'s docstring for why that distinction
+    matters and stays load-bearing all the way to the artifact).
     """
     if stage.mdout is None or stage.mdout.details is None:
-        return None
+        return None, False
     details = stage.mdout.details
     if getattr(details, "run_type", None) == "Minimization":
-        return None
+        return None, False
     stats = getattr(details, "stats", None)
     if stats is None or getattr(stats, "count", 0) == 0:
-        return None
+        return None, False
     if stage.mdout_header is None:
-        return None
+        return None, False
     begin = getattr(stage.mdout_header, "begin_time_ps", None)
     end = getattr(stats, "time_end", None)
-    if begin is None or end is None:
-        return None
-    elapsed = float(end) - float(begin)
-    return elapsed if elapsed > 0 else None
+    if end is None:
+        return None, False
+
+    derived = False
+    if begin is not None:
+        elapsed = float(end) - float(begin)
+    else:
+        # The header's begin time is unavailable -- either irest=0 never printed the line,
+        # or AMBER's fixed-width field overflowed once accumulated simulated time passed
+        # ~1e6 ps and printed `**********` in its place. `read_mdout_header` cannot tell
+        # these two apart (its regex simply does not match either), and neither can this
+        # function; both are "the header states nothing", so both take the same fallback.
+        elapsed = _fenced_elapsed_ps(stats)
+        derived = True
+
+    # One guard for both routes, run on whichever `elapsed` was produced, rather than a
+    # second `> 0` check duplicated inside the fallback branch above: a fencepost estimate
+    # that comes out `None` (fewer than two frames -- see `_fenced_elapsed_ps`) or <= 0 is
+    # exactly as untrustworthy as a header-derived one that does, and must be reported the
+    # same way to the caller -- `None`, never a negative or false-zero "elapsed" time.
+    if elapsed is None or elapsed <= 0:
+        return None, False
+    return elapsed, derived
+
+
+def _elapsed_ps(stage: "SimulationStage") -> Optional[float]:
+    """`_elapsed_ps_and_source`'s value alone, for the many callers that only need the
+    number -- totals, the stats CSV -- and not whether it was read or derived. Callers that
+    DO need to know (`_validate_elapsed_time`, `_check_stage_pair`'s own begin-time read)
+    call `_elapsed_ps_and_source` directly rather than reconstructing "derived" from this
+    function's return value, which cannot be told apart from a value AMBER actually wrote.
+    """
+    return _elapsed_ps_and_source(stage)[0]
 
 
 @dataclass
@@ -536,6 +666,7 @@ class SimulationProtocol:
         start_time = None
         if current.inpcrd and current.inpcrd.details:
             start_time = getattr(current.inpcrd.details, "time", None)
+        start_time_derived = False
         if start_time is None and current.mdout_header is not None:
             # The mdout says when the run began, and says it whether or not the restart it
             # read is machine-readable here. On a bare install `netCDF4`/`scipy` are
@@ -548,6 +679,27 @@ class SimulationProtocol:
             # `ntpr` interval later (1020.0 against a true 920.0), so reaching for it
             # manufactures a gap on every chunked run.
             start_time = current.mdout_header.begin_time_ps
+
+            if start_time is None:
+                # `begin_time_ps` came back None for the same reason it can in
+                # `_elapsed_ps_and_source`: the header line is either absent (irest=0) or
+                # its fixed-width Fortran field overflowed (`**********`) once this chain's
+                # accumulated simulated time passed ~1e6 ps. This is `_check_stage_pair`'s
+                # OWN, independent read of `begin_time_ps` — fixing only `_elapsed_ps`
+                # would correct the totals but leave continuity silently skipped, via the
+                # "Cannot verify continuity ... missing inpcrd time" note below, for
+                # exactly the runs whose totals were just fixed. Same root cause, same
+                # fencepost fallback, same rules: header primary (only reached because it
+                # already returned None above), fallback noted (below, once the pair turns
+                # out to be usable), no false zero (`_fenced_begin_time_ps` inherits
+                # `_fenced_elapsed_ps`'s `count < 2` guard, so a single-frame consumer
+                # still falls through to "Cannot verify" rather than reporting a start time
+                # of exactly `time_end`).
+                stats = None
+                if current.mdout and current.mdout.details:
+                    stats = getattr(current.mdout.details, "stats", None)
+                start_time = _fenced_begin_time_ps(stats)
+                start_time_derived = start_time is not None
 
         if end_time is None or start_time is None:
             # Add informational note when continuity check is skipped
@@ -563,6 +715,17 @@ class SimulationProtocol:
             return
 
         gap = start_time - end_time
+
+        if start_time_derived:
+            # Same "derived from frame spacing" convention `_validate_elapsed_time` uses
+            # for the totals -- follow it here too rather than inventing a second way to
+            # say the same thing, so a reader who has already learned to look for this
+            # phrase in `summary.evidence` finds it for continuity as well.
+            current._add_continuity_note(
+                f"INFO: Start time for {current.name} was derived from frame spacing, "
+                "not read from the header (its stated begin time overflowed AMBER's "
+                "fixed-width field)."
+            )
 
         # Tolerance is a small absolute floor plus half a frame interval —
         # NOT scaled by elapsed time, which would hide real gaps in long runs.
@@ -636,8 +799,9 @@ class SimulationProtocol:
 
         Sourced from the mdout, not the mdin: the mdin states intent and a run that was
         queued and never started, or started and was killed at 60%, states the same
-        intent as one that finished. See `_elapsed_ps` for what "ran" means and for why
-        the formula is `time_end - begin_time_ps`.
+        intent as one that finished. See `_elapsed_ps_and_source` for what "ran" means,
+        for why the primary formula is `time_end - begin_time_ps`, and for the
+        frame-spacing fallback used when the header's `begin_time_ps` overflowed.
 
         Accumulated with ``+=`` rather than ``sum()`` on purpose: CPython 3.12 made
         ``builtins.sum`` compensated, and CI's matrix is 3.9 *and* 3.12, so a float total
@@ -2536,8 +2700,9 @@ def write_stats_csv(protocol: "SimulationProtocol", filepath: str) -> None:
         # `summary.json`'s total from drifting apart again -- the agreement is structural,
         # not two formulas that happen to match today.
         #
-        # `None` covers four situations -- queued, minimisation, unreadable, no stated
-        # begin (see `_elapsed_ps`'s docstring) -- that are all truthfully "unknown", not
+        # `None` covers four situations -- queued, minimisation, unreadable, no elapsed
+        # time derivable by either the header or the frame-spacing fallback (see
+        # `_elapsed_ps_and_source`'s docstring) -- that are all truthfully "unknown", not
         # zero, so the column is left blank rather than filled with a `0.0` that would
         # read as "this stage ran no time" instead of "this stage's time could not be
         # determined".

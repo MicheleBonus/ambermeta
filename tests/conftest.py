@@ -39,6 +39,15 @@ class RunSpec(NamedTuple):
     written. `inpcrd` becomes the File Assignments line AMBER itself records, which is the
     evidence P2.4's handoff proposal reads; None omits the whole block, which is what a
     clipped or absent assignment looks like.
+
+    `begin_overflowed=True` reproduces the real defect this fixture exists to let a test
+    build: AMBER prints `begin time read from input coords` into a fixed-width Fortran
+    field, and once a chain's accumulated simulated time passes roughly 1e6 ps the value no
+    longer fits, so AMBER prints `**********` in its place instead of a number. `begin_ps`
+    is still a real float when this is set -- it is what the frames below are spaced around
+    (AMBER's internal clock did not overflow, only the fixed-width field it was printed
+    into), so a caller reproducing the real failure passes a `begin_ps` at or past the
+    overflow threshold (e.g. `999999.992`, the real tree's own value) alongside it.
     """
     mdin: str
     elapsed_ps: Optional[float] = None
@@ -46,6 +55,7 @@ class RunSpec(NamedTuple):
     dt: float = 0.002
     inpcrd: Optional[str] = None
     frames: int = 5
+    begin_overflowed: bool = False
 
 
 def _mdout_text(spec: RunSpec) -> str:
@@ -64,6 +74,14 @@ def _mdout_text(spec: RunSpec) -> str:
     clipped at that width and refuses to return it (`MdoutHeader.truncated`). Trailing
     padding here is therefore load-bearing, not cosmetic -- without it `INPCRD` would come
     back `None` and the fixture would silently fail to carry the one fact P2.4 reads.
+
+    `spec.begin_overflowed` swaps the begin-time line for AMBER's own overflowed spelling
+    (`=**********`, no digits at all) instead of the numeric one -- `mdout_header.py`'s
+    `_BEGIN_TIME` regex requires `[\\d.]` and does not match either the real overflow or
+    this stand-in, so `begin_time_ps` comes back `None` exactly as it does on the real
+    tree's `prod/01/nvt_prod_0201`. The frame times below are still computed from the real
+    `spec.begin_ps`, because AMBER's internal clock never overflows -- only the fixed-width
+    field it prints the begin time into does.
     """
     assign = ""
     if spec.inpcrd is not None:
@@ -74,11 +92,15 @@ def _mdout_text(spec: RunSpec) -> str:
             f"| INPCRD: {spec.inpcrd:<74}\n"
             "|   PARM: prmtop                                                                 \n"
         )
+    begin_line = (
+        " begin time read from input coords =********** ps\n\n" if spec.begin_overflowed
+        else f" begin time read from input coords = {spec.begin_ps:.3f} ps\n\n"
+    )
     head = (
         f"{assign}\n"
         "   2.  CONTROL  DATA  FOR  THE  RUN\n"
         f"     imin    = 0, nstlim  = {int(spec.elapsed_ps / spec.dt)}, dt = {spec.dt:.5f}\n"
-        f" begin time read from input coords = {spec.begin_ps:.3f} ps\n\n"
+        f"{begin_line}"
         "   4.  RESULTS\n\n"
     )
     step_of = spec.elapsed_ps / spec.frames
