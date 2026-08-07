@@ -511,6 +511,24 @@ def discover_draft(base_directory, recursive=True, pattern=None):
     # evidence lives in the mdout's File Assignments block, and that is PROPOSED rather
     # than written -- see the handoff proposal.
     prev_by_directory: Dict[str, str] = {}
+    # Directories where at least one run demonstrably wrote a restart (an inpcrd-kind file
+    # sitting beside it: `.rst`/`.rst7`/`.ncrst`/`.restrt`/`.inpcrd`). This is the
+    # directory-context rule a step's OWN producer-eligibility is checked against below:
+    # restart absence is only evidence that a step did not run -- and so cannot hand
+    # anything to whatever comes after it -- where the directory shows restarts are being
+    # tracked at all. `sys021_tree`'s `prod/01` is exactly that: `nvt_prod_0001..0003` each
+    # write one, so `cpptraj`'s silence (a leftover cpptraj post-processing script, not a
+    # run) is meaningful and it drops out as a producer -- and so does a queued run sitting
+    # between two real chunks, same directory, same rule, real cntrl_parameters but nothing
+    # written yet. A directory with NO restart evidence anywhere is a purely planned
+    # campaign -- every run just an mdin, nothing executed -- where the chain IS the plan
+    # and demanding restart proof that could never exist would silently unchain every
+    # existing single-replica project's default output. That is also every mdin-only
+    # fixture in this repo, which is why none of them needed to change for this rule to
+    # land: the rule never fires in a directory it has no evidence to fire in.
+    directories_with_restart_evidence = {
+        stem.rpartition("/")[0] for stem in run_stems if grouped[stem].get("inpcrd")
+    }
     # Where each member's previous step landed, for phase grouping only (Task 7 changes
     # how `multi_lineage` is derived, not what this does). A phase lookup that may only
     # start here can never move a member backwards, which is what keeps its steps in order.
@@ -594,7 +612,12 @@ def discover_draft(base_directory, recursive=True, pattern=None):
                                         name=(role.title() if role else "Stage"), role=role))
             phase = sim.phases[-1]
         phase.steps.append(step)
-        prev_by_directory[directory] = step.id
+        # A step becomes eligible to hand its restart to whatever comes next in this
+        # directory only if it wrote one itself, OR the directory has no restart evidence
+        # at all -- see the comment on `directories_with_restart_evidence` above for why
+        # the second half of this condition is not optional.
+        if step.rst or directory not in directories_with_restart_evidence:
+            prev_by_directory[directory] = step.id
 
     warnings = []
     if len(sim.topologies) > 1:

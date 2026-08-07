@@ -94,6 +94,24 @@ def _mdout_text(spec: RunSpec) -> str:
     return head + body + "\n      5.  TIMINGS\n"
 
 
+_RESTART_NATOM = 2
+
+
+def _restart_text(end_ps: float) -> str:
+    """A minimal ASCII restart -- real enough for `InpcrdParser` to read without raising.
+
+    The same three-line shape `test_continuity_p1.py`'s `_rst` already proved safe: a
+    title, `natom time`, and one line of six coordinates (two atoms' worth). Nothing that
+    consumes this fixture ever reads the coordinates -- `smart_group_files` types the file
+    "inpcrd" by extension alone, and `discover_draft`'s restart-producer rule only checks
+    that the file EXISTS beside a run's own stem -- so the coordinates are placeholders and
+    only `end_ps` (the one field a continuity check might read) is real.
+    """
+    return ("restart\n%6d %14.7f\n"
+            "   1.0000000   2.0000000   3.0000000   4.0000000   5.0000000   6.0000000\n"
+            % (_RESTART_NATOM, end_ps))
+
+
 def write_run_tree(root: Path, runs) -> Path:
     """Write the files for each entry of `runs`, creating directories as needed.
 
@@ -107,6 +125,18 @@ def write_run_tree(root: Path, runs) -> Path:
     The bare form also picks its mdin by substring, which raises StopIteration for a stem
     named after neither min/heat/equil/prod (`18_ntp_equi`, `cpptraj`). That is why the
     pair form exists: real campaign stems do not follow this repo's fixture naming.
+
+    The pair form ALSO writes a restart (`<stem>.restrt`) whenever `elapsed_ps is not
+    None`: a real AMBER run that produced output always writes one (`-r`), unconditionally,
+    unless it crashed outright -- and a crash is what an entry simply missing from `runs`
+    already models, not an mdout with no restart beside it. This is what makes
+    `core_bridge.py`'s restart-producer rule (P1.3: a step that wrote nothing cannot hand
+    a restart to whatever comes after it in its directory) testable at all: without a real
+    file here, no fixture built through this helper could ever show "this run wrote
+    something" and "this run wrote nothing" both, in the same directory, to prove the rule
+    tells them apart. The BARE-stem form is unaffected -- its `RunSpec` defaults to
+    `elapsed_ps=None`, so it never enters this branch, and stays exactly the mdin-only
+    fixture every other consumer of it already depends on.
     """
     for entry in runs:
         stem, spec = entry if isinstance(entry, tuple) else (entry, None)
@@ -118,6 +148,8 @@ def write_run_tree(root: Path, runs) -> Path:
         path.write_text(spec.mdin, encoding="utf-8")
         if spec.elapsed_ps is not None:
             (root / (stem + ".mdout")).write_text(_mdout_text(spec), encoding="utf-8")
+            (root / (stem + ".restrt")).write_text(
+                _restart_text(spec.begin_ps + spec.elapsed_ps), encoding="utf-8")
     return root
 
 
@@ -284,3 +316,24 @@ def sys021_tree(tmp_path) -> Path:
     # production runs instead of being ignored as an unrecognised file.
     (tree / "prod" / "01" / "cpptraj.in").write_text(_CPPTRAJ_IN, encoding="utf-8")
     return tree
+
+
+@pytest.fixture
+def mid_directory_queued_tree(tmp_path) -> Path:
+    """One directory, three chunks: a queued run sitting between two that actually ran.
+
+    `sys021_tree`'s own queued chunk is always LAST in its directory, which is exactly
+    where a non-producer is invisible -- nothing downstream ever has to read past it. This
+    fixture puts the queued chunk in the MIDDLE, so `discover_draft`'s restart-producer
+    rule has something to actually prove: `prod_0003` has to skip the empty `prod_0002`
+    and chain to `prod_0001`, the last run that actually wrote a restart, rather than to
+    whichever run happens to sit next to it in document order. `prod_0001` and `prod_0003`
+    use the pair form (so they write a real `.restrt` and the directory has restart
+    evidence at all); `prod_0002` is a pair too, but with `elapsed_ps` left at its default
+    `None`, which is exactly what "declared and never run" means here.
+    """
+    return write_run_tree(tmp_path, [
+        ("prod_0001", RunSpec(mdin=_PROD_MDIN, elapsed_ps=5000.0, begin_ps=0.0)),
+        ("prod_0002", RunSpec(mdin=_PROD_MDIN)),
+        ("prod_0003", RunSpec(mdin=_PROD_MDIN, elapsed_ps=5000.0, begin_ps=10000.0)),
+    ])

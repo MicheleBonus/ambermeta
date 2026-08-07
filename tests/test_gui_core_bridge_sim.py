@@ -375,7 +375,13 @@ def test_discover_draft_never_chains_across_a_run_directory(sys021_tree):
 def test_discover_draft_still_chains_within_one_directory(sys021_tree):
     """The within-directory chain is what makes a chunked run a chain, and it cannot be
     wrong about membership because it never leaves the directory. Removing it would gut the
-    default output of every existing single-replica project."""
+    default output of every existing single-replica project.
+
+    `prod/01` also holds the stray `cpptraj.in` (see sys021_tree's docstring), which
+    natural-sorts ahead of `nvt_prod_0001` and used to be that directory's real first
+    stem -- until the restart-producer rule below took it out of contention. Checking the
+    assertion here on `prod/01` itself, not a workaround directory, is deliberate: it is
+    the regression guard for that rule staying in effect."""
     sim = core_bridge.discover_draft(str(sys021_tree), recursive=True)["simulation"]
     by_id = {s.id: s for _, s in iter_steps(sim)}
     edges = {s.name: by_id[s.input_coords.ref].name
@@ -384,12 +390,72 @@ def test_discover_draft_still_chains_within_one_directory(sys021_tree):
     assert edges["prod/01/nvt_prod_0002"] == "prod/01/nvt_prod_0001"
     assert edges["prod/01/nvt_prod_0003"] == "prod/01/nvt_prod_0002"
     # The head of a directory reads the starting structure, not the previous directory.
-    # Checked on prod/02, not prod/01: prod/01 also holds the stray `cpptraj.in` (see
-    # sys021_tree's docstring), which natural-sorts ahead of `nvt_prod_0001` and is that
-    # directory's real first stem instead -- a pre-existing, separately-tested quirk
-    # (test_protocol_queued.py) this test is not about. prod/02 shows the same
-    # directory-boundary property without it.
-    assert "prod/02/nvt_prod_0001" not in edges
+    assert "prod/01/nvt_prod_0001" not in edges
+
+
+# ---------------------------------------------------------------------------
+# discover_draft's restart-producer rule: silence is only evidence where a
+# directory shows restarts are being tracked at all (fix round 1 on P1.3)
+# ---------------------------------------------------------------------------
+
+def test_discover_draft_excludes_a_restart_free_step_from_producing_where_its_directory_proves_restarts(
+        sys021_tree):
+    """`cpptraj` is a leftover trajectory-analysis script, not a run, and writes no
+    restart. `prod/01`'s other three stems each write a real one, so the directory has
+    restart evidence and cpptraj's own silence is meaningful: it is excluded as a
+    producer, exactly as if it were not there. Before this rule, natural sort alone made
+    it `prod/01`'s head (`'c' < 'n'`) and `nvt_prod_0001` chained from a restart that does
+    not exist -- see `test_discover_draft_never_chains_across_a_run_directory` for why
+    that was still same-directory and so invisible to P1.3's own guard."""
+    sim = core_bridge.discover_draft(str(sys021_tree), recursive=True)["simulation"]
+    by_id = {s.id: s for _, s in iter_steps(sim)}
+    edges = {s.name: by_id[s.input_coords.ref].name
+             for _, s in iter_steps(sim)
+             if s.input_coords and s.input_coords.source == "step"}
+    assert not any(producer == "prod/01/cpptraj" for producer in edges.values())
+
+
+def test_discover_draft_skips_a_mid_directory_queued_run_as_a_producer(mid_directory_queued_tree):
+    """A queued chunk has genuine `&cntrl` parameters -- it is a real run, just not one
+    that has happened yet -- so it is not excluded the same way `cpptraj` is (empty
+    parameters). It is excluded for the same underlying reason: it wrote no restart, and
+    its directory (`prod_0001`, `prod_0003`) proves restarts are being tracked. `prod_0003`
+    must therefore chain to `prod_0001`, the last step that actually ran, skipping the
+    queued `prod_0002` sitting between them in document order."""
+    sim = core_bridge.discover_draft(str(mid_directory_queued_tree),
+                                     recursive=True)["simulation"]
+    by_id = {s.id: s for _, s in iter_steps(sim)}
+    edges = {s.name: by_id[s.input_coords.ref].name
+             for _, s in iter_steps(sim)
+             if s.input_coords and s.input_coords.source == "step"}
+    assert edges["prod_0003"] == "prod_0001"
+    assert "prod_0002" not in edges.values()
+
+
+def test_discover_draft_still_chains_a_directory_where_nothing_has_run(replica_tree):
+    """The regression guard for planned campaigns: `replica_tree` is entirely mdin-only
+    (bare-stem `write_run_tree`), so no step anywhere writes a restart and the
+    restart-producer rule has no evidence to fire on in any of its directories. A step
+    still becomes the next step's producer purely by having run first, exactly as it did
+    before this rule existed -- because here the chain IS the plan, and there is nothing
+    else to check it against. Without this test, someone could later "simplify" the rule
+    to fire unconditionally and silently unchain every planned, not-yet-executed tree in
+    the repo, `replica_tree` included."""
+    sim = core_bridge.discover_draft(str(replica_tree), recursive=True)["simulation"]
+    assert _edges(sim) == [
+        ("rep1/heat_0001", "starting_structure"),
+        ("rep2/heat_0001", "starting_structure"),
+        ("rep3/heat_0001", "starting_structure"),
+        ("rep1/min_0001", "rep1/heat_0001"),
+        ("rep2/min_0001", "rep2/heat_0001"),
+        ("rep3/min_0001", "rep3/heat_0001"),
+        ("rep1/prod_0001", "rep1/min_0001"),
+        ("rep1/prod_0002", "rep1/prod_0001"),
+        ("rep2/prod_0001", "rep2/min_0001"),
+        ("rep2/prod_0002", "rep2/prod_0001"),
+        ("rep3/prod_0001", "rep3/min_0001"),
+        ("rep3/prod_0002", "rep3/prod_0001"),
+    ]
 
 
 def test_discover_draft_leaves_an_ambiguous_tree_untagged_and_unchained(nested_sweep_tree):
