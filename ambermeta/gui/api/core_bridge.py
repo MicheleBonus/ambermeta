@@ -590,13 +590,14 @@ def discover_draft(base_directory, recursive=True, pattern=None, apply_tags=True
     Only this one assignment differs between the two; everything else about the draft
     (chaining, phase grouping, the proposal itself) is identical either way.
     """
-    from ambermeta.simulation import Simulation, Phase, Step, Topology, InputCoords
+    from ambermeta.simulation import Simulation, Phase, Step, Topology, InputCoords, iter_steps
     from ambermeta.lineages import UNTAGGED, infer_lineages_from_layout
     from ambermeta.roles import classify_role
     from ambermeta.topology_pool import classify_topology_pool, implies_hmr
     from ambermeta.coords import sniff_coordinate_kind
     from ambermeta.protocol import smart_group_files, _run_stems, _looks_queued
     from ambermeta.parsers import MdinParser
+    from ambermeta.mdout_header import read_mdout_header
     import uuid
 
     grouped = smart_group_files(base_directory, pattern=pattern, recursive=recursive)
@@ -769,6 +770,66 @@ def discover_draft(base_directory, recursive=True, pattern=None, apply_tags=True
     # `sim`'s own step names regardless of whether those names' steps are ALSO carrying
     # `lineage` right now, so the CLI gets a (currently unused) proposal too.
     proposal = build_lineage_proposal(sim)
+
+    # AMBER wrote down which restart it actually read; `read_mdout_header` has parsed that
+    # block since before lineages existed, and `assignment()` had zero call sites -- the
+    # record was read off every mdout and thrown away.
+    #
+    # It is CORROBORATION, not identification. AMBER records a bare relative filename
+    # (`INPCRD: 18_ntp_equi.restrt`), resolved against the run's own directory, and on the
+    # campaign this was written against ALL FIVE replicas record the identical string. A
+    # document-wide basename->step lookup therefore collapses every replica's tail into one
+    # entry and points every head at whichever was seen last: measured, 10 proposed edges on
+    # sys021_tree of which 9 are wrong. The member grouping is what disambiguates -- the
+    # match is scoped to ONE member, so structure identifies the pair and AMBER's record
+    # only corroborates that a handoff happened at all.
+    #
+    # Three consequences, all deliberate: no member proposal means no handoffs (without
+    # knowing which directories are one replica there is nothing to justify pairing them); a
+    # basename two of the member's OWN steps wrote is ambiguous and proposes nothing, for
+    # the same reason the document-wide lookup was wrong; and a producer in the consumer's
+    # own directory is skipped, since the chunked chain built above already covers it.
+    #
+    # `assignment` returns None when AMBER clipped the value at the field width -- common
+    # for long paths; every PARM on the real campaign is clipped. That is no evidence, not
+    # no producer, so such a step simply gets no proposed edge.
+    #
+    # Fault tolerance matches the mdin parse above: a header that will not read costs this
+    # one edge, not the scan. The path comes from `grouped`, not from `step.mdout`, which
+    # has been relativized against base_directory and will not open.
+    handoffs: List[Dict[str, Any]] = []
+    if proposal:
+        step_by_id = {s.id: s for _, s in iter_steps(sim)}
+        for member in proposal["members"]:
+            member_steps = [step_by_id[i] for i in member["step_ids"]]
+            writes: Dict[str, List[str]] = {}
+            for producer in member_steps:
+                if producer.rst:
+                    writes.setdefault(os.path.basename(producer.rst), []).append(producer.id)
+            for step in member_steps:
+                mdout = grouped.get(step.name, {}).get("mdout")
+                if not mdout:
+                    continue
+                try:
+                    named = read_mdout_header(mdout).assignment("INPCRD")
+                except (IOError, OSError, ValueError, LookupError):
+                    continue
+                if not named:
+                    continue
+                candidates = [i for i in writes.get(os.path.basename(named), [])
+                              if i != step.id]
+                if len(candidates) != 1:
+                    continue
+                producer = step_by_id[candidates[0]]
+                if producer.name.rpartition("/")[0] == step.name.rpartition("/")[0]:
+                    continue
+                handoffs.append({
+                    "consumer_id": step.id, "producer_id": producer.id,
+                    "consumer": step.name, "producer": producer.name,
+                    "evidence": f"mdout File Assignments: INPCRD: {named}",
+                })
+        proposal["handoffs"] = handoffs
+
     suggestions = build_suggestions(sim, base_directory, proposed=tags)
     if proposal is None:
         # Gated on the tree PLAUSIBLY having members to declare, not merely on the

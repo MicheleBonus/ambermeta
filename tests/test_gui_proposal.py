@@ -95,3 +95,65 @@ def test_the_proposal_reaches_the_wire(sys021_tree):
     r = c.post("/api/document/discover", json={"recursive": True})
     assert r.status_code == 200
     assert r.json()["proposal"]["members"][0]["tag"] == "01"
+
+
+# ---------------------------------------------------------------------------
+# P2.4: handoffs proposed from AMBER's own File Assignments block, scoped to one
+# proposed member -- the disambiguator a document-wide basename lookup does not have.
+# ---------------------------------------------------------------------------
+
+def test_the_handoff_proposal_reads_ambers_own_file_assignments(sys021_tree):
+    """Every prod head's mdout records the restart AMBER actually read. The package has
+    parsed that block since before this feature existed and had zero call sites for it.
+
+    All five replicas record the identical bare filename (`INPCRD: 18_ntp_equi.restrt`),
+    so the basename alone identifies nothing -- a document-wide lookup on it would
+    propose 10 edges on this tree, 9 of them wrong (measured). The member grouping is
+    what disambiguates: the match is scoped to one proposed member, so `len(pairs) == 5`
+    below is not just "five entries" but "one correct edge per replica, no duplicates and
+    no cross-replica leakage" -- a duplicate-emitting implementation (one edge per member
+    per matching producer) would inflate this count even though `pairs` is keyed on the
+    consumer and would look right by itself.
+    """
+    out = core_bridge.discover_draft(str(sys021_tree), recursive=True)
+    pairs = {h["consumer"]: h["producer"] for h in out["proposal"]["handoffs"]}
+    assert pairs["prod/01/nvt_prod_0001"] == "equil/01/18_ntp_equi"
+    assert pairs["prod/05/nvt_prod_0001"] == "equil/05/18_ntp_equi"
+    assert len(pairs) == 5
+    assert len(out["proposal"]["handoffs"]) == 5
+
+
+def test_a_clipped_assignment_proposes_nothing_rather_than_guessing(tmp_path):
+    """MdoutHeader.assignment returns None when AMBER clipped the value at the field
+    width -- on the real campaign every PARM line is clipped. That is no evidence, not
+    no producer.
+
+    `RunSpec(inpcrd=None)` (the plan's original fixture) omits the entire File
+    Assignments block, so `assignment("INPCRD")` would return None because the tag is
+    ABSENT, not because it was clipped -- that does not exercise this code path at all.
+    The control half below is what stops this passing vacuously: the same tree with a
+    short assignment proposes both handoffs, so an implementation that read
+    `file_assignments` directly and ignored `truncated` would fail here.
+    """
+    from tests.conftest import RunSpec, write_run_tree, _EQUI_MDIN, _PROD_MDIN
+
+    def tree(at, inpcrd):
+        runs = []
+        for n in ("01", "02"):
+            runs.append((f"equil/{n}/18_ntp_equi",
+                         RunSpec(mdin=_EQUI_MDIN, elapsed_ps=5000.0,
+                                 inpcrd="17_ntp_equi.restrt")))
+            runs.append((f"prod/{n}/nvt_prod_0001",
+                         RunSpec(mdin=_PROD_MDIN, elapsed_ps=5000.0, begin_ps=5000.0,
+                                 inpcrd=inpcrd)))
+        return write_run_tree(at, runs)
+
+    control = core_bridge.discover_draft(
+        str(tree(tmp_path / "short", "18_ntp_equi.restrt")), recursive=True)
+    assert len(control["proposal"]["handoffs"]) == 2
+
+    # 74 characters exactly fills the field `_mdout_text` pads to, so the value carries no
+    # trailing whitespace and comes back as truncated -- the shape a real long path makes.
+    clipped = core_bridge.discover_draft(
+        str(tree(tmp_path / "clipped", "1" * 70 + ".rst")), recursive=True)
+    assert clipped["proposal"]["handoffs"] == []
