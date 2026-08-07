@@ -147,6 +147,12 @@ class SimulationStage:
     lineage: Optional[str] = None
     step_id: Optional[str] = None
     parent_id: Optional[str] = None
+    # Whether this stage produced output. The only non-default value is "queued": an mdin
+    # with no mdout, set by both engine entry points (the manifest path and the scan path
+    # — see `_looks_queued`) rather than derived here, because they are the two places
+    # that still have the raw file-presence facts (which kinds were even declared) in
+    # front of them; by the time a stage reaches `totals()` that distinction is gone.
+    status: Optional[str] = None
     # What the mdout stated before the run started: the resolved seed, the authoritative
     # begin time, and the chain AMBER itself asserts through File Assignments. Kept beside
     # `mdout` rather than on `MdoutData.details`, because that dataclass is serialised with
@@ -169,6 +175,7 @@ class SimulationStage:
             + self._validate_box()
             + self._validate_timing()
             + self._validate_sampling()
+            + self._validate_elapsed_time()
         ):
             if msg not in existing:
                 self.validation.append(msg)
@@ -309,6 +316,37 @@ class SimulationStage:
                 if base[1] and val and base[1] != val:
                     notes.append(f"Coordinate write frequency differs between {base[0]} and {label} ({base[1]} vs {val}).")
         return notes
+
+    def _validate_elapsed_time(self) -> List[str]:
+        """"Ran, mdout unusable -> contributes nothing, plus a note" — the one run state
+        in the design's table that no earlier task gave a voice to. `_elapsed_ps`'s own
+        docstring names the note and defers it ("...for the note it writes, but not
+        here"); nothing downstream ever picked it up, so a truncated or corrupt mdout
+        silently contributed a zero indistinguishable from a stage that never ran at all —
+        the exact silence `status="queued"` exists to remove for the *other* zero-
+        contributing state, left open for this one.
+
+        Deliberately excludes the two situations `_elapsed_ps` also returns `None` for
+        that are NOT "unusable":
+
+        * queued -- `self.mdout is None` covers it (no mdout was ever declared, so nothing
+          was attempted), and it already has its own `status`; a note here would say the
+          same thing twice in two different vocabularies.
+        * minimisation -- checked before `_elapsed_ps` is even called, matching that
+          function's own run_type-before-stats order (see
+          test_a_minimisation_is_recognised_by_run_type_before_stats_are_ever_read). A min
+          mdout legitimately has no elapsed time and never had one; noting it would send a
+          user to go investigate a stage with nothing wrong with it, which is the test
+          `test_a_minimisation_gets_no_note_despite_never_having_an_elapsed_time` pins.
+        """
+        if self.mdout is None or self.mdout.details is None:
+            return []
+        if getattr(self.mdout.details, "run_type", None) == "Minimization":
+            return []
+        if _elapsed_ps(self) is not None:
+            return []
+        return [f"INFO: Elapsed time for {self.name} could not be measured "
+                "(mdout present but unusable)."]
 
     def _add_continuity_note(self, message: str) -> None:
         self.continuity.append(message)
@@ -632,6 +670,13 @@ class SimulationProtocol:
         # and pydantic coerces, exactly as it already does for `stage_count`.
         if len(members) >= 2:
             out["lineage_count"] = float(len(members) - (1 if UNTAGGED in members else 0))
+        # Emitted only when the document holds at least one queued run, so a document with
+        # none reports the totals it always did. `queued_count` is what makes a "smaller
+        # total than before" report distinguishable from "something broke": this many runs
+        # contributed nothing because they never ran, not because the arithmetic changed.
+        queued = sum(1 for s in self.stages if s.status == "queued")
+        if queued:
+            out["queued_count"] = float(queued)
         return out
 
     def lineage_totals(self) -> Dict[str, Dict[str, float]]:
@@ -1157,6 +1202,39 @@ def _parse_mdout(path, stage, *, strict):
     return parsed
 
 
+def _looks_queued(stage: SimulationStage, has_mdin: bool, has_mdout: bool) -> bool:
+    """Whether `stage` is queued: set up and never executed.
+
+    Called with the same two file-presence facts (was an mdin declared, was an mdout
+    declared) both engine entry points already have on hand while they are building the
+    stage — one call site each, so the rule cannot drift between the manifest path and the
+    scan path the way two independently written copies of a chaining rule already have
+    (see the note on `crosses_lineage`'s import above). `stage.mdin` must already be
+    parsed by the time this is called.
+
+    `has_mdin and not has_mdout` alone is not enough. `sys021_tree`'s stray `cpptraj.in`
+    satisfies exactly that and is not a run: it is a leftover cpptraj post-processing
+    script that the extension-based file typing reads as an mdin. `MdinParser` never
+    raises on content it does not recognise — same tolerant-parsing shape as
+    `parse_mdout`, documented on `_elapsed_ps` — so a non-AMBER file with a `.in`/`.mdin`
+    extension parses to a `MdinMetadata` with an empty `cntrl_parameters`, because nothing
+    in it ever matched a `&cntrl` namelist. A genuine AMBER mdin, minimisation or
+    dynamics, always has one — `nstlim`-based production and `maxcyc`-based minimisation
+    both populate it, which is why this checks `cntrl_parameters` rather than the
+    production-specific `length_steps` alone. That refinement is what keeps `cpptraj` out
+    of `test_a_stem_with_an_mdin_and_no_mdout_is_marked_queued`'s five-name list.
+
+    A declared mdin that fails to parse at all (`stage.mdin is None`, a missing or
+    unreadable file, recorded as a `FileLoadError`) reads as NOT queued: that is a broken
+    reference, already flagged through `degraded`/`load_errors`, and a status implying "a
+    real run is waiting to happen" would be a second, misleading claim about the same
+    file.
+    """
+    return (has_mdin and not has_mdout
+            and stage.mdin is not None and stage.mdin.details is not None
+            and bool(getattr(stage.mdin.details, "cntrl_parameters", None)))
+
+
 def _manifest_to_stages(
     manifest: Dict[str, Dict[str, str]] | List[Dict[str, str]],
     directory: Optional[str],
@@ -1251,6 +1329,9 @@ def _manifest_to_stages(
             stage.inpcrd = _safe_parse(InpcrdParser, resolved["inpcrd"], "inpcrd", stage, strict=strict)
             if stage.inpcrd is not None:
                 stage.restart_path = resolved["inpcrd"]
+
+        if _looks_queued(stage, "mdin" in resolved, "mdout" in resolved):
+            stage.status = "queued"
 
         restart_source = None
         if restart_files:
@@ -2073,6 +2154,9 @@ def auto_discover(
             stage.inpcrd = _safe_parse(InpcrdParser, file_kinds["inpcrd"], "inpcrd", stage, strict=strict)
             if stage.inpcrd is not None:
                 stage.restart_path = file_kinds["inpcrd"]
+
+        if _looks_queued(stage, "mdin" in file_kinds, "mdout" in file_kinds):
+            stage.status = "queued"
 
         # Try content-based role inference if still no role
         if not stage.stage_role:

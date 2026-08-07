@@ -257,6 +257,30 @@ def test_an_empty_lineage_tag_loads_as_untagged():
     assert "lineage" not in simulation_to_payload(back)["steps"][1]
 
 
+# --- queued runs: the status a step carries ---------------------------------
+#
+# Two brief-originated defects fixed here rather than reproduced (see progress.md for the
+# same class of issue on Tasks 1 and 2): `Simulation` takes no `name` kwarg, and `steps` is
+# a top-level key of the payload, not nested under `phases` -- `payload["steps"][0]`, the
+# access every other round-trip test in this file already uses (e.g.
+# `test_lineage_round_trips_through_the_v2_payload` above), not
+# `payload["phases"][0]["steps"][0]`.
+
+def test_status_round_trips_through_the_v2_payload():
+    sim = Simulation(phases=[Phase(id="p1", name="Production", role="production",
+                                   steps=[Step(id="s1", name="prod_0002",
+                                               status="queued")])])
+    payload = simulation_to_payload(sim)
+    assert payload["steps"][0]["status"] == "queued"
+    assert payload_to_simulation(payload) == sim
+
+
+def test_a_step_with_no_status_keeps_the_payload_it_always_had():
+    sim = Simulation(phases=[Phase(id="p1", name="Production", role="production",
+                                   steps=[Step(id="s1", name="prod_0001")])])
+    assert "status" not in simulation_to_payload(sim)["steps"][0]
+
+
 def test_lineage_survives_the_legacy_restart_path_rewrite():
     """_adopt_legacy_restart_paths rebuilds InputCoords wholesale on every load, which is
     why the tag lives on the Step: anything stored on the coords is dropped here."""

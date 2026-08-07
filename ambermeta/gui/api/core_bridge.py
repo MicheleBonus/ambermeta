@@ -69,14 +69,19 @@ def document_to_payload(stages: List[Dict[str, Any]], settings: Dict[str, Any],
             entry["stage_role"] = role
         # This whitelist is the gate: a key that is not copied out here never reaches
         # _manifest_to_stages, so tagging the step and flattening the tag would both be
-        # silent no-ops without these three lines. Only `lineage` is really conditional —
-        # `step_id` is set on every step and `parent_id` on every chained one, so every
-        # document's engine payload carries those two. That is deliberate rather than
-        # sloppy: they are how a lineage head is measured against its real producer, and
-        # withholding them from untagged documents would only mean recomputing them the
-        # moment one tag appeared. This payload is in-memory input to `auto_discover` and
-        # is never serialised, so it is not part of any on-disk shape.
-        for provenance in ("lineage", "step_id", "parent_id"):
+        # silent no-ops without these four lines. `lineage` and `status` are really
+        # conditional — `step_id` is set on every step and `parent_id` on every chained
+        # one, so every document's engine payload carries those two. That is deliberate
+        # rather than sloppy: they are how a lineage head is measured against its real
+        # producer, and withholding them from untagged documents would only mean
+        # recomputing them the moment one tag appeared. This payload is in-memory input to
+        # `auto_discover` and is never serialised, so it is not part of any on-disk shape.
+        #
+        # `status`'s own truthiness guard is what keeps
+        # test_an_untagged_step_adds_no_key_to_the_engine_payload green: the default is
+        # `None`, which is falsy, so an ordinary step contributes no `status` key here
+        # either — the same emit-when-set rule `_step_payload` enforces on the document.
+        for provenance in ("lineage", "step_id", "parent_id", "status"):
             val = s.get(provenance)
             if val:
                 entry[provenance] = val
@@ -368,6 +373,7 @@ def _flatten_simulation(sim):
                 # restart *path*, which several steps can share, so the edge itself cannot
                 # be recovered from it downstream.
                 "lineage": s.lineage,
+                "status": s.status,
                 "parent_id": s.input_coords.ref if s.input_coords.source == "step" else None,
                 "prmtop": topo_by_id.get(s.topology) if s.topology else None,
                 "mdin": s.mdin, "mdout": s.mdout, "mdcrd": s.mdcrd, "inpcrd": inpcrd,

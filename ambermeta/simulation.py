@@ -47,6 +47,16 @@ class Step:
     # not on input_coords because _adopt_legacy_restart_paths and both relink_restarts
     # branches rebuild InputCoords wholesale, which would silently drop it.
     lineage: Optional[str] = None
+    # Whether this run produced output. The only non-default value is "queued": an mdin
+    # that was set up and never executed. It lives on Step rather than being derived at
+    # read time because _adopt_legacy_restart_paths rebuilds InputCoords wholesale on
+    # every load, and anything stored there is dropped on the next one.
+    #
+    # NOT inferred in _step_payload. The hand-written manifest fixture holds a step with
+    # an mdin and no mdout whose golden block has no status key and is compared with ==;
+    # inferring at payload time would rewrite it. Inference belongs to discover and to the
+    # engine, which have the files in front of them.
+    status: Optional[str] = None
     expected_gap_ps: Optional[float] = None
     gap_tolerance_ps: Optional[float] = None
     notes: List[str] = field(default_factory=list)
@@ -86,6 +96,8 @@ def _step_payload(step: Step, phase_id: str, order: int) -> Dict[str, Any]:
         data["rst"] = step.rst
     if step.lineage is not None:
         data["lineage"] = step.lineage
+    if step.status is not None:
+        data["status"] = step.status
     if step.expected_gap_ps is not None or step.gap_tolerance_ps is not None:
         data["gaps"] = {"expected": step.expected_gap_ps, "tolerance": step.gap_tolerance_ps}
     return data
@@ -133,12 +145,16 @@ def payload_to_simulation(payload: Dict[str, Any]) -> Simulation:
         # crash the first caller that sorts or concatenates tags.
         lineage = s.get("lineage")
         lineage = None if lineage is None else (str(lineage) or None)
+        # An unrecognised spelling reads as no status rather than raising, matching the
+        # "a skipped file costs a note and exit 0" fault tolerance the rest of the loader has.
+        status = s.get("status")
+        status = status if status == "queued" else None
         step = Step(
             id=s["id"], name=s.get("name", ""), topology=s.get("topology"),
             input_coords=InputCoords(source=ic.get("source", "starting_structure"),
                                      ref=ic.get("ref"), path=ic.get("path")),
             mdin=s.get("mdin"), mdout=s.get("mdout"), mdcrd=s.get("mdcrd"),
-            rst=s.get("rst"), lineage=lineage,
+            rst=s.get("rst"), lineage=lineage, status=status,
             expected_gap_ps=gaps.get("expected"), gap_tolerance_ps=gaps.get("tolerance"),
             notes=list(s.get("notes", []) or []),
         )

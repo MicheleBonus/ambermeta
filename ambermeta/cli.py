@@ -263,10 +263,13 @@ def _print_simulation(sim, report=None, *, verbose: bool = False,
                 f"{k}={getattr(step, k)}" for k in ("mdin", "mdout", "mdcrd") if getattr(step, k)
             )
             # Emit-when-set, like every other spelling of the tag: an untagged document's
-            # output is unchanged character for character.
+            # output is unchanged character for character. `status` is the only other
+            # field on Step with the same discipline — a step that ran carries none, so
+            # this line is unchanged for it too, and only a queued step gains the suffix.
             tag = f"  lineage={step.lineage}" if step.lineage else ""
+            status = f"  status={step.status}" if step.status else ""
             line = (f"  - {step.name}  topology={topo}"
-                    f"  input={_input_source_label(sim, step)}{tag}")
+                    f"  input={_input_source_label(sim, step)}{tag}{status}")
             _out(line + (f"  ({files})" if files else ""))
     if report is not None:
         if verbose:

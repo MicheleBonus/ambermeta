@@ -71,6 +71,10 @@ class StepModel(BaseModel):
     # single member. Written by `discover`'s inference or by editing the manifest, so the
     # GUI only displays it.
     lineage: Optional[str] = None
+    # Whether this run produced output. The only value ever emitted is "queued": an mdin
+    # that was set up and never executed. Written by discover's inference or by the
+    # engine, same as `lineage` above; the GUI only displays it.
+    status: Optional[str] = None
     # The coordinate file this step actually reads, resolved through the chain. Read-only:
     # the GUI shows it without re-implementing the resolution rules.
     resolved_input_coords: Optional[str] = None
