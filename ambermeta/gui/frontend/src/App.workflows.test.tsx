@@ -7,7 +7,7 @@ import { server, emptyDocument } from "@/test/server";
 import { queryClient } from "@/api/queryClient";
 import { makeStep } from "@/test/factories";
 import App from "@/App";
-import type { DiscoverResult, ValidationReport } from "@/types";
+import type { DiscoverResult, LineageProposalResponse, ValidationReport } from "@/types";
 
 function renderApp() {
   queryClient.clear();
@@ -111,5 +111,69 @@ describe("top-bar workflows", () => {
     renderApp();
     await userEvent.click(await screen.findByRole("button", { name: "Save" }));
     await waitFor(() => expect(saved).toBe(true));
+  });
+});
+
+describe("lineage proposal wiring (P2.2/P2.3)", () => {
+  it("shows the proposal after Discover instead of applying it", async () => {
+    const result: DiscoverResult = {
+      document: { ...emptyDocument, dirty: true },
+      suggestions: [],
+      warnings: [],
+      proposal: {
+        segment_index: 1,
+        segments: [["equil", "prod"], ["01", "02"]],
+        members: [
+          { tag: "01", step_ids: ["a1"], sources: [{ directory: "equil/01", run_count: 18 }] },
+          { tag: "02", step_ids: ["b1"], sources: [{ directory: "equil/02", run_count: 18 }] },
+        ],
+        handoffs: [],
+      },
+    };
+    server.use(http.post("/api/document/discover", () => HttpResponse.json(result)));
+    renderApp();
+    await userEvent.click(await screen.findByRole("button", { name: "Discover" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Run discover" }));
+    expect(await screen.findByText(/repeated members/)).toBeInTheDocument();
+  });
+
+  it("opens a working manual picker from Define replicas… on a tree the smart inference declines", async () => {
+    // Mirrors build_lineage_proposal's real contract (routes.py, core_bridge.py): a bare
+    // call (segment_index omitted) runs the cohort/nesting inference and can refuse --
+    // that refusal is the whole reason this button exists (a nested sweep, a flat chain
+    // with no directory segment). An explicit segment_index never refuses that way; it
+    // tags every run by its own value at that index. This handler distinguishes the two
+    // exactly as the real route does, so this test actually exercises App's fallback
+    // (mutate(undefined) then mutate(0)) rather than a stub that cannot tell them apart.
+    server.use(
+      http.post("/api/steps/infer-lineages", async ({ request }) => {
+        const body = (await request.json()) as { segment_index?: number | null };
+        if (body.segment_index == null) {
+          const declined: LineageProposalResponse = {
+            proposal: null,
+            warnings: ["No lineages inferred: the run names do not distinguish members by "
+              + "one directory segment. Tag the bands by hand."],
+          };
+          return HttpResponse.json(declined);
+        }
+        const seeded: LineageProposalResponse = {
+          proposal: {
+            segment_index: body.segment_index,
+            segments: [["min", "heat"]],
+            members: [
+              { tag: "min", step_ids: ["s1"], sources: [{ directory: "min", run_count: 1 }] },
+              { tag: "heat", step_ids: ["s2"], sources: [{ directory: "heat", run_count: 1 }] },
+            ],
+            handoffs: [],
+          },
+          warnings: [],
+        };
+        return HttpResponse.json(seeded);
+      }),
+    );
+    renderApp();
+    await userEvent.click(await screen.findByRole("button", { name: "Define replicas…" }));
+    expect(await screen.findByText(/which part of the path names the replica/i)).toBeInTheDocument();
+    expect(screen.getByLabelText("tag for min")).toBeInTheDocument();
   });
 });
