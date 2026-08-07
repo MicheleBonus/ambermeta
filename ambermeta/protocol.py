@@ -2412,7 +2412,6 @@ def write_stats_csv(protocol: "SimulationProtocol", filepath: str) -> None:
         if stats:
             row["time_start_ps"] = getattr(stats, "time_start", "")
             row["time_end_ps"] = getattr(stats, "time_end", "")
-            row["duration_ns"] = getattr(stats, "duration_ns", "")
             row["frame_count"] = getattr(stats, "count", "")
             for prefix, attr in (("temp", "temp_stats"), ("pressure", "pressure_stats"),
                                  ("density", "density_stats"), ("etot", "etot_stats")):
@@ -2421,6 +2420,25 @@ def write_stats_csv(protocol: "SimulationProtocol", filepath: str) -> None:
                     mean, std = series.get_stats()
                     row[f"{prefix}_avg"] = mean if mean is not None else ""
                     row[f"{prefix}_std"] = std if std is not None else ""
+        # `duration_ns` used to read `stats.duration_ns`, i.e. `(time_end - time_start) /
+        # 1000` -- and `time_start` is the first PRINTED frame, one ntpr interval after the
+        # true begin (the same trap documented at `_check_stage_pair`). That made this CSV
+        # disagree with `summary.json`'s `time_ps` for the identical run: 99.5 ns here
+        # against a true 100.0 ns there on the back-compat fixture, both shipped in the
+        # same artifact bundle. `_elapsed_ps` is the one place `time_end -
+        # mdout_header.begin_time_ps` is computed now; calling it here, rather than
+        # re-deriving the number from `stats` alone, is what keeps this column and
+        # `summary.json`'s total from drifting apart again -- the agreement is structural,
+        # not two formulas that happen to match today.
+        #
+        # `None` covers four situations -- queued, minimisation, unreadable, no stated
+        # begin (see `_elapsed_ps`'s docstring) -- that are all truthfully "unknown", not
+        # zero, so the column is left blank rather than filled with a `0.0` that would
+        # read as "this stage ran no time" instead of "this stage's time could not be
+        # determined".
+        elapsed = _elapsed_ps(stage)
+        if elapsed is not None:
+            row["duration_ns"] = elapsed / 1000.0
         rows.append(row)
 
     with open(filepath, "w", newline="", encoding="utf-8") as fh:

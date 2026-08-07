@@ -12,7 +12,9 @@ summing `time_end` treats an absolute clock reading as a duration, and
 """
 from __future__ import annotations
 
-from ambermeta.protocol import auto_discover, _elapsed_ps
+import csv
+
+from ambermeta.protocol import auto_discover, _elapsed_ps, write_stats_csv
 
 
 # --- the core arithmetic ---
@@ -149,3 +151,39 @@ def test_a_present_but_malformed_mdout_contributes_nothing(tmp_path):
     assert stage.mdout.details.stats.count == 0
     assert _elapsed_ps(stage) is None
     assert protocol.totals()["time_ps"] == 0.0
+
+
+# --- the CSV artifact must agree with the JSON artifact ---
+
+def test_the_stats_csv_duration_agrees_with_the_summary_total(sys021_tree, tmp_path):
+    """`summary.json`'s `totals()["time_ps"]` and `stats.csv`'s `duration_ns` column used
+    to come from two different formulas and quietly disagreed: `stats.csv` read
+    `stats.duration_ns` (`time_end - time_start`), short by one ntpr interval per chunk,
+    while `totals()` used `time_end - begin_time_ps`. On the back-compat fixture that was
+    99.5 ns against a true 100.0 ns for the identical run, both numbers shipped in the same
+    artifact bundle a researcher would plot from.
+
+    Both now call `_elapsed_ps(stage)` -- `write_stats_csv` directly, `_sum_stages`
+    through the same function -- so this is not "the two numbers happen to match today",
+    it is "the two numbers cannot come apart without one of them stopping to call
+    `_elapsed_ps`". Recomputing the CSV's total independently (summing the column back up,
+    rather than re-deriving it a third way) and comparing it against `totals()["time_ps"]`
+    is what a future formula change on either side would have to break.
+    """
+    protocol = auto_discover(str(sys021_tree), recursive=True)
+    out = tmp_path / "stats.csv"
+    write_stats_csv(protocol, str(out))
+    rows = list(csv.DictReader(out.open(encoding="utf-8")))
+
+    # Every ran stage wrote a duration; every queued one left the cell blank -- not "0.0",
+    # which would misreport "no time" as a measured fact rather than an absent one.
+    ran = [r for r in rows if r["duration_ns"] != ""]
+    queued = [r for r in rows if r["duration_ns"] == ""]
+    assert len(ran) + len(queued) == len(rows)
+    # One queued chunk per replica (5), plus the stray `cpptraj.in` sys021_tree's docstring
+    # says gets typed as a queued mdin by extension -- both are "no mdout", so both belong
+    # in this bucket rather than the ran one.
+    assert len(queued) == 6
+
+    csv_total_ns = sum(float(r["duration_ns"]) for r in ran)
+    assert csv_total_ns * 1000.0 == protocol.totals()["time_ps"]
