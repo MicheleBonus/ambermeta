@@ -161,7 +161,7 @@ The Inspector's content depends on what's selected:
 
 Every inferred thing is surfaced as an explainable suggestion rather than applied silently — this is the draft-first design: roles, the HMR topology, the starting structure, sequence holes, and continuity gaps all show up here. Suggestions are grouped:
 
-- **Needs you** — something the tool can't resolve on its own (`missing_run`: a numbered-sequence hole; `continuity_gap`: a genuine start/end mismatch between consecutive steps; `topology_confirm`: more than one topology in the pool, confirm which is HMR). Each card offers **Accept** / **Adjust** / **Ignore**.
+- **Needs you** — something the tool can't resolve on its own (`missing_run`: a numbered-sequence hole; `continuity_gap`: a genuine start/end mismatch between consecutive steps; `topology_confirm`: more than one topology in the pool, confirm which is HMR; `lineage_needs_you`: the directory layout could not be reconciled into a grouping, on a tree that plausibly had one to declare). Each card offers **Accept** / **Adjust** / **Ignore**.
 - **Applied** — something already reflected in the draft, shown for transparency (`starting_structure`, `role_guess`, `lineage_group`: the run lineages the document declares, how many runs each holds, and how many carry none). Each card offers **Dismiss**, plus **Undo** (calls the server's undo) when the suggestion says it can be undone.
 
 Every card shows a `title` and a monospace `evidence` string explaining the inference. Dismissing a card only hides it in this browser session — it does not mutate the document; **Undo** is the only action here that does.
@@ -185,7 +185,9 @@ A `missing_run` card carries a `lineage` field naming the member it is scoped to
   "actions": ["Undo"] }
 ```
 
-That card reports what the document **declares**, not where the tags came from — nothing after the fact can tell an inferred tag from a hand-written one, so a manifest whose lineages you typed yourself is described the same way. `discover` announces its own inference by running this over the draft it just built.
+That card reports what the document **declares**, not where the tags came from — nothing after the fact can tell an inferred tag from a hand-written one, so a manifest whose lineages you typed yourself is described the same way.
+
+**Discover does not declare anything.** The GUI's Discover proposes a grouping — a `proposal` beside `suggestions` (§11) — without writing it, so `lineage_group` does not appear right after it; a fresh scan of your directory tree is not yet a claim you've made about your data. Accepting a member (`PATCH /steps/lineage`, one call per proposed tag) is what turns the proposal into a declaration, at which point the next validate finds real tags on the steps and shows this card same as it would for a manifest whose lineages you typed by hand. A tree the inference cannot reconcile gets `lineage_needs_you` instead, in `suggestions`, right away — that card fires whether or not anything is ever accepted.
 
 (Both blocks above elide the always-present `step_id`/`phase_id`/`base`/`missing`/`lineage` keys where they are `null` — no route sets `exclude_none`, so every key is on the wire on every card.)
 
@@ -324,7 +326,7 @@ The frontend talks to a small REST API under `/api` (`ambermeta/gui/api/routes.p
 | `POST` | `/api/document/open` | `{ path }` | Document (history reset); `404` if the file doesn't exist, `400` if it isn't a v2 YAML/JSON manifest |
 | `POST` | `/api/document/save` | `{ path?, format? }` | `{ document, warnings[] }`; `400` if no path is known and none is given |
 | `POST` | `/api/document/preview` | `{ format }` | `{ content, warnings[], format }` |
-| `POST` | `/api/document/discover` | `{ recursive, pattern? }` | `{ document, suggestions[], warnings[] }` |
+| `POST` | `/api/document/discover` | `{ recursive, pattern? }` | `{ document, suggestions[], proposal, warnings[] }` |
 
 ### Topologies & starting structure
 
@@ -384,7 +386,7 @@ file slot. And `PATCH /api/steps/lineage` tags many steps at once:
 | Method | Path | Body | Returns |
 |---|---|---|---|
 | `PATCH` | `/api/steps/lineage` | `{ ids[], lineage }` — `lineage: null` clears | Document (`404` naming the first unknown id) |
-| `POST` | `/api/steps/infer-lineages` | — | Document; `warnings[]` says so when the layout was too ambiguous to tag |
+| `POST` | `/api/steps/infer-lineages` | `{ segment_index? }` | `{ proposal, warnings[] }` — nothing is written; `warnings[]` says so when the layout was too ambiguous to tag |
 
 The bulk route exists because a loop of per-step `PUT`s is not merely slower: every write deep-copies
 the document onto the undo stack, and `history_limit` is 100, so annotating a 20 × 10 campaign evicts
@@ -433,7 +435,11 @@ $ curl -s http://127.0.0.1:8799/api/document
 $ curl -s -X POST http://127.0.0.1:8799/api/document/discover \
     -H 'Content-Type: application/json' -d '{"recursive": true}'
 # -> {"document": {... 1 topology, starting_structure set, 1 phase "Production" with 5 chained steps ...},
-#     "suggestions": [{"kind":"starting_structure", ...}, {"kind":"role_guess", ...}], "warnings": []}
+#     "suggestions": [{"kind":"starting_structure", ...}, {"kind":"role_guess", ...}],
+#     "proposal": null, "warnings": []}
+# `proposal` is null here because a single flat directory has nothing for the layout
+# inference to name a member from — it is not `null` because tags were withheld; see
+# `discover_draft`'s `apply_tags` in api.md for why nothing is tagged either way.
 
 $ curl -s "http://127.0.0.1:8799/api/files?recursive=false" | head -c 200
 [{"path":"...CH3L1_HUMAN_6NAG.crd","name":"CH3L1_HUMAN_6NAG.crd","file_type":"mdcrd",

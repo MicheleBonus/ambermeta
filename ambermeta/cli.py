@@ -348,7 +348,12 @@ def _discover_command(args: argparse.Namespace) -> int:
         print(Colors.error(f"ERROR: Directory not found: {directory}"), file=sys.stderr)
         return 1
 
-    result = discover_draft(directory, recursive=args.recursive, pattern=args.pattern)
+    # apply_tags=True (also the default): `discover --write`'s manifest IS this command's
+    # confirmation step, so unlike the GUI's Discover it writes the inferred grouping
+    # straight onto the steps. Stated explicitly here rather than left to the default so
+    # this call site reads as a decision, not an oversight.
+    result = discover_draft(directory, recursive=args.recursive, pattern=args.pattern,
+                            apply_tags=True)
     sim = result["simulation"]
     if not sim.phases:
         _out("No simulation files discovered; nothing to draft.")

@@ -96,9 +96,25 @@ def _discovered(client):
     assert client.post("/api/document/discover", json={"recursive": True}).status_code == 200
 
 
+def _discovered_and_tagged(client):
+    """Discover, then accept every member the proposal names — one PATCH per tag.
+
+    Discover itself writes nothing now (the GUI route calls `discover_draft(...,
+    apply_tags=False)`), so a test that wants `lineages`/`lineage_count` actually populated
+    has to accept the proposal first, the same way the real GUI's proposal strip would:
+    `PATCH /steps/lineage` once per member, `{ids: step_ids, lineage: tag}`.
+    """
+    r = client.post("/api/document/discover", json={"recursive": True})
+    assert r.status_code == 200
+    for member in r.json()["proposal"]["members"]:
+        assert client.patch("/api/steps/lineage",
+                            json={"ids": member["step_ids"], "lineage": member["tag"]}
+                            ).status_code == 200
+
+
 def test_validate_carries_the_breakdown(replica_tree):
     c = _client(replica_tree)
-    _discovered(c)
+    _discovered_and_tagged(c)
     body = c.post("/api/validate").json()
     assert body["totals"]["lineage_count"] == 3.0    # a float map coerces; see below
     assert sorted(body["lineages"]) == ["rep1", "rep2", "rep3"]
@@ -115,7 +131,7 @@ def test_plan_carries_the_breakdown_and_still_returns_200(replica_tree, tmp_path
     names none of them. That is why the breakdown sits beside `totals` and not inside it:
     `totals` is `Dict[str, float]` and a nested dict raises."""
     c = _client(replica_tree)
-    _discovered(c)
+    _discovered_and_tagged(c)
     summary = tmp_path / "s.json"
     r = c.post("/api/plan", json={"summary_path": str(summary)})
     assert r.status_code == 200, r.text
@@ -185,7 +201,7 @@ def test_lineage_count_is_a_float_on_the_wire_and_an_int_in_the_artifact(replica
     artifact is a plain dict and is not bound by that — but `step_count` inside
     `LineageTotals` *is* declared an int, which is why the breakdown is its own model."""
     c = _client(replica_tree)
-    _discovered(c)
+    _discovered_and_tagged(c)
     assert c.post("/api/validate").json()["totals"]["lineage_count"] == 3.0
 
     out = tmp_path / "summary.json"

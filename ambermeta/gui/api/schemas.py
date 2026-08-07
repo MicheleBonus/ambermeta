@@ -265,7 +265,11 @@ class FailedFile(BaseModel):
 
 class Suggestion(BaseModel):
     id: str
-    kind: str        # missing_run|continuity_gap|topology_confirm|restart_link|role_guess|starting_structure|lineage_group
+    # missing_run|continuity_gap|topology_confirm|restart_link|role_guess|starting_structure
+    # |lineage_group|lineage_needs_you — `lineage_needs_you` is the card a tree the layout
+    # inference refuses gets, when the tree plausibly had members to declare (see
+    # `discover_draft`'s `rival_dirs` gate). `needs_you` is never a `kind` — see `severity`.
+    kind: str
     severity: str    # needs_you|applied|info
     title: str
     evidence: str
@@ -291,6 +295,56 @@ class LineageTotals(BaseModel):
     steps: float = 0.0
     time_ps: float = 0.0
     step_count: int = 0
+
+
+# ---- Lineage proposal: what Discover found, never what it wrote (P2.2) ----
+
+class ProposedSource(BaseModel):
+    """One directory a proposed member's runs came from, and how many of them."""
+    directory: str
+    run_count: int
+
+
+class ProposedMember(BaseModel):
+    """One member `core_bridge.build_lineage_proposal` proposes — NOT a declared lineage.
+
+    Nothing here is on any step's `lineage` yet; `step_ids` is what a PATCH /steps/lineage
+    accepting this member would tag, and `sources` is the evidence a reviewer reads before
+    doing that — which directories fed it and how many runs each held.
+    """
+    tag: str
+    step_ids: List[str] = Field(default_factory=list)
+    sources: List[ProposedSource] = Field(default_factory=list)
+
+
+class ProposedHandoff(BaseModel):
+    """One cross-directory restart handoff read off AMBER's own File Assignments block.
+
+    Populated starting with the handoff-proposal task (P2.4), not this one — declared now
+    so `LineageProposal.handoffs` has a shape from the day the wire contract exists, and
+    the field is never a silent extra='ignore' drop the moment it starts carrying data.
+    """
+    consumer_id: str
+    producer_id: str
+    consumer: str
+    producer: str
+    evidence: str
+
+
+class LineageProposal(BaseModel):
+    """What Discover — or the layout inference re-run on the open document — proposes.
+
+    Never written: nothing in this model corresponds to a `Step.lineage` that has actually
+    been set. See `core_bridge.build_lineage_proposal` for exactly what `segment_index` and
+    `segments` count over and where the offered indices come from — a segment picker
+    renders directly off `segments`, so the server, not the frontend, owns that math.
+    """
+    segment_index: int
+    segments: List[List[str]] = Field(default_factory=list)
+    members: List[ProposedMember] = Field(default_factory=list)
+    # Always present, possibly empty, rather than omitted — so the wire shape does not
+    # change the day the handoff-proposal task starts populating it.
+    handoffs: List[ProposedHandoff] = Field(default_factory=list)
 
 
 class PlanResult(BaseModel):
@@ -397,6 +451,37 @@ class DiscoverRequest(BaseModel):
 class DiscoverResult(BaseModel):
     document: DocumentResponse
     suggestions: List[Suggestion] = Field(default_factory=list)
+    # Optional so the field is absent-tolerant on the wire — every discover response
+    # carries the key (pydantic serialises a declared field whether or not it was set),
+    # but `null` is a legitimate value: a tree the layout inference refuses proposes
+    # nothing. The GUI route calls `discover_draft(..., apply_tags=False)`, so this is the
+    # ONLY place the grouping reaches the client at all until it is accepted.
+    proposal: Optional[LineageProposal] = None
+    warnings: List[str] = Field(default_factory=list)
+
+
+class InferLineagesRequest(BaseModel):
+    """Which path segment to try, or `None` to run the layout inference `discover` uses.
+
+    `segment_index` indexes `stem.split("/")` on the OPEN document's own step names — the
+    same posix stems `discover` built them from — directory parts first, then the run stem
+    itself. See `core_bridge.build_lineage_proposal` for exactly what index a given value
+    selects and where the offered indices (`LineageProposal.segments`) come from; this is
+    the segment-picker's "try this column" request.
+    """
+    segment_index: Optional[int] = None
+
+
+class LineageProposalResponse(BaseModel):
+    """`POST /steps/infer-lineages`'s reply: a proposal, or none, plus why not.
+
+    Its own model rather than a reuse of `DocumentResponse` — this route no longer touches
+    the document at all (it only reads it), so returning one would claim an edit that never
+    happened. Both fields are declared, not just `proposal`, because a bare
+    `Optional[LineageProposal]` has no `warnings` field at all and is `null` on exactly the
+    refusal path two existing tests read `body["warnings"][0]` off.
+    """
+    proposal: Optional[LineageProposal] = None
     warnings: List[str] = Field(default_factory=list)
 
 

@@ -16,6 +16,7 @@ from .schemas import (
     StepCreate, StepUpdate, StepMove, StepReorder, StepsLineage, AssignRequest,
     ValidationReport,
     FileMetadata, FileInfo, RawFile, Suggestion, PlanRequest, PlanResult,
+    LineageProposal, InferLineagesRequest, LineageProposalResponse,
 )
 
 router = APIRouter()
@@ -102,15 +103,27 @@ def preview_document(req: PreviewRequest) -> PreviewResponse:
 
 @router.post("/document/discover", response_model=DiscoverResult)
 def discover_document(req: DiscoverRequest) -> DiscoverResult:
+    """Scan the base directory into a fresh draft. Proposes a lineage grouping; writes none
+    of it. `discover_draft(..., apply_tags=False)` is what makes that true here — the CLI's
+    own `discover` calls the same function with the opposite default and writes it straight
+    onto the steps, because a manifest it writes with `--write` is the user's confirmation
+    and the GUI's PATCH /steps/lineage is the GUI's.
+    """
     store = get_store()
     sim0, settings, manifest_path, base_directory = store.snapshot()
     _within_base(base_directory, base_directory)
-    out = core_bridge.discover_draft(base_directory, recursive=req.recursive, pattern=req.pattern)
+    out = core_bridge.discover_draft(base_directory, recursive=req.recursive,
+                                     pattern=req.pattern, apply_tags=False)
     store.replace(simulation=out["simulation"], settings=settings,
                   manifest_path=manifest_path, dirty=True, reset_history=False)
-    return DiscoverResult(document=store.to_response(),
-                          suggestions=[Suggestion(**s) for s in out["suggestions"]],
-                          warnings=out["warnings"])
+    return DiscoverResult(
+        document=store.to_response(),
+        suggestions=[Suggestion(**s) for s in out["suggestions"]],
+        # `out["proposal"]` is already the exact shape `LineageProposal` declares
+        # (`core_bridge.build_lineage_proposal`'s return); `None` passes through as `None`
+        # rather than as `LineageProposal(**None)`, which would raise.
+        proposal=LineageProposal(**out["proposal"]) if out["proposal"] else None,
+        warnings=out["warnings"])
 
 
 @router.post("/plan", response_model=PlanResult)
@@ -395,22 +408,28 @@ def set_step_lineages(req: StepsLineage) -> DocumentResponse:
     return store.to_response()
 
 
-@router.post("/steps/infer-lineages", response_model=DocumentResponse)
-def infer_lineages() -> DocumentResponse:
-    """Apply the directory-layout inference to the open document, in one undo entry.
+@router.post("/steps/infer-lineages", response_model=LineageProposalResponse)
+def infer_lineages(req: InferLineagesRequest = InferLineagesRequest()) -> LineageProposalResponse:
+    """Propose a grouping for the OPEN document. Writes nothing.
 
-    Reports through the same warnings channel every other edit uses, including when it
-    tagged nothing: a layout this refuses is the common case, and an action that appears
-    to do nothing and says nothing reads as broken.
+    Re-runs the layout inference — or, given `segment_index`, the picker's "try this
+    column" — over the document's own step names, so this works whether the document came
+    from a fresh scan, a reopened manifest, or steps built by hand; not just the tree
+    `discover` last touched. Accepting what comes back is a separate step the caller takes
+    explicitly, one `PATCH /steps/lineage` per member — this route never calls it.
+
+    Reports through the same shape on both outcomes (a `LineageProposalResponse`, not a
+    `DocumentResponse`) rather than through the general edit-warnings channel every other
+    route uses: there is no edit here to report warnings ABOUT.
     """
     store = get_store()
-    tagged = store.apply_inferred_lineages()
-    response = store.to_response()
-    if not tagged:
-        response.warnings = list(response.warnings) + [
+    sim, _settings, _manifest_path, _base_directory = store.snapshot()
+    proposal = core_bridge.build_lineage_proposal(sim, segment_index=req.segment_index)
+    if proposal is None:
+        return LineageProposalResponse(proposal=None, warnings=[
             "No lineages inferred: the run names do not distinguish members by one "
-            "directory segment. Tag the bands by hand."]
-    return response
+            "directory segment. Tag the bands by hand."])
+    return LineageProposalResponse(proposal=LineageProposal(**proposal), warnings=[])
 
 
 @router.delete("/steps/{step_id}", response_model=DocumentResponse)

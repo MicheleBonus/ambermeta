@@ -546,11 +546,13 @@ class DocumentStore:
     def apply_inferred_lineages(self) -> int:
         """Tag the steps whose names give the directory layout away. Returns how many.
 
-        The same inference `discover` reports as `[applied]`, offered again because a
-        document reaches the canvas by other routes than a fresh scan — an opened manifest,
-        a tree `discover` was run on before the steps were renamed — and because it refuses
-        far more layouts than it accepts. Everything it refuses stays for the user to tag
-        by hand, which is the point of the tag being declared rather than derived.
+        Not reachable from the HTTP API today: `POST /steps/infer-lineages` used to call
+        this directly, but P2.2 repointed that route to PROPOSE a grouping
+        (`core_bridge.build_lineage_proposal`) rather than apply one, so the caller now
+        goes through `PATCH /steps/lineage` once per accepted member instead. Kept — not
+        deleted — because it is still a legitimate one-shot "just tag it" primitive for a
+        script driving `DocumentStore` directly rather than through the API surface, and
+        because deleting it buys nothing a docstring note doesn't already buy.
         """
         with self.lock:
             steps = [s for _, s in iter_steps(self._doc.simulation)]

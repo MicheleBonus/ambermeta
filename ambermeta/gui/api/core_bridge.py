@@ -299,14 +299,27 @@ def preview_simulation(sim, base_directory, fmt):
     return {"content": content, "warnings": []}
 
 
-def build_suggestions(sim, base_directory):
+def build_suggestions(sim, base_directory, proposed=None):
     from ambermeta.lineages import lineages
     from ambermeta.protocol import sequence_findings
 
     steps = [s for p in sim.phases for s in p.steps]
     # Shared with the `plan --recursive` path, which has stages rather than a document and
     # so cannot come through here at all. One producer, one wording.
-    out = sequence_findings([s.name for s in steps], [s.lineage for s in steps])
+    #
+    # `proposed`, when given, is a proposal's `{stem: tag}` -- never written onto any step
+    # -- that the caller wants the sequence-hole scan to see anyway. `discover_draft`
+    # passes its own proposal here so the GUI's Discover, which tags nothing
+    # (`apply_tags=False`), still surfaces the per-member crashed-replica finding rather
+    # than pooling every run into one complete family the moment tags stop landing on the
+    # steps -- that pooling is exactly what silenced this finding before lineages existed,
+    # and withholding the tag must not bring it back. `s.lineage` is the fallback, not the
+    # override: a document whose tags ARE written (the CLI's default, or any document
+    # post-Accept) needs no `proposed` at all, and the two sources only differ for the one
+    # caller that supplies both.
+    out = sequence_findings(
+        [s.name for s in steps],
+        [(proposed or {}).get(s.name) or s.lineage for s in steps])
 
     def _sug(kind, severity, title, evidence, actions):
         return {"id": f"sug_{len(out) + 1}", "kind": kind, "severity": severity,
@@ -333,11 +346,20 @@ def build_suggestions(sim, base_directory):
     # in the manifest, so the evidence names each member and how many runs it holds and
     # the user can read the claim back off the document.
     #
-    # It says what the document declares, not where the tags came from. This function also
-    # runs from validate_simulation for any open document, so a manifest whose lineages
-    # were typed by hand would be told they had been read off its directories — and after
-    # the fact nothing here can tell an inferred tag from a hand-written one. `discover`
-    # announces its own inference by running on the draft it just built.
+    # It says what the document DECLARES, not where the tags came from or whether they were
+    # ever proposed. This function also runs from validate_simulation for any open
+    # document, so a manifest whose lineages were typed by hand is told the same story a
+    # freshly-tagged one is — after the fact nothing here can tell an inferred tag from a
+    # hand-written one. `ambermeta discover` (and `discover_draft(..., apply_tags=True)`,
+    # its default and the CLI's) announces its own inference by running this over the
+    # draft it just tagged.
+    #
+    # A draft the GUI discovered declares nothing: `discover_draft(..., apply_tags=False)`
+    # is what the GUI route calls, so `lineages(sim)` is empty right after Discover and
+    # this card simply does not fire there. `out["proposal"]` is what stands in for it —
+    # what discovery found, not yet what the document says — until PATCH /steps/lineage
+    # accepts a member, at which point the next validate finds a real declaration and this
+    # card starts firing on it exactly as it would on any hand-tagged manifest.
     #
     # The untagged runs are counted beside the declared members because the count is of
     # declared members only: left unsaid, "3 lineages" reads as covering all nine runs of
@@ -450,7 +472,124 @@ def write_plan_outputs(sim, settings, base_directory, targets: Dict[str, str],
     return result
 
 
-def discover_draft(base_directory, recursive=True, pattern=None):
+def build_lineage_proposal(sim, segment_index=None):
+    """Propose a lineage grouping for `sim`'s CURRENT steps. Writes nothing.
+
+    Reads step NAMES only — the posix stems `discover_draft` builds them from, e.g.
+    `rep1/prod_0001` — so this works for any Simulation: a fresh scan, a manifest reopened
+    from disk, or one hand-edited on the canvas since. `discover_draft` calls this once,
+    right after building the draft, for the object it returns as `"proposal"`.
+    `POST /steps/infer-lineages` calls it again on demand — with or without a caller's own
+    `segment_index` — to re-propose against whatever the OPEN document says right now,
+    which is not necessarily the tree `discover` last scanned.
+
+    `segment_index=None` (the default, and everything `discover_draft` ever passes) runs
+    the same cohort/nesting inference `infer_lineages_from_layout` performs, refusing
+    exactly what that function refuses — ambiguity resolves to no proposal, never to a
+    guess (see its docstring for the rule in full). An explicit `segment_index` instead is
+    the picker's "try this column": every step's stem is tagged by its OWN segment at that
+    index, with no cohort reconciliation and no refusal, because a caller naming an index
+    is asserting the boundary rather than asking the tool to infer one.
+
+    Returns ``None`` — no proposal — when `segment_index` is `None` and the inference
+    tags nothing, or when an explicit `segment_index` reaches no step's stem at all.
+
+    The returned dict: ``{"segment_index": int, "segments": List[List[str]],
+    "members": [{"tag": str, "step_ids": [...], "sources": [{"directory": str,
+    "run_count": int}, ...]}, ...]}``. `segment_index`/`segments` are what a segment
+    picker renders from and are pinned precisely because nothing else specifies them:
+    `segment_index` indexes ``stem.split("/")`` — directory parts, then the run stem
+    itself — and `segments[i]` is the ordered, first-appearance-deduplicated list of
+    values every run stem holds at index `i`. Only indices every run stem actually HAS a
+    part at are offered, which in practice is ``range(the shortest stem's depth)``: a stem
+    short at index i is short at every later index too, so that range never has a gap in
+    it. `members` is in first-appearance order over `sim`'s own step order (phase-major
+    for a multi-member draft, so NOT the order runs were found on disk); a step whose stem
+    the chosen index/inference does not tag is simply absent from every member's
+    `step_ids` — the untagged bucket has no member entry of its own, same as `lineages()`.
+    """
+    from ambermeta.lineages import infer_lineages_from_layout
+    from ambermeta.simulation import iter_steps
+
+    steps = [s for _, s in iter_steps(sim)]
+    stems = [s.name for s in steps]
+    split_stems = [stem.split("/") for stem in stems]
+
+    if segment_index is None:
+        tags = infer_lineages_from_layout(stems)
+        if not tags:
+            return None
+        # Back-solve the one index the tags actually vary at: infer_lineages_from_layout
+        # decides it internally but does not hand it back, and every stem it tagged agrees
+        # with its own tag at exactly that index by construction — so the first index
+        # every tagged stem agrees with simultaneously IS it.
+        tagged = [(stem.split("/"), tag) for stem, tag in tags.items()]
+        shortest_tagged = min(len(parts) for parts, _ in tagged)
+        index = next(i for i in range(shortest_tagged)
+                     if all(parts[i] == tag for parts, tag in tagged))
+    else:
+        index = segment_index
+        tags = {stem: parts[index] for stem, parts in zip(stems, split_stems)
+                if len(parts) > index}
+        if not tags:
+            return None
+
+    shortest_stem = min((len(parts) for parts in split_stems), default=0)
+    segments: List[List[str]] = []
+    for i in range(shortest_stem):
+        ordered: List[str] = []
+        for parts in split_stems:
+            if parts[i] not in ordered:
+                ordered.append(parts[i])
+        segments.append(ordered)
+
+    members: Dict[str, Dict[str, Any]] = {}
+    order: List[str] = []
+    for stem, step in zip(stems, steps):
+        tag = tags.get(stem)
+        if tag is None:
+            continue
+        if tag not in members:
+            members[tag] = {"tag": tag, "step_ids": [], "sources": []}
+            order.append(tag)
+        member = members[tag]
+        member["step_ids"].append(step.id)
+        directory = stem.rpartition("/")[0]
+        source = next((s for s in member["sources"] if s["directory"] == directory), None)
+        if source is None:
+            member["sources"].append({"directory": directory, "run_count": 1})
+        else:
+            source["run_count"] += 1
+
+    return {"segment_index": index, "segments": segments,
+            "members": [members[tag] for tag in order]}
+
+
+def discover_draft(base_directory, recursive=True, pattern=None, apply_tags=True):
+    """Scan `base_directory` into a Simulation draft, with a proposal beside it.
+
+    `apply_tags` decides whether the inferred grouping (see `infer_lineages_from_layout`)
+    is WRITTEN onto `Step.lineage` (`True`, the default) or only PROPOSED, in the returned
+    `"proposal"`, with every step left untagged (`False`). The two callers want opposite
+    answers and both are load-bearing:
+
+    * `ambermeta discover` (cli.py) passes `apply_tags=True` — its default, unstated. The
+      CLI is batch and has no confirmation surface of its own; `--write`ing the manifest
+      IS the user's accept, and printing `[applied] Runs carry N declared lineage(s)` is
+      how it states the claim it just wrote. Withholding tags here would ship every
+      `discover --write` manifest untagged, with no way to accept it and the crashed-
+      replica finding gone from the file for good.
+    * The GUI's `POST /document/discover` route passes `apply_tags=False`. A fresh scan of
+      someone else's directory tree is a claim about THEIR data the tool has not been told
+      to make; the GUI has a real confirmation step (the proposal strip, accepted a member
+      at a time through `PATCH /steps/lineage`), so nothing is asserted until the user
+      does. `build_suggestions` is still handed the proposed tags (`proposed=tags` below),
+      so the per-member sequence-hole finding — this feature's headline payoff — still
+      appears in `"suggestions"` even though nothing landed on the document.
+
+    Only this one assignment differs between the two; everything else about the draft
+    (chaining, phase grouping, the proposal itself) is identical either way.
+    """
     from ambermeta.simulation import Simulation, Phase, Step, Topology, InputCoords
     from ambermeta.lineages import UNTAGGED, infer_lineages_from_layout
     from ambermeta.roles import classify_role
@@ -580,7 +719,7 @@ def discover_draft(base_directory, recursive=True, pattern=None):
             # A run's single-frame coordinate sibling is the restart it wrote (-r restrt),
             # which is exactly what the next run reads.
             rst=_relativize(kinds.get("inpcrd"), base_directory),
-            lineage=tag, status=status,
+            lineage=(tag if apply_tags else None), status=status,
         )
         if multi_lineage:
             # One phase per role, shared by every member. Left contiguous, the replica-major
@@ -622,5 +761,31 @@ def discover_draft(base_directory, recursive=True, pattern=None):
     warnings = []
     if len(sim.topologies) > 1:
         warnings.append(f"{len(sim.topologies)} topologies found; confirm normal vs HMR.")
-    return {"simulation": sim, "suggestions": build_suggestions(sim, base_directory),
+
+    # The proposal is built from `sim` itself (not from `tags` directly) so discover_draft
+    # and `POST /steps/infer-lineages` share one implementation of what a proposal IS —
+    # segment_index, segments, members — rather than each assembling that shape by hand.
+    # Independent of `apply_tags`: `build_lineage_proposal` re-derives the same tags from
+    # `sim`'s own step names regardless of whether those names' steps are ALSO carrying
+    # `lineage` right now, so the CLI gets a (currently unused) proposal too.
+    proposal = build_lineage_proposal(sim)
+    suggestions = build_suggestions(sim, base_directory, proposed=tags)
+    if proposal is None:
+        # Gated on the tree PLAUSIBLY having members to declare, not merely on the
+        # inference having refused: `tags` (and so `proposal`) is empty for every tree with
+        # fewer than two run sub-directories, which is the commonest shape there is —
+        # nagging "which runs are replicas?" at a plain single-directory campaign would be
+        # noise on nearly every project. Two or more directories actually holding runs is
+        # the one shape where the inference had a real choice to make and refused it.
+        rival_dirs = {stem.rpartition("/")[0] for stem in run_stems if "/" in stem}
+        if len(rival_dirs) >= 2:
+            suggestions.append({
+                "id": f"sug_{len(suggestions) + 1}", "kind": "lineage_needs_you",
+                "severity": "needs_you", "title": "Which runs are replicas?",
+                "evidence": ("could not tell from the directory layout: no single path "
+                             "segment names the member"),
+                "actions": ["Define replicas", "Ignore"],
+            })
+
+    return {"simulation": sim, "proposal": proposal, "suggestions": suggestions,
             "warnings": warnings}
