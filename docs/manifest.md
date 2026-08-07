@@ -180,7 +180,7 @@ steps:
 | `input_coords` | no (default `{source: starting_structure}`) | Where this Step's initial coordinates come from — see §6. |
 | `mdin`, `mdout`, `mdcrd` | no | File paths for this run. Provide at least one parseable file for `plan`/`validate` to do anything useful with the Step. |
 | `rst` | no | The restart this run **writes** (`-r restrt`). It is what the next Step reads — see §6. Omitted entirely when unset, so a Step that records no restart round-trips as no key. |
-| `lineage` | no | Which run lineage — replica, branch, pose — this Step belongs to. Steps sharing a tag are one member; a Step with no tag belongs to the implicit single member. Any string; `""` reads as unset, and a number is read as its string form (`lineage: 1` → `"1"`). Omitted entirely when unset, so an untagged Step round-trips as no key. `ambermeta discover` writes it when the directory layout names the members; otherwise it is yours to declare. |
+| `lineage` | no | Which run lineage — replica, branch, pose — this Step belongs to. Steps sharing a tag are one member; a Step with no tag belongs to the implicit single member. Any string; `""` reads as unset, and a number is read as its string form (`lineage: 1` → `"1"`). Omitted entirely when unset, so an untagged Step round-trips as no key. `ambermeta discover` applies it directly when the directory layout names the members (`--write`'s manifest is the confirmation step); the GUI's Discover only *proposes* the same grouping — accepting a member (`PATCH /steps/lineage`) is what writes it there. Otherwise it is yours to declare. |
 | `notes` | no (default `[]`) | List of free-text strings. |
 | `gaps` | no | `{expected, tolerance}` in ps — see below. Omitted entirely when both are unset (round-trips as no key, not as `null`s, unless you write it explicitly as in the template). |
 
@@ -355,10 +355,12 @@ ambermeta gui runs/                         # build it in the browser, drag file
 structure, group runs into role-named phases, and chain each step's `input_coords` off the previous step of
 its own lineage — surfacing each inference as an explainable suggestion rather than silently guessing. When
 the layout names members (`rep1/`, `rep2/`, … sibling directories whose run sets the inference can
-reconcile) each one is tagged, chained
-separately from the head of the starting structure, and reported as an `[applied]` `lineage_group`
-suggestion; an ambiguous layout is left untagged rather than guessed at, and is chained and grouped exactly
-as it was before lineages existed. It is the only thing
+reconcile), the **CLI** tags each one directly — chained separately from the head of the starting
+structure, and reported as an `[applied]` `lineage_group` suggestion — because `--write`ing the manifest is
+its own confirmation step. The **GUI**'s Discover instead returns the same grouping as a `proposal` (see the
+[GUI guide](gui.md#7-suggestions-tray)) and writes no tag on its own; `lineage_group` only shows up there
+once a member has actually been accepted (`PATCH /steps/lineage`). An ambiguous layout is left untagged
+either way — chained and grouped exactly as it was before lineages existed. `discover` is the only thing
 that scans a directory into a *v2 draft* — `plan --recursive` also scans from scratch, but through the flat
 analysis engine (§10), and prints a Protocol summary rather than producing a manifest. The member inference
 is shared, not exclusive to the draft: `plan --recursive` applies the same rule to the runs it finds, so its
@@ -374,7 +376,9 @@ See the [GUI guide](gui.md) and [CLI reference](cli.md).
 ### 9.1 How `discover` infers members
 
 A lineage is normally **declared** — you write `lineage:` on the steps (§5). `discover` is the one thing
-that will propose one for you, and it does so only from **directory layout**, never from file contents.
+that will name one for you, from **directory layout** alone, never from file contents — the CLI writes it
+straight onto the steps, while the GUI's Discover only proposes it, writing nothing until you accept a
+member (§9 above).
 
 **The rule.** Group the runs by their directory, then group the directories into **cohorts** by the pair of
 *run bases they hold* **and** *their own depth* — where the base of `prod_0001` is `prod` (the same

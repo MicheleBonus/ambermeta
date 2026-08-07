@@ -493,13 +493,11 @@ print(md.stats.temp_stats.stdev)       <span class="o"># 1.2504190252445306</spa
 <tbody>
 <tr><td><strong>Files</strong> (left)</td><td>A searchable file list; drag a file onto the topology pool, the starting-structure slot, a step's topology, or a step's <code>mdin</code>/<code>mdout</code>/<code>mdcrd</code> slot.</td></tr>
 <tr><td><strong>Canvas</strong> (center)</td><td>A continuous vertical timeline — phases as sections, steps as cards showing their bound topology (▸) and input-coordinate source (◂); continuity arrows between steps (amber only where a real gap exists); missing-run ghosts for sequence holes; long numbered runs collapse. Drag to reorder steps within a phase, move a step across phases, or reorder phases.</td></tr>
-<tr><td><strong>Inspector</strong> (right)</td><td>Peek + full-details/raw tabs and assign actions for the selected <em>file</em>. A selected step or phase gets a placeholder editor (see below); with the Simulation or nothing selected it shows the suggestions tray instead.</td></tr>
+<tr><td><strong>Inspector</strong> (right)</td><td>Peek + full-details/raw tabs and assign actions for the selected <em>file</em>. A selected step or phase gets an inline editor (name, topology, input-coordinate source and "continues from", restart, gaps, notes; name and role for a phase); with the Simulation or nothing selected it shows the suggestions tray instead.</td></tr>
 </tbody>
 </table>
 
 <p>A typical session: <strong>Discover</strong> scans the launch directory into a Simulation draft (topology pool, phases by role, chained steps) → drag files from <strong>Files</strong> onto canvas slots, or use the Inspector's assign actions → arrange steps/phases by dragging their grip handles → <strong>Validate</strong> reports continuity/sequence issues → <strong>Save</strong> writes the canonical v2 manifest, the same one the CLI's <code>discover --write</code>/<code>export</code> write.</p>
-
-<aside class="warn"><strong>Known limitation: the step/phase inline editors are still stubs.</strong> Selecting a step or phase highlights it and lets Validate jump to it, but the Inspector shows a placeholder rather than an editable form — rename a step, change its role, or set its gap tolerance via drag-and-drop assignment, the file-side Assign actions, the HTTP API, or by editing the manifest directly.</aside>
 
 <p>Every inferred thing — roles, the HMR topology, the starting structure, sequence holes, continuity gaps — is surfaced in the <strong>Suggestions</strong> tray as an explainable, undoable suggestion rather than applied silently. This is the draft-first design.</p>
 

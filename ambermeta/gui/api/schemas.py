@@ -68,12 +68,16 @@ class StepModel(BaseModel):
     mdcrd: Optional[str] = None
     rst: Optional[str] = None            # the restart this step writes; the next step reads it
     # Which run lineage (replica, branch, pose) this step belongs to; null is the implicit
-    # single member. Written by `discover`'s inference or by editing the manifest, so the
-    # GUI only displays it.
+    # single member. Three routes write it -- POST /phases/{id}/steps (routes.py:391),
+    # PUT /steps/{id} (routes.py:432-433) and PATCH /steps/lineage -- as does editing the
+    # manifest. The CLI's `discover` applies inferred tags directly; the GUI's Discover only
+    # *proposes* them and re-applies ones already declared, inventing none of its own.
+    # Nothing about this field is display-only.
     lineage: Optional[str] = None
     # Whether this run produced output. The only value ever emitted is "queued": an mdin
-    # that was set up and never executed. Written by discover's inference or by the
-    # engine, same as `lineage` above; the GUI only displays it.
+    # that was set up and never executed. Written by discover's scan (core_bridge) and
+    # read from the manifest; unlike `lineage` above, no route accepts it, so this one
+    # really is read-only at the HTTP surface.
     status: Optional[str] = None
     # The coordinate file this step actually reads, resolved through the chain. Read-only:
     # the GUI shows it without re-implementing the resolution rules.
@@ -201,9 +205,13 @@ class StepUpdate(BaseModel):
     # dropped, so a gap once set could never be removed — only overwritten with 0.
     name: Optional[str] = None
     topology: Optional[str] = None
-    # The tag is read-only at this surface today: no route writes it. Declared as a
-    # top-level field so it inherits `topology`'s presence semantics when a write path
-    # arrives, rather than `files`' ""-clears rule — a lineage is a label, not a file slot.
+    # `PUT /steps/{id}` writes this (routes.py:432-433, present-vs-absent like `topology`):
+    # `tests/test_gui_bulk_lineage.py:59-65` drives it with {"lineage": "rep9"}. Declared as
+    # a top-level field so it inherits `topology`'s presence semantics rather than `files`'
+    # ""-clears rule — a lineage is a label, not a file slot. This comment used to say the
+    # tag was read-only here — true when PR 2a wrote it, false since PR 2b gave this route
+    # a write path and never came back to fix the comment — which is the likeliest reason
+    # the frontend never grew a tagging control of its own.
     lineage: Optional[str] = None
     input_coords: Optional[InputCoordsModel] = None
     files: Optional[StageFiles] = None

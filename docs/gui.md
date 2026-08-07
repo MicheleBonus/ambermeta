@@ -63,7 +63,7 @@ The server (FastAPI + Uvicorn) binds the host/port, resolves `directory` to an a
 |---|---|
 | **Files** (left) | A searchable, drag-source file list scanned from the launch directory. |
 | **Canvas** (center) | The Simulation header (topology pool + starting structure) above a vertical timeline of phase sections and step cards. |
-| **Inspector** (right) | Peek/details/assign actions for the selected file; a stub editor for a selected step or phase; the suggestions tray when the Simulation itself or nothing is selected (§6). |
+| **Inspector** (right) | Peek/details/assign actions for the selected file; an editor for a selected step or phase (§6); the suggestions tray when the Simulation itself or nothing is selected. |
 | **Open / Save** | Load an existing manifest / write the current one to disk (dot = unsaved changes). |
 | **Discover** | Discover-as-draft: scan the launch directory into a Simulation draft. |
 | **Validate** | Run full validation and show the report. |
@@ -126,7 +126,7 @@ The canvas is a continuous vertical timeline, not a flat list of cards.
 
 **Lineage bands** — where the document declares members, each member's runs sit in their own band with a header naming it and how many runs it holds. The band name is editable: click it to rename the member, which retags every run in the band in one request and one undo entry, or **clear** to untag them. Bands are the outer grouping level and the numeric grouping above stays as the inner one, so collapsing and ghosts keep working. A document that declares nothing gets no band chrome at all.
 
-**Infer lineages** in the Simulation header applies the directory-layout inference to the open document — the same rule `discover` reports as `[applied]`, offered again because a document also arrives here by being opened rather than scanned. It refuses far more layouts than it accepts, and says so when it does; everything it refuses is yours to tag by band.
+**Infer lineages** in the Simulation header re-runs the directory-layout inference over the open document and reports what it would name (`POST /steps/infer-lineages`, §11) — offered again because a document also arrives here by being opened rather than scanned, not just by a fresh scan. It writes nothing: accepting a member still takes `PATCH /steps/lineage` (§11), one call per tag. It refuses far more layouts than it accepts, and says so when it does; everything it refuses is yours to tag by band.
 
 **Continuity arrows** sit between consecutive steps in a sequence. When the lower step continues from the upper one, the arrow is labelled with the restart file that passes between them — that file belongs to neither card alone, so the edge is where it is shown. An amber arrow annotated with the gap magnitude (e.g. `20 ps`) marks a real continuity gap. **No arrow is drawn between bands**: what precedes a member's first run in document order is another member's last run, and that adjacency means nothing. Where the members all branch from one run, a line above the bands names it (`3 lineages branch from common/equil`) rather than drawing three arrows across boundaries the bands exist to keep apart.
 
@@ -143,7 +143,8 @@ If the Simulation has no phases yet, the canvas shows "Discover or drop files to
 The Inspector's content depends on what's selected:
 
 - **A file** (from the Files pane, or a step's bound topology) — a **peek** header (filename plus a few curated fields: atoms, residues, frames, steps, `hmr_active`, box), an **Assign** section (below), and a tabbed detail view: **Overview** (parsed-field count, warning count), **Full details** (every parsed field), **Raw file** (a byte-capped prefix of the file), **Warnings**.
-- **A step or a phase** — a placeholder (`Step editor.` / `Phase editor.`). **These inline editors are stubs today**: selecting a step or phase does highlight it and lets Validate jump to it, but editing its name, role, gap tolerance, or notes from the Inspector is not yet wired up. Use drag-and-drop assignment, the Inspector's file-side Assign actions, or the [HTTP API](#11-http-api)/CLI to change those fields in the meantime.
+- **A step** — an inline editor for its name, topology, input-coordinate source and "continues from", output restart (with a readback of who reads it), expected gap, gap tolerance and notes, plus Delete.
+- **A phase** — an inline editor for its name and role, plus Delete (with an optional "move its steps to" reassignment).
 - **The Simulation, or nothing** — the **suggestions tray** (§7).
 
 ### Assign actions (per selected file type)
@@ -294,7 +295,7 @@ Real output (`POST /api/validate` after Discover, on the sample data):
 }
 ```
 
-The panel shows a status badge — `N stage(s) with errors` if any step failed, else `Valid, with N protocol note(s)` if there are protocol-level notes, else `All checks passed` — then any protocol notes, then a per-step card (`ok`/`error` badge, errors/warnings/info) you can click to select that step (subject to the Inspector's step-editor stub, §6). A non-empty `protocol_issues` list means the simulation is *not* fully clean even when every step reports `ok` — the panel reflects that rather than reporting a false all-clear.
+The panel shows a status badge — `N stage(s) with errors` if any step failed, else `Valid, with N protocol note(s)` if there are protocol-level notes, else `All checks passed` — then any protocol notes, then a per-step card (`ok`/`error` badge, errors/warnings/info) you can click to select that step (§6). A non-empty `protocol_issues` list means the simulation is *not* fully clean even when every step reports `ok` — the panel reflects that rather than reporting a false all-clear.
 
 ---
 
@@ -347,7 +348,7 @@ The frontend talks to a small REST API under `/api` (`ambermeta/gui/api/routes.p
 | `DELETE` | `/api/phases/{id}?reassign_to=<phase_id>` | — | Document (`404`; `400` if `reassign_to` is the phase being deleted); moves the deleted phase's steps to `reassign_to` if given |
 | `POST` | `/api/phases/{id}/steps` | `{ name, topology?, input_coords?, mdin?, mdout?, mdcrd?, rst?, lineage?, index?, expected_gap_ps?, gap_tolerance_ps?, notes? }` — `lineage` places the step in that member; `index` (default `-1`) is the position within the phase, appending **within the step's own lineage** | Document (`404` if phase unknown, `400` for an unusable `input_coords.ref` — see below) |
 | `POST` | `/api/phases/{id}/steps/reorder` | `{ step_ids[] }` | Document (`404`/`400`) |
-| `PUT` | `/api/steps/{id}` | `{ name?, topology?, input_coords?, files?: {mdin?,mdout?,mdcrd?,rst?}, expected_gap_ps?, gap_tolerance_ps?, notes? }` — `topology`, `expected_gap_ps` and `gap_tolerance_ps` use present-vs-absent: sending `null` clears, omitting leaves alone | Document (`404`; `400` for an unusable `input_coords.ref` — see below) |
+| `PUT` | `/api/steps/{id}` | `{ name?, topology?, lineage?, input_coords?, files?: {mdin?,mdout?,mdcrd?,rst?}, expected_gap_ps?, gap_tolerance_ps?, notes? }` — `topology`, `lineage`, `expected_gap_ps` and `gap_tolerance_ps` use present-vs-absent: sending `null` clears, omitting leaves alone | Document (`404`; `400` for an unusable `input_coords.ref` — see below) |
 | `DELETE` | `/api/steps/{id}` | — | Document (`404`) |
 | `POST` | `/api/steps/{id}/move` | `{ phase_id, index? }` (`index` default `-1` = append) | Document (`404`) |
 
@@ -492,7 +493,6 @@ One field here has no counterpart on disk: **`resolved_input_coords` is read-onl
 
 ## 12. Known limitations
 
-- **Step and phase inline editing is stubbed.** The Inspector shows a placeholder (`Step editor.` / `Phase editor.`) when a step or phase is selected — you cannot yet rename a step, change its role, or set its gap tolerance/notes from there. Reach those fields via drag-and-drop assignment, the file-side Assign actions (§6), the HTTP API (§11), or by editing the saved manifest and reopening it.
 - **Suggestion cards are advisory**, not bound to their nominal actions beyond Dismiss/Undo — "Accept"/"Adjust"/"Ignore" currently just dismiss the card in the browser; the underlying condition (e.g. a sequence hole) still needs to be fixed via assignment or by adding the missing run's files.
 - **Save and Preview write v2 only, as YAML or JSON.** `write_simulation` accepts no other format (anything else raises `ValueError: v2 write supports json/yaml only, got: <fmt>`), and there is no other on-disk form to fall back to — so a manifest leaving the GUI is always one of those two.
 

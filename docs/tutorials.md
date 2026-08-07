@@ -379,7 +379,7 @@ This launches a local, single-user server (bound to `127.0.0.1` only) and opens 
 
 1. **Files** (left) — a searchable list of everything under the launch directory. Rows carry data-driven hints (`prmtop`, `mdin`, restart, …).
 2. **Canvas** (center) — a continuous vertical timeline: the phase as a section, steps as cards showing their bound topology (▸) and input-coordinate source (◂), with continuity arrows between them (amber only where a real gap exists) and a **missing-run ghost** where a sequence hole was detected.
-3. **Inspector** (right) — peek and full-details/raw tabs for whatever's selected, plus an actions list. The step/phase inline editors here are still stubs in this release — do structural edits (renaming, gap tolerances, notes) by editing the saved YAML/JSON directly, as in [§1](#1-discover-edit-and-export-a-v2-manifest), until they land.
+3. **Inspector** (right) — peek and full-details/raw tabs for whatever's selected, an actions list, and inline editors for the selected step or phase (name, topology, input-coordinate source and "continues from", restart, gaps, notes; name and role for a phase).
 
 Walk through the round trip:
 
