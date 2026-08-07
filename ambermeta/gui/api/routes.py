@@ -6,6 +6,7 @@ from typing import Dict, List, Optional
 from fastapi import APIRouter, HTTPException, Query
 
 from ambermeta.errors import AmberMetaError
+from ambermeta.simulation import InputCoords, crosses_lineage, iter_steps
 
 from . import core_bridge, files
 from .document import DocumentStore
@@ -114,6 +115,67 @@ def discover_document(req: DiscoverRequest) -> DiscoverResult:
     _within_base(base_directory, base_directory)
     out = core_bridge.discover_draft(base_directory, recursive=req.recursive,
                                      pattern=req.pattern, apply_tags=False)
+
+    # Discover replaces the document wholesale, so re-running it -- the natural reflex
+    # after adding files to a campaign, and the most prominent button in the top bar --
+    # silently discarded every tag the user had declared. Recoverable with Ctrl+Z because
+    # reset_history=False, but nothing in the UI said so.
+    #
+    # Matched on Step.name, the path-prefixed run stem: step ids are freshly generated on
+    # every scan (core_bridge.discover_draft mints a new uuid4 per step), so they cannot
+    # identify anything across one. Re-applied to the fresh scan's OWN Simulation object,
+    # in memory, before it is ever handed to `store.replace` -- so the whole operation
+    # still costs the single undo frame Discover always cost. Doing this afterwards through
+    # a loop of `PATCH /steps/lineage`-style writes would push one snapshot per tag and
+    # evict the very Discover result being annotated (`set_lineages`' docstring records
+    # this same trap for the bulk-tag route).
+    previous = {step.name: step.lineage for _, step in iter_steps(sim0) if step.lineage}
+    for _, step in iter_steps(out["simulation"]):
+        tag = previous.pop(step.name, None)
+        if tag is not None:
+            step.lineage = tag
+    # Whatever is left in `previous` names a run that carried a tag last scan and did not
+    # come back this time -- moved, renamed, or deleted out from under it. Reported below
+    # rather than silently dropped.
+    dropped = sorted(previous)
+
+    # Carrying a tag back onto the fresh scan can turn one of discovery's own directory-wide
+    # chain edges into a claim that one member continues another -- the exact cross-lineage
+    # restart edge `DocumentStore._sever_crossed_refs` exists to remove, and which a bare
+    # `store.replace` below does NOT run (it only clears warnings and swaps the document).
+    # Without this pass, re-Discovering after `PATCH /steps/lineage` had just severed such an
+    # edge and warned about it would silently re-create precisely that edge and stamp the
+    # carried tags on top -- the one fact simulation.py's module docstring forbids any
+    # automatic operation from inventing. No "was this already crossing before" check is
+    # needed here (contrast `_sever_crossed_refs`, which keeps a pre-existing declared
+    # branch): every step in a fresh `apply_tags=False` scan starts untagged, so nothing can
+    # be crossing before the loop above runs, and anything crossing after it is new.
+    by_id = {s.id: s for _, s in iter_steps(out["simulation"])}
+    severed: List[str] = []
+    for _, step in iter_steps(out["simulation"]):
+        ic = step.input_coords
+        if ic is None or ic.source != "step" or not ic.ref:
+            continue
+        producer = by_id.get(ic.ref)
+        if producer is not None and crosses_lineage(producer, step):
+            step.input_coords = InputCoords(source="starting_structure")
+            severed.append(
+                f"{step.name} no longer continues {producer.name}: they are "
+                "different lineages. Set its input coordinates if that is wrong.")
+
+    # This report cannot go through `DocumentResponse.warnings` -- `store.replace` below
+    # clears that field first thing, and docs/gui.md states as a contract that Discover
+    # always reports an empty list there. It goes in `DiscoverResult.warnings` instead,
+    # the channel that already carries this route's own findings (e.g. the topology-count
+    # note) back to the toasts `useDiscover` renders.
+    warnings = list(out["warnings"])
+    if dropped:
+        warnings.append(
+            f"{len(dropped)} run(s) carried a lineage tag that this scan did not find "
+            f"again, so their tags were dropped: {', '.join(dropped[:5])}"
+            + (" ..." if len(dropped) > 5 else ""))
+    warnings.extend(severed)
+
     store.replace(simulation=out["simulation"], settings=settings,
                   manifest_path=manifest_path, dirty=True, reset_history=False)
     return DiscoverResult(
@@ -123,7 +185,7 @@ def discover_document(req: DiscoverRequest) -> DiscoverResult:
         # (`core_bridge.build_lineage_proposal`'s return); `None` passes through as `None`
         # rather than as `LineageProposal(**None)`, which would raise.
         proposal=LineageProposal(**out["proposal"]) if out["proposal"] else None,
-        warnings=out["warnings"])
+        warnings=warnings)
 
 
 @router.post("/plan", response_model=PlanResult)

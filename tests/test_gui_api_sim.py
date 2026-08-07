@@ -5,6 +5,8 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from ambermeta.gui.api import routes
 
+from tests.conftest import RunSpec, write_run_tree, _PROD_MDIN
+
 
 def _client(base):
     routes.set_base_directory(str(base))
@@ -53,6 +55,112 @@ def test_the_missing_run_card_names_its_member_on_the_wire(crashed_replica_tree)
     card, = [s for s in r.json()["suggestions"] if s["kind"] == "missing_run"]
     assert card["lineage"] == "rep2"
     assert card["base"] == "prod" and card["missing"] == [2, 3]
+
+
+# --- re-discovering an already-tagged document --------------------------------
+
+def test_rediscovering_keeps_the_tags_already_declared(sys021_tree):
+    """Discover is the most prominent button in the top bar and the natural reflex after
+    adding files. It replaced the document wholesale, so every tag vanished with no warning
+    -- recoverable with Ctrl+Z, but nothing said so."""
+    client = _client(sys021_tree)
+    client.post("/api/document/discover", json={"recursive": True})
+    doc = client.get("/api/document").json()["simulation"]
+    ids = [s["id"] for p in doc["phases"] for s in p["steps"]
+           if s["name"].startswith("equil/01/") or s["name"].startswith("prod/01/")]
+    client.patch("/api/steps/lineage", json={"ids": ids, "lineage": "01"})
+
+    body = client.post("/api/document/discover", json={"recursive": True}).json()
+    after = body["document"]["simulation"]
+    tagged = {s["name"] for p in after["phases"] for s in p["steps"] if s["lineage"] == "01"}
+    assert "prod/01/nvt_prod_0001" in tagged
+    assert body["warnings"] == []
+
+
+def test_a_tag_on_a_run_that_vanished_is_reported_not_silently_dropped(sys021_tree):
+    """A run that carried a tag last scan and is not found again this scan must be named
+    in the response, not folded silently into "the document changed"."""
+    client = _client(sys021_tree)
+    client.post("/api/document/discover", json={"recursive": True})
+    doc = client.get("/api/document").json()["simulation"]
+    victim = [s for p in doc["phases"] for s in p["steps"]
+              if s["name"] == "prod/05/nvt_prod_0002"][0]
+    client.patch("/api/steps/lineage", json={"ids": [victim["id"]], "lineage": "05"})
+    # All three files `write_run_tree`'s pair form wrote for this run. Unlinking only the
+    # `.mdin`/`.mdout` pair -- an earlier draft of this test did exactly that -- leaves the
+    # `.restrt` behind as the tree's only non-run coordinate file, which discovery then
+    # adopts as `starting_structure` for the WHOLE document: a second, unrelated field
+    # would have silently flipped alongside the one this test means to check.
+    for suffix in (".mdin", ".mdout", ".restrt"):
+        (sys021_tree / "prod" / "05" / f"nvt_prod_0002{suffix}").unlink()
+    body = client.post("/api/document/discover", json={"recursive": True}).json()
+    assert any("did not find again" in w for w in body["warnings"])
+    assert body["document"]["simulation"]["starting_structure"] is None
+
+
+def test_rediscovering_does_not_rebuild_an_edge_the_tags_forbid(tmp_path):
+    """The severing case, and the reason this feature is not just "copy the dict back".
+
+    `prod/rep1_0001 -> rep1_0002 -> rep2_0001` is the chain discovery builds inside one
+    directory before anything is tagged: `rep2_0001` looks, to a scan that knows nothing
+    about replicas, like the run that comes after `rep1_0002`. Tagging the two apart makes
+    `PATCH /steps/lineage` sever that edge and warn about it -- a restart replica 2 never
+    read from replica 1 is exactly the fact `simulation.py`'s module docstring says no
+    automatic operation may invent. Re-running Discover must not silently rebuild it just
+    because the tags that make it a cross-lineage edge are being carried back on.
+    """
+    tree = write_run_tree(tmp_path, [
+        ("prod/rep1_0001", RunSpec(mdin=_PROD_MDIN, elapsed_ps=5000.0, begin_ps=0.0)),
+        ("prod/rep1_0002", RunSpec(mdin=_PROD_MDIN, elapsed_ps=5000.0, begin_ps=5000.0)),
+        ("prod/rep2_0001", RunSpec(mdin=_PROD_MDIN, elapsed_ps=5000.0, begin_ps=0.0)),
+    ])
+    client = _client(tree)
+    client.post("/api/document/discover", json={"recursive": True})
+    steps = [s for p in client.get("/api/document").json()["simulation"]["phases"]
+             for s in p["steps"]]
+    for tag in ("rep1", "rep2"):
+        client.patch("/api/steps/lineage", json={
+            "ids": [s["id"] for s in steps if s["name"].startswith("prod/" + tag)],
+            "lineage": tag})
+
+    after = client.post("/api/document/discover", json={"recursive": True}).json()
+    steps = [s for p in after["document"]["simulation"]["phases"] for s in p["steps"]]
+    by_id = {s["id"]: s for s in steps}
+    crossing = [(s["name"], by_id[s["input_coords"]["ref"]]["name"]) for s in steps
+                if s["input_coords"].get("ref")
+                and by_id[s["input_coords"]["ref"]]["lineage"] != s["lineage"]]
+    assert crossing == []
+    assert any("no longer continues" in w for w in after["warnings"])
+
+
+def test_rediscovering_costs_one_undo_frame_not_n(sys021_tree):
+    """`store.replace(..., reset_history=False)` already costs exactly one undo frame.
+    Re-applying N carried tags through N separate document writes -- rather than onto the
+    fresh scan's own Simulation object before the single `replace` -- would push one frame
+    per tag and could evict the very Discover result being annotated (`set_lineages`'
+    docstring records this trap for the bulk-tag route).
+
+    Proven without reaching into the undo stack: capture the document exactly as it stood
+    the instant before the second Discover, run that Discover, undo ONCE, and require an
+    exact match. If re-Discovering had cost more than one frame, a single Ctrl+Z would only
+    unwind the last of them and land on some partially-reverted state in between -- not
+    back on the document as it was before the second Discover ran at all.
+    """
+    client = _client(sys021_tree)
+    client.post("/api/document/discover", json={"recursive": True})
+    doc = client.get("/api/document").json()["simulation"]
+    ids = [s["id"] for p in doc["phases"] for s in p["steps"]
+           if s["name"].startswith("equil/01/") or s["name"].startswith("prod/01/")]
+    client.patch("/api/steps/lineage", json={"ids": ids, "lineage": "01"})
+    before = client.get("/api/document").json()
+
+    client.post("/api/document/discover", json={"recursive": True})
+    after = client.post("/api/undo").json()
+
+    def tags(doc):
+        return sorted((s["name"], s["lineage"]) for p in doc["simulation"]["phases"]
+                      for s in p["steps"])
+    assert tags(after) == tags(before)
 
 
 def test_topology_routes(tmp_path):
