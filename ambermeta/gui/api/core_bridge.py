@@ -472,7 +472,87 @@ def write_plan_outputs(sim, settings, base_directory, targets: Dict[str, str],
     return result
 
 
-def build_lineage_proposal(sim, segment_index=None):
+def _propose_handoffs(sim, proposal, mdout_for):
+    """The cross-directory restart handoffs AMBER's own File Assignments block evidences,
+    scoped to `proposal`'s members. Returns a list; writes nothing.
+
+    Shared by `discover_draft` and `build_lineage_proposal` rather than living in the
+    former alone, which is the defect this function exists to close: the segment picker
+    (`POST /steps/infer-lineages`, which goes through `build_lineage_proposal`) replaced
+    the shown proposal WHOLESALE, so a user who clicked `Change`, looked at another column
+    and tapped back lost all five handoff rows with no message -- the entire payoff of the
+    handoff work, gone to a UI affordance whose whole purpose is to be reversible. One
+    implementation means the rows come back because they are RECOMPUTED for whichever
+    grouping is now shown, not because the frontend cached the old ones: handoffs are
+    member-scoped, so a different segmentation genuinely has different (or no) handoffs,
+    and showing the previous column's answers against this column's members would be worse
+    than showing none.
+
+    `mdout_for(step) -> Optional[str]` is how the caller says where a step's mdout can be
+    opened. `discover_draft` has the scan's own absolute paths in `grouped`;
+    `build_lineage_proposal` has `step.mdout`, which has been relativized against the base
+    directory and will not open on its own. Neither is derivable from `sim` alone, which is
+    why this is a parameter rather than an attribute read.
+
+    It is CORROBORATION, not identification. AMBER records a bare relative filename
+    (`INPCRD: 18_ntp_equi.restrt`), resolved against the run's own directory, and on the
+    campaign this was written against ALL FIVE replicas record the identical string. A
+    document-wide basename->step lookup therefore collapses every replica's tail into one
+    entry and points every head at whichever was seen last: measured, 10 proposed edges on
+    sys021_tree of which 9 are wrong. The member grouping is what disambiguates -- the
+    match is scoped to ONE member, so structure identifies the pair and AMBER's record
+    only corroborates that a handoff happened at all.
+
+    Three consequences, all deliberate: no member proposal means no handoffs (without
+    knowing which directories are one replica there is nothing to justify pairing them); a
+    basename two of the member's OWN steps wrote is ambiguous and proposes nothing, for
+    the same reason the document-wide lookup was wrong; and a producer in the consumer's
+    own directory is skipped, since the chunked chain discovery builds already covers it.
+
+    `assignment` returns None when AMBER clipped the value at the field width -- common
+    for long paths; every PARM on the real campaign is clipped. That is no evidence, not
+    no producer, so such a step simply gets no proposed edge.
+
+    Fault tolerance matches `discover_draft`'s mdin parse: a header that will not read
+    costs this one edge, not the scan.
+    """
+    from ambermeta.mdout_header import read_mdout_header
+    from ambermeta.simulation import iter_steps
+
+    handoffs: List[Dict[str, Any]] = []
+    step_by_id = {s.id: s for _, s in iter_steps(sim)}
+    for member in proposal["members"]:
+        member_steps = [step_by_id[i] for i in member["step_ids"] if i in step_by_id]
+        writes: Dict[str, List[str]] = {}
+        for producer in member_steps:
+            if producer.rst:
+                writes.setdefault(os.path.basename(producer.rst), []).append(producer.id)
+        for step in member_steps:
+            mdout = mdout_for(step)
+            if not mdout:
+                continue
+            try:
+                named = read_mdout_header(mdout).assignment("INPCRD")
+            except (IOError, OSError, ValueError, LookupError):
+                continue
+            if not named:
+                continue
+            candidates = [i for i in writes.get(os.path.basename(named), [])
+                          if i != step.id]
+            if len(candidates) != 1:
+                continue
+            producer = step_by_id[candidates[0]]
+            if producer.name.rpartition("/")[0] == step.name.rpartition("/")[0]:
+                continue
+            handoffs.append({
+                "consumer_id": step.id, "producer_id": producer.id,
+                "consumer": step.name, "producer": producer.name,
+                "evidence": f"mdout File Assignments: INPCRD: {named}",
+            })
+    return handoffs
+
+
+def build_lineage_proposal(sim, segment_index=None, base_directory=None):
     """Propose a lineage grouping for `sim`'s CURRENT steps. Writes nothing.
 
     Reads step NAMES only — the posix stems `discover_draft` builds them from, e.g.
@@ -507,6 +587,13 @@ def build_lineage_proposal(sim, segment_index=None):
     for a multi-member draft, so NOT the order runs were found on disk); a step whose stem
     the chosen index/inference does not tag is simply absent from every member's
     `step_ids` — the untagged bucket has no member entry of its own, same as `lineages()`.
+
+    `base_directory` is what makes `handoffs` reachable from here at all: `Step.mdout` has
+    been relativized against it and will not open on its own, and the handoff evidence
+    lives inside those mdouts. Omitted, the key is present and empty — which was this
+    function's ONLY behaviour before, and is why the segment picker silently dropped every
+    handoff row the moment a user looked at another column. Callers that can supply it
+    should: `POST /steps/infer-lineages` does.
     """
     from ambermeta.lineages import infer_lineages_from_layout
     from ambermeta.simulation import iter_steps
@@ -561,8 +648,18 @@ def build_lineage_proposal(sim, segment_index=None):
         else:
             source["run_count"] += 1
 
-    return {"segment_index": index, "segments": segments,
-            "members": [members[tag] for tag in order]}
+    proposal = {"segment_index": index, "segments": segments,
+                "members": [members[tag] for tag in order]}
+    # Always present, never omitted, so the returned dict has ONE shape whether or not the
+    # caller could supply a base directory -- `LineageProposal.handoffs` would default it
+    # to `[]` anyway, and a key that appears only sometimes is how a consumer comes to read
+    # `proposal.handoffs` on an object that has none.
+    proposal["handoffs"] = (
+        _propose_handoffs(sim, proposal,
+                          lambda step: (os.path.join(base_directory, step.mdout)
+                                        if step.mdout else None))
+        if base_directory else [])
+    return proposal
 
 
 def discover_draft(base_directory, recursive=True, pattern=None, apply_tags=True):
@@ -773,62 +870,15 @@ def discover_draft(base_directory, recursive=True, pattern=None, apply_tags=True
 
     # AMBER wrote down which restart it actually read; `read_mdout_header` has parsed that
     # block since before lineages existed, and `assignment()` had zero call sites -- the
-    # record was read off every mdout and thrown away.
+    # record was read off every mdout and thrown away. `_propose_handoffs` is where the
+    # rule for reading it lives, shared with `build_lineage_proposal` so the segment picker
+    # re-proposes handoffs for whatever grouping it lands on instead of dropping them.
     #
-    # It is CORROBORATION, not identification. AMBER records a bare relative filename
-    # (`INPCRD: 18_ntp_equi.restrt`), resolved against the run's own directory, and on the
-    # campaign this was written against ALL FIVE replicas record the identical string. A
-    # document-wide basename->step lookup therefore collapses every replica's tail into one
-    # entry and points every head at whichever was seen last: measured, 10 proposed edges on
-    # sys021_tree of which 9 are wrong. The member grouping is what disambiguates -- the
-    # match is scoped to ONE member, so structure identifies the pair and AMBER's record
-    # only corroborates that a handoff happened at all.
-    #
-    # Three consequences, all deliberate: no member proposal means no handoffs (without
-    # knowing which directories are one replica there is nothing to justify pairing them); a
-    # basename two of the member's OWN steps wrote is ambiguous and proposes nothing, for
-    # the same reason the document-wide lookup was wrong; and a producer in the consumer's
-    # own directory is skipped, since the chunked chain built above already covers it.
-    #
-    # `assignment` returns None when AMBER clipped the value at the field width -- common
-    # for long paths; every PARM on the real campaign is clipped. That is no evidence, not
-    # no producer, so such a step simply gets no proposed edge.
-    #
-    # Fault tolerance matches the mdin parse above: a header that will not read costs this
-    # one edge, not the scan. The path comes from `grouped`, not from `step.mdout`, which
-    # has been relativized against base_directory and will not open.
-    handoffs: List[Dict[str, Any]] = []
+    # The mdout paths come from `grouped`, the scan's own absolute ones, NOT from
+    # `step.mdout`, which has been relativized against base_directory and will not open.
     if proposal:
-        step_by_id = {s.id: s for _, s in iter_steps(sim)}
-        for member in proposal["members"]:
-            member_steps = [step_by_id[i] for i in member["step_ids"]]
-            writes: Dict[str, List[str]] = {}
-            for producer in member_steps:
-                if producer.rst:
-                    writes.setdefault(os.path.basename(producer.rst), []).append(producer.id)
-            for step in member_steps:
-                mdout = grouped.get(step.name, {}).get("mdout")
-                if not mdout:
-                    continue
-                try:
-                    named = read_mdout_header(mdout).assignment("INPCRD")
-                except (IOError, OSError, ValueError, LookupError):
-                    continue
-                if not named:
-                    continue
-                candidates = [i for i in writes.get(os.path.basename(named), [])
-                              if i != step.id]
-                if len(candidates) != 1:
-                    continue
-                producer = step_by_id[candidates[0]]
-                if producer.name.rpartition("/")[0] == step.name.rpartition("/")[0]:
-                    continue
-                handoffs.append({
-                    "consumer_id": step.id, "producer_id": producer.id,
-                    "consumer": step.name, "producer": producer.name,
-                    "evidence": f"mdout File Assignments: INPCRD: {named}",
-                })
-        proposal["handoffs"] = handoffs
+        proposal["handoffs"] = _propose_handoffs(
+            sim, proposal, lambda step: grouped.get(step.name, {}).get("mdout"))
 
     suggestions = build_suggestions(sim, base_directory, proposed=tags)
     if proposal is None:

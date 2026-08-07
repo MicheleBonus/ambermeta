@@ -141,8 +141,8 @@ def test_a_clipped_assignment_proposes_nothing_rather_than_guessing(tmp_path):
         runs = []
         for n in ("01", "02"):
             runs.append((f"equil/{n}/18_ntp_equi",
-                         RunSpec(mdin=_EQUI_MDIN, elapsed_ps=5000.0,
-                                 inpcrd="17_ntp_equi.restrt")))
+                         RunSpec(mdin=_EQUI_MDIN, elapsed_ps=3200.0, begin_ps=1800.0,
+                                 irest=0, inpcrd="17_ntp_equi.restrt")))
             runs.append((f"prod/{n}/nvt_prod_0001",
                          RunSpec(mdin=_PROD_MDIN, elapsed_ps=5000.0, begin_ps=5000.0,
                                  inpcrd=inpcrd)))
@@ -154,6 +154,72 @@ def test_a_clipped_assignment_proposes_nothing_rather_than_guessing(tmp_path):
 
     # 74 characters exactly fills the field `_mdout_text` pads to, so the value carries no
     # trailing whitespace and comes back as truncated -- the shape a real long path makes.
+    #
+    # The BASENAME still has to match, and that is what this test used to get wrong:
+    # `"1" * 70 + ".rst"` is 74 characters and truncated, but its basename is
+    # `111...1.rst`, which no producer in the tree ever wrote. The handoff was refused by
+    # the basename lookup, not by the truncation rule, so an implementation that read
+    # `file_assignments` directly and ignored `truncated` passed anyway -- verified. Here
+    # the value is a long DIRECTORY prefix ending in a basename a producer really did
+    # write, so truncation is the only thing left that can refuse it.
+    clipped_value = "x" * 55 + "/18_ntp_equi.restrt"
+    assert len(clipped_value) == 74, "the value must exactly fill the padded field"
+    assert clipped_value.rpartition("/")[2] == "18_ntp_equi.restrt"
     clipped = core_bridge.discover_draft(
-        str(tree(tmp_path / "clipped", "1" * 70 + ".rst")), recursive=True)
+        str(tree(tmp_path / "clipped", clipped_value)), recursive=True)
     assert clipped["proposal"]["handoffs"] == []
+
+
+# ---------------------------------------------------------------------------
+# The segment picker must not throw the handoff proposal away. `ProposalStrip.pickSegment`
+# replaces the shown proposal WHOLESALE with whatever `POST /steps/infer-lineages`
+# returns, so a proposal built without handoffs erases every row the user was looking at.
+# ---------------------------------------------------------------------------
+
+def test_re_picking_the_same_segment_returns_the_handoffs_again(sys021_tree):
+    """`Change` -> another column -> back is a reversible UI affordance. Before this,
+    tapping back returned a proposal with `handoffs: []` and the five
+    `equil/NN -> prod/NN` rows vanished with no message -- the entire payoff of the
+    handoff work, lost to a control whose whole purpose is that it can be undone.
+
+    Recomputed rather than remembered: the response is compared against what Discover's
+    own proposal said, so a frontend that merely cached the previous rows would not satisfy
+    this and neither would a server that returned a fixed list.
+    """
+    c = _client(sys021_tree)
+    discovered = c.post("/api/document/discover", json={"recursive": True}).json()
+    expected = {h["consumer"]: h["producer"] for h in discovered["proposal"]["handoffs"]}
+    assert len(expected) == 5
+
+    index = discovered["proposal"]["segment_index"]
+    repicked = c.post("/api/steps/infer-lineages",
+                      json={"segment_index": index}).json()["proposal"]
+    assert {h["consumer"]: h["producer"] for h in repicked["handoffs"]} == expected
+
+
+def test_a_different_segment_gets_that_segments_own_handoffs_not_the_last_ones(sys021_tree):
+    """Handoffs are MEMBER-SCOPED, so a different segmentation genuinely has different
+    ones -- which is why the fix is to re-propose rather than to have the frontend hold the
+    previous column's rows over the top of this column's members.
+
+    Index 0 groups by `equil` / `prod`, i.e. by PHASE rather than by replica. Every
+    `equil/NN -> prod/NN` pair then straddles two members, and a handoff that straddles
+    members is exactly what the member scoping exists to refuse: the empty list here is the
+    right answer, not a failure to compute one.
+    """
+    c = _client(sys021_tree)
+    c.post("/api/document/discover", json={"recursive": True})
+    by_phase = c.post("/api/steps/infer-lineages",
+                      json={"segment_index": 0}).json()["proposal"]
+    assert [m["tag"] for m in by_phase["members"]] == ["equil", "prod"]
+    assert by_phase["handoffs"] == []
+
+
+def test_the_default_inference_carries_handoffs_too(sys021_tree):
+    """The bare call -- no `segment_index` -- is what `Define replicas…` and the refusal
+    retry both make. It goes through the same code path and must not be the one that
+    silently returns a handoff-less proposal."""
+    c = _client(sys021_tree)
+    c.post("/api/document/discover", json={"recursive": True})
+    inferred = c.post("/api/steps/infer-lineages", json={}).json()["proposal"]
+    assert len(inferred["handoffs"]) == 5

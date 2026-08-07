@@ -552,10 +552,18 @@ def infer_lineages(req: InferLineagesRequest = InferLineagesRequest()) -> Lineag
     Reports through the same shape on both outcomes (a `LineageProposalResponse`, not a
     `DocumentResponse`) rather than through the general edit-warnings channel every other
     route uses: there is no edit here to report warnings ABOUT.
+
+    `base_directory` is passed so the response carries `handoffs` too. Without it this
+    route returned a proposal with none, and `ProposalStrip.pickSegment` replaces the shown
+    proposal wholesale -- so a user who opened `Change`, glanced at another column and
+    tapped back lost every handoff row with no message. Handoffs are member-scoped, so the
+    right answer is to re-propose them against the grouping now being shown rather than to
+    have the frontend hold the previous column's ones over the top of different members.
     """
     store = get_store()
-    sim, _settings, _manifest_path, _base_directory = store.snapshot()
-    proposal = core_bridge.build_lineage_proposal(sim, segment_index=req.segment_index)
+    sim, _settings, _manifest_path, base_directory = store.snapshot()
+    proposal = core_bridge.build_lineage_proposal(
+        sim, segment_index=req.segment_index, base_directory=base_directory)
     if proposal is None:
         return LineageProposalResponse(proposal=None, warnings=[
             "No lineages inferred: the directory layout could not be resolved into one "

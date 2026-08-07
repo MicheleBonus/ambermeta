@@ -129,3 +129,101 @@ it("writes the tags before the handoffs", async () => {
   await userEvent.click(screen.getByRole("button", { name: "Accept" }));
   await waitFor(() => expect(order).toEqual(["tag", "tag", "edge:b1"]));
 });
+
+/**
+ * `pickSegment` had ZERO coverage, although the specification's Testing item 8 requires
+ * "picking one regroups the preview live". The three tests below cover the three things it
+ * does: it replaces the members shown, it resets the editable tag map (so a stale edit
+ * against a member that no longer exists cannot leak into the next Accept), and -- the
+ * defect these were written for -- it does NOT lose the handoff rows, because the server
+ * now re-proposes them for whichever grouping came back.
+ */
+
+const byPhase: LineageProposal = {
+  segment_index: 0,
+  segments: [["equil", "prod"], ["01", "02"]],
+  members: [
+    { tag: "equil", step_ids: ["a1", "b1"], sources: [
+      { directory: "equil/01", run_count: 18 }, { directory: "equil/02", run_count: 18 }] },
+    { tag: "prod", step_ids: ["a2"], sources: [{ directory: "prod/01", run_count: 202 }] },
+  ],
+  handoffs: [],
+};
+
+const withHandoffs: LineageProposal = {
+  ...proposal,
+  handoffs: [
+    { consumer_id: "b1", producer_id: "a2", consumer: "prod/02/01_prod",
+      producer: "equil/02/18_ntp_equi", evidence: "18_ntp_equi.restrt" },
+  ],
+};
+
+/** One handler answering both columns the way the server does: index 0 is the phase
+ *  grouping (whose members straddle no directory pair, so no handoffs), index 1 is the
+ *  replica grouping. Keyed on the request body rather than returning a fixed object, so a
+ *  component that sent the wrong index would not be handed the right answer anyway. */
+function serveBothSegments() {
+  server.use(http.post("/api/steps/infer-lineages", async ({ request }) => {
+    const body = (await request.json()) as { segment_index?: number | null };
+    return HttpResponse.json({
+      proposal: body?.segment_index === 0 ? byPhase : withHandoffs, warnings: [],
+    });
+  }));
+}
+
+it("regroups the preview live when a segment is picked", async () => {
+  serveBothSegments();
+  show(withHandoffs, "manual");
+  await userEvent.click(screen.getByRole("button", { name: "equil|prod" }));
+  expect(await screen.findByLabelText("tag for equil")).toHaveValue("equil");
+  expect(screen.getByLabelText("tag for prod")).toHaveValue("prod");
+  // The members the first proposal named are gone, not merged with the new ones.
+  expect(screen.queryByLabelText("tag for 01")).not.toBeInTheDocument();
+});
+
+it("keeps the handoff rows when a segment is picked and unpicked", async () => {
+  serveBothSegments();
+  show(withHandoffs, "manual");
+  expect(await screen.findByText(/equil\/02\/18_ntp_equi/)).toBeInTheDocument();
+
+  // Away: this grouping's members straddle no directory pair, so it genuinely has none.
+  await userEvent.click(screen.getByRole("button", { name: "equil|prod" }));
+  await waitFor(() =>
+    expect(screen.queryByText(/equil\/02\/18_ntp_equi/)).not.toBeInTheDocument());
+
+  // ...and back. Before the fix the server returned a proposal with `handoffs: []` for
+  // every re-pick, so this row never came back and nothing said why -- the whole payoff of
+  // the handoff work lost to a control whose purpose is that it can be undone.
+  await userEvent.click(screen.getByRole("button", { name: "01|02" }));
+  expect(await screen.findByText(/equil\/02\/18_ntp_equi/)).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Wire these" })).toBeInTheDocument();
+});
+
+it("recomputes the tag map on every pick rather than merging into it", async () => {
+  serveBothSegments();
+  const seen: unknown[] = [];
+  server.use(http.patch("/api/steps/lineage", async ({ request }) => {
+    seen.push(await request.json());
+    return HttpResponse.json(emptyDocument);
+  }));
+  show(withHandoffs, "manual");
+  const field = await screen.findByLabelText("tag for 01");
+  await userEvent.clear(field);
+  await userEvent.type(field, "rep1");
+
+  // Away and back. `tags` is keyed on the PROPOSED tag, so a merge would keep
+  // `{"01": "rep1"}` alive across the round trip and silently re-apply an edit the user
+  // made to a grouping they then navigated away from. Recomputing puts "01" back --
+  // which is only observable on the return leg, so testing one hop cannot see it.
+  await userEvent.click(screen.getByRole("button", { name: "equil|prod" }));
+  expect(await screen.findByLabelText("tag for equil")).toHaveValue("equil");
+  await userEvent.click(screen.getByRole("button", { name: "01|02" }));
+  expect(await screen.findByLabelText("tag for 01")).toHaveValue("01");
+
+  await userEvent.click(screen.getByRole("button", { name: "Apply" }));
+  await waitFor(() => expect(seen).toHaveLength(2));
+  expect(seen).toEqual([
+    { ids: ["a1", "a2"], lineage: "01" },
+    { ids: ["b1"], lineage: "02" },
+  ]);
+});
