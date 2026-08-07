@@ -188,13 +188,18 @@ def crashed_replica_tree(tmp_path) -> Path:
     NO mdout — which, post-Task-2, reads as entirely `queued`. Every member's `time_ps`
     would collapse to 0.0 and `rep2 shorter than rep1` would degenerate to `0.0 < 0.0`,
     true for the wrong reason and passing even if the totals rule broke. Each chunk here is
-    a real 1000 ps, so the three-chunk members genuinely outran the one-chunk member.
+    a real 5000 ps -- matching `_PROD_MDIN`'s own `nstlim=2500000, dt=0.002`, the same
+    pairing `sys021_tree` uses -- so the three-chunk members genuinely outran the one-chunk
+    member rather than merely reporting a `nstlim x dt` that does not match what the mdout
+    the run actually produced would say. An earlier version of this fixture used 1000.0,
+    which does not match `_PROD_MDIN`'s stated duration and made every chunk validate as
+    `Simulation duration differs` / `result: Unclear`.
     """
     return write_run_tree(tmp_path, [
         *((f"{rep}/prod_{i:04d}",
-           RunSpec(mdin=_PROD_MDIN, elapsed_ps=1000.0, begin_ps=1000.0 * i))
+           RunSpec(mdin=_PROD_MDIN, elapsed_ps=5000.0, begin_ps=5000.0 * i))
           for rep in ("rep1", "rep3") for i in (1, 2, 3)),
-        ("rep2/prod_0001", RunSpec(mdin=_PROD_MDIN, elapsed_ps=1000.0, begin_ps=1000.0)),
+        ("rep2/prod_0001", RunSpec(mdin=_PROD_MDIN, elapsed_ps=5000.0, begin_ps=5000.0)),
     ])
 
 
