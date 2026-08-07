@@ -30,8 +30,23 @@
 
 ```bash
 export PATH="/home/bonus/Software/miniforge3/envs/ambermeta/bin:$PATH"
+export NODE_OPTIONS="--no-experimental-webstorage"
 cd /home/bonus/git/ambermeta
 ```
+
+**`NODE_OPTIONS` is not optional and is not a repo problem.** This env ships node **v25.6.0**,
+which exposes a global `localStorage` whose `getItem` is `undefined` unless `--localstorage-file`
+is given. It shadows jsdom's, and **32 of the 286 vitest tests fail** with
+`TypeError: localStorage.getItem is not a function` across `App.dnd.test.tsx`,
+`App.undo.test.tsx` and two others. CI pins node 20 (`tests.yml:52`,
+`gui-static-check.yml:34`), which has no such global, so this never appears there.
+`--no-experimental-webstorage` removes the global and restores 286/286. **Do not "fix" this in
+the repo** — there is nothing wrong with the repo.
+
+**Verified baseline on this branch at `0367c75`:** 476 pytest passed (Python 3.12), 286 vitest
+passed, and `npm run build` reproduces the committed bundle byte-for-byte (`git status
+--porcelain ambermeta/gui/static` empty, hashes `index-DC22nyyY.js` / `index-mUR3WOy9.css`
+unchanged). Any deviation from those three numbers is caused by the change under test.
 
 Verified state of that environment as of this plan: Python **3.12.12**, node **v25.6.0**,
 npm **11.8.0**, `ambermeta` already installed editable and resolving to this repo
