@@ -376,27 +376,39 @@ See the [GUI guide](gui.md) and [CLI reference](cli.md).
 A lineage is normally **declared** — you write `lineage:` on the steps (§5). `discover` is the one thing
 that will propose one for you, and it does so only from **directory layout**, never from file contents.
 
-**The rule.** Group the runs by their directory, then group the directories into **cohorts** by the set of
-*run bases* they hold — where the base of `prod_0001` is `prod` (the same stripping `detect_sequence_gaps`
-uses). Every cohort holding more than one directory reports its own varying path segment: its directories
-must all be at the same depth and exactly one segment must vary across them, and a cohort that cannot
-report one contributes nothing rather than refusing the whole tree. All reporting cohorts must name the
-member at the **same** segment index, and their run-base sets must be **disjoint** — cohorts that *share* a
-base are two arms of one sweep, not two phases of a pipeline, and reconciling them would merge two
-different conditions (e.g. two temperatures) into one lineage. Their tag sets must also **nest** — every
-set a subset of the largest, which becomes the reconciled tag set; two disjoint tag sets are still two
-experiments and are still refused. Finally, a directory left alone in its cohort is **absorbed** when it
-sits at a depth some reporting cohort actually used *and* its segment at the agreed index is already a
-reconciled tag: `prod/01`, whose stray `cpptraj.in` gives it a run-base set of its own, is tagged `01` this
-way, while `common/` is not, because `common` is not a tag — and neither is a directory whose tag-shaped
-segment sits at the *wrong depth* to be a genuine sibling.
+**The rule.** Group the runs by their directory, then group the directories into **cohorts** by the pair of
+*run bases they hold* **and** *their own depth* — where the base of `prod_0001` is `prod` (the same
+stripping `detect_sequence_gaps` uses). Depth is part of the cohort's identity, not a uniformity check
+applied after the fact: a directory whose runs happen to share an entire OTHER cohort's base set, at a
+different depth, forms (or joins) its own cohort at its own depth and can never drag that other cohort down
+with it — see the residual-gap note below for the shape this specifically fixes. Every cohort holding more
+than one directory reports its own varying path segment: exactly one segment must vary across its
+directories, and a cohort that cannot report one contributes nothing rather than refusing the whole tree.
+All reporting cohorts must name the member at the **same** segment index, and their run-base sets must be
+**disjoint** — cohorts that *share* a base are usually two arms of one sweep rather than two phases of a
+pipeline, and reconciling them would merge two different conditions (e.g. two temperatures) into one
+lineage. Their tag sets must also **nest** — every set a subset of the largest, which becomes the
+reconciled tag set; two disjoint tag sets are still two experiments and are still refused. Finally, a
+directory left alone in its cohort is **absorbed** when it sits at a depth some reporting cohort actually
+used *and* its segment at the agreed index is already a reconciled tag: `prod/01`, whose stray `cpptraj.in`
+gives it a run-base set of its own, is tagged `01` this way, while `common/` is not, because `common` is
+not a tag — and neither is a directory whose tag-shaped segment sits at the *wrong depth* to be a genuine
+sibling.
+
+Sharing a base is not *proof* of a sweep, though — it is a heuristic, and it can misfire toward the safe
+side. A genuine two-phase pipeline whose phases happen to reuse one run name — `equil/01..02/{min,heat}`
+beside `prod/01..02/{heat,nvt_prod}`, both cohorts running `heat` — is refused here too, even though each
+phase has its own multiple replicas and would otherwise reconcile cleanly: untagged, not a merged claim,
+but a user staring at that untagged tree is not told *why* by this rule alone.
 
 The disjoint-bases requirement only tells a pipeline's phases apart from a sweep's arms when the arms
 happen to *share* a run name — a stray minimisation on one temperature arm, for instance. It has no way to
 tell a pipeline apart from two deliberately parallel arms that use entirely distinct run names of their own
-(`apo/*` beside `holo/*`, or `wt/*` beside `mut/*`): those bases are disjoint too, on purpose, and directory
-layout alone cannot distinguish the two shapes. Such arms still merge today — a known, accepted gap,
-deferred to a multi-axis design rather than fixed here.
+throughout, whether cross-system (`apo/*` beside `holo/*`, or `wt/*` beside `mut/*`) or, more easily missed
+because it looks like an ordinary sweep, the *same* system under two conditions with condition-specific run
+names — `300K/*/prodA` beside `310K/*/prodB`. Both shapes have disjoint bases, on purpose, and directory
+layout alone cannot distinguish either of them from a pipeline's phases. Such arms still merge today — a
+known, accepted gap, deferred to a multi-axis design rather than fixed here.
 
 Bases, not whole run names, is deliberate: **a replica that died early is the single most important thing
 this feature has to catch.** `rep1/prod_0001..0003` beside `rep2/prod_0001` is one crashed member, not two
@@ -422,7 +434,9 @@ is a claim, and a wrong claim here is exactly what lineages exist to stop:
 | `equil/01..05` beside `prod/02..05` (a replica that never reached production) | tagged `01..05`; `{02..05}` nests inside `{01..05}` |
 | `prod/01` also holding a stray `cpptraj.in` | still tagged `01` — a directory alone in its cohort is absorbed when it sits at a depth the tree reported and its segment is already a reconciled tag |
 | `analysis/01/rmsd/calc` beside a `equil/01../prod/01..` tree (a coincidental tag-shaped segment, wrong depth) | untagged — absorption requires the singleton's *depth* to match a reporting cohort's, not just the segment spelling |
-| `apo/01..03/prod_apo_*` beside `holo/01..02/prod_holo_*` (deliberately parallel arms, disjoint run names of their own) | tagged `01..03` / `01..02` and merged into one campaign — **known, accepted limitation**: disjoint bases cannot be told apart from a pipeline's phases by directory layout alone; deferred to a multi-axis design |
+| `prod/01..03/prod_0001` also beside a `rerun/deep/here/prod_0001` (a stray rerun sharing the WHOLE cohort's base, at another depth) | `01..03` still tagged — the stray forms its own cohort at its own depth instead of dragging `prod/01..03`'s cohort down with it |
+| `apo/01..03/prod_apo_*` beside `holo/01..02/prod_holo_*` (deliberately parallel arms, disjoint run names of their own, cross-system) | tagged `01..03` / `01..02` and merged into one campaign — **known, accepted limitation**: disjoint bases cannot be told apart from a pipeline's phases by directory layout alone; deferred to a multi-axis design |
+| `300K/01..03/prodA` beside `310K/01..03/prodB` (same system, two conditions, condition-specific run names) | tagged and merged the same way — the harder-to-notice case of the same limitation: it looks like an ordinary sweep, but each arm's OWN run name makes the bases disjoint, so it reconciles instead of refusing |
 | `rep1/prod_0001` beside `x/rep2/prod_0001` (mismatched depth) | untagged |
 | `rep1_prod_0001`, `rep2_prod_0001` — flat, replica in the **filename** | **untagged.** Only directory segments are read |
 | `01_min_rep1`, `01_min_rep2` — flat, replica as a filename *suffix* | **untagged**, same reason |
@@ -431,16 +445,20 @@ The last two rows are the ones people expect to work. Splitting a stem into toke
 rule, and the obvious one tags a plain chunked chain `prod_0001`/`prod_0002` as two members — breaking
 every untagged document in the process of helping a few. Tag those layouts by hand instead.
 
-**A known residual gap, worse than a refusal.** Cohorting groups directories by the exact SET of run bases
-they hold, so a directory that happens to run only the same single base as an entire replica tree — a
-one-off rerun tucked away at an unrelated depth, say `rerun/deep/here/prod_0001` beside `prod/01..03`'s
-`prod_0001` — lands in that tree's *own* cohort, not a cohort of its own. If that pulls the cohort's
-directories out of depth-uniformity, the whole cohort, replicas included, reports nothing: not just the
-stray directory. On `equil/01..03` beside `prod/01..03` plus that stray `rerun/`, the result is `equil`
-tagged `01..03` and **every** `prod` run silently untagged — a half-claimed campaign, which is worse than
-the outright refusal this rule otherwise gives. Absorption cannot rescue it either, because the affected
-cohort was never a singleton. Known and not yet fixed; watch for it when a directory's run names collide
-exactly with a cohort's bases from an unrelated part of the tree.
+**A residual gap the depth-keyed cohort fixed, and one it did not.** An earlier version of this rule
+grouped directories by run-base SET alone, so a directory that happened to run only the same single base as
+an entire replica tree — a one-off rerun tucked away at an unrelated depth, say `rerun/deep/here/prod_0001`
+beside `prod/01..03`'s `prod_0001` — fell into that tree's *own* cohort instead of one of its own, and its
+mismatched depth silently dropped the whole cohort, replicas included: `equil` tagged `01..03`, **every**
+`prod` run gone, reported as success. Keying cohorts on `(bases, depth)` fixed this: a directory can no
+longer merge into a cohort it does not belong to, so the stray rerun above forms its own single-directory
+cohort and `prod/01..03` tags normally (see the table row above).
+
+What depth-keying does **not** catch: two directories at the exact SAME depth the reporting cohorts agreed
+on, coincidentally sharing a segment spelling (`scratch/01` beside a `rep/01`-shaped tree, or `.cache/01`).
+Depth alone cannot distinguish a genuine sibling from a same-depth coincidence, and absorption will tag
+`scratch/01` (or `.cache/01`) as `01` if that segment happens to be a reconciled tag. This is a narrower,
+still-open gap — bounded to exact depth matches, unlike the one above — and is not fixed here.
 
 ### 9.2 A multi-lineage document is phase-major
 

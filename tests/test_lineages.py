@@ -268,13 +268,14 @@ def test_a_prep_directory_is_absorbed_only_when_its_segment_is_a_tag():
     assert sorted(set(tags.values())) == ["01", "02", "03"]
 
 
-def test_a_cohort_with_mismatched_depths_contributes_nothing_but_does_not_refuse():
-    """Step 2's depth-uniformity half, isolated. `extra/` and `extra/deep/` share a run
-    base (`min`) so they land in one cohort together, but they sit at different depths and
-    that cohort cannot report a segment either way -- it is dropped, not a veto. The `prod`
-    cohort, entirely unrelated to it, still tags. Mutating the depth-uniformity `continue`
-    into a `return {}` empties this result; the nested-sweep fixture cannot catch that
-    mutation because it has only one cohort to begin with."""
+def test_directories_sharing_a_base_but_not_a_depth_never_share_a_cohort():
+    """Depth lives in the cohort key (`(bases, depth)`), not in a post-hoc uniformity check
+    on the cohort's members -- so `extra/` and `extra/deep/`, which share a run base
+    (`min`) but sit at different depths, can never be grouped together in the first place.
+    Each becomes its own single-directory cohort, dropped as a singleton rather than as a
+    same-cohort depth mismatch. The unrelated `prod` cohort still tags. This used to be a
+    `continue` on a `depths != 1` check inside one cohort; folding depth into the key is
+    what fixes I5 below, and this pins the small-scale half of that mechanism."""
     names = ["rep1/prod_0001", "rep2/prod_0001",
              "extra/min_0001", "extra/deep/min_0001"]
     assert infer_lineages_from_layout(names) == {
@@ -306,6 +307,35 @@ def test_absorption_requires_the_singletons_depth_to_match_a_reporting_cohort():
     tags = infer_lineages_from_layout(names)
     assert "analysis/01/rmsd/calc" not in tags
     assert sorted(set(tags.values())) == ["01", "02", "03"]
+
+
+def test_a_stray_directory_sharing_a_whole_cohorts_base_set_does_not_drop_that_cohort():
+    """I5: a real defect this reconciliation model shipped with, found in review round 1,
+    deferred and disclosed there, and fixed here by keying cohorts on `(bases, depth)`
+    rather than on `bases` alone.
+
+    `rerun/deep/here` runs only `prod_0001` -- the SAME single run base as the ENTIRE
+    `prod/01..03` cohort, just three segments deep instead of two. Keyed on bases alone,
+    it landed in `prod/01..03`'s own cohort rather than one of its own, and its mismatched
+    depth pulled the WHOLE cohort out of depth-uniformity -- not just the stray directory.
+    The result was `equil` tagged `01..03` and every actual `prod` run silently gone: a
+    campaign reported `[applied]` with none of its production runs in it, which is worse
+    than the honest refusal this rule otherwise gives, and it is exactly the shape the real
+    campaign this feature was built for has (`prod/01..05`, all running only `nvt_prod` --
+    a single-base cohort, the vulnerable case). Keying cohorts on `(bases, depth)` means
+    `rerun/deep/here` can never merge into a cohort it does not belong to: it forms its own
+    single-directory cohort, dropped there as a singleton, and `prod/01..03` tags normally
+    -- 6 of the 7 runs here, everything but the stray one."""
+    names = [f"equil/{n}/equil_0001" for n in ("01", "02", "03")]
+    names += [f"prod/{n}/prod_0001" for n in ("01", "02", "03")]
+    names += ["rerun/deep/here/prod_0001"]
+    tags = infer_lineages_from_layout(names)
+    assert "rerun/deep/here/prod_0001" not in tags
+    assert len(tags) == 6
+    assert sorted(set(tags.values())) == ["01", "02", "03"]
+    assert tags["equil/01/equil_0001"] == "01"
+    assert tags["prod/01/prod_0001"] == "01"
+    assert tags["prod/03/prod_0001"] == "03"
 
 
 def test_two_temperature_arms_sharing_a_run_base_refuse_even_when_replica_numbers_nest():

@@ -341,13 +341,13 @@ def infer_lineages_from_layout(run_names: Iterable[str]) -> Dict[str, str]:
       predicate on exact run-name sets refuses to tag it, and a refusal here silently
       disables the very sequence-hole finding that would have reported the crash.
 
-      **Known residual gap, worse than a refusal**: cohorting keys on the exact SET of run
-      bases, so a stray directory whose run happens to share a whole tree's single base
-      (``rerun/deep/here/prod_0001`` beside ``prod/01..03``'s ``prod_0001``) lands in THAT
-      cohort, not one of its own. If that pulls the cohort out of depth-uniformity, the
-      whole cohort — replicas included — contributes nothing, not just the stray directory:
-      a half-claimed campaign, silently missing an entire cohort's tags rather than an
-      honest refusal. Not yet fixed; see ``manifest.md`` §9.1;
+      Cohorts are keyed on ``(bases, depth)``, not bases alone, for exactly the same
+      reason: a stray directory whose runs happen to share an entire OTHER cohort's base
+      set — ``rerun/deep/here/prod_0001`` beside ``prod/01..03``'s ``prod_0001``, both base
+      ``{prod}`` — used to fall into that cohort rather than one of its own, and its
+      mismatched depth silently dropped the whole cohort, replicas included: ``equil``
+      tagged, every ``prod`` run gone, reported as success. Folding depth into the key means
+      a directory can never merge into a cohort it does not belong to in the first place;
     * two rival families whose tag sets are **disjoint** are two experiments in one
       manifest, which this model does not represent. Neither is tagged. Sets that
       **nest**, though, are one campaign with a short member: ``equil/01..05`` beside
@@ -360,12 +360,23 @@ def infer_lineages_from_layout(run_names: Iterable[str]) -> Dict[str, str]:
       replicas;
     * contributing cohorts must run **disjoint** sets of run bases. A temperature sweep
       where one arm ran one extra minimisation splits into a ``{prod}`` cohort and a
-      ``{prod, min}`` cohort that still *share* ``prod`` — two arms of one sweep, not two
-      phases of a pipeline — and reconciling them would merge two different temperatures
-      into one lineage. ``equil/*`` and ``prod/*`` share no base at all, which is what
-      makes them phases rather than rivals. This cannot, by directory layout alone,
-      distinguish that from deliberately parallel arms with their *own* run names
-      (``apo/*`` beside ``holo/*``): those are disjoint too and still merge today — a known,
+      ``{prod, min}`` cohort that still *share* ``prod`` — usually two arms of one sweep
+      rather than two phases of a pipeline — and reconciling them would merge two
+      different temperatures into one lineage. ``equil/*`` and ``prod/*`` share no base at
+      all, which is what makes them phases rather than rivals.
+
+      Sharing a base is not *proof* of a sweep, though: a genuine two-phase pipeline whose
+      phases happen to reuse one run name — ``equil/01..02/{min,heat}`` beside
+      ``prod/01..02/{heat,nvt_prod}``, both cohorts running ``heat`` — is refused here too,
+      even though each phase has its own multiple replicas and would otherwise reconcile
+      cleanly. That is the safe failure — untagged, not a merged claim — but a user staring
+      at an untagged tree is not told *why* by this rule alone.
+
+      This cannot, by directory layout alone, distinguish a shared base from deliberately
+      parallel arms that use their *own* run names throughout — cross-system
+      (``apo/*`` beside ``holo/*``) or, more easily missed, same system under two
+      conditions with condition-specific run names (``300K/*/prodA`` beside
+      ``310K/*/prodB``): those bases are disjoint too and still merge today — a known,
       accepted limitation of this reconciliation model, not fixed here;
     * a directory left **alone** in its cohort — ``prod/01``, whose stray ``cpptraj.in``
       gives it a run-base set of its own — is absorbed only when it sits at a depth some
@@ -398,9 +409,23 @@ def infer_lineages_from_layout(run_names: Iterable[str]) -> Dict[str, str]:
     if len(candidates) < 2:
         return {}
 
-    cohorts: Dict[FrozenSet[str], List[str]] = {}
+    # Cohorts are keyed on `(bases, depth)`, not on `bases` alone. A directory whose runs
+    # happen to share an ENTIRE unrelated tree's base set -- `rerun/deep/here/prod_0001`
+    # beside `prod/01..03`'s `prod_0001`, both base `{prod}` -- used to land in `prod/01..03`'s
+    # own cohort rather than one of its own, and if that pulled the cohort out of depth
+    # uniformity the WHOLE cohort, replicas included, silently reported nothing: `equil`
+    # tagged, every `prod` run gone, with the tree still calling it a success. That is worse
+    # than the refusal this rule otherwise gives, and it disables the very sequence-hole
+    # finding this rule exists to protect -- on the exact tree shape (a single-base cohort)
+    # the real campaign this feature was built for actually has. Folding depth into the key
+    # means a directory at a foreign depth can never merge into a cohort it does not belong
+    # to in the first place: it forms (or joins) its OWN cohort at its own depth, where it is
+    # either a contributor in its own right or, alone, a candidate for absorption below --
+    # never a silent vote against directories it has nothing to do with.
+    cohorts: Dict[Tuple[FrozenSet[str], int], List[str]] = {}
     for directory, runs in candidates.items():
-        cohorts.setdefault(frozenset(_run_base(r) for r in runs), []).append(directory)
+        bases = frozenset(_run_base(r) for r in runs)
+        cohorts.setdefault((bases, len(directory.split("/"))), []).append(directory)
 
     # Each cohort of more than one directory reports its OWN varying segment, and a cohort
     # that cannot report one contributes nothing rather than refusing the whole tree -- a
@@ -414,18 +439,15 @@ def infer_lineages_from_layout(run_names: Iterable[str]) -> Dict[str, str]:
     # single-varying-segment rule below would refuse it one line later. Reconciled per
     # cohort, each cohort varies in exactly one segment and the two agree on which one.
     #
-    # `bases` (the cohort's own key) and `depth` travel with each report because two later
-    # checks need them: the disjointness check below needs the bases, and absorption needs
-    # to know which depths the tree actually agreed on.
+    # `bases` and `depth` travel with each report because two later checks need them: the
+    # disjointness check below needs the bases, and absorption needs to know which depths
+    # the tree actually agreed on. Depth is no longer re-derived here -- every directory in
+    # `dirs` already sits at `depth`, by construction of the cohort key above.
     reports: List[Tuple[FrozenSet[str], int, int, Dict[str, str]]] = []
-    for bases, dirs in cohorts.items():
+    for (bases, depth), dirs in cohorts.items():
         if len(dirs) < 2:
             continue
         segments = {d: d.split("/") for d in dirs}
-        depths = {len(s) for s in segments.values()}
-        if len(depths) != 1:
-            continue
-        depth = depths.pop()
         varying = [i for i in range(depth)
                    if len({segments[d][i] for d in dirs}) > 1]
         if len(varying) != 1:
