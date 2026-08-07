@@ -226,3 +226,21 @@ def test_topology_4_one_topology_with_different_starting_coordinates():
     sim = _tagged(["pose1/prod_0001", "pose2/prod_0001", "pose3/prod_0001"])
     assert list(lineages(sim)) == ["pose1", "pose2", "pose3"]
     assert is_multi_lineage(sim) is True
+
+
+# --- the sys021 shape ---
+
+def test_the_sys021_fixture_has_five_equil_and_five_prod_directories(sys021_tree):
+    """The fixture the whole spec is written against, pinned so a later edit cannot
+    quietly reshape it. `prod/01` carries the stray `cpptraj` run that put it in a cohort
+    of its own -- removing it would make the reconciliation task pass for the wrong
+    reason."""
+    equil = sorted(p.name for p in (sys021_tree / "equil").iterdir())
+    prod = sorted(p.name for p in (sys021_tree / "prod").iterdir())
+    assert equil == ["01", "02", "03", "04", "05"]
+    assert prod == ["01", "02", "03", "04", "05"]
+    assert (sys021_tree / "prod" / "01" / "cpptraj.in").exists()
+    # rep 01 ran one chunk further than the rest, and every rep has one queued chunk.
+    assert (sys021_tree / "prod" / "01" / "nvt_prod_0003.mdout").exists()
+    assert not (sys021_tree / "prod" / "01" / "nvt_prod_0004.mdout").exists()
+    assert (sys021_tree / "prod" / "01" / "nvt_prod_0004.mdin").exists()

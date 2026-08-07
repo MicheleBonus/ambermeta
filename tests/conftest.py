@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from typing import NamedTuple, Optional
 
 import pytest
 
@@ -30,18 +31,93 @@ _REPLICA_MDIN = {
 }
 
 
-def write_run_tree(root: Path, runs) -> Path:
-    """Write one mdin per entry of `runs` (posix stems), creating directories as needed.
+class RunSpec(NamedTuple):
+    """What to write on disk for one run.
 
-    mdin only: `discover_draft` counts a group holding an mdin *or* an mdout as a run and
-    parses only the mdin, so a real 160 kB mdout and a 12 MB prmtop would slow the suite
-    down without changing a single assertion here.
+    `elapsed_ps=None` writes NO mdout, which is how a queued run -- an mdin that was set
+    up and never executed -- is expressed. Every other field only matters when an mdout is
+    written. `inpcrd` becomes the File Assignments line AMBER itself records, which is the
+    evidence P2.4's handoff proposal reads; None omits the whole block, which is what a
+    clipped or absent assignment looks like.
     """
-    for stem in runs:
+    mdin: str
+    elapsed_ps: Optional[float] = None
+    begin_ps: float = 0.0
+    dt: float = 0.002
+    inpcrd: Optional[str] = None
+    frames: int = 5
+
+
+def _mdout_text(spec: RunSpec) -> str:
+    """The smallest mdout carrying everything the engine reads off one.
+
+    Three blocks, in AMBER's own order: the File Assignments block `read_mdout_header`
+    parses, a CONTROL DATA block giving `imin`/`nstlim`/`dt`, and `frames` NSTEP records.
+
+    The NSTEP times are ABSOLUTE, spanning `begin_ps` (exclusive) to
+    `begin_ps + elapsed_ps` (inclusive) -- which is the whole reason `_sum_stages` cannot
+    sum `time_end` directly. A fixture that wrote elapsed times here would let the wrong
+    formula pass.
+
+    Real AMBER pads every File Assignments value with trailing spaces up to a fixed column
+    width; `read_mdout_header` treats a value with NO trailing whitespace as possibly
+    clipped at that width and refuses to return it (`MdoutHeader.truncated`). Trailing
+    padding here is therefore load-bearing, not cosmetic -- without it `INPCRD` would come
+    back `None` and the fixture would silently fail to carry the one fact P2.4 reads.
+    """
+    assign = ""
+    if spec.inpcrd is not None:
+        assign = (
+            "File Assignments:\n"
+            "|   MDIN: mdin                                                                   \n"
+            "|  MDOUT: mdout                                                                  \n"
+            f"| INPCRD: {spec.inpcrd:<74}\n"
+            "|   PARM: prmtop                                                                 \n"
+        )
+    head = (
+        f"{assign}\n"
+        "   2.  CONTROL  DATA  FOR  THE  RUN\n"
+        f"     imin    = 0, nstlim  = {int(spec.elapsed_ps / spec.dt)}, dt = {spec.dt:.5f}\n"
+        f" begin time read from input coords = {spec.begin_ps:.3f} ps\n\n"
+        "   4.  RESULTS\n\n"
+    )
+    step_of = spec.elapsed_ps / spec.frames
+    body = ""
+    for i in range(1, spec.frames + 1):
+        t = spec.begin_ps + step_of * i
+        body += (
+            f" NSTEP = {int(step_of * i / spec.dt):>8}   TIME(PS) = {t:>11.3f}"
+            f"  TEMP(K) =   300.00  PRESS =     0.0\n"
+            " Etot   =    -1000.0000  EKtot   =      200.0000  EPtot      =    -1200.0000\n"
+            "  ----------------------------------------------------------------\n"
+        )
+    return head + body + "\n      5.  TIMINGS\n"
+
+
+def write_run_tree(root: Path, runs) -> Path:
+    """Write the files for each entry of `runs`, creating directories as needed.
+
+    An entry is either a bare posix stem -- the original behaviour, one role-matched mdin
+    and nothing else -- or a `(stem, RunSpec)` pair spelling out exactly what to write.
+
+    The bare form still writes mdin ONLY. That was a deliberate speed choice and it stays
+    the default, but it means every tree built from it reads as entirely `queued` once
+    totals come from the mdout, so a fixture asserting on time MUST use the pair form.
+
+    The bare form also picks its mdin by substring, which raises StopIteration for a stem
+    named after neither min/heat/equil/prod (`18_ntp_equi`, `cpptraj`). That is why the
+    pair form exists: real campaign stems do not follow this repo's fixture naming.
+    """
+    for entry in runs:
+        stem, spec = entry if isinstance(entry, tuple) else (entry, None)
+        if spec is None:
+            kind = next(k for k in _REPLICA_MDIN if k in Path(stem).name)
+            spec = RunSpec(mdin=_REPLICA_MDIN[kind])
         path = root / (stem + ".mdin")
         path.parent.mkdir(parents=True, exist_ok=True)
-        kind = next(k for k in _REPLICA_MDIN if k in Path(stem).name)
-        path.write_text(_REPLICA_MDIN[kind], encoding="utf-8")
+        path.write_text(spec.mdin, encoding="utf-8")
+        if spec.elapsed_ps is not None:
+            (root / (stem + ".mdout")).write_text(_mdout_text(spec), encoding="utf-8")
     return root
 
 
@@ -143,3 +219,54 @@ def nested_sweep_tree(tmp_path) -> Path:
         f"{temperature}/{rep}/prod_0001"
         for temperature in ("300K", "310K") for rep in ("rep1", "rep2")
     ])
+
+
+_PROD_MDIN = ("production\n &cntrl\n  imin = 0, irest = 1, nstlim = 2500000,\n"
+              "  dt = 0.002, ntb = 2,\n /\n")
+_EQUI_MDIN = ("equilibrate\n &cntrl\n  imin = 0, nstlim = 2500000, dt = 0.002,\n"
+              "  temp0 = 300.0, ntb = 2,\n /\n")
+_CPPTRAJ_IN = "trajin nvt_prod_0001.nc\nautoimage\ntrajout stripped.nc\n"
+
+
+@pytest.fixture
+def sys021_tree(tmp_path) -> Path:
+    """The real campaign this spec was written against, scaled down.
+
+    Five replicas, each an `equil/NN` directory feeding a `prod/NN` directory. Three
+    things about the real tree are load-bearing and are reproduced exactly:
+
+    * `prod/01` holds a stray `cpptraj.in`, which the extension-based file typing reads as
+      an AMBER mdin. That puts `prod/01` in a run-base cohort of its own, which is what
+      made the first draft of the reconciliation rule refuse this tree entirely;
+    * every replica has one final chunk with an mdin and no mdout -- queued, never run --
+      which is the 25 ns the old totals counted as simulated;
+    * replica 01 completed one chunk more than 02-05, which is the only genuine asymmetry
+      in the campaign and must survive as a finding rather than as a phantom missing run.
+
+    Each prod chunk is 5000 ps, matching the real `nstlim=2500000, dt=0.002`. Times are
+    absolute and continuous within a replica, so a totals rule that sums `time_end`
+    instead of elapsed time gives a visibly wrong number here.
+    """
+    runs = []
+    for n in ("01", "02", "03", "04", "05"):
+        # Equilibration: one 5000 ps run, ending where production picks up.
+        runs.append((f"equil/{n}/18_ntp_equi",
+                     RunSpec(mdin=_EQUI_MDIN, elapsed_ps=5000.0, begin_ps=0.0,
+                             inpcrd="17_ntp_equi.restrt")))
+        ran = 3 if n == "01" else 2
+        for i in range(1, ran + 1):
+            runs.append((f"prod/{n}/nvt_prod_{i:04d}",
+                         RunSpec(mdin=_PROD_MDIN, elapsed_ps=5000.0,
+                                 begin_ps=5000.0 * i,
+                                 inpcrd=("18_ntp_equi.restrt" if i == 1
+                                         else f"nvt_prod_{i - 1:04d}.restrt"))))
+        # The chunk that was queued and never ran: mdin, no mdout.
+        runs.append((f"prod/{n}/nvt_prod_{ran + 1:04d}", RunSpec(mdin=_PROD_MDIN)))
+    tree = write_run_tree(tmp_path, runs)
+    # The stray cpptraj script. Written directly rather than through `write_run_tree` --
+    # that helper always appends `.mdin`, but the real campaign file is `cpptraj.in`, and
+    # `.in` is the other extension `discover_draft` reads as an mdin candidate (alongside
+    # `.mdin`), which is the whole reason this run ends up cohorted with the mdin-typed
+    # production runs instead of being ignored as an unrecognised file.
+    (tree / "prod" / "01" / "cpptraj.in").write_text(_CPPTRAJ_IN, encoding="utf-8")
+    return tree
