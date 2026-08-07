@@ -68,7 +68,50 @@ export interface ValidationReport {
   protocol_issues: string[];
   stage_issues: StageIssue[]; suggestions: Suggestion[];
 }
-export interface DiscoverResult { document: DocumentResponse; suggestions: Suggestion[]; warnings: string[]; }
+// --- lineage proposal: what discovery inferred, never what it wrote (P2.2) ---
+
+export interface ProposedSource { directory: string; run_count: number; }
+/** One member `build_lineage_proposal` proposes — NOT a declared lineage. Nothing here is
+ *  on any step's `lineage` yet: `step_ids` is what a `PATCH /steps/lineage` accepting this
+ *  member would tag, and `sources` is the evidence a reviewer reads before doing that. */
+export interface ProposedMember { tag: string; step_ids: string[]; sources: ProposedSource[]; }
+/** One cross-directory restart handoff read off AMBER's own File Assignments block. */
+export interface ProposedHandoff {
+  consumer_id: string; producer_id: string;
+  consumer: string; producer: string; evidence: string;
+}
+/**
+ * What Discover — or a re-run of the layout inference over the open document — proposes.
+ * Never written: nothing here corresponds to a `StepModel.lineage` that has actually been
+ * set. `segments` is the raw material for a segment picker: the server, not the frontend,
+ * owns the math of what a given `segment_index` counts over, so the picker renders
+ * directly off this array rather than reconstructing it from step names.
+ */
+export interface LineageProposal {
+  segment_index: number;
+  segments: string[][];
+  members: ProposedMember[];
+  handoffs: ProposedHandoff[];
+}
+/**
+ * `POST /steps/infer-lineages`'s reply: a proposal, or none, plus why not. Its own shape
+ * rather than `DocumentResponse` — that route only reads the document (see its docstring:
+ * "Writes nothing"), so returning one would claim an edit that never happened.
+ */
+export interface LineageProposalResponse { proposal: LineageProposal | null; warnings: string[]; }
+
+export interface DiscoverResult {
+  document: DocumentResponse; suggestions: Suggestion[]; warnings: string[];
+  /**
+   * Required, not optional, for the same reason as `warnings` above: the server always
+   * sends the key (`DiscoverResponse.proposal: Optional[LineageProposal] = None` still
+   * serialises on the wire), and a fixture allowed to omit it is a surface that silently
+   * reports no proposal at all. `discover_draft(..., apply_tags=False)` never writes the
+   * grouping it finds, so this is the only place it reaches the client until the strip
+   * that reads it (`ProposalStrip`) sends it back through `PATCH /steps/lineage`.
+   */
+  proposal: LineageProposal | null;
+}
 
 /** The artifacts `ambermeta plan` writes. A null path means "do not write this one". */
 export interface PlanRequest {

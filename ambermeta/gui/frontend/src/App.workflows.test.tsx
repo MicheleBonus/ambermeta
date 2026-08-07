@@ -46,6 +46,10 @@ describe("top-bar workflows", () => {
         },
       ],
       warnings: [],
+      // No layout inference to report here -- the fixture's single step has no directory
+      // segment to distinguish members by, matching build_lineage_proposal's own "returns
+      // None" case.
+      proposal: null,
     };
     server.use(
       http.post("/api/document/discover", () => {

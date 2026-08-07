@@ -31,5 +31,14 @@ export const apiHandlers = [
   http.put("/api/simulation/starting-structure", () => HttpResponse.json(emptyDocument)),
   http.post("/api/undo", () => HttpResponse.json(emptyDocument)),
   http.post("/api/redo", () => HttpResponse.json(emptyDocument)),
+  // ProposalStrip's segment picker posts to the former on click, and any strip opened
+  // with no proposal in hand (the top-bar manual-mode entry point) would fetch one on
+  // mount. `null` is the honest default -- inference refuses far more layouts than it
+  // accepts -- and a test that wants a real proposal overrides it with `server.use`.
+  http.post("/api/steps/infer-lineages", () => HttpResponse.json({ proposal: null, warnings: [] })),
+  // Accepting a proposal is one PATCH per distinct tag; a test that does not care about
+  // the specific bodies still needs this so mounting the strip does not trip
+  // onUnhandledRequest:"error".
+  http.patch("/api/steps/lineage", () => HttpResponse.json(emptyDocument)),
 ];
 export const server = setupServer(...apiHandlers);
