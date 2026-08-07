@@ -26,18 +26,38 @@
 
 ## Environment
 
-Nothing is installed on this machine. Task 0 handles it.
+**Use the `ambermeta` mamba environment. Put this at the top of every shell:**
+
+```bash
+export PATH="/home/bonus/Software/miniforge3/envs/ambermeta/bin:$PATH"
+cd /home/bonus/git/ambermeta
+```
+
+Verified state of that environment as of this plan: Python **3.12.12**, node **v25.6.0**,
+npm **11.8.0**, `ambermeta` already installed editable and resolving to this repo
+(`/home/bonus/git/ambermeta/ambermeta/__init__.py`). `fastapi`, `pyyaml`, `numpy` and `netCDF4`
+are present; **`pytest` and `httpx` are missing** — that is what Task 0 installs.
+
+`npm` fails with `env: 'node': No such file or directory` unless the env's `bin` is on `PATH`.
+The export above is not optional.
 
 | Need | Command | Note |
 | --- | --- | --- |
 | Python deps | `python -m pip install -e ".[all,tests]"` | Exactly CI's line. `[all]` or `[tests]` alone = collection errors. |
 | Full python suite | `python -m pytest` | From repo root. `testpaths`/`addopts` come from pyproject; add no flags. |
 | One python test | `python -m pytest tests/test_lineages.py::test_name` | No test classes exist anywhere. |
-| Node | `/home/bonus/Software/miniforge3/envs/ambermeta/bin` | node v25.6.0, npm 11.8.0. `node_modules/` absent. |
-| Frontend suite | `cd ambermeta/gui/frontend && npm ci && npm test` | `npm test` is `vitest run`. |
+| Frontend suite | `cd ambermeta/gui/frontend && npm ci && npm test` | `npm test` is `vitest run`. `node_modules/` is absent, so `npm ci` is required once. |
 | One frontend test | `npx vitest run src/path/X.test.tsx -t "sentence"` | From `ambermeta/gui/frontend`. |
 | Type check | `npx tsc --noEmit` | The only automated type gate. CI runs no Python linter/typechecker. |
 | Bundle | `npm ci && npm run build`, then `git add -A ambermeta/gui/static` | `emptyOutDir: true`; asset names are content-hashed, so `-A` is required to stage deletions. |
+
+**Two interpreter caveats.** The env is Python 3.12, so the **3.9 CI leg cannot be reproduced
+locally** — a 3.9-only failure (syntax, or a float last-bit difference from the compensated
+`sum()`) will only surface in CI, which is exactly why the Global Constraints on 3.9 syntax and
+`+=` accumulation are non-negotiable. And `scripts/export_cli_help.py` demands Python **3.11**
+exactly; if a task ever needs it, use
+`/home/bonus/Software/miniforge3/envs/chainsaw-py311/bin/python` (3.11.15, verified). No task in
+this plan changes CLI help text, so it should not be needed — Task 14 confirms.
 
 **CI jobs:** pytest 3.9, pytest 3.12, vitest (node 20), GUI Static Build Check (`paths:` filter on `frontend/src/**`, `vite.config.ts`, `package*.json`), CLI Docs Sync Check (`docs/cli.md` only).
 
