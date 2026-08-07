@@ -339,7 +339,15 @@ def infer_lineages_from_layout(run_names: Iterable[str]) -> Dict[str, str]:
       important thing this feature has to catch**. ``rep1/prod_0001..0003`` beside
       ``rep2/prod_0001`` is one crashed member, not two unrelated directories; keying the
       predicate on exact run-name sets refuses to tag it, and a refusal here silently
-      disables the very sequence-hole finding that would have reported the crash;
+      disables the very sequence-hole finding that would have reported the crash.
+
+      **Known residual gap, worse than a refusal**: cohorting keys on the exact SET of run
+      bases, so a stray directory whose run happens to share a whole tree's single base
+      (``rerun/deep/here/prod_0001`` beside ``prod/01..03``'s ``prod_0001``) lands in THAT
+      cohort, not one of its own. If that pulls the cohort out of depth-uniformity, the
+      whole cohort — replicas included — contributes nothing, not just the stray directory:
+      a half-claimed campaign, silently missing an entire cohort's tags rather than an
+      honest refusal. Not yet fixed; see ``manifest.md`` §9.1;
     * two rival families whose tag sets are **disjoint** are two experiments in one
       manifest, which this model does not represent. Neither is tagged. Sets that
       **nest**, though, are one campaign with a short member: ``equil/01..05`` beside
@@ -350,10 +358,23 @@ def infer_lineages_from_layout(run_names: Iterable[str]) -> Dict[str, str]:
       **index**. A cohort that cannot name one segment contributes nothing rather than
       refusing the whole tree, so a prep directory at another depth cannot veto the
       replicas;
+    * contributing cohorts must run **disjoint** sets of run bases. A temperature sweep
+      where one arm ran one extra minimisation splits into a ``{prod}`` cohort and a
+      ``{prod, min}`` cohort that still *share* ``prod`` — two arms of one sweep, not two
+      phases of a pipeline — and reconciling them would merge two different temperatures
+      into one lineage. ``equil/*`` and ``prod/*`` share no base at all, which is what
+      makes them phases rather than rivals. This cannot, by directory layout alone,
+      distinguish that from deliberately parallel arms with their *own* run names
+      (``apo/*`` beside ``holo/*``): those are disjoint too and still merge today — a known,
+      accepted limitation of this reconciliation model, not fixed here;
     * a directory left **alone** in its cohort — ``prod/01``, whose stray ``cpptraj.in``
-      gives it a run-base set of its own — is absorbed only when the tree has already
-      decided what the tags are and its segment at the agreed index is one of them.
-      ``common/`` is not absorbed: its segment is ``common``, not a tag;
+      gives it a run-base set of its own — is absorbed only when it sits at a depth some
+      reporting cohort actually used **and** its segment at the agreed index is one of the
+      reconciled tags. ``common/`` is not absorbed: its segment is ``common``, not a tag.
+      The depth check keeps an unrelated directory that merely happens to spell a tag at
+      the right *index* (``analysis/01/rmsd/calc``, three segments deep) from being
+      absorbed by coincidence; it does not, and cannot, catch a coincidence at the *same*
+      depth the reporting cohorts used (``scratch/01`` beside a ``rep/01``-shaped tree);
     * the tag must be **one** segment: a nested sweep (``300K/rep1``, ``310K/rep2``)
       varies in two places at once *within its cohort* and there is no way to tell which
       one names the member.
@@ -392,51 +413,88 @@ def infer_lineages_from_layout(run_names: Iterable[str]) -> Dict[str, str]:
     # TWO segments at once (equil|prod at index 0, 01..05 at index 1), and the
     # single-varying-segment rule below would refuse it one line later. Reconciled per
     # cohort, each cohort varies in exactly one segment and the two agree on which one.
-    reports: List[Tuple[int, Dict[str, str]]] = []
-    for dirs in cohorts.values():
+    #
+    # `bases` (the cohort's own key) and `depth` travel with each report because two later
+    # checks need them: the disjointness check below needs the bases, and absorption needs
+    # to know which depths the tree actually agreed on.
+    reports: List[Tuple[FrozenSet[str], int, int, Dict[str, str]]] = []
+    for bases, dirs in cohorts.items():
         if len(dirs) < 2:
             continue
         segments = {d: d.split("/") for d in dirs}
         depths = {len(s) for s in segments.values()}
         if len(depths) != 1:
             continue
-        varying = [i for i in range(depths.pop())
+        depth = depths.pop()
+        varying = [i for i in range(depth)
                    if len({segments[d][i] for d in dirs}) > 1]
         if len(varying) != 1:
             continue
-        reports.append((varying[0], {d: segments[d][varying[0]] for d in dirs}))
+        reports.append((bases, depth, varying[0],
+                         {d: segments[d][varying[0]] for d in dirs}))
 
     if not reports:
         return {}
     # Two cohorts naming their member at different segment indices are not one campaign --
     # merging them would tag two unrelated axes as though they were the same replica.
-    if len({index for index, _ in reports}) != 1:
+    if len({index for _, _, index, _ in reports}) != 1:
         return {}
-    index = reports[0][0]
+    index = reports[0][2]
+
+    # Contributing cohorts must run genuinely DISJOINT sets of run bases. Two cohorts that
+    # SHARE a base are the same kind of thing running in parallel, not two phases of one
+    # pipeline: a temperature sweep where one arm happened to run one extra minimisation
+    # splits into a `{prod}` cohort and a `{prod, min}` cohort that still share `prod`, and
+    # their matching replica numbering (`rep1`, `rep2` in both) would otherwise nest into
+    # one lineage that silently crosses the temperature axis -- two different temperatures
+    # reported as one member. `equil/*` (many prep run names) beside `prod/*` (`nvt_prod`),
+    # by contrast, share no base at all: they are different PHASES of one pipeline, which
+    # is exactly the shape this rule exists to reconcile, not refuse.
+    #
+    # This does not, and cannot, catch deliberately parallel arms that use DISTINCT run
+    # names of their own -- `apo/01../prod_apo` beside `holo/01../prod_holo`, or `wt/*`
+    # beside `mut/*` -- their bases are disjoint too, on purpose, and directory layout
+    # alone cannot tell that apart from a pipeline's phases. Accepted, not fixed here: see
+    # manifest.md §9.1 for the deferred multi-axis design this belongs to.
+    for i, (bases_a, _, _, _) in enumerate(reports):
+        for bases_b, _, _, _ in reports[i + 1:]:
+            if bases_a & bases_b:
+                return {}
 
     # Nested, not equal. A member that never reached production appears in the equil
     # cohort and not the prod one, and that is one campaign with a short member -- exactly
     # the crashed replica this feature exists to surface. Two DISJOINT sets are still two
     # experiments and are still refused, because neither contains the other.
-    tag_sets = [set(mapping.values()) for _, mapping in reports]
+    tag_sets = [set(mapping.values()) for _, _, _, mapping in reports]
     reconciled = max(tag_sets, key=len)
     if any(not tags <= reconciled for tags in tag_sets):
         return {}
 
-    tagged = {d: tag for _, mapping in reports for d, tag in mapping.items()}
+    tagged = {d: tag for _, _, _, mapping in reports for d, tag in mapping.items()}
 
     # A directory alone in its cohort was dropped above -- `len(dirs) < 2` -- so it never
     # got a chance to report a varying segment of its own. It is absorbed only when the
-    # tree has already decided what the tags are AND this directory's segment at the agreed
-    # index is one of them. That is how a stray `cpptraj.in` stops costing `prod/01` its
-    # membership (its segment, "01", is already a reconciled tag), while a genuine
-    # `common/` prep directory is not absorbed: its segment is "common", which is not a tag
-    # anybody's cohort reported, so it stays untagged and out of the count.
+    # tree has already decided what the tags are, this directory sits at a depth some
+    # reporting cohort actually used, AND its segment at the agreed index is one of the
+    # reconciled tags. The depth check earns its keep on its own: without it,
+    # `analysis/01/rmsd/calc` (depth 3, nothing to do with either replica tree) would be
+    # absorbed into lineage "01" purely because its third segment happens to spell a tag --
+    # a coincidence the layout gives no support for, not a claim. This is how a stray
+    # `cpptraj.in` stops costing `prod/01` its membership -- its segment ("01") is a
+    # reconciled tag AND `prod/01` sits at the same depth `prod/02..05` itself reported --
+    # while a genuine `common/` prep directory at that SAME depth is still not absorbed:
+    # its segment is "common", which is not a tag anybody's cohort reported.
+    #
+    # What the depth check does NOT catch: two directories at the SAME depth the tree
+    # agreed on, coincidentally sharing a segment spelling (`scratch/01` beside a
+    # `rep/01`-shaped tree). Depth alone cannot distinguish a genuine sibling from a same-
+    # depth coincidence. Left as a residual gap; see manifest.md §9.1.
+    reporting_depths = {depth for _, depth, _, _ in reports}
     for dirs in cohorts.values():
         if len(dirs) != 1:
             continue
         parts = dirs[0].split("/")
-        if len(parts) > index and parts[index] in reconciled:
+        if len(parts) in reporting_depths and parts[index] in reconciled:
             tagged[dirs[0]] = parts[index]
 
     return {f"{d}/{run}": tag for d, tag in tagged.items() for run in candidates[d]}

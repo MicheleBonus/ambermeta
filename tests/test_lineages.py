@@ -236,10 +236,25 @@ def test_a_member_missing_from_one_cohort_does_not_refuse_the_tree():
     assert set(tags.values()) == {"01", "02", "03"}
 
 
-def test_two_cohorts_naming_their_member_at_different_depths_refuse():
-    """Step 3 of the rule: `p/01`, `p/02` name the member at index 1; `q1/`, `q2/` name
-    it at index 0. Merging them would tag two unrelated axes as one campaign."""
-    assert infer_lineages_from_layout(["p/01/x", "p/02/x", "q1/z", "q2/z"]) == {}
+def test_two_cohorts_naming_their_member_at_different_segment_indices_refuse():
+    """Step 3 of the rule, genuinely exercised. Each shape's two cohorts run DISJOINT
+    bases (so the step-4 disjointness/nesting checks cannot be what refuses them) and each
+    cohort DOES report a segment of its own -- but at a different index, so merging them
+    would tag two unrelated axes as though they were the same replica.
+
+    `["p/01/x", "p/02/x", "q1/z", "q2/z"]` used to stand in for this, but it is refused by
+    step 4 (its tag sets `{01,02}` and `{q1,q2}` are disjoint) whether or not step 3 exists
+    -- deleting step 3 left the whole suite green. These three do not have that escape
+    hatch: verified by deleting the step-3 check and watching each one fail.
+    """
+    # p/01, p/02 name the member at index 1; 01, 02 name it at index 0.
+    assert infer_lineages_from_layout(["p/01/x", "p/02/x", "01/z", "02/z"]) == {}
+    # rep1, rep2 name the member at index 0; a/rep1, a/rep2 name it at index 1.
+    assert infer_lineages_from_layout(
+        ["rep1/prod", "rep2/prod", "a/rep1/heat", "a/rep2/heat"]) == {}
+    # 01, 02, 03 name the member at index 0; p/01, p/02 name it at index 1.
+    assert infer_lineages_from_layout(
+        ["01/x", "02/x", "03/x", "p/01/z", "p/02/z"]) == {}
 
 
 def test_a_prep_directory_is_absorbed_only_when_its_segment_is_a_tag():
@@ -251,6 +266,83 @@ def test_a_prep_directory_is_absorbed_only_when_its_segment_is_a_tag():
     tags = infer_lineages_from_layout(names)
     assert "prod/common/setup" not in tags
     assert sorted(set(tags.values())) == ["01", "02", "03"]
+
+
+def test_a_cohort_with_mismatched_depths_contributes_nothing_but_does_not_refuse():
+    """Step 2's depth-uniformity half, isolated. `extra/` and `extra/deep/` share a run
+    base (`min`) so they land in one cohort together, but they sit at different depths and
+    that cohort cannot report a segment either way -- it is dropped, not a veto. The `prod`
+    cohort, entirely unrelated to it, still tags. Mutating the depth-uniformity `continue`
+    into a `return {}` empties this result; the nested-sweep fixture cannot catch that
+    mutation because it has only one cohort to begin with."""
+    names = ["rep1/prod_0001", "rep2/prod_0001",
+             "extra/min_0001", "extra/deep/min_0001"]
+    assert infer_lineages_from_layout(names) == {
+        "rep1/prod_0001": "rep1", "rep2/prod_0001": "rep2"}
+
+
+def test_a_cohort_with_two_varying_segments_contributes_nothing_but_does_not_refuse():
+    """Step 2's other half, isolated. `sweepA/armX/` and `sweepB/armY/` share a run base
+    (`misc`) and sit at the same depth -- so this is not the depth-uniformity check above
+    -- but two segments vary between them, not one, and that cohort cannot report a segment
+    either. The `prod` cohort still tags. Mutating the single-varying-segment `continue`
+    into a `return {}` empties this result."""
+    names = ["rep1/prod_0001", "rep2/prod_0001",
+             "sweepA/armX/misc_0001", "sweepB/armY/misc_0001"]
+    assert infer_lineages_from_layout(names) == {
+        "rep1/prod_0001": "rep1", "rep2/prod_0001": "rep2"}
+
+
+def test_absorption_requires_the_singletons_depth_to_match_a_reporting_cohort():
+    """The depth half of absorption. `analysis/01/rmsd/calc` sits three segments deep --
+    one deeper than the equil/prod cohorts, which both report at depth 2 -- so its second
+    segment spelling `01` is a coincidence the layout gives no support for, not a claim,
+    and it is not absorbed even though `01` is a reconciled tag. Without this check it
+    would be: `len(parts) > index` alone (the pre-fix guard) says nothing about which depth
+    the reporting cohorts actually agreed on."""
+    names = [f"equil/{n}/eq" for n in ("01", "02", "03")]
+    names += [f"prod/{n}/pr" for n in ("01", "02", "03")]
+    names += ["analysis/01/rmsd/calc"]
+    tags = infer_lineages_from_layout(names)
+    assert "analysis/01/rmsd/calc" not in tags
+    assert sorted(set(tags.values())) == ["01", "02", "03"]
+
+
+def test_two_temperature_arms_sharing_a_run_base_refuse_even_when_replica_numbers_nest():
+    """The rule that fixes the over-tagging defect this round's review found. `310K` ran
+    one extra minimisation on top of `production`, splitting into a `{prod}` cohort
+    (`300K/*`) and a `{prod, min}` cohort (`310K/*`) that still SHARE `prod` -- two arms of
+    one sweep, not two phases of a pipeline. Both cohorts happen to report at the same
+    index with matching replica numbering (`rep1`, `rep2` in both), so nesting alone would
+    have merged two different temperatures into one lineage. This is the shape that used to
+    return a tagged dict instead of `{}` before the disjointness check existed."""
+    names = ["300K/rep1/prod_0001", "300K/rep2/prod_0001",
+             "310K/rep1/prod_0001", "310K/rep2/prod_0001",
+             "310K/rep1/min_0001", "310K/rep2/min_0001"]
+    assert infer_lineages_from_layout(names) == {}
+
+
+def test_a_per_replica_extra_run_does_not_cross_the_temperature_axis():
+    """The worse half of the same defect: the extra minimisation lands on one replica per
+    arm (`310K/rep1` only) rather than the whole arm, so without the disjointness check
+    `310K/rep1` and `310K/rep2` would still land in the SAME cohort as `300K/rep1` and
+    `300K/rep2` by run base -- tagging `rep1` across both temperatures as one member."""
+    names = ["300K/rep1/prod_0001", "300K/rep2/prod_0001",
+             "310K/rep1/prod_0001", "310K/rep1/min_0001",
+             "310K/rep2/prod_0001", "310K/rep2/min_0001"]
+    assert infer_lineages_from_layout(names) == {}
+
+
+def test_deliberately_parallel_arms_with_disjoint_bases_still_merge_a_known_limitation():
+    """A documented, accepted gap, not a defect: `apo/*` and `holo/*` use entirely distinct
+    run names of their own, so their bases are genuinely disjoint -- the same shape that
+    lets `equil/*` and `prod/*` reconcile into one pipeline. Directory layout alone cannot
+    tell a pipeline's phases apart from two rival arms that happen to use different names,
+    so this still merges. Deferred to the multi-axis design; see manifest.md §9.1."""
+    names = [f"apo/{n}/prod_apo_0001" for n in ("01", "02", "03")]
+    names += [f"holo/{n}/prod_holo_0001" for n in ("01", "02")]
+    tags = infer_lineages_from_layout(names)
+    assert set(tags.values()) == {"01", "02", "03"}
 
 
 # --- the four in-scope topologies of design section 1.1 ----------------------
