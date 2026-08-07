@@ -500,9 +500,20 @@ def discover_draft(base_directory, recursive=True, pattern=None):
     # one member and takes the single flat chain and contiguous phases it always had.
     multi_lineage = len({tags.get(stem) or UNTAGGED for stem in run_stems}) >= 2
 
-    prev_by_lineage = {}
-    # Where each member's previous step landed. A phase lookup that may only start here
-    # can never move a member backwards, which is what keeps its steps in order.
+    # Keyed on the run DIRECTORY, not on the lineage bucket. On an untagged tree every
+    # stem shared the UNTAGGED bucket, which is exactly how one flat chain came to run
+    # equil/01 -> equil/02 -> ... -> prod/05: nine edges nobody asserted, published with
+    # ok: true, and self-validating because resolve_input_coords hands the consumer the
+    # producer's own restart so the gap is always 0.0.
+    #
+    # A directory boundary is the only boundary discovery can justify. Within one, the
+    # chunked chain prod_0001 -> prod_0002 is what the numbering means. Across one, the
+    # evidence lives in the mdout's File Assignments block, and that is PROPOSED rather
+    # than written -- see the handoff proposal.
+    prev_by_directory: Dict[str, str] = {}
+    # Where each member's previous step landed, for phase grouping only (Task 7 changes
+    # how `multi_lineage` is derived, not what this does). A phase lookup that may only
+    # start here can never move a member backwards, which is what keeps its steps in order.
     phase_index_by_lineage = {}
     for stem in run_stems:
         kinds = grouped[stem]
@@ -518,11 +529,19 @@ def discover_draft(base_directory, recursive=True, pattern=None):
         topology = hmr_topo if (hmr_topo and implies_hmr(dt)) else default_topo
         tag = tags.get(stem)
         member = tag or UNTAGGED
-        prev_step_id = prev_by_lineage.get(member)
+        # The chain boundary is the run DIRECTORY, not the lineage member. Two directories
+        # sharing one member -- `equil/05` and `prod/01` on an untagged tree, or two
+        # replicas that both fell into UNTAGGED -- are not evidence that one continues the
+        # other; that evidence is the mdout's File Assignments block, which this scan does
+        # not read. So the first step written in EACH directory starts over here, however
+        # many members or lineages that directory's stems share.
+        directory = stem.rpartition("/")[0]
+        prev_step_id = prev_by_directory.get(directory)
         if prev_step_id is None:
-            # The first run of each member reads what tLEaP wrote alongside the topology.
-            # Which member is the point: one flat "is this the first run at all?" test is
-            # what chained replica 2 onto replica 1.
+            # The first run of each directory reads what tLEaP wrote alongside the
+            # topology. Which DIRECTORY is the point: keying this on the lineage member
+            # instead is what let `equil/05` hand its restart to `prod/01`, and let an
+            # untagged tree's one shared UNTAGGED bucket hand rep1's tail to rep2's head.
             ic = InputCoords(source="starting_structure")
         else:
             # Chained: this run's input coords ARE the previous run's output restart.
@@ -575,7 +594,7 @@ def discover_draft(base_directory, recursive=True, pattern=None):
                                         name=(role.title() if role else "Stage"), role=role))
             phase = sim.phases[-1]
         phase.steps.append(step)
-        prev_by_lineage[member] = step.id
+        prev_by_directory[directory] = step.id
 
     warnings = []
     if len(sim.topologies) > 1:

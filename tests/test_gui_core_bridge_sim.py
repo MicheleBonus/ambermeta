@@ -5,7 +5,9 @@ import pytest
 
 from ambermeta.errors import AmberMetaError
 from ambermeta.gui.api import core_bridge
-from ambermeta.simulation import Simulation, Phase, Step, Topology, resolve_input_coords
+from ambermeta.simulation import (
+    Simulation, Phase, Step, Topology, iter_steps, resolve_input_coords,
+)
 
 
 def _sim():
@@ -352,9 +354,50 @@ def test_discover_reports_the_replica_that_stopped_early(crashed_replica_tree):
     assert card["base"] == "prod" and card["missing"] == [2, 3]
 
 
-def test_discover_draft_leaves_an_ambiguous_tree_untagged_and_serially_chained(nested_sweep_tree):
-    """A nested sweep varies in two segments at once, so nothing is tagged — and an
-    untagged tree keeps exactly the flat chain and contiguous phases it always had."""
+# ---------------------------------------------------------------------------
+# discover_draft never invents a cross-directory continuation (P1.3)
+# ---------------------------------------------------------------------------
+
+def test_discover_draft_never_chains_across_a_run_directory(sys021_tree):
+    """The nine edges this removes were the whole reason a 1097-run campaign published as
+    one serial 5.055 us trajectory. They self-validated, too: resolve_input_coords hands a
+    source="step" consumer the PRODUCER'S OWN restart, so _check_stage_pair compared a
+    run's end time against its own output and saw observed_gap_ps = 0.0 every time."""
+    sim = core_bridge.discover_draft(str(sys021_tree), recursive=True)["simulation"]
+    by_id = {s.id: s for _, s in iter_steps(sim)}
+    for _, step in iter_steps(sim):
+        if step.input_coords and step.input_coords.source == "step":
+            producer = by_id[step.input_coords.ref]
+            assert producer.name.rpartition("/")[0] == step.name.rpartition("/")[0], (
+                f"{step.name} reads a restart written by {producer.name}")
+
+
+def test_discover_draft_still_chains_within_one_directory(sys021_tree):
+    """The within-directory chain is what makes a chunked run a chain, and it cannot be
+    wrong about membership because it never leaves the directory. Removing it would gut the
+    default output of every existing single-replica project."""
+    sim = core_bridge.discover_draft(str(sys021_tree), recursive=True)["simulation"]
+    by_id = {s.id: s for _, s in iter_steps(sim)}
+    edges = {s.name: by_id[s.input_coords.ref].name
+             for _, s in iter_steps(sim)
+             if s.input_coords and s.input_coords.source == "step"}
+    assert edges["prod/01/nvt_prod_0002"] == "prod/01/nvt_prod_0001"
+    assert edges["prod/01/nvt_prod_0003"] == "prod/01/nvt_prod_0002"
+    # The head of a directory reads the starting structure, not the previous directory.
+    # Checked on prod/02, not prod/01: prod/01 also holds the stray `cpptraj.in` (see
+    # sys021_tree's docstring), which natural-sorts ahead of `nvt_prod_0001` and is that
+    # directory's real first stem instead -- a pre-existing, separately-tested quirk
+    # (test_protocol_queued.py) this test is not about. prod/02 shows the same
+    # directory-boundary property without it.
+    assert "prod/02/nvt_prod_0001" not in edges
+
+
+def test_discover_draft_leaves_an_ambiguous_tree_untagged_and_unchained(nested_sweep_tree):
+    """A nested sweep varies in two segments at once, so nothing is tagged. Each of its four
+    stems is also the only run in its own directory, and a directory boundary is the only
+    boundary discovery can justify — so the tree now yields four single-run directories with
+    no edges at all, tagged or not. It no longer matters that these four used to fall into
+    one shared UNTAGGED bucket: the bucket stopped being what the chain is keyed on."""
     tree = nested_sweep_tree
     sim = core_bridge.discover_draft(str(tree), recursive=True)["simulation"]
 
@@ -362,9 +405,9 @@ def test_discover_draft_leaves_an_ambiguous_tree_untagged_and_serially_chained(n
     assert len(sim.phases) == 1
     assert _edges(sim) == [
         ("300K/rep1/prod_0001", "starting_structure"),
-        ("300K/rep2/prod_0001", "300K/rep1/prod_0001"),
-        ("310K/rep1/prod_0001", "300K/rep2/prod_0001"),
-        ("310K/rep2/prod_0001", "310K/rep1/prod_0001"),
+        ("300K/rep2/prod_0001", "starting_structure"),
+        ("310K/rep1/prod_0001", "starting_structure"),
+        ("310K/rep2/prod_0001", "starting_structure"),
     ]
     assert not any(s["kind"] == "lineage_group"
                    for s in core_bridge.build_suggestions(sim, str(tree)))
