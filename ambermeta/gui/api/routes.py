@@ -139,6 +139,53 @@ def discover_document(req: DiscoverRequest) -> DiscoverResult:
     # rather than silently dropped.
     dropped = sorted(previous)
 
+    # The tags were carried; the ACCEPTED HANDOFFS were not, and they were the other half
+    # of the same declaration. A user who accepted the proposal strip's five
+    # `equil/NN -> prod/NN` edges and then re-Discovered got all five deleted, with
+    # `warnings: []` -- verified end to end: 3 cross-directory edges after Accept, 0 after
+    # re-Discover, nothing said. The fresh draft cannot rebuild them, and that is
+    # deliberate rather than an oversight to route around: `discover_draft` chains WITHIN a
+    # run directory only, because a restart sitting in another directory is not evidence
+    # that this run read it. The mdout's File Assignments block is that evidence, and the
+    # handoff proposal is where it is offered -- as a PROPOSAL, accepted by hand. So the
+    # edge exists in the document for exactly one reason: the user put it there.
+    #
+    # Scoped to CROSS-DIRECTORY edges on purpose. Within one directory the fresh scan
+    # rebuilds the chunked chain itself, and carrying those forward would fight it: an
+    # edge the user deliberately removed (or rerouted around a run that turned out not to
+    # have produced anything) would be reinstated by this loop over the top of the scan's
+    # own, better-informed answer. Cross-directory is precisely the set the scan never
+    # asserts, so carrying it can only restore, never contradict.
+    #
+    # Matched on Step.name for the same reason the tags are: ids are freshly minted per
+    # scan. Applied to the fresh scan's own objects before `store.replace`, so this still
+    # costs the one undo frame Discover has always cost.
+    steps0 = {step.name: step for _, step in iter_steps(sim0)}
+    by_name0 = {step.id: step.name for _, step in iter_steps(sim0)}
+    carried_edges: Dict[str, str] = {}
+    for name, step in steps0.items():
+        ic = step.input_coords
+        if ic is None or ic.source != "step" or not ic.ref:
+            continue
+        producer_name = by_name0.get(ic.ref)
+        if producer_name is None:
+            continue
+        if producer_name.rpartition("/")[0] != name.rpartition("/")[0]:
+            carried_edges[name] = producer_name
+
+    fresh_by_name = {step.name: step for _, step in iter_steps(out["simulation"])}
+    lost_edges: List[str] = []
+    for consumer_name, producer_name in sorted(carried_edges.items()):
+        consumer = fresh_by_name.get(consumer_name)
+        producer = fresh_by_name.get(producer_name)
+        if consumer is None or producer is None:
+            # One end of the edge is not in this scan. Nothing to re-point at, and the
+            # user's declaration is being discarded either way -- so it is REPORTED. A
+            # silently dropped declaration is the one outcome that is not acceptable here.
+            lost_edges.append(f"{consumer_name} <- {producer_name}")
+            continue
+        consumer.input_coords = InputCoords(source="step", ref=producer.id)
+
     # Carrying a tag back onto the fresh scan can turn one of discovery's own directory-wide
     # chain edges into a claim that one member continues another -- the exact cross-lineage
     # restart edge `DocumentStore._sever_crossed_refs` exists to remove, and which a bare
@@ -150,6 +197,23 @@ def discover_document(req: DiscoverRequest) -> DiscoverResult:
     # needed here (contrast `_sever_crossed_refs`, which keeps a pre-existing declared
     # branch): every step in a fresh `apply_tags=False` scan starts untagged, so nothing can
     # be crossing before the loop above runs, and anything crossing after it is new.
+    #
+    # Runs AFTER the carried handoff edges above, not just after the carried tags, and that
+    # ordering is load-bearing. A carried edge lands on the fresh scan's own objects and is
+    # then subject to exactly the same rule as one the scan built: if the tags now say its
+    # two ends are different members, it is severed and reported, rather than surviving into
+    # a grouping that forbids it because it happened to arrive by a different route.
+    #
+    # Applied unconditionally, which does cost one thing worth naming: a deliberately
+    # DECLARED cross-lineage branch (`_check_continues_from` accepts one, and
+    # `_sever_crossed_refs` protects it by comparing against what was crossing before) is
+    # severed by a re-Discover rather than preserved. That is still strictly better than
+    # what happened before this carry-forward existed -- the edge was deleted outright with
+    # `warnings: []` -- because it is now severed WITH the "no longer continues ... Set its
+    # input coordinates if that is wrong" line, which is exactly the sentence that tells a
+    # user to put it back. Preserving it instead would mean reproducing `_sever_crossed_refs`'
+    # before/after comparison here, and no Discover result may carry a cross-lineage step
+    # ref: that invariant is what the whole partitioned continuity check rests on.
     by_id = {s.id: s for _, s in iter_steps(out["simulation"])}
     severed: List[str] = []
     for _, step in iter_steps(out["simulation"]):
@@ -174,6 +238,11 @@ def discover_document(req: DiscoverRequest) -> DiscoverResult:
             f"{len(dropped)} run(s) carried a lineage tag that this scan did not find "
             f"again, so their tags were dropped: {', '.join(dropped[:5])}"
             + (" ..." if len(dropped) > 5 else ""))
+    if lost_edges:
+        warnings.append(
+            f"{len(lost_edges)} declared cross-directory restart handoff(s) could not be "
+            f"carried forward -- one end of each is not in this scan: "
+            f"{', '.join(lost_edges[:5])}" + (" ..." if len(lost_edges) > 5 else ""))
     warnings.extend(severed)
 
     store.replace(simulation=out["simulation"], settings=settings,

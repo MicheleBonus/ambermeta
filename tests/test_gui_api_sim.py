@@ -133,34 +133,162 @@ def test_rediscovering_does_not_rebuild_an_edge_the_tags_forbid(tmp_path):
     assert any("no longer continues" in w for w in after["warnings"])
 
 
-def test_rediscovering_costs_one_undo_frame_not_n(sys021_tree):
-    """`store.replace(..., reset_history=False)` already costs exactly one undo frame.
-    Re-applying N carried tags through N separate document writes -- rather than onto the
-    fresh scan's own Simulation object before the single `replace` -- would push one frame
-    per tag and could evict the very Discover result being annotated (`set_lineages`'
-    docstring records this trap for the bulk-tag route).
+# ---------------------------------------------------------------------------
+# Re-Discover must not destroy the handoffs the user accepted. `discover_draft`
+# chains WITHIN a run directory only, deliberately -- a restart sitting in another
+# directory is not evidence that this run read it -- so a cross-directory edge exists
+# for exactly one reason: the user accepted the handoff proposal. It has to survive a
+# rescan, or accepting the proposal means nothing the moment new files arrive.
+# ---------------------------------------------------------------------------
 
-    Proven without reaching into the undo stack: capture the document exactly as it stood
-    the instant before the second Discover, run that Discover, undo ONCE, and require an
-    exact match. If re-Discovering had cost more than one frame, a single Ctrl+Z would only
-    unwind the last of them and land on some partially-reverted state in between -- not
-    back on the document as it was before the second Discover ran at all.
+def _discovered_steps(client):
+    doc = client.get("/api/document").json()["simulation"]
+    return [s for p in doc["phases"] for s in p["steps"]]
+
+
+def _accept_the_sys021_handoffs(client):
+    """Tag the five members, then wire `equil/NN -> prod/NN`, in that order.
+
+    Mirrors what `ProposalStrip.accept` does, tags first: tagging leaves each handoff
+    intra-member, so `_check_continues_from` reports no branch and `_sever_crossed_refs`
+    has nothing crossing to sever. Returns {consumer name: producer name}.
+    """
+    steps = _discovered_steps(client)
+    for member in ("01", "02", "03", "04", "05"):
+        ids = [s["id"] for s in steps
+               if s["name"].startswith(f"equil/{member}/")
+               or s["name"].startswith(f"prod/{member}/")]
+        assert client.patch("/api/steps/lineage",
+                            json={"ids": ids, "lineage": member}).status_code == 200
+    by_name = {s["name"]: s["id"] for s in steps}
+    wired = {}
+    for member in ("01", "02", "03", "04", "05"):
+        consumer = f"prod/{member}/nvt_prod_0001"
+        producer = f"equil/{member}/18_ntp_equi"
+        r = client.put(f"/api/steps/{by_name[consumer]}", json={
+            "input_coords": {"source": "step", "ref": by_name[producer], "path": None}})
+        assert r.status_code == 200, r.text
+        wired[consumer] = producer
+    return wired
+
+
+def _cross_directory_edges(steps):
+    by_id = {s["id"]: s for s in steps}
+    return {s["name"]: by_id[s["input_coords"]["ref"]]["name"] for s in steps
+            if s["input_coords"].get("ref")
+            and by_id[s["input_coords"]["ref"]]["name"].rpartition("/")[0]
+            != s["name"].rpartition("/")[0]}
+
+
+def test_rediscovering_carries_accepted_handoffs_forward(sys021_tree):
+    """The defect: `step.lineage` was carried across a re-Discover and `input_coords` was
+    not, so every handoff the user explicitly accepted was wiped -- with `warnings: []`.
+
+    Measured before the fix on this exact flow: 5 cross-directory edges after Accept, 0
+    after re-Discover, nothing said. The fresh draft cannot rebuild them by design, so
+    nothing else in the system would ever put them back.
     """
     client = _client(sys021_tree)
     client.post("/api/document/discover", json={"recursive": True})
-    doc = client.get("/api/document").json()["simulation"]
-    ids = [s["id"] for p in doc["phases"] for s in p["steps"]
+    wired = _accept_the_sys021_handoffs(client)
+    assert _cross_directory_edges(_discovered_steps(client)) == wired
+
+    after = client.post("/api/document/discover", json={"recursive": True}).json()
+    steps = [s for p in after["document"]["simulation"]["phases"] for s in p["steps"]]
+    assert _cross_directory_edges(steps) == wired
+    # And the tags they were accepted alongside are still there, on both ends of each edge.
+    tags = {s["name"]: s["lineage"] for s in steps}
+    for consumer, producer in wired.items():
+        assert tags[consumer] == tags[producer] is not None
+
+
+def test_a_carried_handoff_the_tags_forbid_is_severed_and_reported(sys021_tree):
+    """The carry-forward must not be able to smuggle a cross-lineage edge into a Discover
+    result. `_check_continues_from` accepts a deliberately declared branch, so the state
+    "cross-directory edge whose two ends are different members" is genuinely reachable; on
+    the next scan it has to meet exactly the rule an edge the scan itself built would meet.
+
+    Severing it, rather than dropping it silently, is the point: the user gets the
+    "no longer continues ... Set its input coordinates if that is wrong" line, which is the
+    sentence that tells them how to put it back.
+    """
+    client = _client(sys021_tree)
+    client.post("/api/document/discover", json={"recursive": True})
+    _accept_the_sys021_handoffs(client)
+    steps = _discovered_steps(client)
+    by_name = {s["name"]: s["id"] for s in steps}
+    # Member 02's production head declared as continuing member 01's equilibration: a
+    # branch, accepted and reported rather than refused.
+    r = client.put(f"/api/steps/{by_name['prod/02/nvt_prod_0001']}", json={
+        "input_coords": {"source": "step",
+                         "ref": by_name["equil/01/18_ntp_equi"], "path": None}})
+    assert r.status_code == 200
+    assert _cross_directory_edges(_discovered_steps(client))[
+        "prod/02/nvt_prod_0001"] == "equil/01/18_ntp_equi"
+
+    after = client.post("/api/document/discover", json={"recursive": True}).json()
+    steps = [s for p in after["document"]["simulation"]["phases"] for s in p["steps"]]
+    edges = _cross_directory_edges(steps)
+    assert "prod/02/nvt_prod_0001" not in edges
+    assert any("prod/02/nvt_prod_0001 no longer continues" in w for w in after["warnings"])
+    # The four handoffs that the tags DO permit are untouched by the severing.
+    assert len(edges) == 4
+
+
+def test_a_handoff_whose_producer_vanished_is_reported_not_silently_dropped(sys021_tree):
+    """One end of a declared edge is gone from the tree, so there is nothing to re-point
+    at. The declaration is being discarded either way -- what must not happen is
+    discarding it in silence, which is what the whole re-Discover path used to do to
+    every handoff at once."""
+    client = _client(sys021_tree)
+    client.post("/api/document/discover", json={"recursive": True})
+    _accept_the_sys021_handoffs(client)
+    for suffix in (".mdin", ".mdout", ".restrt"):
+        (sys021_tree / "equil" / "03" / f"18_ntp_equi{suffix}").unlink()
+
+    after = client.post("/api/document/discover", json={"recursive": True}).json()
+    steps = [s for p in after["document"]["simulation"]["phases"] for s in p["steps"]]
+    assert "prod/03/nvt_prod_0001" not in _cross_directory_edges(steps)
+    assert any("could not be carried forward" in w
+               and "prod/03/nvt_prod_0001 <- equil/03/18_ntp_equi" in w
+               for w in after["warnings"]), after["warnings"]
+    # The other four survive: one missing producer costs its own edge, not the feature.
+    assert len(_cross_directory_edges(steps)) == 4
+
+
+def test_rediscovering_costs_one_undo_frame_not_n(sys021_tree):
+    """`store.replace(..., reset_history=False)` already costs exactly one undo frame.
+    Re-applying N carried tags and N carried handoff edges through separate document
+    writes -- rather than onto the fresh scan's own Simulation object before the single
+    `replace` -- would push one frame per write and could evict the very Discover result
+    being annotated (`set_lineages`' docstring records this trap for the bulk-tag route).
+
+    TWO undos, not one, and that is the whole test. Undoing once and comparing tags was
+    vacuous: the carry-forward makes the post-Discover document ALREADY hold the same tags
+    as the pre-Discover one, so that assertion passed with zero undos and with any number
+    of extra frames -- adding a second `store.replace` to the route, the exact defect it
+    names, left the suite green. Stepping back TWICE has to land on the document as it
+    stood before the tagging edit: if Discover cost more than one frame, the second undo
+    lands in the middle of Discover's own writes and the tags are still there.
+    """
+    client = _client(sys021_tree)
+    client.post("/api/document/discover", json={"recursive": True})
+    untagged = client.get("/api/document").json()["simulation"]
+    ids = [s["id"] for p in untagged["phases"] for s in p["steps"]
            if s["name"].startswith("equil/01/") or s["name"].startswith("prod/01/")]
     client.patch("/api/steps/lineage", json={"ids": ids, "lineage": "01"})
-    before = client.get("/api/document").json()
+    tagged = client.get("/api/document").json()["simulation"]
 
     client.post("/api/document/discover", json={"recursive": True})
-    after = client.post("/api/undo").json()
+    # Frame 1: the Discover itself. Frame 2: the tagging edit before it.
+    assert client.post("/api/undo").json()["simulation"] == tagged
+    assert client.post("/api/undo").json()["simulation"] == untagged
 
-    def tags(doc):
-        return sorted((s["name"], s["lineage"]) for p in doc["simulation"]["phases"]
-                      for s in p["steps"])
-    assert tags(after) == tags(before)
+    # Named rather than left implicit: the second undo is only meaningful because the two
+    # states genuinely differ, and they differ in exactly the tags the carry-forward
+    # re-applies -- which is why comparing tags after ONE undo could not see anything.
+    assert any(s["lineage"] for p in tagged["phases"] for s in p["steps"])
+    assert not any(s["lineage"] for p in untagged["phases"] for s in p["steps"])
 
 
 def test_topology_routes(tmp_path):
