@@ -452,11 +452,21 @@ def _print_protocol(protocol: SimulationProtocol, verbose: bool = False) -> None
     _out(f"Total simulated time (ps): {totals['time_ps']:.3f}")
     if "lineage_count" in totals:
         _out(f"Declared lineages: {totals['lineage_count']:.0f}")
+    # Emit-when-nonzero, matching `totals()` itself: a directory with nothing queued prints
+    # exactly what it always did. Without this line the terminal said nothing at all about
+    # `queued_count` -- the JSON/GUI surfaces carried it, the CLI's own summary did not.
+    if "queued_count" in totals:
+        _out(f"Queued (no output): {totals['queued_count']:.0f}")
     _print_lineage_totals(protocol.lineage_totals())
 
     for stage in protocol.stages:
         summary = stage.summary()
         _out(f"\n- {stage.name}")
+        # Emit-when-set, like `lineage=`/`status=` on the per-step manifest line in
+        # `_print_simulation`: a stage that ran prints exactly what it always did, and only
+        # a queued one gains this line.
+        if stage.status:
+            _out(f"  status: {stage.status}")
         _out(f"  intent: {summary['intent']}")
         _out(f"  result: {summary['result']}")
         metadata_lines = []

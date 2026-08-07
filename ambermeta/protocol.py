@@ -376,13 +376,25 @@ class SimulationStage:
         }
 
     def to_dict(self) -> Dict[str, Any]:
-        return {
+        out: Dict[str, Any] = {
             "name": self.name,
             "stage_role": self.stage_role,
             "expected_gap_ps": self.expected_gap_ps,
             "gap_tolerance_ps": self.gap_tolerance_ps,
             "observed_gap_ps": self.observed_gap_ps,
             "restart_path": self.restart_path,
+        }
+        # Emitted only when queued, so an ordinary (non-queued) stage's summary.json block
+        # is unchanged from what it was before this field existed — `to_dict()` feeds
+        # summary.json, byte-pinned by test_lineage_backcompat.py's `assert_matches_golden`,
+        # which fails on any ADDED key path, even a null one. `queued_count` in `totals()`
+        # said how many; this is what makes the artifact say WHICH ones, rather than
+        # leaving a reader to infer it from `files.mdout: null` plus the absence of a
+        # `load_errors` entry — the same silence this whole feature exists to remove, one
+        # level down.
+        if self.status is not None:
+            out["status"] = self.status
+        out.update({
             "summary": self.summary(),
             "validation": list(self.validation),
             "continuity": list(self.continuity),
@@ -395,7 +407,8 @@ class SimulationStage:
                 "mdout": _serialize_metadata(self.mdout),
                 "mdcrd": _serialize_metadata(self.mdcrd),
             },
-        }
+        })
+        return out
 
 
 def _elapsed_ps(stage: "SimulationStage") -> Optional[float]:
@@ -1202,15 +1215,23 @@ def _parse_mdout(path, stage, *, strict):
     return parsed
 
 
-def _looks_queued(stage: SimulationStage, has_mdin: bool, has_mdout: bool) -> bool:
-    """Whether `stage` is queued: set up and never executed.
+def _looks_queued(mdin_details: Any, has_mdin: bool, has_mdout: bool) -> bool:
+    """Whether a run built from these facts is queued: set up and never executed.
 
-    Called with the same two file-presence facts (was an mdin declared, was an mdout
-    declared) both engine entry points already have on hand while they are building the
-    stage — one call site each, so the rule cannot drift between the manifest path and the
-    scan path the way two independently written copies of a chaining rule already have
-    (see the note on `crosses_lineage`'s import above). `stage.mdin` must already be
-    parsed by the time this is called.
+    Takes `mdin_details` -- an `MdinMetadata`-shaped object (specifically, anything with a
+    `.cntrl_parameters` attribute), or `None` -- rather than a whole `SimulationStage`, so
+    the ONE rule can be called from three places that do not all have a `SimulationStage`
+    to hand: both engine entry points already hold `stage.mdin.details` at the point they
+    call this, but `core_bridge.discover_draft` builds `ambermeta.simulation.Step` objects
+    and never constructs a `SimulationStage` at all -- it parses the mdin straight to its
+    `.details` (`mdin_details` in that function) to decide the step's role. A second,
+    forked copy of this predicate for `discover_draft` is exactly the kind of drift
+    `crosses_lineage`'s import note above already warns about for a different chaining
+    rule, so this function's signature bent to fit the odd caller out rather than being
+    duplicated for it.
+
+    Called together with the same two file-presence facts (was an mdin declared, was an
+    mdout declared) every caller already has on hand while it is building the run.
 
     `has_mdin and not has_mdout` alone is not enough. `sys021_tree`'s stray `cpptraj.in`
     satisfies exactly that and is not a run: it is a leftover cpptraj post-processing
@@ -1221,18 +1242,18 @@ def _looks_queued(stage: SimulationStage, has_mdin: bool, has_mdout: bool) -> bo
     in it ever matched a `&cntrl` namelist. A genuine AMBER mdin, minimisation or
     dynamics, always has one — `nstlim`-based production and `maxcyc`-based minimisation
     both populate it, which is why this checks `cntrl_parameters` rather than the
-    production-specific `length_steps` alone. That refinement is what keeps `cpptraj` out
-    of `test_a_stem_with_an_mdin_and_no_mdout_is_marked_queued`'s five-name list.
+    production-specific `length_steps` alone (a queued *minimisation* would otherwise be a
+    false negative too: a min mdin never sets `nstlim`, so `length_steps` stays 0 for a
+    genuine one exactly as it does for `cpptraj`). That refinement is what keeps `cpptraj`
+    out of `test_a_stem_with_an_mdin_and_no_mdout_is_marked_queued`'s five-name list.
 
-    A declared mdin that fails to parse at all (`stage.mdin is None`, a missing or
-    unreadable file, recorded as a `FileLoadError`) reads as NOT queued: that is a broken
-    reference, already flagged through `degraded`/`load_errors`, and a status implying "a
-    real run is waiting to happen" would be a second, misleading claim about the same
-    file.
+    A declared mdin that fails to parse at all (`mdin_details is None` — a missing or
+    unreadable file, recorded elsewhere as a `FileLoadError`) reads as NOT queued: that is
+    a broken reference, already flagged through `degraded`/`load_errors`, and a status
+    implying "a real run is waiting to happen" would be a second, misleading claim about
+    the same file.
     """
-    return (has_mdin and not has_mdout
-            and stage.mdin is not None and stage.mdin.details is not None
-            and bool(getattr(stage.mdin.details, "cntrl_parameters", None)))
+    return has_mdin and not has_mdout and bool(getattr(mdin_details, "cntrl_parameters", None))
 
 
 def _manifest_to_stages(
@@ -1330,7 +1351,7 @@ def _manifest_to_stages(
             if stage.inpcrd is not None:
                 stage.restart_path = resolved["inpcrd"]
 
-        if _looks_queued(stage, "mdin" in resolved, "mdout" in resolved):
+        if _looks_queued(getattr(stage.mdin, "details", None), "mdin" in resolved, "mdout" in resolved):
             stage.status = "queued"
 
         restart_source = None
@@ -2155,7 +2176,7 @@ def auto_discover(
             if stage.inpcrd is not None:
                 stage.restart_path = file_kinds["inpcrd"]
 
-        if _looks_queued(stage, "mdin" in file_kinds, "mdout" in file_kinds):
+        if _looks_queued(getattr(stage.mdin, "details", None), "mdin" in file_kinds, "mdout" in file_kinds):
             stage.status = "queued"
 
         # Try content-based role inference if still no role

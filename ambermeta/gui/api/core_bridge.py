@@ -456,7 +456,7 @@ def discover_draft(base_directory, recursive=True, pattern=None):
     from ambermeta.roles import classify_role
     from ambermeta.topology_pool import classify_topology_pool, implies_hmr
     from ambermeta.coords import sniff_coordinate_kind
-    from ambermeta.protocol import smart_group_files, _run_stems
+    from ambermeta.protocol import smart_group_files, _run_stems, _looks_queued
     from ambermeta.parsers import MdinParser
     import uuid
 
@@ -529,6 +529,12 @@ def discover_draft(base_directory, recursive=True, pattern=None):
             # The path lives on that producing step's `rst`, so the link is the ref alone
             # and the file is named once rather than copied onto every consumer.
             ic = InputCoords(source="step", ref=prev_step_id)
+        # Same rule the engine uses (`_looks_queued`), reused rather than reimplemented: an
+        # mdin declared with no mdout beside it, EXCEPT a same-extension file that never
+        # was a real AMBER input (`sys021_tree`'s stray `cpptraj.in`) -- `mdin_details`
+        # above is already the parse this needs, so no second file read is spent on it.
+        status = "queued" if _looks_queued(
+            mdin_details, bool(kinds.get("mdin")), bool(kinds.get("mdout"))) else None
         step = Step(
             id=uuid.uuid4().hex[:8], name=stem, topology=topology, input_coords=ic,
             mdin=_relativize(kinds.get("mdin"), base_directory),
@@ -537,7 +543,7 @@ def discover_draft(base_directory, recursive=True, pattern=None):
             # A run's single-frame coordinate sibling is the restart it wrote (-r restrt),
             # which is exactly what the next run reads.
             rst=_relativize(kinds.get("inpcrd"), base_directory),
-            lineage=tag,
+            lineage=tag, status=status,
         )
         if multi_lineage:
             # One phase per role, shared by every member. Left contiguous, the replica-major
