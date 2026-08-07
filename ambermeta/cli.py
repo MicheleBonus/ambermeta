@@ -1153,6 +1153,51 @@ steps:
 """
 
 
+def _totals_delta(previous: Any, current: Dict[str, float], path: str) -> Optional[str]:
+    """A line for each of `steps`/`time_ps` that moved since the summary at `path`, or
+    None if nothing did (including: there was no readable prior summary).
+
+    Compared against a prior `summary.json`-shaped artifact rather than against the v2
+    manifest, because the manifest stores no totals to compare against —
+    `simulation_to_payload` emits version/simulation/phases/steps and nothing else — and
+    this change is not adding any; the manifest format stays exactly as it is.
+
+    `previous` is deliberately typed `Any`, not `Dict[str, Any]`: it is whatever
+    `json.load`/`yaml.safe_load` handed back from a file this function does not control
+    the contents of. A prior artifact that is missing, unreadable, or parses to something
+    that is not an object at all (a bare JSON string or list, emptied mid-write, a
+    document from a wholly different tool at the same path) carries no claim about totals
+    — `isinstance` below turns all of those into "no prior claim" rather than an
+    AttributeError from calling `.get` on a non-dict, which is exactly what the naive
+    `(previous or {}).get("totals")` does when `previous` is a truthy non-dict.
+
+    `path` names the file this call actually read, not a fixed "this directory" — it is
+    whatever the caller passed to `--summary-path`, which is free to be `s.json`,
+    `reports/summary.json`, or an absolute path outside the scanned tree altogether. A
+    message that assumes a fixed location would point the user at a file that both isn't
+    there and isn't the one that was actually compared against.
+    """
+    before = previous.get("totals") if isinstance(previous, dict) else None
+    before = before if isinstance(before, dict) else {}
+    lines = []
+    for key in ("steps", "time_ps"):
+        old, new = before.get(key), current.get(key)
+        if isinstance(old, (int, float)) and isinstance(new, (int, float)) and old != new:
+            lines.append(f"  {key:<9} {float(old):.3f} -> {float(new):.3f}")
+    if not lines:
+        return None
+    # `queued_count` is what makes "smaller than before" legible as "this many runs never
+    # executed" rather than "the arithmetic broke": every existing project that holds a
+    # queued or truncated run now totals less than it used to (see protocol.totals()), and
+    # this is the one sentence that tells a researcher which of those two stories is true.
+    queued = int(current.get("queued_count") or 0)
+    reason = (f"  reason    {queued} queued run(s) no longer counted "
+              f"(mdin present, no mdout)" if queued else
+              "  reason    totals now come from elapsed mdout time, not the mdin")
+    return (f"totals changed since the last summary.json ({path}):\n"
+            + "\n".join(lines) + "\n" + reason)
+
+
 def _write_plan_artifacts(args: argparse.Namespace, protocol: SimulationProtocol) -> int:
     """Build the requested plan artifacts from an already-built protocol and report
     the outcome.
@@ -1189,6 +1234,47 @@ def _write_plan_artifacts(args: argparse.Namespace, protocol: SimulationProtocol
         return 2
 
     fmt = _resolve_sim_format(args.summary_path or "", args.summary_format)
+
+    # Read any prior summary BEFORE write_protocol_outputs (below) overwrites it. Reading
+    # afterwards would see the file this very call just wrote — new totals compared
+    # against themselves — so _totals_delta would return None forever, silently disabling
+    # the whole feature rather than reporting anything.
+    #
+    # Guarded on "summary" in targets, not on `args.summary_path` being truthy:
+    # `_write_plan_artifacts` also runs for `--stats-csv`/`--methods-summary-path` alone,
+    # where `args.summary_path` is None. `open(None)` raises TypeError, which is not in
+    # the (OSError, ValueError) list below and is not caught anywhere before main()'s
+    # broad top-level guard — it would turn a working `plan --stats-csv` into an
+    # "Unexpected error (TypeError: ...)" exit instead of the CSV it used to write.
+    if "summary" in targets:
+        previous: Any = {}
+        try:
+            with open(targets["summary"], "r", encoding="utf-8") as fh:
+                # Read with the format `fmt` just resolved for *writing* this same path,
+                # not unconditionally as JSON: `plan` also writes YAML summaries when
+                # `--summary-path` ends `.yaml`/`.yml`, and `json.load` on a YAML document
+                # raises JSONDecodeError — a ValueError — which the `except` below would
+                # swallow into "no prior claim". Read blindly as JSON, that swallow would
+                # be permanent: every future `plan` against a YAML summary path would
+                # report nothing, forever, not just this once. Reading with the resolved
+                # format instead means a YAML prior claim is honoured exactly like a JSON
+                # one.
+                previous = (yaml.safe_load(fh) if fmt == "yaml" and yaml is not None
+                            else json.load(fh))
+        except Exception:
+            # Broad on purpose, not (OSError, ValueError): yaml.YAMLError is neither, and
+            # any genuinely unreadable or malformed prior artifact — missing file,
+            # truncated write, a document from an unrelated tool — is "no prior claim",
+            # not a reason to fail a `plan` that is otherwise about to succeed.
+            previous = {}
+        delta = _totals_delta(previous, protocol.totals(), targets["summary"])
+        if delta:
+            # stdout via _out, deliberately not stderr like the WARNING lines a few lines
+            # below: this reports on the artifact plan is about to write, so it belongs
+            # with the "Wrote summary: ..." line the user is already reading, not in the
+            # error channel a script would filter out.
+            _out(Colors.warning(delta))
+
     result = write_protocol_outputs(protocol, targets, summary_format=fmt)
     for item in result["written"]:
         _out(f"Wrote {item['artifact']}: {item['path']}")
