@@ -499,6 +499,8 @@ print(md.stats.temp_stats.stdev)       <span class="o"># 1.2504190252445306</spa
 
 <p>A typical session: <strong>Discover</strong> scans the launch directory into a Simulation draft (topology pool, phases by role, chained steps) → drag files from <strong>Files</strong> onto canvas slots, or use the Inspector's assign actions → arrange steps/phases by dragging their grip handles → <strong>Validate</strong> reports continuity/sequence issues → <strong>Save</strong> writes the canonical v2 manifest, the same one the CLI's <code>discover --write</code>/<code>export</code> write.</p>
 
+<p><strong>Run lineages are proposed, never written.</strong> Where Discover reconciles the layout into members, a <strong>proposal strip</strong> opens over the result: one editable row per member with the directories it was built from, a segment picker for regrouping by a different part of the path, and — where AMBER's own mdout <code>File Assignments</code> record evidences one — the cross-directory restart handoffs (<code>equil/01/18_ntp_equi → prod/01/nvt_prod_0001</code>) you can wire in the same action. Nothing lands until <strong>Accept</strong>. The inference refuses more layouts than it accepts; <strong>Define replicas…</strong> in the top bar opens the same picker on demand and never refuses.</p>
+
 <p>Every inferred thing — roles, the HMR topology, the starting structure, sequence holes, continuity gaps — is surfaced in the <strong>Suggestions</strong> tray as an explainable, undoable suggestion rather than applied silently. This is the draft-first design.</p>
 
 <aside class="key"><strong>Built to be safe on a workstation.</strong> The server binds <code>127.0.0.1</code>, pins CORS to localhost, and confines every file path to the launch directory (resolved through symlinks; escapes get <code>403</code>). State is server-authoritative — a single document held server-side, every mutation returns the new document, undo/redo call the server. It is not a multi-user service.</aside>
@@ -510,6 +512,7 @@ print(md.stats.temp_stats.stdev)       <span class="o"># 1.2504190252445306</spa
 <tr><td>Document</td><td><code>GET /api/document</code>, <code>POST /document/{open,save,preview,discover}</code></td></tr>
 <tr><td>Topologies / starting structure</td><td><code>POST /api/topologies</code>, <code>PUT/DELETE /api/topologies/{id}</code>, <code>PUT /api/simulation/starting-structure</code></td></tr>
 <tr><td>Phases / steps</td><td><code>POST /api/phases</code>, <code>/phases/reorder</code>, <code>PUT/DELETE /api/phases/{id}</code>, <code>POST /api/phases/{id}/steps</code>, <code>/steps/reorder</code>, <code>PUT/DELETE /api/steps/{id}</code>, <code>POST /api/steps/{id}/move</code></td></tr>
+<tr><td>Run lineages</td><td><code>PATCH /api/steps/lineage</code>, <code>POST /api/steps/infer-lineages</code></td></tr>
 <tr><td>Assignment / state</td><td><code>POST /api/assign</code>, <code>GET/PUT /api/settings</code>, <code>POST /api/undo</code>·<code>/redo</code>, <code>POST /api/validate</code></td></tr>
 <tr><td>Files</td><td><code>GET /api/files</code>, <code>/files/metadata</code>, <code>/files/raw</code>, <code>/files/related/{stem}</code></td></tr>
 </tbody>

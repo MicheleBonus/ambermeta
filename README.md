@@ -268,6 +268,8 @@ A rebuilt three-pane browser app for assembling and auditing a Simulation:
 
 A **Suggestions** tray surfaces every inferred thing (roles, HMR topology, starting structure, sequence holes, continuity gaps) as an explainable, undoable suggestion rather than applying it silently. **Discover** re-runs discover-as-draft on the launch directory; **Open**/**Save** read and write the same v2 manifest the CLI does; **Validate** lists issues.
 
+Run lineages are **proposed, never written**. After a Discover that found a grouping, a **proposal strip** shows the members it inferred, the directories each was built from, an editable name per member, and a segment picker for regrouping by a different part of the path — plus, where AMBER's own mdout `File Assignments` records evidence one, the cross-directory restart handoffs (`equil/01/18_ntp_equi → prod/01/nvt_prod_0001`) you can choose to wire at the same time. Nothing lands until you press **Accept**. The inference refuses more layouts than it accepts; **Define replicas…** in the top bar opens the same picker on demand and never refuses, so a tree it could not reconcile is still one click from being declared. See [GUI guide §5a](docs/gui.md).
+
 The server is server-authoritative (a single document held server-side; every mutation returns the new document; undo/redo call the server), single-user, **localhost-only**, and confines all file access to the launch directory. Full walkthrough, including the HTTP API surface: [GUI guide](docs/gui.md).
 
 ---

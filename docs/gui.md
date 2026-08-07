@@ -40,7 +40,8 @@ The server (FastAPI + Uvicorn) binds the host/port, resolves `directory` to an a
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────────┐
-│ AmberMeta [Open] [Save] ●   [Discover] [Validate] [Plan] [Export] [↶] [↷]    │
+│ AmberMeta [Open] [Save] ●  [Discover] [Define replicas…] [Validate] [Plan]   │
+│                                                          [Export] [↶] [↷]    │
 ├───────────────┬────────────────────────────────────┬─────────────────────────┤
 │               │  Simulation                        │                         │
 │  FILES        │  ┌ pool ───────────────────────┐   │  INSPECTOR              │
@@ -66,6 +67,7 @@ The server (FastAPI + Uvicorn) binds the host/port, resolves `directory` to an a
 | **Inspector** (right) | Peek/details/assign actions for the selected file; an editor for a selected step or phase (§6); the suggestions tray when the Simulation itself or nothing is selected. |
 | **Open / Save** | Load an existing manifest / write the current one to disk (dot = unsaved changes). |
 | **Discover** | Discover-as-draft: scan the launch directory into a Simulation draft. |
+| **Define replicas…** | Open the proposal strip's segment picker (§5a) to declare run lineages by hand. Always enabled — it is the way back when the automatic inference refuses, which is most of the time. |
 | **Validate** | Run full validation and show the report. |
 | **Plan** | Write the manifest and the summaries `ambermeta plan` produces, in one action. |
 | **Export** | Preview the manifest as YAML or JSON and copy it. |
@@ -78,10 +80,11 @@ Each pane is resizable (drag the divider); widths persist across sessions.
 ## 3. A typical session
 
 1. **Discover.** Click **Discover**, optionally uncheck "Search subdirectories" or set a filename pattern, then **Run discover**. The server scans the launch directory, groups files by stem, classifies the topology pool (normal vs. HMR), picks a starting structure, and chains later steps' input coordinates to the previous step's output restart — the previous step **of the same lineage**, when the directory layout names members (`rep1/`, `rep2/`, … sibling directories whose run sets the inference can reconcile); each member then starts from the starting structure and same-role steps of every member share one phase. This **replaces** the current draft (a confirmation guards unsaved changes) and repopulates the suggestions tray.
-2. **Assign & adjust.** Drag a file from **Files** onto the topology pool, the starting-structure slot, a step's `mdin`/`mdout`/`mdcrd`/`rst` slot, or a phase's/step's topology target. Or select a file in **Files** and use the Inspector's **Assign** actions (§6) — the same mutations, without dragging.
-3. **Arrange.** In the **Canvas**, drag a step's grip handle to reorder it within a phase or drop it onto another phase to move it; drag a phase's grip handle to reorder phases.
-4. **Validate.** Click **Validate**. The panel lists per-step issues (missing files, continuity/sequence problems) and protocol-level notes, and lets you jump to a step. A simulation with continuity notes shows as *valid, with N protocol note(s)* — never a silent clean pass when something is worth a look.
-5. **Save / Plan / Export.** **Save** writes the canonical **v2 manifest** to disk (YAML or JSON) and reports the path it wrote. **Plan** is the step after that: it writes the manifest *and* the artifacts [`ambermeta plan`](cli.md) produces — `summary.json`, `methods_summary.json`, and optionally a statistics CSV — so the whole pipeline is one action rather than a save followed by a trip to a terminal. **Export** previews YAML or JSON for copying without writing anything.
+2. **Declare the replicas.** If the scan found a grouping, the **proposal strip** (§5a) opens on top of the result: the members it inferred, the directories each was built from, and — where AMBER's own mdouts evidence it — the restart handoffs that cross a directory boundary. Nothing is written until you press **Accept**; **Not replicas** dismisses it and leaves every run untagged. If the scan refused to infer a grouping (it refuses more layouts than it accepts), press **Define replicas…** in the top bar and pick the path segment yourself.
+3. **Assign & adjust.** Drag a file from **Files** onto the topology pool, the starting-structure slot, a step's `mdin`/`mdout`/`mdcrd`/`rst` slot, or a phase's/step's topology target. Or select a file in **Files** and use the Inspector's **Assign** actions (§6) — the same mutations, without dragging.
+4. **Arrange.** In the **Canvas**, drag a step's grip handle to reorder it within a phase or drop it onto another phase to move it; drag a phase's grip handle to reorder phases.
+5. **Validate.** Click **Validate**. The panel lists per-step issues (missing files, continuity/sequence problems) and protocol-level notes, and lets you jump to a step. A simulation with continuity notes shows as *valid, with N protocol note(s)* — never a silent clean pass when something is worth a look.
+6. **Save / Plan / Export.** **Save** writes the canonical **v2 manifest** to disk (YAML or JSON) and reports the path it wrote. **Plan** is the step after that: it writes the manifest *and* the artifacts [`ambermeta plan`](cli.md) produces — `summary.json`, `methods_summary.json`, and optionally a statistics CSV — so the whole pipeline is one action rather than a save followed by a trip to a terminal. **Export** previews YAML or JSON for copying without writing anything.
 
 Undo/redo (**Ctrl+Z** / **Ctrl+Shift+Z**, **Ctrl+Y**) and a dirty-state dot live in the top bar; history is kept on the server (100 steps). **Open** resets it — a different manifest is a new editing session — while **Discover** does not, so a discovery run on the wrong directory is one undo away. Removing something (a step, a phase, a topology, the starting structure) reports itself with an **Undo** button; that offer disappears as soon as you make another change, because undo always reverses the most recent one.
 
@@ -126,7 +129,7 @@ The canvas is a continuous vertical timeline, not a flat list of cards.
 
 **Lineage bands** — where the document declares members, each member's runs sit in their own band with a header naming it and how many runs it holds. The band name is editable: click it to rename the member, which retags every run in the band in one request and one undo entry, or **clear** to untag them. Bands are the outer grouping level and the numeric grouping above stays as the inner one, so collapsing and ghosts keep working. A document that declares nothing gets no band chrome at all.
 
-**Infer lineages** in the Simulation header re-runs the directory-layout inference over the open document and reports what it would name (`POST /steps/infer-lineages`, §11) — offered again because a document also arrives here by being opened rather than scanned, not just by a fresh scan. It writes nothing: accepting a member still takes `PATCH /steps/lineage` (§11), one call per tag. It refuses far more layouts than it accepts, and says so when it does; everything it refuses is yours to tag by band.
+Bands appear once the document *declares* members. To declare them, use the **proposal strip** — see §5a.
 
 **Continuity arrows** sit between consecutive steps in a sequence. When the lower step continues from the upper one, the arrow is labelled with the restart file that passes between them — that file belongs to neither card alone, so the edge is where it is shown. An amber arrow annotated with the gap magnitude (e.g. `20 ps`) marks a real continuity gap. **No arrow is drawn between bands**: what precedes a member's first run in document order is another member's last run, and that adjacency means nothing. Where the members all branch from one run, a line above the bands names it (`3 lineages branch from common/equil`) rather than drawing three arrows across boundaries the bands exist to keep apart.
 
@@ -135,6 +138,34 @@ The canvas is a continuous vertical timeline, not a flat list of cards.
 **Long numbered runs collapse**: a group of 6 or more steps sharing a numeric base starts collapsed behind a `<base> × N steps` toggle; expand it to work with the individual cards.
 
 If the Simulation has no phases yet, the canvas shows "Discover or drop files to start".
+
+---
+
+## 5a. Declaring run lineages: the proposal strip
+
+A **run lineage** is a member of a repeated set — replica 01, replica 02, … — declared on each run as `lineage: "01"`. Nothing declares one for you: **Discover proposes, you accept.** The proposal strip is where that happens, and it is the only place a lineage can be created from nothing (the band name in §5 renames a member that already exists).
+
+It opens two ways:
+
+| How | Mode | What you get |
+|---|---|---|
+| Automatically, after **Discover**, when the layout inference reconciled the tree into members | *Proposed* | The members it inferred, with **Accept** / **Not replicas** and a collapsed `Change ▾` picker |
+| **Define replicas…** in the top bar, any time | *Manual* | The segment picker, always open, seeded with the best segment available |
+
+**What the strip shows**
+
+- A headline: `N run directories look like M repeated members`.
+- One row per proposed member: an **editable tag field** (type over `01` to call it `rep1`; two members given the same name merge into one lineage in one request) and the directories it was built from, with run counts — `equil/01 (18) + prod/01 (202)`.
+- A **segment picker**: one button per path segment the run stems share, labelled with that segment's distinct values (`equil|prod`, `01|02|03…`). Clicking one regroups the preview live against that column — the server re-runs the proposal for it (`POST /steps/infer-lineages` with `segment_index`, §11) and the member rows, and the handoffs below them, are recomputed for the new grouping. Picking a column and picking back returns you to where you were.
+- A **handoff proposal**, when there is one: `AMBER's own restart files show these runs continuing across the directory boundary the tags above just drew`, then one row per edge — `equil/01/18_ntp_equi → prod/01/nvt_prod_0001`, with the evidence line `mdout File Assignments: INPCRD: 18_ntp_equi.restrt`. **Wire these** / **Leave unlinked** chooses whether accepting also writes them; *Leave unlinked* is the default.
+
+**Where the handoff evidence comes from.** Discovery chains runs *within* a directory only — a restart sitting in another directory is not evidence that this run read it. But AMBER records the coordinate file it actually opened, in the mdout's `File Assignments` block, and that record is read here. It **corroborates**, it does not identify: AMBER writes a bare filename (`18_ntp_equi.restrt`) that every replica repeats verbatim, so the *member grouping* is what says which `18_ntp_equi.restrt` is meant. A basename two runs of the same member wrote is ambiguous and proposes nothing rather than guessing, and a clipped assignment (AMBER pads to a fixed width; long paths run off the end) is treated as no evidence rather than as no producer.
+
+**Accept** applies the tags first and the handoffs second, one request each. That order matters: tagging first makes each handoff intra-member, so the edge is an ordinary continuation rather than a cross-lineage branch that the server would sever a moment later. A failure partway through reports `applied N of M` and leaves the strip open rather than claiming success — there is no transaction across separate requests.
+
+**If the inference refuses.** It refuses far more layouts than it accepts — a nested sweep where two segments vary at once, arms that ran the same run names, a tree with fewer than two run directories. You then get `No lineages inferred: the directory layout could not be resolved into one unambiguous set of members. Use Define replicas… to pick the segment yourself.` That button always opens a working picker: naming a segment index yourself asserts the boundary instead of asking the tool to infer one, so it never refuses on a document that holds any steps at all.
+
+**Re-running Discover** keeps what you declared: tags and accepted cross-directory handoffs are both carried onto the fresh scan, matched by run name, in the single undo entry Discover has always cost. Anything that could not be carried — a tagged run the new scan did not find, a handoff one of whose ends is gone, an edge the tags now forbid — is reported in the toasts rather than dropped in silence.
 
 ---
 
@@ -387,7 +418,7 @@ file slot. And `PATCH /api/steps/lineage` tags many steps at once:
 | Method | Path | Body | Returns |
 |---|---|---|---|
 | `PATCH` | `/api/steps/lineage` | `{ ids[], lineage }` — `lineage: null` clears | Document (`404` naming the first unknown id) |
-| `POST` | `/api/steps/infer-lineages` | `{ segment_index? }` | `{ proposal, warnings[] }` — nothing is written; `warnings[]` says so when the layout was too ambiguous to tag |
+| `POST` | `/api/steps/infer-lineages` | `{ segment_index? }` | `{ proposal, warnings[] }` — nothing is written; `warnings[]` says so when the layout was too ambiguous to tag. `segment_index` is the picker's "try this column" and never refuses; omitted, the reconciling inference runs and may. `proposal.handoffs` is recomputed for whichever grouping comes back, so re-picking a column does not lose them |
 
 The bulk route exists because a loop of per-step `PUT`s is not merely slower: every write deep-copies
 the document onto the undo stack, and `history_limit` is 100, so annotating a 20 × 10 campaign evicts

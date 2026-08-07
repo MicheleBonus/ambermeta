@@ -264,7 +264,7 @@ def discover_draft(
 
 Scans a directory into a **Simulation draft**: builds the topology pool (HMR detected from timestep, `ambermeta.topology_pool.classify_topology_pool`), finds a starting structure (a single-frame coordinate file outside any run group), groups runs into phases by inferred role (`ambermeta.roles.classify_role` — the one classifier shared by CLI and GUI), and chains each step's `input_coords` off the previous step **of its own lineage**. Where the directory layout names members (`rep1/`, `rep2/`, … sibling directories whose run sets the inference can reconcile — `ambermeta.lineages.infer_lineages_from_layout`), each member gets its own chain starting from the starting structure and same-role steps share one phase across members; where it does not, the result is the single chain and contiguous phases it always was.
 
-`apply_tags` decides whether that grouping is *written* onto `Step.lineage` (`True`, the default) or only *proposed*, in the returned `"proposal"`, with every step left untagged (`False`). `ambermeta discover` calls this with the default — `--write`'s manifest is its own confirmation step, so the CLI has always tagged and still does. The GUI's `POST /document/discover` route is the one caller that passes `apply_tags=False`: a fresh scan is a claim about the user's own data the GUI has a real Accept step for (`PATCH /steps/lineage`), so nothing is written until the user takes it. `"proposal"` is `None` when the layout inference tags nothing, and otherwise `{"segment_index": int, "segments": List[List[str]], "members": [{"tag": str, "step_ids": [...], "sources": [{"directory": str, "run_count": int}, ...]}, ...]}` — see `build_lineage_proposal()`, below, for what each of those means. See [§1](#1-the-ambermetasimulation-model) for a full run.
+`apply_tags` decides whether that grouping is *written* onto `Step.lineage` (`True`, the default) or only *proposed*, in the returned `"proposal"`, with every step left untagged (`False`). `ambermeta discover` calls this with the default — `--write`'s manifest is its own confirmation step, so the CLI has always tagged and still does. The GUI's `POST /document/discover` route is the one caller that passes `apply_tags=False`: a fresh scan is a claim about the user's own data the GUI has a real Accept step for (`PATCH /steps/lineage`), so nothing is written until the user takes it. `"proposal"` is `None` when the layout inference tags nothing, and otherwise `{"segment_index": int, "segments": List[List[str]], "members": [{"tag": str, "step_ids": [...], "sources": [{"directory": str, "run_count": int}, ...]}, ...], "handoffs": [{"consumer_id": str, "producer_id": str, "consumer": str, "producer": str, "evidence": str}, ...]}` — see `build_lineage_proposal()`, below, for what each of those means. `handoffs` are the cross-directory restart handoffs AMBER's own `File Assignments` block evidences, scoped to one proposed member: the record is a bare filename every replica repeats verbatim, so the grouping is what identifies the pair and AMBER's record only corroborates that a handoff happened. An ambiguous or clipped record proposes nothing rather than guessing. See [§1](#1-the-ambermetasimulation-model) for a full run.
 
 ### `build_lineage_proposal()`
 
@@ -272,10 +272,13 @@ Scans a directory into a **Simulation draft**: builds the topology pool (HMR det
 def build_lineage_proposal(
     sim: Simulation,
     segment_index: Optional[int] = None,
+    base_directory: Optional[str] = None,
 ) -> Optional[Dict[str, Any]]
 ```
 
 The grouping `discover_draft` proposes, re-derived from `sim`'s own step names rather than from the original scan — so it also works on a manifest reopened from disk, or one edited on the canvas since. `segment_index=None` (the default) runs the same reconciling inference `discover_draft` uses; an explicit index instead tags every step by its own path segment at that position, with no cohort reconciliation and no refusal — the segment-picker's "try this column". This is what `POST /steps/infer-lineages` calls to re-propose against whatever the open document says right now.
+
+`base_directory` is what makes `handoffs` reachable: `Step.mdout` has been relativized against it, and the handoff evidence lives inside those mdouts. Omitted, the key is present and empty. Pass it whenever you have it — the GUI route does, because the segment picker replaces the shown proposal wholesale and a handoff-less one silently erases every row the user was looking at.
 
 ### `validate_simulation()`
 
