@@ -268,3 +268,34 @@ def test_the_stats_csv_duration_agrees_with_the_summary_total(sys021_tree, tmp_p
 
     csv_total_ns = sum(float(r["duration_ns"]) for r in ran)
     assert csv_total_ns * 1000.0 == protocol.totals()["time_ps"]
+
+
+def test_the_methods_summary_states_intent_while_the_totals_state_execution(
+        truncated_run_tree, tmp_path):
+    """The two artifacts `plan` writes in one action disagree for a truncated run, and that
+    is correct rather than a bug -- but only because they are answering different questions.
+
+    `methods_summary.json`'s `md_engine.run_length_ps` is `run_length_steps x timestep_ps`,
+    read from the input deck: the protocol as SPECIFIED, alongside `cntrl_parameters` and
+    everything else in that all-intent block. `summary.json`'s `totals` are measured from
+    the mdout's own frames: what the machine DID.
+
+    Pinned here because the difference is invisible on every other fixture in the repo --
+    everywhere else the runs did exactly what they declared -- and because the discrepancy
+    was originally found the other way round, on five real runs whose totals were wrong and
+    whose `run_length_ps` was right. docs/cli.md's plan-artifacts table states which is
+    which; this is the assertion that keeps that statement true.
+    """
+    import json
+    from ambermeta.protocol import write_protocol_outputs
+
+    protocol = auto_discover(str(truncated_run_tree), recursive=True)
+    write_protocol_outputs(protocol, {"methods_summary": str(tmp_path / "methods.json")})
+    methods = json.loads((tmp_path / "methods.json").read_text(encoding="utf-8"))
+    by_name = {s["name"]: s for s in methods["stages"]}
+
+    # Both chunks declared the same 5000 ps, and the methods summary says so for both.
+    assert by_name["prod_0001"]["md_engine"]["run_length_ps"] == 5000.0
+    assert by_name["prod_0002"]["md_engine"]["run_length_ps"] == 5000.0
+    # The totals count what ran: prod_0002 stopped at 3000.
+    assert protocol.totals()["time_ps"] == 8000.0

@@ -1127,6 +1127,26 @@ class SimulationProtocol:
                             existing_pme.setdefault(key, value)
                     else:
                         md_engine["pme"] = pme_indicators
+            # INTENT, deliberately, and it does NOT agree with `summary.json`'s totals for a
+            # run that did not finish what it declared. `md_engine` is an all-intent block:
+            # `cntrl_parameters` verbatim from the deck, `run_length_steps` from `nstlim`,
+            # the ensemble and thermostat the deck asked for. `run_length_ps` is
+            # `run_length_steps x timestep_ps` and belongs with them -- it is the protocol's
+            # stated length, which is what a Methods section reports.
+            #
+            # Making it execution-derived instead was considered and rejected: it would be
+            # the single measured number in a block of declarations, sitting immediately
+            # beside a `run_length_steps` it visibly is NOT the product of, which is a worse
+            # self-contradiction than the one it would fix and one a reader is far more
+            # likely to trip over. The honest fix is to say which is which, and docs/cli.md's
+            # plan-artifacts table now does, in the artifact's own terms: methods_summary is
+            # what was asked for, summary.json/stats.csv are what happened.
+            #
+            # This is also no longer the discrepancy it was found as. The five real runs that
+            # exposed it were `irest = 0` runs whose totals were being over-reported by 1800
+            # ps each; `run_length_ps` was RIGHT and the totals were wrong (see
+            # `_origin_time_ps`). With that fixed the two agree wherever a run did what it
+            # declared, and differ only where it genuinely did not.
             if md_engine.get("run_length_steps") and md_engine.get("timestep_ps"):
                 try:
                     md_engine["run_length_ps"] = float(md_engine["run_length_steps"]) * float(md_engine["timestep_ps"])

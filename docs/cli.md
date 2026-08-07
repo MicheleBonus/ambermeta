@@ -227,6 +227,19 @@ options:
 | `--methods-summary-path FILE` | Materials-&-Methods JSON: software, MD engine settings, system composition, restraints |
 | `--stats-csv FILE` | Per-stage statistics (one row per stage) |
 
+> **Intent and execution are different numbers, and the bundle carries both.**
+> `methods_summary.json` describes the **protocol that was specified**: everything under a
+> stage's `md_engine` — `cntrl_parameters`, `run_length_steps`, and `run_length_ps`
+> (`run_length_steps × timestep_ps`) — is read from the input deck and states what the run
+> was *asked* to do. `summary.json`'s `totals` and `stats.csv`'s `duration_ns` describe what
+> the run *did*: they are measured from each mdout's own frames and count nothing for a run
+> that was queued and never started, or that was killed part-way.
+>
+> The two therefore disagree, correctly, for any truncated run: a chunk that declared
+> `nstlim = 2500000, dt = 0.002` reports `run_length_ps: 5000.0` in the methods summary and
+> contributes 3000 ps to the totals if that is where it stopped. Quote `run_length_ps` when
+> writing up the protocol; quote the totals when reporting sampling.
+
 The CSV header is exactly:
 
 ```text
