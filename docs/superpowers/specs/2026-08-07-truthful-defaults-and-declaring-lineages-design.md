@@ -64,36 +64,63 @@ total_steps += float(length)
 total_time  += float(length) * float(dt)
 ```
 
-Replace with a three-way rule sourced from the mdout, which the parser already produces —
-`legacy_extractors/mdout.py:406` tracks `NSTEP = … TIME(PS)` and `:543` computes
-`global_end = last_stats.time_end`:
+Replace with a four-way rule sourced from the mdout:
 
 | State | Contributes | Detection |
 | --- | --- | --- |
-| Ran to completion | `time_end` from the final `NSTEP` record | mdout present and parseable |
-| Ran, truncated | `time_end` from the final `NSTEP` record | same — a run killed at 60% counts 60% |
-| Ran, mdout unparseable | nothing, plus a note | mdout present, parse failed |
-| Queued | nothing | mdin present, no mdout |
+| Ran (complete or truncated) | `elapsed_ps` (below), and `elapsed_ps / dt` steps | `stage.mdout` and `stage.mdout_header` both present, `stats.count > 0`, `begin_time_ps` not None |
+| Minimisation | nothing, no note | `mdout.details.run_type == "Minimization"` — a min mdout prints `NSTEP ENERGY RMS GMAX`, never `TIME(PS)`, so it has no elapsed time and never had one |
+| Ran, mdout unusable | nothing, plus a note | `stage.mdout is not None` but `stats.count == 0`, or `mdout_header is None`, or `begin_time_ps is None` |
+| Queued | nothing, plus the `queued` status (P1.2) | `stage.mdin` present, `stage.mdout is None` |
 
-Sourcing from `time_end` rather than `nstlim × dt` is strictly more truthful and fixes a second
-latent bug: a crashed or wall-clock-killed run is currently rounded up to its full intent.
+**The formula is `elapsed_ps = stats.time_end - mdout_header.begin_time_ps`.** This is
+load-bearing and was verified against the repo's own fixtures before being written down:
+
+- `stats.time_end` is an **absolute** AMBER clock reading, not a duration. The back-compat
+  fixture's five chunks read 20920 / 40920 / 60920 / 80920 / 100920 ps against a true 100,000 ps
+  total. Summing `time_end` directly yields 304,600 ps — a worse bug than the one being fixed.
+- `stats.time_end - stats.time_start` is **not** the alternative: `time_start` is the first
+  *printed* frame, one `ntpr` interval after the true begin, giving 99,500 ps.
+  `protocol.py:451-456` already documents this exact trap.
+- The chosen formula reproduces the committed golden exactly:
+  `sum(time_end - begin_time_ps) == 100000.0` and `sum(elapsed/dt) == 25000000.0`, which is what
+  `tests/data/lineage_backcompat/summary.json` already holds. **No golden regeneration is
+  expected**, and any movement in those files is a signal the formula is wrong, not a routine
+  rebase.
+
+"The final NSTEP" is **not** retrievable — `ThermoStats.add_frame` parses the NSTEP key and
+discards it, and `MdoutMetadata.nstlim` is the control-data *intent*, identical to the mdin's.
+Steps-that-ran are therefore derived as `elapsed_ps / dt`.
+
+The `+=`-not-`sum()` accumulation in the current docstring must survive the rewrite: CPython
+3.12's `sum` is compensated, CI runs 3.9 *and* 3.12, and the goldens compare floats.
+
+Sourcing from elapsed mdout time rather than `nstlim × dt` is strictly more truthful and fixes a
+second latent bug: a crashed or wall-clock-killed run is currently rounded up to its full intent.
 
 **Blast radius, accepted:** this changes reported totals for every existing project, not only
 replicated ones. Any project containing a truncated or queued run will report a smaller number
 than before.
 
 **Landing:** the new rule is the only rule — no flag, no manifest version bump, no second code
-path. When `validate` runs against a manifest whose stored totals disagree with the recomputed
-ones, it reports the delta and why:
+path.
+
+**Where the delta is reported.** The v2 manifest stores no totals — `simulation_to_payload` emits
+version/simulation/phases/steps and nothing else — so there is no stored number in the manifest to
+compare against, and the spec is not changing the format to add one. The comparison is made
+against a previously written **`summary.json`**, which is where totals actually live. When `plan`
+is about to overwrite a `summary.json` whose `totals` disagree with the recomputed ones, it says
+so before writing:
 
 ```
-totals changed since this manifest was written:
+totals changed since the last summary.json in this directory:
   time_ps  5,055,000 → 5,030,000
   reason   5 queued runs no longer counted (mdin present, no mdout)
   runs     1006 → 1001 completed, +5 queued
 ```
 
-Keeping the old number reachable behind a flag would invite citing it. Changing it silently would
+Where no prior `summary.json` exists, nothing is reported — there is no claim to contradict.
+Keeping the old number reachable behind a flag would invite citing it; changing it silently would
 surface the discrepancy at the worst possible moment.
 
 ## P1.2 Queued runs are kept, cost nothing, and are reported
@@ -181,22 +208,71 @@ Cohorts are keyed by `frozenset(_run_base(r) for r in runs)`. `equil/*` holds 18
 rival cohorts → `len(matched) != 1` → `{}`. Verified against the real tree: `equil/` alone yields
 `01..05`, `prod/` alone yields `01..05`, together `{}`. The wanted tags are computed and discarded.
 
-**New rule:** for each cohort with more than one member, compute that cohort's own varying segment
-index and its own tag set. If every cohort yields the same tag set, treat them as one campaign
-with those members. Otherwise refuse, as today.
+**New rule**, in five steps:
+
+1. Group directories into cohorts by run-base frozenset, as today.
+2. For each cohort holding **more than one** directory: check depth uniformity *within that
+   cohort*, and compute *that cohort's own* varying segment index. A cohort that fails either
+   check contributes nothing — it does **not** refuse the whole tree. (Required by
+   `test_a_prep_run_at_a_different_depth_does_not_block_the_replicas`.)
+3. Require every contributing cohort to agree on the **same** segment index. Otherwise refuse —
+   two cohorts naming their member at different depths must not silently merge.
+4. Require the contributing tag sets to be **nested**: sort by size, and every set must be a
+   subset of the largest. Otherwise refuse. The reconciled tag set is the largest.
+5. **Absorb singleton directories.** A directory dropped at step 2 for being alone in its cohort
+   is tagged if it is deep enough to have a segment at the agreed index *and* that segment is
+   already in the reconciled tag set.
+
+> **This rule was rewritten after the first draft was tested and failed.** The obvious version —
+> *"if every cohort yields the same tag set, accept"* — **refuses `sys021`**, the exact tree this
+> feature exists to fix. Reconstructed and executed against the real shape: `equil/*` cohorts on
+> 18 shared run bases → `{01..05}`; but `prod/01` also holds `cpptraj`, so its base set is
+> `{cpptraj, nvt_prod}` while `prod/02..05` hold `{nvt_prod}`. `prod/01` is therefore alone in its
+> cohort, is dropped by `len(dirs) > 1`, and the surviving prod cohort yields only `{02,03,04,05}`.
+> Two unequal sets → refuse. Steps 4 and 5 exist precisely to survive this: `{02..05}` is a subset
+> of `{01..05}`, and `prod/01`'s segment at index 1 is `01`, which is already a reconciled tag.
+
+Worked through on `sys021`:
 
 ```
-equil/* → varying index 1 → {01,02,03,04,05}
-prod/*  → varying index 1 → {01,02,03,04,05}     same set → 5 members ✓
+equil/01..05   bases {18 shared}      → index 1 → {01,02,03,04,05}
+prod/02..05    bases {nvt_prod}       → index 1 → {02,03,04,05}
+prod/01        bases {cpptraj,nvt_prod} → alone in its cohort → dropped at step 2
+
+step 3: both contributing cohorts agree on index 1            ✓
+step 4: {02..05} ⊂ {01..05}  → reconciled = {01,02,03,04,05}  ✓
+step 5: prod/01 segment[1] == "01" ∈ reconciled → tagged 01   ✓
 ```
+
+Every existing refusal still refuses, and this is the acceptance criterion for the rule:
+
+| Existing test | Shape | Why it still refuses |
+| --- | --- | --- |
+| `test_two_rival_families_tag_neither` | `{rep1,rep2}` vs `{ctrl1,ctrl2}` | Disjoint, so neither is a subset of the other — step 4 refuses |
+| `test_a_shared_prep_directory_stays_untagged_and_out_of_the_count` | `common/` beside `rep1..3` | `common` is not in the reconciled tag set — step 5 does not absorb it |
+| `test_runs_at_the_tree_root_fail_the_predicate…` | runs at depth 0 | The `if d` filter is kept unchanged |
+| `test_a_single_lineage_in_a_subdirectory_stays_untagged` | one directory | The `len(candidates) < 2` guard is kept unchanged |
+| `test_lineages.py::…nested_sweep…` | `300K/rep1` … | One cohort, two segments vary → contributes nothing → no contributing cohorts → refuse |
 
 > **Implementation trap, verified empirically.** Do *not* union the directories and then look for
 > the varying segment. The union has two segments varying (`equil|prod` at index 0, `01..05` at
 > index 1), so `if len(varying) != 1: return {}` refuses one line later. Reconcile per cohort;
 > never union first.
 
-Genuinely ambiguous shapes — nested sweeps where two segments vary within a single cohort —
-continue to refuse, and become P4's problem.
+Nested sweeps continue to refuse, and become P4's problem.
+
+**Blast radius.** `infer_lineages_from_layout` has **four** call sites, not one:
+`protocol.py:1883` (inside `smart_group_files`, feeding `detect_numeric_sequences`),
+`protocol.py:1961` (`plan --recursive`), `core_bridge.py:491` (`discover_draft`), and
+`document.py:557` (`apply_inferred_lineages`). Widening it changes sequence-family pooling on
+every existing project, so the sequence-note assertions in `test_continuity_p1.py` and
+`test_gui_core_bridge_sim.py` are part of this task's verification, not a later surprise. Note
+also that `document.py:557` passes `[s.name for s in steps]` — open-document names, possibly
+hand-renamed — not scan-derived stems.
+
+The function is re-exported at `ambermeta/__init__.py:22` and documented in `docs/api.md:107` as
+`(run_names) -> Dict[str, str]`. **Its signature does not change.** The proposal object of P2.2 is
+built by a new function alongside it, not by changing this one's return type.
 
 ## P2.2 Propose, never apply
 
@@ -216,15 +292,33 @@ Discovered 1097 runs in sys021.
 └────────────────────────────────────────────────────────┘
 ```
 
-Accepting issues one `PATCH /api/steps/lineage` per tag — the route already takes an arbitrary
-cross-phase id list, applies in one edit and one undo entry, and auto-severs any restart link the
-edit turned into a cross-member claim (`document.py:522-544, 574-627`).
+Accepting issues one `PATCH /api/steps/lineage` per tag — the route takes an arbitrary cross-phase
+id list, applies in one edit and one undo entry, and auto-severs any restart link the edit turned
+into a cross-member claim (`document.set_lineages`, `_crossing_refs`, `_sever_crossed_refs`).
 
 `[Change ▾]` lets the user pick a different path segment when the proposal picked the wrong one.
 
 Where inference refuses outright, the strip is replaced by a `needs_you` card rather than the
 silence emitted today (`core_bridge.py:340-341` guards the lineage card behind `if declared:`
-with no `else`).
+with no `else`). That card is built in `discover_draft` and appended, **not** added to
+`build_suggestions` — the latter is called from three places and has no access to the scan, which
+its own comment at `:331-335` already records.
+
+**The proposal still drives phase layout; it just writes no tags.** `multi_lineage`
+(`core_bridge.py:495`) currently gates phase-major grouping *and* chaining off written tags. If
+Discover stopped tagging, phase-major grouping would vanish for every tree and
+`test_discover_draft_groups_same_role_steps_from_every_lineage_into_one_phase` and
+`test_discover_draft_opens_a_new_phase_when_a_role_recurs` would both break. So `multi_lineage`
+is re-derived from *the proposal* rather than from `Step.lineage`: layout is unchanged,
+`Step.lineage` stays `None` until Accept, and bands correctly do not render before then.
+
+**The existing "Infer lineages" button must go.** `SimHeader.tsx:122-130` already ships one,
+wired to `useInferLineages()` → `POST /api/steps/infer-lineages`, which writes tags with **no
+preview**. Shipping P2.2 beside it would leave two contradictory inference affordances in one
+app. It is removed and replaced by the `Define replicas…` entry point of P2.3. It has no test
+coverage, so nothing pins it — but `api.inferLineages` / `useInferLineages` and their `import`s
+must be removed with it, because `noUnusedLocals` makes a dangling import a hard build failure.
+The `POST /steps/infer-lineages` route itself stays, repointed to return a proposal.
 
 ## P2.3 "Define replicas…" — declaring members by hand
 
@@ -308,6 +402,29 @@ Accepting issues `PUT /api/steps/{id}` per edge. The route already refuses dead 
 null refs and cycles with 400, and returns `resolved_input_coords` so the client never
 re-implements resolution.
 
+**Order matters, and the order is: tags first, then handoffs.** The two operations interact.
+`set_lineages` runs `_sever_crossed_refs`, which rewrites to `starting_structure` any edge *this
+edit* turned into a cross-member link; and `_check_continues_from` accepts a cross-member ref with
+a "branch, not a continuation" warning. Writing handoffs first and tagging second would therefore
+delete the edges just written. Tagging first is safe because a handoff within one member —
+`equil/01 → prod/01`, both tagged `01` — is not a crossing at all, so it draws neither the sever
+nor the warning. P1.3's within-directory edges likewise never cross a member boundary when a
+member is a whole directory, so tagging severs nothing. This ordering has no existing test and
+gets one.
+
+**Accept is N transactions, not one.** `PATCH /steps/lineage` raises 404 on the first unknown id
+and applies nothing (pinned by `test_one_bad_id_changes_nothing`), but five tags are five separate
+requests and five undo frames; a failure on the third leaves two applied. Step ids are freshly
+generated on every Discover, so a proposal held across a re-Discover is stale by construction —
+which is the 400-plus-re-proposal case in Error handling below. The strip reports partial
+application rather than claiming success.
+
+`MdoutHeader.assignment("INPCRD")` returns `None` when AMBER clipped the value at the field
+width, which is common for long paths. That is "no evidence", not "no producer" — such a step
+simply gets no proposed edge. Discovery does not read mdout headers today; the new read matches
+the existing fault tolerance in `discover_draft`, which catches
+`(IOError, OSError, ValueError, LookupError)` around its mdin parse.
+
 ## P2.5 Discover stops eating tags
 
 `routes.py:103-113` replaces the document wholesale:
@@ -355,7 +472,9 @@ Each change lands in the module that already owns the concern; no new modules.
 | `gui/api/schemas.py` | wire contract | P1.4 corrected docs, proposal type |
 | `Canvas/PhaseSection.tsx` | phase layout | **unchanged** — see P2.3 on why `showBands` stays |
 | new `Canvas/ProposalStrip.tsx` | the review strip, in both proposed and manual modes | P2.2, P2.3, P2.4, P2.6 |
-| `TopBar/TopBar.tsx` | actions | P2.3 `Define replicas…` |
+| `TopBar/TopBar.tsx` | actions | P2.3 `Define replicas…` (a 7th prop; `TopBar.test.tsx:14-15` passes all six explicitly and must be updated) |
+| `Canvas/SimHeader.tsx` | simulation header | P2.2 — remove the old no-preview "Infer lineages" button |
+| `tests/conftest.py` | fixture trees | optional mdout writer + explicit-content arm for `write_run_tree` |
 | `TopBar/ValidationPanel.tsx` | findings | P2.6 per-lineage totals |
 
 The proposal is a **response-shaped object, not stored state** — it is derived from the draft on
@@ -373,6 +492,17 @@ document that declares no lineages keeps the exact step block it had before.
 - Tag preservation across re-discovery reports unmatched tags rather than dropping them quietly.
 
 ## Testing
+
+**The existing fixture helper cannot express any of this and must be extended first.**
+`tests/conftest.py:write_run_tree` writes **mdin only**, deliberately, so under P1.1 every
+existing lineage fixture becomes entirely `queued` with `0.0 ps` totals — and
+`test_lineage_totals.py:67` (`breakdown["rep2"]["time_ps"] < breakdown["rep1"]["time_ps"]`)
+degenerates to `0.0 < 0.0` and fails. The helper gains an optional mdout writer emitting a
+`begin time read from input coords` header line, a File Assignments block and a few
+`NSTEP = … TIME(PS) =` records. It also picks mdin content by
+`next(k for k in _REPLICA_MDIN if k in Path(stem).name)`, which raises `StopIteration` on stems
+like `18_ntp_equi` or `cpptraj` — so it needs an explicit-content arm before a `sys021` fixture
+can exist at all.
 
 A fixture built from the real `sys021` structure — full directory layout and run stems, with tiny
 synthetic mdins/mdouts and no trajectories — asserting:
