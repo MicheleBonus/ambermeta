@@ -66,10 +66,20 @@ The export above is not optional.
 | Type check | `npx tsc --noEmit` | The only automated type gate. CI runs no Python linter/typechecker. |
 | Bundle | `npm ci && npm run build`, then `git add -A ambermeta/gui/static` | `emptyOutDir: true`; asset names are content-hashed, so `-A` is required to stage deletions. |
 
-**Two interpreter caveats.** The env is Python 3.12, so the **3.9 CI leg cannot be reproduced
-locally** — a 3.9-only failure (syntax, or a float last-bit difference from the compensated
-`sum()`) will only surface in CI, which is exactly why the Global Constraints on 3.9 syntax and
-`+=` accumulation are non-negotiable. And `scripts/export_cli_help.py` demands Python **3.11**
+**Syntax-check every Python change under a real 3.9.** One exists at
+`/home/bonus/Software/miniforge3/envs/pymol/bin/python3.9` (3.9.23, verified):
+
+```bash
+/home/bonus/Software/miniforge3/envs/pymol/bin/python3.9 -m py_compile <changed files>
+```
+
+It has none of this project's dependencies, so it cannot *run* the suite — the 3.9 CI leg still
+cannot be fully reproduced, and a float last-bit difference from a compensated `sum()` will only
+surface in CI. That is exactly why the Global Constraints on 3.9 syntax and `+=` accumulation are
+non-negotiable. But `py_compile` catches every syntax-level 3.10+ slip for free, and every task
+touching `ambermeta/` or `tests/` should run it.
+
+**One more interpreter caveat.** `scripts/export_cli_help.py` demands Python **3.11**
 exactly; if a task ever needs it, use
 `/home/bonus/Software/miniforge3/envs/chainsaw-py311/bin/python` (3.11.15, verified). No task in
 this plan changes CLI help text, so it should not be needed — Task 14 confirms.
