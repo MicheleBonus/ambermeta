@@ -534,6 +534,14 @@ synthetic mdins/mdouts and no trajectories — asserting:
   per-cohort reconciliation makes this harmless for inference, but the phantom step remains.
   Fixing it means sniffing `.in` files for an `&cntrl` namelist, which reclassifies files in every
   existing project.
+- **P1.3's directory rule is enforced at discovery only.** Two other code paths also create
+  `input_coords.ref`s and are keyed on lineage rather than on directory: `relink_restarts`
+  (`simulation.py:306-361`), whose multi-member guard does not trip on an untagged document, and
+  `repair_dangling_refs` (`simulation.py:364-407`), whose `same_lineage` filter matches every step
+  when nothing is tagged. `document.py:394` auto-chains a newly created step to its phase
+  neighbour for the same reason. So a reorder, a delete or a step-add can still re-create a
+  cross-directory edge that discovery would no longer write. Closing this means giving those three
+  the same directory predicate, and is deliberately not in this spec.
 - **`ambermeta init`'s v2 template** (`cli.py:1069-1140`) emits no `lineage:` key, teaching the
   wrong shape to anyone hand-authoring.
 - **`n_atoms` is computed at discovery and dropped** — `topology_pool.Topology` has it,
