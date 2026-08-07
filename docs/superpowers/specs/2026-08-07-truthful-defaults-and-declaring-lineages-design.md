@@ -226,26 +226,58 @@ Where inference refuses outright, the strip is replaced by a `needs_you` card ra
 silence emitted today (`core_bridge.py:340-341` guards the lineage card behind `if declared:`
 with no `else`).
 
-## P2.3 Kill the bootstrap deadlock
+## P2.3 "Define replicas…" — declaring members by hand
 
-`PhaseSection.tsx:274`:
+The confirm strip only appears when inference succeeded. Inference will keep refusing on purpose:
+nested sweeps (P4), and any tree where no single path segment names the member. Without a manual
+path, those users are exactly where this spec started.
 
-```tsx
-const showBands = bands.some((b) => b.lineage !== null);
+**The bootstrap deadlock, and why the obvious fix is wrong.** `PhaseSection.tsx:274` reads
+`const showBands = bands.some((b) => b.lineage !== null)`, so with nothing tagged no band renders,
+and `LineageBand` is the only caller of `useSetLineages` in the entire frontend — no lineage
+control exists in the Inspector or on the step card, and selection is single-select. The tempting
+one-line fix is to make `showBands` unconditional. **It must not be done.** `bandsOf`
+(`PhaseSection.tsx:185-193`) merges *adjacent* entries sharing a tag, so in a fully untagged
+document every step collapses into one band per phase, and `LineageBand`'s rename applies to
+`steps.map((s) => s.id)` — every step in that band. On `sys021` that is a control which tags all
+~1007 production steps as a single member in one keystroke. `LineageBand` is a post-tagging
+*editing* surface — its own docstring says a phase-major document "produces one band per member",
+which presupposes members — and it does that job correctly. It is not a way to create members
+from nothing, and ungating it does not make it one. `showBands` stays as it is.
+
+**The fix:** the strip becomes openable on demand, from a top-bar `Define replicas…` action,
+regardless of document state:
+
+```
+┌─ Define replicas ──────────────────────────┐
+│ Which part of the path names the replica?  │
+│                                            │
+│   [ equil|prod ]  [ 01…05 ]◀  [ run stem ] │
+│                                            │
+│   01  ← equil/01 (18) + prod/01 (202)      │
+│   02  ← equil/02 (18) + prod/02 (201)      │
+│   …                                        │
+│                     [ Apply ]  [ Cancel ]  │
+└────────────────────────────────────────────┘
 ```
 
-With nothing tagged, no band renders. `LineageBand` is the only caller of `useSetLineages` in the
-entire frontend, and there is no lineage control anywhere else — `grep -rn lineage
-components/Inspector/ Canvas/StepNode.tsx` returns nothing, and selection state is single-select.
-So the only control that can *create* a tag renders only when a tag already exists.
+Segments are read off the run paths actually present; picking one regroups the preview live. This
+is the same component as the confirm strip, in a mode where the user supplies the segment instead
+of inference proposing it — so `[Change ▾]` in the confirm strip and `Define replicas…` from the
+top bar land in the same place.
 
-`showBands` becomes unconditional; an untagged band renders with its existing "Rename this
-lineage, or tag these runs" affordance.
+**Preview rows are editable.** Each proposed member's tag can be overridden before Apply. The
+segment picker gets a regular tree ~all the way there; hand-editing the rows covers the irregular
+remainder without building a second navigation model. A tree where members cannot be expressed as
+whole run directories at all remains out of reach, and that limitation is accepted here — the full
+per-run assignment table is P3/P4 territory.
 
-This is one line, and it is not optional. Without it the confirm strip is the sole entry point:
-decline the proposal, or open a manifest from YAML where no proposal exists, and the deadlock is
-back with no way out. `LineageBand.test.tsx:84-95` currently pins the old behaviour and must be
-updated.
+Applying issues the same `PATCH /api/steps/lineage` calls as accepting a proposal: one per tag,
+one undo entry each, cross-member links auto-severed.
+
+Partially-tagged documents already work today and are unaffected: once any member exists,
+`showBands` is true, the untagged remainder renders as a "no lineage" band, and `LineageBand`
+retags it correctly.
 
 ## P2.4 The handoff proposal, from AMBER's own record
 
@@ -321,8 +353,9 @@ Each change lands in the module that already owns the concern; no new modules.
 | `gui/api/core_bridge.py` | draft construction | P1.3 edge rule, P2.2 proposal, P2.6 totals |
 | `gui/api/routes.py` | HTTP surface | P2.2 preview mode, P2.5 tag preservation, P1.4 message |
 | `gui/api/schemas.py` | wire contract | P1.4 corrected docs, proposal type |
-| `Canvas/PhaseSection.tsx` | phase layout | P2.3 `showBands` |
-| new `Canvas/ProposalStrip.tsx` | the review strip | P2.2, P2.4, P2.6 |
+| `Canvas/PhaseSection.tsx` | phase layout | **unchanged** — see P2.3 on why `showBands` stays |
+| new `Canvas/ProposalStrip.tsx` | the review strip, in both proposed and manual modes | P2.2, P2.3, P2.4, P2.6 |
+| `TopBar/TopBar.tsx` | actions | P2.3 `Define replicas…` |
 | `TopBar/ValidationPanel.tsx` | findings | P2.6 per-lineage totals |
 
 The proposal is a **response-shaped object, not stored state** — it is derived from the draft on
@@ -353,9 +386,14 @@ synthetic mdins/mdouts and no trajectories — asserting:
 5. A truncated mdout counts its actual `time_end`, not `nstlim × dt` (P1.1).
 6. `validate` on a manifest with stored older totals reports the delta and the reason (P1.1).
 7. Re-running Discover preserves tags (P2.5).
-8. An untagged document renders a band (P2.3) — replaces `LineageBand.test.tsx:84-95`.
-9. `test_lineage_backcompat` continues to prove manifests without `lineage:` round-trip
-   byte-identically.
+8. `Define replicas…` is available on a fully untagged document, its segment picker offers every
+   segment present in the run paths, picking one regroups the preview, an edited preview row
+   overrides the tag it applies, and Apply issues one `PATCH /steps/lineage` per distinct tag
+   (P2.3).
+9. `LineageBand.test.tsx:84-95` is **kept as-is**: an untagged phase must continue to render no
+   band. It now pins a deliberate decision rather than an accident, and its comment should say so.
+10. `test_lineage_backcompat` continues to prove manifests without `lineage:` round-trip
+    byte-identically.
 
 ## Out of scope, recorded so it is not lost
 
