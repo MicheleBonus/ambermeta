@@ -525,7 +525,10 @@ _STATED_ORIGINS = (ORIGIN_HEADER, ORIGIN_CONTROL_T)
 
 
 def _origin_time_ps(
-    header: Optional["MdoutHeader"], stats: Optional["ThermoStats"]
+    header: Optional["MdoutHeader"],
+    stats: Optional["ThermoStats"],
+    *,
+    is_minimisation: bool = False,
 ) -> Tuple[Optional[float], Optional[str]]:
     """The ABSOLUTE AMBER clock reading this run started from, and where that came from.
 
@@ -565,6 +568,32 @@ def _origin_time_ps(
     ignores it. The repo's own back-compat fixtures say `t = 1000.0` for a run that began
     at 920.0, and the real campaign's `nvt_prod_0201` says `t = 5000.0` for a run that
     began at 1005019.992.
+
+    **`is_minimisation` narrows the `irest = 0` rule above -- it does not hold for a
+    minimisation, and this function used to apply it there anyway.** Real counterexample on
+    the campaign this branch was written against: `equil/01/07_min_red.out` is
+    `imin = 1, ntx = 1, irest = 0`, states no `t` anywhere in CONTROL DATA (a minimisation's
+    CONTROL DATA has no `Molecular dynamics:` section to state one in), and prints no
+    `NSTEP = 0` / `TIME(PS)` record (a minimisation prints `NSTEP ENERGY RMS GMAX` instead)
+    -- yet its header begin time is a perfectly valid, non-zero 1800.000. The `irest = 0`
+    rule above is about DYNAMICS specifically: AMBER substitutes the mdin's `t` for the
+    coordinate file's time only because it is initialising an MD clock it is about to
+    integrate forward, and a minimisation has no such clock to initialise. Nothing in AMBER
+    suppresses the coordinate file's stated time for a minimisation, `irest` notwithstanding,
+    so the header's `begin_time_ps` remains a READING, not the meaningless 0.000 a dynamics
+    run under the same `irest = 0` would print. Before this parameter existed, the two
+    routes above both failed here (no stated `t`, no first frame -- a minimisation has
+    neither) and this function returned `(None, None)`, discarding a begin time that was
+    never untrustworthy in the first place -- a regression this file's own re-review caught:
+    the pre-`_origin_time_ps` code used 1800.0 for exactly this file via `begin_time_ps`
+    directly, and `_check_stage_pair` started reporting "Cannot verify continuity" instead.
+    Costs nothing on the TOTALS path: `_elapsed_ps_and_source` excludes minimisations by
+    `run_type` before it ever calls this function (a minimisation has no elapsed dynamics
+    time to measure), so this widens only what CONTINUITY (`_check_stage_pair`) can verify.
+    A DYNAMICS `irest = 0` run with neither a stated `t` nor a first frame still returns
+    `(None, None)`: unlike a minimisation, its header begin remains exactly the untrustworthy
+    0.000 the C1 fix this function exists to hold was about, and trusting it would
+    reintroduce the over-count on any dynamics mdout whose CONTROL DATA `t` failed to parse.
     """
     if header is None:
         return None, None
@@ -580,6 +609,14 @@ def _origin_time_ps(
             first = getattr(stats, "time_start", None)
             if first is not None:
                 return float(first), ORIGIN_FIRST_FRAME
+        # LAST resort, and gated on `is_minimisation` for exactly the reason the docstring
+        # above walks through at length: a minimisation's header begin time was never put
+        # through the substitution that makes a DYNAMICS irest=0 run's begin time
+        # meaningless, so it is safe to trust here where a dynamics run's would not be.
+        if is_minimisation:
+            begin = getattr(header, "begin_time_ps", None)
+            if begin is not None:
+                return float(begin), ORIGIN_HEADER
         return None, None
     begin = getattr(header, "begin_time_ps", None)
     if begin is not None:
@@ -807,9 +844,18 @@ class SimulationProtocol:
             # really was written at `t`), the goldens were generated from the inpcrd route,
             # and changing the preference is a continuity change rather than a totals fix.
             stats = None
+            run_type = None
             if current.mdout and current.mdout.details:
                 stats = getattr(current.mdout.details, "stats", None)
-            start_time, start_time_source = _origin_time_ps(current.mdout_header, stats)
+                run_type = getattr(current.mdout.details, "run_type", None)
+            # `is_minimisation` is what lets `_origin_time_ps` trust a valid header begin
+            # time under `irest = 0` here without reintroducing the over-count on a DYNAMICS
+            # run whose CONTROL DATA `t` failed to parse -- see that function's own
+            # docstring for the real counterexample (`equil/01/07_min_red.out`) this closes.
+            start_time, start_time_source = _origin_time_ps(
+                current.mdout_header, stats,
+                is_minimisation=(run_type == "Minimization"),
+            )
 
         if end_time is None or start_time is None:
             # Add informational note when continuity check is skipped

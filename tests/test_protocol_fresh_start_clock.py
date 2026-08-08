@@ -169,3 +169,60 @@ def test_a_fresh_run_is_not_reported_as_overlapping_what_precedes_it(fresh_start
     # equi ends at 5000 and prod's clock starts at 5000: no gap, no overlap.
     assert prod.observed_gap_ps == 0.0
     assert not [n for n in prod.continuity if "overlap" in n]
+
+
+def test_a_minimisations_valid_header_begin_survives_irest_zero(tmp_path):
+    """F3, a narrow regression from the fix wave above: `_check_stage_pair` routing through
+    `_origin_time_ps` discarded a MINIMISATION's valid header begin time under `irest = 0`,
+    where the rule above (`t` substitutes for the coordinate file's time) does not apply.
+
+    Real counterexample on the campaign: `equil/01/07_min_red.out` is
+    `imin = 1, ntx = 1, irest = 0`, states no `t` anywhere in CONTROL DATA (a minimisation's
+    CONTROL DATA has no `Molecular dynamics:` section), and prints no `NSTEP = 0` /
+    `TIME(PS)` record (a minimisation prints `NSTEP ENERGY RMS GMAX` instead) -- so
+    `_origin_time_ps`'s `irest = 0` branch has neither a stated `t` nor a first frame to
+    fall back to. But its header states a perfectly valid, non-zero begin time, 1800.000,
+    because a minimisation has no internal MD clock for AMBER to initialise from `t` INSTEAD
+    of the coordinate file the way it does for dynamics -- nothing suppresses the
+    coordinate file's stated time here. Before `is_minimisation` existed, this function
+    returned `(None, None)` for exactly this shape -- the SAME answer it correctly gives a
+    DYNAMICS `irest = 0` run whose `t` is unreadable, even though the two cases are not
+    alike: the pre-`_origin_time_ps` code used 1800.0 for the real file via `begin_time_ps`
+    directly, so this is a regression the fix wave introduced, not a pre-existing gap.
+
+    It is masked on the real campaign only because the ASCII restart parses and
+    `current.inpcrd`'s own time wins first (`_check_stage_pair` prefers it, deliberately,
+    over the header route). `current.inpcrd = None` reproduces where it actually surfaces:
+    a bare install with no `netCDF4`, or an inpcrd that is missing outright.
+    """
+    from tests.conftest import RunSpec, _PROD_MDIN, write_run_tree
+
+    # `imin = 1, ntx = 1, irest = 0`, no `t` stated -- `07_min_red.out`'s own CONTROL DATA
+    # shape. `RunSpec.imin=1` is what makes `_mdout_text` write it that way: no
+    # `Molecular dynamics:` section, no `NSTEP = 0` record, and the begin-time line carries
+    # `begin_ps` unmodified even though `irest = 0` (see `RunSpec.imin`'s docstring).
+    min_mdin = "minimise\n &cntrl\n  imin = 1, ntx = 1, irest = 0, maxcyc = 1000, ntb = 1,\n /\n"
+    write_run_tree(tmp_path, [
+        ("prev", RunSpec(mdin=_PROD_MDIN, elapsed_ps=1800.0, begin_ps=0.0)),
+        ("min_red", RunSpec(mdin=min_mdin, elapsed_ps=0.0, begin_ps=1800.0, irest=0, imin=1)),
+    ])
+
+    protocol = auto_discover(str(tmp_path), recursive=True)
+    by_name = {s.name: s for s in protocol.stages}
+    prev, current = by_name["prev"], by_name["min_red"]
+
+    # Grounds the scenario: genuinely irest=0, no readable CONTROL DATA `t`, no frames to
+    # read a first-printed one from -- yet a header begin that IS non-zero and valid.
+    assert current.mdout.details.run_type == "Minimization"
+    assert current.mdout_header.irest == 0
+    assert current.mdout_header.control_t_ps is None
+    assert current.mdout.details.stats.count == 0
+    assert current.mdout_header.begin_time_ps == 1800.0
+
+    current.inpcrd = None  # force the header route: bare install / missing inpcrd
+    protocol._check_stage_pair(prev, current)
+
+    # `prev` ends at 1800 and the minimisation's own valid header begin is also 1800: no
+    # gap, and -- the regression this test guards -- NOT "Cannot verify continuity".
+    assert current.observed_gap_ps == 0.0
+    assert not [n for n in current.continuity if "Cannot verify" in n]

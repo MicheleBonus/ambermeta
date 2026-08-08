@@ -68,6 +68,20 @@ class RunSpec(NamedTuple):
     `begin_ps` is that origin in both cases (it is where the frames start); only the printed
     header line differs. This shape is the one the branch's totals over-reported by 1800 ps
     on five real runs, and no fixture modelled it until this field existed.
+
+    `imin=1` -- a minimisation -- is the ONE exception to the `irest=0` rule just described,
+    and no fixture modelled it until this field existed either. A minimisation has no
+    internal MD clock for AMBER to initialise from `t` INSTEAD of the coordinate file --
+    that substitution is a dynamics-only behaviour -- so nothing suppresses the coordinate
+    file's stated time the way it is suppressed under `irest=0, imin=0`. `begin_ps` is
+    therefore printed on the begin-time line AS IS, even under `irest=0`, and no
+    `Molecular dynamics:` section (`t`, `dt`, `nstlim`) is written at all -- a real
+    minimisation's CONTROL DATA has none of those, which is also what makes `control_t_ps`
+    correctly come back `None`. No `NSTEP = ... TIME(PS) = ...` frames are written either:
+    a minimisation prints `NSTEP ENERGY RMS GMAX` instead, which none of this repo's parsers
+    read, so `frames` is ignored and `stats.count` comes back `0`, exactly as it does for a
+    real minimisation mdout. Real counterexample this models: `equil/01/07_min_red.out`
+    (`imin=1, ntx=1, irest=0`, no `t`, header begin = 1800.000, genuinely valid).
     """
     mdin: str
     elapsed_ps: Optional[float] = None
@@ -79,6 +93,7 @@ class RunSpec(NamedTuple):
     stated_ps: Optional[float] = None
     irest: int = 1
     natoms: Optional[int] = None
+    imin: int = 0
     """The system size AMBER reports in its `RESOURCE USE` block, or None to omit the block.
 
     This is the ONLY source `lineages.coherence` reads an atom count from
@@ -138,10 +153,12 @@ def _mdout_text(spec: RunSpec) -> str:
             f"| INPCRD: {spec.inpcrd:<74}\n"
             "|   PARM: prmtop                                                                 \n"
         )
-    # What AMBER PRINTS on the begin-time line. An `irest=0` run read no time from its
-    # coordinates and says so with a literal 0.000, however far along the clock `t` put it
-    # -- reading that 0.000 as the clock origin is the 1800-ps-per-replica over-count.
-    printed_begin = 0.0 if spec.irest == 0 else spec.begin_ps
+    # What AMBER PRINTS on the begin-time line. An `irest=0` DYNAMICS run read no time from
+    # its coordinates and says so with a literal 0.000, however far along the clock `t` put
+    # it -- reading that 0.000 as the clock origin is the 1800-ps-per-replica over-count.
+    # A MINIMISATION is not part of that substitution at all (see `RunSpec.imin`'s
+    # docstring): it always prints the coordinate file's real time, `irest` notwithstanding.
+    printed_begin = 0.0 if (spec.irest == 0 and spec.imin == 0) else spec.begin_ps
     begin_line = (
         " begin time read from input coords =********** ps\n\n" if spec.begin_overflowed
         else f" begin time read from input coords = {printed_begin:.3f} ps\n\n"
@@ -157,23 +174,33 @@ def _mdout_text(spec: RunSpec) -> str:
         f" NATOM  = {spec.natoms:>7} NTYPES =       1 NBONH =       1 MBONA  =       0\n"
         if spec.natoms is not None else ""
     )
-    head = (
-        f"{assign}\n"
-        f"{resources}"
-        "   2.  CONTROL  DATA  FOR  THE  RUN\n"
-        "General flags:\n"
-        "     imin    =       0, nmropt  =       0\n"
-        "\n"
-        "Nature and format of input:\n"
-        f"     ntx     =       {5 if spec.irest else 1}, irest   =       {spec.irest},"
-        "  ntrx    =       1\n"
-        "\n"
+    # A minimisation's CONTROL DATA has no `Molecular dynamics:` section at all -- no `t`,
+    # no `dt`, no `nstlim`, because none of those integration quantities exist for it (real
+    # AMBER prints a `Minimization:` section instead, with `maxcyc`/`drms`, which none of
+    # this repo's parsers read). Omitting it rather than inventing one is what makes
+    # `read_mdout_header`'s `control_t_ps`/`control_dt_ps` correctly come back `None` here,
+    # matching `equil/01/07_min_red.out`'s real CONTROL DATA block.
+    dynamics_block = (
         "Molecular dynamics:\n"
         f"     nstlim  = {int(stated_ps / spec.dt):>9}, nscm    =         0,"
         "  nrespa  =         1\n"
         f"     t       = {spec.begin_ps:.5f}, dt      = {spec.dt:.5f},"
         "  vlimit  =  -1.00000\n"
         "\n"
+        if spec.imin == 0 else ""
+    )
+    head = (
+        f"{assign}\n"
+        f"{resources}"
+        "   2.  CONTROL  DATA  FOR  THE  RUN\n"
+        "General flags:\n"
+        f"     imin    =       {spec.imin}, nmropt  =       0\n"
+        "\n"
+        "Nature and format of input:\n"
+        f"     ntx     =       {5 if spec.irest else 1}, irest   =       {spec.irest},"
+        "  ntrx    =       1\n"
+        "\n"
+        f"{dynamics_block}"
         "   3.  ATOMIC COORDINATES AND VELOCITIES\n"
         f"{begin_line}"
         "   4.  RESULTS\n\n"
@@ -187,15 +214,23 @@ def _mdout_text(spec: RunSpec) -> str:
             "  ----------------------------------------------------------------\n"
         )
 
-    step_of = spec.elapsed_ps / spec.frames
-    # An `irest=0` run prints its starting energies as an `NSTEP = 0` record before it
-    # integrates anything, so its first PRINTED frame is the clock origin itself rather
-    # than one output interval past it. That is what makes the fencepost correction
-    # (`time_end - time_start + interval`) overshoot by exactly one interval on such a run,
-    # and it is why `_origin_time_ps` never routes an irest=0 run through the fencepost.
-    body = frame(0, spec.begin_ps) if spec.irest == 0 else ""
-    for i in range(1, spec.frames + 1):
-        body += frame(int(step_of * i / spec.dt), spec.begin_ps + step_of * i)
+    if spec.imin == 0:
+        step_of = spec.elapsed_ps / spec.frames
+        # An `irest=0` run prints its starting energies as an `NSTEP = 0` record before it
+        # integrates anything, so its first PRINTED frame is the clock origin itself rather
+        # than one output interval past it. That is what makes the fencepost correction
+        # (`time_end - time_start + interval`) overshoot by exactly one interval on such a
+        # run, and it is why `_origin_time_ps` never routes an irest=0 run through the
+        # fencepost.
+        body = frame(0, spec.begin_ps) if spec.irest == 0 else ""
+        for i in range(1, spec.frames + 1):
+            body += frame(int(step_of * i / spec.dt), spec.begin_ps + step_of * i)
+    else:
+        # A minimisation prints `NSTEP ENERGY RMS GMAX` records, never `TIME(PS)` -- none of
+        # this repo's parsers read them, so leaving this empty is what makes
+        # `mdout.details.stats.count == 0`, the same signal a real minimisation's mdout
+        # gives every consumer of `ThermoStats`.
+        body = ""
     return head + body + "\n      5.  TIMINGS\n"
 
 
