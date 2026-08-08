@@ -22,7 +22,13 @@ export function Toaster() {
         // two radii differ by 3px. items-start keeps the buttons on the first line.
         <div key={t.id} role="status"
           className={`flex items-start gap-2 max-w-sm px-3 py-2 rounded-2xl border bg-surface text-sm ${toneClass[t.tone]}`}>
-          <span>{t.message}</span>
+          {/* whitespace-pre-line: the same fix as PlanModal's warning list, for the same
+              reason -- `totals_delta`'s multi-line, column-padded block is exactly what a
+              toast (a much narrower box) needs the line breaks preserved for most. An
+              ordinary one-line toast, which is every toast this component rendered before
+              that message existed, carries no "\n" and is unaffected: `pre-line` changes
+              only how an EXISTING break is honoured, not how a break-free message wraps. */}
+          <span className="whitespace-pre-line">{t.message}</span>
           {t.action && (
             <button type="button"
               onClick={() => { t.action?.run(); dismissToast(t.id); }}
