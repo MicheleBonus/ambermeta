@@ -710,9 +710,26 @@ def _timestep_ps(stage: "SimulationStage") -> Optional[float]:
     of -- it stops at the results banner; the legacy parser does not -- still contributes
     what it has.
 
-    Returns `None`, not a default, when no source states a usable timestep: `steps` is a
-    published number, and a stage whose timestep is unknown must contribute nothing to it
-    rather than a plausible-looking count computed from a guess.
+    Returns `None`, not a default, when sources (1) and (2) both state nothing AND (3) is
+    itself absent (no mdout, or no `.details` on it) -- but NOT, despite the paragraph
+    above, whenever "no source states a usable timestep" in the sense a reader would take
+    that to mean. (3) is exactly the source this function exists to stop being trusted
+    blindly, and it is *still* trusted blindly once reached: `MdoutMetadata.dt`'s truthy
+    0.001 default cannot be told apart from a file that genuinely stated 0.001, because the
+    legacy parser records no separate "did I actually see a `dt =` line" flag. So a stage
+    whose header CONTROL DATA did not parse (1) and whose mdin is missing or unparseable (2)
+    reports 0.001 here whether or not ANY source ever stated a timestep -- doubling `steps`
+    for a genuine 0.002 run exactly as (3) alone always did, just one fallback further out
+    than before. This is PRE-EXISTING, not introduced by the ordering fix above, and not
+    closed by it: closing it means giving `MdoutMetadata.dt` an `Optional[float] = None`
+    default so "unstated" and "0.001" stop being the same value, and `MdoutMetadata` is the
+    exact dataclass `asdict()`-ed verbatim into `summary.json` per stage (see
+    `mdout_header.py`'s module docstring) -- so that default is not free to change; every
+    golden mdout that never printed a `dt =` line at all would flip its emitted
+    `mdout.details.dt` from `0.001` to `null`, and this repo's own goldens are byte-pinned
+    against exactly that field. The honest fix available here is this paragraph, not the
+    code: source (3) is a source of last resort in name only, and a stage that reaches it
+    with no genuine reading is a silent, pre-existing risk, not a closed one.
     """
     for value in (
         getattr(stage.mdout_header, "control_dt_ps", None) if stage.mdout_header else None,
@@ -1107,6 +1124,17 @@ class SimulationProtocol:
 
         def _collect_md_engine(stage: SimulationStage) -> Dict[str, Any]:
             md_engine: Dict[str, Any] = {}
+            # F2 (fix-wave follow-up): this used to read `mdin.dt` then `mdout.dt` here,
+            # independently of `_timestep_ps` -- the SAME rule `totals()`/`stats.csv` use,
+            # already carrying the fix for the doubled-`steps` regression (header
+            # `control_dt_ps` first, so an mdin's stated `dt` is preferred over the legacy
+            # parser's truthy 0.001 default). A `methods_summary.json` built from the old
+            # order never consulted `control_dt_ps` at all, so it could still publish the
+            # doubled figure whenever `mdin.dt` was unavailable -- one rule, fixed in one
+            # place, drifting from its own unfixed copy. Computed once, here, rather than
+            # inline at each of the two sites below, so both branches read the identical
+            # value regardless of which one (or both) run.
+            timestep_ps = _timestep_ps(stage)
 
             def _collect_pme_indicators(
                 cntrl_parameters: Dict[str, Any], mdout_details: Optional[Any]
@@ -1146,7 +1174,7 @@ class SimulationProtocol:
                         "cutoff": getattr(details, "cutoff", None),
                         "constraints": getattr(details, "constraints", None),
                         "pbc": getattr(details, "pbc", None),
-                        "timestep_ps": getattr(details, "dt", None),
+                        "timestep_ps": timestep_ps,
                         "run_length_steps": getattr(details, "length_steps", None),
                         "cntrl_parameters": cntrl_parameters or None,
                     }
@@ -1158,7 +1186,7 @@ class SimulationProtocol:
                 details = stage.mdout.details
                 md_engine.setdefault("thermostat", getattr(details, "thermostat", None))
                 md_engine.setdefault("barostat", getattr(details, "barostat", None))
-                md_engine.setdefault("timestep_ps", getattr(details, "dt", None))
+                md_engine.setdefault("timestep_ps", timestep_ps)
                 md_engine.setdefault("run_length_steps", getattr(details, "nstlim", None))
                 if getattr(details, "cutoff", None) is not None:
                     md_engine.setdefault("cutoff", getattr(details, "cutoff", None))
