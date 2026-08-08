@@ -215,8 +215,17 @@ export function PlanModal({ open, onClose }: { open: boolean; onClose: () => voi
           {/* Also shown here, not only as a toast: the toast is in the corner while the
               user is reading this list, and "it wrote a file" is exactly the moment a
               caveat about that file matters. */}
+          {/* whitespace-pre-line: `totals_delta` (the reason this feature exists) builds a
+              terminal-formatted block -- embedded "\n"s separating a steps/time_ps/note/
+              queued line each. The browser default (white-space: normal) collapses every
+              one of those newlines, so the four-line block a user reads perfectly well in
+              the CLI arrives here as one run-on sentence. `pre-line` keeps the line breaks
+              (and still WRAPS a too-long line, unlike `pre`/`pre-wrap`, which would risk
+              overflowing this box) while leaving an ordinary single-line warning -- which
+              carries no "\n" at all -- rendering exactly as before: `pre-line` only changes
+              how an EXISTING line break is honoured, not how a message with none wraps. */}
           {plan.data.warnings.map((w) => (
-            <p key={w} className="mt-1 text-xs text-warning">{w}</p>
+            <p key={w} className="mt-1 text-xs text-warning whitespace-pre-line">{w}</p>
           ))}
         </div>
       )}

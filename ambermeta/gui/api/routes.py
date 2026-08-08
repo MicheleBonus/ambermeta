@@ -6,6 +6,7 @@ from typing import Dict, List, Optional
 from fastapi import APIRouter, HTTPException, Query
 
 from ambermeta.errors import AmberMetaError
+from ambermeta.simulation import InputCoords, crosses_lineage, iter_steps
 
 from . import core_bridge, files
 from .document import DocumentStore
@@ -16,6 +17,7 @@ from .schemas import (
     StepCreate, StepUpdate, StepMove, StepReorder, StepsLineage, AssignRequest,
     ValidationReport,
     FileMetadata, FileInfo, RawFile, Suggestion, PlanRequest, PlanResult,
+    LineageProposal, InferLineagesRequest, LineageProposalResponse,
 )
 
 router = APIRouter()
@@ -102,15 +104,157 @@ def preview_document(req: PreviewRequest) -> PreviewResponse:
 
 @router.post("/document/discover", response_model=DiscoverResult)
 def discover_document(req: DiscoverRequest) -> DiscoverResult:
+    """Scan the base directory into a fresh draft. Proposes a lineage grouping; writes none
+    of it. `discover_draft(..., apply_tags=False)` is what makes that true here — the CLI's
+    own `discover` calls the same function with the opposite default and writes it straight
+    onto the steps, because a manifest it writes with `--write` is the user's confirmation
+    and the GUI's PATCH /steps/lineage is the GUI's.
+    """
     store = get_store()
     sim0, settings, manifest_path, base_directory = store.snapshot()
     _within_base(base_directory, base_directory)
-    out = core_bridge.discover_draft(base_directory, recursive=req.recursive, pattern=req.pattern)
+    out = core_bridge.discover_draft(base_directory, recursive=req.recursive,
+                                     pattern=req.pattern, apply_tags=False)
+
+    # Discover replaces the document wholesale, so re-running it -- the natural reflex
+    # after adding files to a campaign, and the most prominent button in the top bar --
+    # silently discarded every tag the user had declared. Recoverable with Ctrl+Z because
+    # reset_history=False, but nothing in the UI said so.
+    #
+    # Matched on Step.name, the path-prefixed run stem: step ids are freshly generated on
+    # every scan (core_bridge.discover_draft mints a new uuid4 per step), so they cannot
+    # identify anything across one. Re-applied to the fresh scan's OWN Simulation object,
+    # in memory, before it is ever handed to `store.replace` -- so the whole operation
+    # still costs the single undo frame Discover always cost. Doing this afterwards through
+    # a loop of `PATCH /steps/lineage`-style writes would push one snapshot per tag and
+    # evict the very Discover result being annotated (`set_lineages`' docstring records
+    # this same trap for the bulk-tag route).
+    previous = {step.name: step.lineage for _, step in iter_steps(sim0) if step.lineage}
+    for _, step in iter_steps(out["simulation"]):
+        tag = previous.pop(step.name, None)
+        if tag is not None:
+            step.lineage = tag
+    # Whatever is left in `previous` names a run that carried a tag last scan and did not
+    # come back this time -- moved, renamed, or deleted out from under it. Reported below
+    # rather than silently dropped.
+    dropped = sorted(previous)
+
+    # The tags were carried; the ACCEPTED HANDOFFS were not, and they were the other half
+    # of the same declaration. A user who accepted the proposal strip's five
+    # `equil/NN -> prod/NN` edges and then re-Discovered got all five deleted, with
+    # `warnings: []` -- verified end to end: 3 cross-directory edges after Accept, 0 after
+    # re-Discover, nothing said. The fresh draft cannot rebuild them, and that is
+    # deliberate rather than an oversight to route around: `discover_draft` chains WITHIN a
+    # run directory only, because a restart sitting in another directory is not evidence
+    # that this run read it. The mdout's File Assignments block is that evidence, and the
+    # handoff proposal is where it is offered -- as a PROPOSAL, accepted by hand. So the
+    # edge exists in the document for exactly one reason: the user put it there.
+    #
+    # Scoped to CROSS-DIRECTORY edges on purpose. Within one directory the fresh scan
+    # rebuilds the chunked chain itself, and carrying those forward would fight it: an
+    # edge the user deliberately removed (or rerouted around a run that turned out not to
+    # have produced anything) would be reinstated by this loop over the top of the scan's
+    # own, better-informed answer. Cross-directory is precisely the set the scan never
+    # asserts, so carrying it can only restore, never contradict.
+    #
+    # Matched on Step.name for the same reason the tags are: ids are freshly minted per
+    # scan. Applied to the fresh scan's own objects before `store.replace`, so this still
+    # costs the one undo frame Discover has always cost.
+    steps0 = {step.name: step for _, step in iter_steps(sim0)}
+    by_name0 = {step.id: step.name for _, step in iter_steps(sim0)}
+    carried_edges: Dict[str, str] = {}
+    for name, step in steps0.items():
+        ic = step.input_coords
+        if ic is None or ic.source != "step" or not ic.ref:
+            continue
+        producer_name = by_name0.get(ic.ref)
+        if producer_name is None:
+            continue
+        if producer_name.rpartition("/")[0] != name.rpartition("/")[0]:
+            carried_edges[name] = producer_name
+
+    fresh_by_name = {step.name: step for _, step in iter_steps(out["simulation"])}
+    lost_edges: List[str] = []
+    for consumer_name, producer_name in sorted(carried_edges.items()):
+        consumer = fresh_by_name.get(consumer_name)
+        producer = fresh_by_name.get(producer_name)
+        if consumer is None or producer is None:
+            # One end of the edge is not in this scan. Nothing to re-point at, and the
+            # user's declaration is being discarded either way -- so it is REPORTED. A
+            # silently dropped declaration is the one outcome that is not acceptable here.
+            lost_edges.append(f"{consumer_name} <- {producer_name}")
+            continue
+        consumer.input_coords = InputCoords(source="step", ref=producer.id)
+
+    # Carrying a tag back onto the fresh scan can turn one of discovery's own directory-wide
+    # chain edges into a claim that one member continues another -- the exact cross-lineage
+    # restart edge `DocumentStore._sever_crossed_refs` exists to remove, and which a bare
+    # `store.replace` below does NOT run (it only clears warnings and swaps the document).
+    # Without this pass, re-Discovering after `PATCH /steps/lineage` had just severed such an
+    # edge and warned about it would silently re-create precisely that edge and stamp the
+    # carried tags on top -- the one fact simulation.py's module docstring forbids any
+    # automatic operation from inventing. No "was this already crossing before" check is
+    # needed here (contrast `_sever_crossed_refs`, which keeps a pre-existing declared
+    # branch): every step in a fresh `apply_tags=False` scan starts untagged, so nothing can
+    # be crossing before the loop above runs, and anything crossing after it is new.
+    #
+    # Runs AFTER the carried handoff edges above, not just after the carried tags, and that
+    # ordering is load-bearing. A carried edge lands on the fresh scan's own objects and is
+    # then subject to exactly the same rule as one the scan built: if the tags now say its
+    # two ends are different members, it is severed and reported, rather than surviving into
+    # a grouping that forbids it because it happened to arrive by a different route.
+    #
+    # Applied unconditionally, which does cost one thing worth naming: a deliberately
+    # DECLARED cross-lineage branch (`_check_continues_from` accepts one, and
+    # `_sever_crossed_refs` protects it by comparing against what was crossing before) is
+    # severed by a re-Discover rather than preserved. That is still strictly better than
+    # what happened before this carry-forward existed -- the edge was deleted outright with
+    # `warnings: []` -- because it is now severed WITH the "no longer continues ... Set its
+    # input coordinates if that is wrong" line, which is exactly the sentence that tells a
+    # user to put it back. Preserving it instead would mean reproducing `_sever_crossed_refs`'
+    # before/after comparison here, and no Discover result may carry a cross-lineage step
+    # ref: that invariant is what the whole partitioned continuity check rests on.
+    by_id = {s.id: s for _, s in iter_steps(out["simulation"])}
+    severed: List[str] = []
+    for _, step in iter_steps(out["simulation"]):
+        ic = step.input_coords
+        if ic is None or ic.source != "step" or not ic.ref:
+            continue
+        producer = by_id.get(ic.ref)
+        if producer is not None and crosses_lineage(producer, step):
+            step.input_coords = InputCoords(source="starting_structure")
+            severed.append(
+                f"{step.name} no longer continues {producer.name}: they are "
+                "different lineages. Set its input coordinates if that is wrong.")
+
+    # This report cannot go through `DocumentResponse.warnings` -- `store.replace` below
+    # clears that field first thing, and docs/gui.md states as a contract that Discover
+    # always reports an empty list there. It goes in `DiscoverResult.warnings` instead,
+    # the channel that already carries this route's own findings (e.g. the topology-count
+    # note) back to the toasts `useDiscover` renders.
+    warnings = list(out["warnings"])
+    if dropped:
+        warnings.append(
+            f"{len(dropped)} run(s) carried a lineage tag that this scan did not find "
+            f"again, so their tags were dropped: {', '.join(dropped[:5])}"
+            + (" ..." if len(dropped) > 5 else ""))
+    if lost_edges:
+        warnings.append(
+            f"{len(lost_edges)} declared cross-directory restart handoff(s) could not be "
+            f"carried forward -- one end of each is not in this scan: "
+            f"{', '.join(lost_edges[:5])}" + (" ..." if len(lost_edges) > 5 else ""))
+    warnings.extend(severed)
+
     store.replace(simulation=out["simulation"], settings=settings,
                   manifest_path=manifest_path, dirty=True, reset_history=False)
-    return DiscoverResult(document=store.to_response(),
-                          suggestions=[Suggestion(**s) for s in out["suggestions"]],
-                          warnings=out["warnings"])
+    return DiscoverResult(
+        document=store.to_response(),
+        suggestions=[Suggestion(**s) for s in out["suggestions"]],
+        # `out["proposal"]` is already the exact shape `LineageProposal` declares
+        # (`core_bridge.build_lineage_proposal`'s return); `None` passes through as `None`
+        # rather than as `LineageProposal(**None)`, which would raise.
+        proposal=LineageProposal(**out["proposal"]) if out["proposal"] else None,
+        warnings=warnings)
 
 
 @router.post("/plan", response_model=PlanResult)
@@ -395,22 +539,37 @@ def set_step_lineages(req: StepsLineage) -> DocumentResponse:
     return store.to_response()
 
 
-@router.post("/steps/infer-lineages", response_model=DocumentResponse)
-def infer_lineages() -> DocumentResponse:
-    """Apply the directory-layout inference to the open document, in one undo entry.
+@router.post("/steps/infer-lineages", response_model=LineageProposalResponse)
+def infer_lineages(req: InferLineagesRequest = InferLineagesRequest()) -> LineageProposalResponse:
+    """Propose a grouping for the OPEN document. Writes nothing.
 
-    Reports through the same warnings channel every other edit uses, including when it
-    tagged nothing: a layout this refuses is the common case, and an action that appears
-    to do nothing and says nothing reads as broken.
+    Re-runs the layout inference — or, given `segment_index`, the picker's "try this
+    column" — over the document's own step names, so this works whether the document came
+    from a fresh scan, a reopened manifest, or steps built by hand; not just the tree
+    `discover` last touched. Accepting what comes back is a separate step the caller takes
+    explicitly, one `PATCH /steps/lineage` per member — this route never calls it.
+
+    Reports through the same shape on both outcomes (a `LineageProposalResponse`, not a
+    `DocumentResponse`) rather than through the general edit-warnings channel every other
+    route uses: there is no edit here to report warnings ABOUT.
+
+    `base_directory` is passed so the response carries `handoffs` too. Without it this
+    route returned a proposal with none, and `ProposalStrip.pickSegment` replaces the shown
+    proposal wholesale -- so a user who opened `Change`, glanced at another column and
+    tapped back lost every handoff row with no message. Handoffs are member-scoped, so the
+    right answer is to re-propose them against the grouping now being shown rather than to
+    have the frontend hold the previous column's ones over the top of different members.
     """
     store = get_store()
-    tagged = store.apply_inferred_lineages()
-    response = store.to_response()
-    if not tagged:
-        response.warnings = list(response.warnings) + [
-            "No lineages inferred: the run names do not distinguish members by one "
-            "directory segment. Tag the bands by hand."]
-    return response
+    sim, _settings, _manifest_path, base_directory = store.snapshot()
+    proposal = core_bridge.build_lineage_proposal(
+        sim, segment_index=req.segment_index, base_directory=base_directory)
+    if proposal is None:
+        return LineageProposalResponse(proposal=None, warnings=[
+            "No lineages inferred: the directory layout could not be resolved into one "
+            "unambiguous set of members. Use Define replicas… to pick the segment "
+            "yourself."])
+    return LineageProposalResponse(proposal=LineageProposal(**proposal), warnings=[])
 
 
 @router.delete("/steps/{step_id}", response_model=DocumentResponse)

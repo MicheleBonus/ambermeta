@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Any, Dict, FrozenSet, Iterable, List, Optional, Protocol, TypeVar
+from typing import Any, Dict, FrozenSet, Iterable, List, Optional, Protocol, Tuple, TypeVar
 
 from ambermeta.simulation import Simulation, Step, iter_steps
 
@@ -221,7 +221,10 @@ def coherence(stages: Iterable[Any]) -> List[Finding]:
     answer.
 
     Silent for a document with fewer than two declared members — there is nothing to
-    compare — which is every untagged document.
+    compare — which is every untagged document. That gate applies to the within-member
+    atom-count check below as well, deliberately: a lone declared member is not a claim
+    that anything matches anything, and this function's contract is comparison between
+    members.
     """
     stages = list(stages)
     members = {tag: group for tag, group in buckets(stages).items() if tag is not UNTAGGED}
@@ -232,6 +235,43 @@ def coherence(stages: Iterable[Any]) -> List[Finding]:
     # --- category errors: the members are not runs of the same thing ------------
     counts = {tag: {c for c in map(_atom_count_of, group) if c is not None}
               for tag, group in members.items()}
+
+    # WITHIN a member, first. A member holding runs of two different systems is not a set of
+    # runs of one system, which is the same claim the cross-member check below makes, one
+    # level down -- so it carries the same `error` severity and the same `atom_count` kind.
+    #
+    # This exists because the cross-member check SILENTLY DISABLES ITSELF on exactly the
+    # shape that needs it most. `stated` below admits only tags holding ONE distinct count,
+    # which is right for that comparison (a member that disagrees with itself has no single
+    # value to compare) but means such a member drops out of the comparison entirely rather
+    # than being reported. Measured on two independent campaigns that share member labels --
+    # `apo/01..03` beside `holo/01..03`, which the layout inference merges into three
+    # members each holding one apo run and one holo run:
+    #
+    #     CORRECT grouping (apo | holo):  error atom_count -- Members do not hold the same
+    #                                     number of atoms (apo: 50000; holo: 50800).
+    #     MERGED grouping:                (nothing at all)
+    #
+    # The merge itself is an accepted limitation of cohort reconciliation (it belongs to the
+    # P4 decision the spec deferred). Its SILENCE was not accepted: the one check that would
+    # have caught the mis-grouping was the one the mis-grouping turned off. Because this
+    # fires on a DECLARED member it reaches the CLI's `[applied]` path too, so a user who
+    # discovers such a tree gets the tags AND an error saying the tags are wrong.
+    #
+    # Reported before the cross-member finding because it is the more fundamental one: a
+    # member that disagrees with itself makes its own contribution to that comparison
+    # meaningless. Neither masks the other -- both are appended, and a tree with one mixed
+    # member beside two consistent members that differ raises both findings.
+    mixed = {tag: values for tag, values in counts.items() if len(values) > 1}
+    if mixed:
+        spelled = "; ".join(
+            f"{tag}: {', '.join(str(c) for c in sorted(mixed[tag]))}"
+            for tag in sorted(mixed))
+        out.append(Finding(
+            "error", "atom_count",
+            f"Runs within one member hold different numbers of atoms ({spelled}). "
+            "These are not runs of one system, so the grouping is wrong."))
+
     stated = {tag: values for tag, values in counts.items() if len(values) == 1}
     if len({next(iter(v)) for v in stated.values()}) > 1:
         spelled = "; ".join(f"{tag}: {next(iter(stated[tag]))}"
@@ -330,19 +370,65 @@ def infer_lineages_from_layout(run_names: Iterable[str]) -> Dict[str, str]:
     * runs at the tree root carry no segment to be tagged by, and one directory has
       nothing to differ from — either way, nothing is tagged;
     * **the membership predicate**: only directories running the same set of *run bases*
-      are members of one another. ``common/{min,heat,equil}`` beside ``rep1..3/prod_*``
-      matches nothing and stays untagged. Without this, the canonical campaign reports
-      four members for three and hands ``lineage_count`` the prep runs as a replica.
+      are grouped into a cohort together. ``common/{min,heat,equil}`` beside
+      ``rep1..3/prod_*`` matches nothing and stays untagged. Without this, the canonical
+      campaign reports four members for three and hands ``lineage_count`` the prep runs
+      as a replica.
 
       Bases, not whole run names, because **a replica that died early is the single most
       important thing this feature has to catch**. ``rep1/prod_0001..0003`` beside
       ``rep2/prod_0001`` is one crashed member, not two unrelated directories; keying the
       predicate on exact run-name sets refuses to tag it, and a refusal here silently
-      disables the very sequence-hole finding that would have reported the crash;
-    * two rival families that each pass the predicate are two experiments in one
-      manifest, which this model does not represent. Neither is tagged;
+      disables the very sequence-hole finding that would have reported the crash.
+
+      Cohorts are keyed on ``(bases, depth)``, not bases alone, for exactly the same
+      reason: a stray directory whose runs happen to share an entire OTHER cohort's base
+      set — ``rerun/deep/here/prod_0001`` beside ``prod/01..03``'s ``prod_0001``, both base
+      ``{prod}`` — used to fall into that cohort rather than one of its own, and its
+      mismatched depth silently dropped the whole cohort, replicas included: ``equil``
+      tagged, every ``prod`` run gone, reported as success. Folding depth into the key means
+      a directory can never merge into a cohort it does not belong to in the first place;
+    * two rival families whose tag sets are **disjoint** are two experiments in one
+      manifest, which this model does not represent. Neither is tagged. Sets that
+      **nest**, though, are one campaign with a short member: ``equil/01..05`` beside
+      ``prod/02..05`` is a replica that never reached production, and refusing it would
+      disable the very finding that reports the crash. The reconciled tag set is the
+      largest; every cohort's set must be a subset of it;
+    * cohorts each report their **own** varying segment and must agree on the segment
+      **index**. A cohort that cannot name one segment contributes nothing rather than
+      refusing the whole tree, so a prep directory at another depth cannot veto the
+      replicas;
+    * contributing cohorts must run **disjoint** sets of run bases. A temperature sweep
+      where one arm ran one extra minimisation splits into a ``{prod}`` cohort and a
+      ``{prod, min}`` cohort that still *share* ``prod`` — usually two arms of one sweep
+      rather than two phases of a pipeline — and reconciling them would merge two
+      different temperatures into one lineage. ``equil/*`` and ``prod/*`` share no base at
+      all, which is what makes them phases rather than rivals.
+
+      Sharing a base is not *proof* of a sweep, though: a genuine two-phase pipeline whose
+      phases happen to reuse one run name — ``equil/01..02/{min,heat}`` beside
+      ``prod/01..02/{heat,nvt_prod}``, both cohorts running ``heat`` — is refused here too,
+      even though each phase has its own multiple replicas and would otherwise reconcile
+      cleanly. That is the safe failure — untagged, not a merged claim — but a user staring
+      at an untagged tree is not told *why* by this rule alone.
+
+      This cannot, by directory layout alone, distinguish a shared base from deliberately
+      parallel arms that use their *own* run names throughout — cross-system
+      (``apo/*`` beside ``holo/*``) or, more easily missed, same system under two
+      conditions with condition-specific run names (``300K/*/prodA`` beside
+      ``310K/*/prodB``): those bases are disjoint too and still merge today — a known,
+      accepted limitation of this reconciliation model, not fixed here;
+    * a directory left **alone** in its cohort — ``prod/01``, whose stray ``cpptraj.in``
+      gives it a run-base set of its own — is absorbed only when it sits at a depth some
+      reporting cohort actually used **and** its segment at the agreed index is one of the
+      reconciled tags. ``common/`` is not absorbed: its segment is ``common``, not a tag.
+      The depth check keeps an unrelated directory that merely happens to spell a tag at
+      the right *index* (``analysis/01/rmsd/calc``, three segments deep) from being
+      absorbed by coincidence; it does not, and cannot, catch a coincidence at the *same*
+      depth the reporting cohorts used (``scratch/01`` beside a ``rep/01``-shaped tree);
     * the tag must be **one** segment: a nested sweep (``300K/rep1``, ``310K/rep2``)
-      varies in two places at once and there is no way to tell which one names the member.
+      varies in two places at once *within its cohort* and there is no way to tell which
+      one names the member.
 
     Ambiguity resolves to untagged, never to a guess — an inference reported as
     ``[applied]`` is a claim, and a wrong claim here is exactly what this feature exists
@@ -363,22 +449,114 @@ def infer_lineages_from_layout(run_names: Iterable[str]) -> Dict[str, str]:
     if len(candidates) < 2:
         return {}
 
-    cohorts: Dict[FrozenSet[str], List[str]] = {}
+    # Cohorts are keyed on `(bases, depth)`, not on `bases` alone. A directory whose runs
+    # happen to share an ENTIRE unrelated tree's base set -- `rerun/deep/here/prod_0001`
+    # beside `prod/01..03`'s `prod_0001`, both base `{prod}` -- used to land in `prod/01..03`'s
+    # own cohort rather than one of its own, and if that pulled the cohort out of depth
+    # uniformity the WHOLE cohort, replicas included, silently reported nothing: `equil`
+    # tagged, every `prod` run gone, with the tree still calling it a success. That is worse
+    # than the refusal this rule otherwise gives, and it disables the very sequence-hole
+    # finding this rule exists to protect -- on the exact tree shape (a single-base cohort)
+    # the real campaign this feature was built for actually has. Folding depth into the key
+    # means a directory at a foreign depth can never merge into a cohort it does not belong
+    # to in the first place: it forms (or joins) its OWN cohort at its own depth, where it is
+    # either a contributor in its own right or, alone, a candidate for absorption below --
+    # never a silent vote against directories it has nothing to do with.
+    cohorts: Dict[Tuple[FrozenSet[str], int], List[str]] = {}
     for directory, runs in candidates.items():
-        cohorts.setdefault(frozenset(_run_base(r) for r in runs), []).append(directory)
-    matched = [dirs for dirs in cohorts.values() if len(dirs) > 1]
-    if len(matched) != 1:
-        return {}
-    family = matched[0]
+        bases = frozenset(_run_base(r) for r in runs)
+        cohorts.setdefault((bases, len(directory.split("/"))), []).append(directory)
 
-    segments = {d: d.split("/") for d in family}
-    depths = {len(s) for s in segments.values()}
-    if len(depths) != 1:
-        return {}
-    varying = [i for i in range(depths.pop())
-               if len({segments[d][i] for d in family}) > 1]
-    if len(varying) != 1:
-        return {}
-    index = varying[0]
+    # Each cohort of more than one directory reports its OWN varying segment, and a cohort
+    # that cannot report one contributes nothing rather than refusing the whole tree -- a
+    # prep directory at a different depth must not be able to veto the replicas. This is
+    # why the canonical layout (a prep tree beside a production tree) can be tagged at all:
+    # `equil/*` and `prod/*` run different run bases, so they are two cohorts, not one, and
+    # each is free to name its own member without the other's shape constraining it.
+    #
+    # Per cohort, never on the union: `equil/01..05` unioned with `prod/01..05` varies in
+    # TWO segments at once (equil|prod at index 0, 01..05 at index 1), and the
+    # single-varying-segment rule below would refuse it one line later. Reconciled per
+    # cohort, each cohort varies in exactly one segment and the two agree on which one.
+    #
+    # `bases` and `depth` travel with each report because two later checks need them: the
+    # disjointness check below needs the bases, and absorption needs to know which depths
+    # the tree actually agreed on. Depth is no longer re-derived here -- every directory in
+    # `dirs` already sits at `depth`, by construction of the cohort key above.
+    reports: List[Tuple[FrozenSet[str], int, int, Dict[str, str]]] = []
+    for (bases, depth), dirs in cohorts.items():
+        if len(dirs) < 2:
+            continue
+        segments = {d: d.split("/") for d in dirs}
+        varying = [i for i in range(depth)
+                   if len({segments[d][i] for d in dirs}) > 1]
+        if len(varying) != 1:
+            continue
+        reports.append((bases, depth, varying[0],
+                         {d: segments[d][varying[0]] for d in dirs}))
 
-    return {f"{d}/{run}": segments[d][index] for d in family for run in candidates[d]}
+    if not reports:
+        return {}
+    # Two cohorts naming their member at different segment indices are not one campaign --
+    # merging them would tag two unrelated axes as though they were the same replica.
+    if len({index for _, _, index, _ in reports}) != 1:
+        return {}
+    index = reports[0][2]
+
+    # Contributing cohorts must run genuinely DISJOINT sets of run bases. Two cohorts that
+    # SHARE a base are the same kind of thing running in parallel, not two phases of one
+    # pipeline: a temperature sweep where one arm happened to run one extra minimisation
+    # splits into a `{prod}` cohort and a `{prod, min}` cohort that still share `prod`, and
+    # their matching replica numbering (`rep1`, `rep2` in both) would otherwise nest into
+    # one lineage that silently crosses the temperature axis -- two different temperatures
+    # reported as one member. `equil/*` (many prep run names) beside `prod/*` (`nvt_prod`),
+    # by contrast, share no base at all: they are different PHASES of one pipeline, which
+    # is exactly the shape this rule exists to reconcile, not refuse.
+    #
+    # This does not, and cannot, catch deliberately parallel arms that use DISTINCT run
+    # names of their own -- `apo/01../prod_apo` beside `holo/01../prod_holo`, or `wt/*`
+    # beside `mut/*` -- their bases are disjoint too, on purpose, and directory layout
+    # alone cannot tell that apart from a pipeline's phases. Accepted, not fixed here: see
+    # manifest.md §9.1 for the deferred multi-axis design this belongs to.
+    for i, (bases_a, _, _, _) in enumerate(reports):
+        for bases_b, _, _, _ in reports[i + 1:]:
+            if bases_a & bases_b:
+                return {}
+
+    # Nested, not equal. A member that never reached production appears in the equil
+    # cohort and not the prod one, and that is one campaign with a short member -- exactly
+    # the crashed replica this feature exists to surface. Two DISJOINT sets are still two
+    # experiments and are still refused, because neither contains the other.
+    tag_sets = [set(mapping.values()) for _, _, _, mapping in reports]
+    reconciled = max(tag_sets, key=len)
+    if any(not tags <= reconciled for tags in tag_sets):
+        return {}
+
+    tagged = {d: tag for _, _, _, mapping in reports for d, tag in mapping.items()}
+
+    # A directory alone in its cohort was dropped above -- `len(dirs) < 2` -- so it never
+    # got a chance to report a varying segment of its own. It is absorbed only when the
+    # tree has already decided what the tags are, this directory sits at a depth some
+    # reporting cohort actually used, AND its segment at the agreed index is one of the
+    # reconciled tags. The depth check earns its keep on its own: without it,
+    # `analysis/01/rmsd/calc` (depth 3, nothing to do with either replica tree) would be
+    # absorbed into lineage "01" purely because its third segment happens to spell a tag --
+    # a coincidence the layout gives no support for, not a claim. This is how a stray
+    # `cpptraj.in` stops costing `prod/01` its membership -- its segment ("01") is a
+    # reconciled tag AND `prod/01` sits at the same depth `prod/02..05` itself reported --
+    # while a genuine `common/` prep directory at that SAME depth is still not absorbed:
+    # its segment is "common", which is not a tag anybody's cohort reported.
+    #
+    # What the depth check does NOT catch: two directories at the SAME depth the tree
+    # agreed on, coincidentally sharing a segment spelling (`scratch/01` beside a
+    # `rep/01`-shaped tree). Depth alone cannot distinguish a genuine sibling from a same-
+    # depth coincidence. Left as a residual gap; see manifest.md §9.1.
+    reporting_depths = {depth for _, depth, _, _ in reports}
+    for dirs in cohorts.values():
+        if len(dirs) != 1:
+            continue
+        parts = dirs[0].split("/")
+        if len(parts) in reporting_depths and parts[index] in reconciled:
+            tagged[dirs[0]] = parts[index]
+
+    return {f"{d}/{run}": tag for d, tag in tagged.items() for run in candidates[d]}

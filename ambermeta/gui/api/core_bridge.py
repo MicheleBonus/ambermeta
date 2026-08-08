@@ -69,14 +69,19 @@ def document_to_payload(stages: List[Dict[str, Any]], settings: Dict[str, Any],
             entry["stage_role"] = role
         # This whitelist is the gate: a key that is not copied out here never reaches
         # _manifest_to_stages, so tagging the step and flattening the tag would both be
-        # silent no-ops without these three lines. Only `lineage` is really conditional —
-        # `step_id` is set on every step and `parent_id` on every chained one, so every
-        # document's engine payload carries those two. That is deliberate rather than
-        # sloppy: they are how a lineage head is measured against its real producer, and
-        # withholding them from untagged documents would only mean recomputing them the
-        # moment one tag appeared. This payload is in-memory input to `auto_discover` and
-        # is never serialised, so it is not part of any on-disk shape.
-        for provenance in ("lineage", "step_id", "parent_id"):
+        # silent no-ops without these four lines. `lineage` and `status` are really
+        # conditional — `step_id` is set on every step and `parent_id` on every chained
+        # one, so every document's engine payload carries those two. That is deliberate
+        # rather than sloppy: they are how a lineage head is measured against its real
+        # producer, and withholding them from untagged documents would only mean
+        # recomputing them the moment one tag appeared. This payload is in-memory input to
+        # `auto_discover` and is never serialised, so it is not part of any on-disk shape.
+        #
+        # `status`'s own truthiness guard is what keeps
+        # test_an_untagged_step_adds_no_key_to_the_engine_payload green: the default is
+        # `None`, which is falsy, so an ordinary step contributes no `status` key here
+        # either — the same emit-when-set rule `_step_payload` enforces on the document.
+        for provenance in ("lineage", "step_id", "parent_id", "status"):
             val = s.get(provenance)
             if val:
                 entry[provenance] = val
@@ -294,14 +299,27 @@ def preview_simulation(sim, base_directory, fmt):
     return {"content": content, "warnings": []}
 
 
-def build_suggestions(sim, base_directory):
+def build_suggestions(sim, base_directory, proposed=None):
     from ambermeta.lineages import lineages
     from ambermeta.protocol import sequence_findings
 
     steps = [s for p in sim.phases for s in p.steps]
     # Shared with the `plan --recursive` path, which has stages rather than a document and
     # so cannot come through here at all. One producer, one wording.
-    out = sequence_findings([s.name for s in steps], [s.lineage for s in steps])
+    #
+    # `proposed`, when given, is a proposal's `{stem: tag}` -- never written onto any step
+    # -- that the caller wants the sequence-hole scan to see anyway. `discover_draft`
+    # passes its own proposal here so the GUI's Discover, which tags nothing
+    # (`apply_tags=False`), still surfaces the per-member crashed-replica finding rather
+    # than pooling every run into one complete family the moment tags stop landing on the
+    # steps -- that pooling is exactly what silenced this finding before lineages existed,
+    # and withholding the tag must not bring it back. `s.lineage` is the fallback, not the
+    # override: a document whose tags ARE written (the CLI's default, or any document
+    # post-Accept) needs no `proposed` at all, and the two sources only differ for the one
+    # caller that supplies both.
+    out = sequence_findings(
+        [s.name for s in steps],
+        [(proposed or {}).get(s.name) or s.lineage for s in steps])
 
     def _sug(kind, severity, title, evidence, actions):
         return {"id": f"sug_{len(out) + 1}", "kind": kind, "severity": severity,
@@ -328,11 +346,20 @@ def build_suggestions(sim, base_directory):
     # in the manifest, so the evidence names each member and how many runs it holds and
     # the user can read the claim back off the document.
     #
-    # It says what the document declares, not where the tags came from. This function also
-    # runs from validate_simulation for any open document, so a manifest whose lineages
-    # were typed by hand would be told they had been read off its directories — and after
-    # the fact nothing here can tell an inferred tag from a hand-written one. `discover`
-    # announces its own inference by running on the draft it just built.
+    # It says what the document DECLARES, not where the tags came from or whether they were
+    # ever proposed. This function also runs from validate_simulation for any open
+    # document, so a manifest whose lineages were typed by hand is told the same story a
+    # freshly-tagged one is — after the fact nothing here can tell an inferred tag from a
+    # hand-written one. `ambermeta discover` (and `discover_draft(..., apply_tags=True)`,
+    # its default and the CLI's) announces its own inference by running this over the
+    # draft it just tagged.
+    #
+    # A draft the GUI discovered declares nothing: `discover_draft(..., apply_tags=False)`
+    # is what the GUI route calls, so `lineages(sim)` is empty right after Discover and
+    # this card simply does not fire there. `out["proposal"]` is what stands in for it —
+    # what discovery found, not yet what the document says — until PATCH /steps/lineage
+    # accepts a member, at which point the next validate finds a real declaration and this
+    # card starts firing on it exactly as it would on any hand-tagged manifest.
     #
     # The untagged runs are counted beside the declared members because the count is of
     # declared members only: left unsaid, "3 lineages" reads as covering all nine runs of
@@ -368,6 +395,7 @@ def _flatten_simulation(sim):
                 # restart *path*, which several steps can share, so the edge itself cannot
                 # be recovered from it downstream.
                 "lineage": s.lineage,
+                "status": s.status,
                 "parent_id": s.input_coords.ref if s.input_coords.source == "step" else None,
                 "prmtop": topo_by_id.get(s.topology) if s.topology else None,
                 "mdin": s.mdin, "mdout": s.mdout, "mdcrd": s.mdcrd, "inpcrd": inpcrd,
@@ -429,11 +457,45 @@ def write_plan_outputs(sim, settings, base_directory, targets: Dict[str, str],
     The writing half lives in ambermeta.protocol so the CLI shares it; keeping a
     second copy here is how the CLI ended up without mkdir and without per-artifact
     failure capture.
+
+    The totals-delta report shares the same way, and for the same reason. It existed only
+    in `cli.py`, so a user who pressed **Plan** in the browser had their `summary.json`
+    overwritten with a materially different total and was told nothing at all — and the
+    GUI is precisely the surface this whole feature was written for. The specification
+    stated the delta as a property of `plan` and never carved the GUI out; contrast P2.2,
+    where the CLI/GUI split is argued explicitly and at length.
     """
-    from ambermeta.protocol import write_protocol_outputs
+    from ambermeta.protocol import (
+        read_prior_summary, totals_delta, write_protocol_outputs)
 
     protocol = build_protocol(_flatten_simulation(sim), dict(settings), base_directory)
+
+    # BEFORE the write, never after. `write_protocol_outputs` below overwrites the very
+    # file being compared against, so a read placed after it sees this run's own output --
+    # new totals compared to themselves, `None` every time, the feature silently dead
+    # rather than merely quiet. It is the same ordering trap the CLI has, which is why its
+    # own review insisted on an end-to-end check rather than a reading of the code, and
+    # `test_the_gui_plan_reports_the_totals_delta` is that check for this path.
+    #
+    # Guarded on "summary" in targets, matching the CLI: a GUI Plan that asks only for the
+    # stats CSV or the methods summary has no summary path to read, and there is nothing
+    # for the comparison to be about.
+    prior_delta = None
+    if "summary" in targets:
+        prior = read_prior_summary(targets["summary"], summary_format)
+        prior_delta = totals_delta(prior, protocol.totals(), targets["summary"])
+
     result = write_protocol_outputs(protocol, targets, summary_format=summary_format)
+    if prior_delta:
+        # Into `warnings`, which `PlanResult` already declares and which the route already
+        # merges into its response -- so this needs no new wire field and no frontend
+        # change. `PlanModal` renders every warning inline, immediately under the list of
+        # files it just wrote ("it wrote a file" is exactly the moment a caveat about that
+        # file matters, in that component's own words), and `usePlan`'s `onSuccess` also
+        # raises each one as a toast. A NEW key would have been dropped in silence:
+        # pydantic's `extra='ignore'` has cost this repo two findings already, both
+        # recorded in schemas.py.
+        result["warnings"].append(prior_delta)
     result["totals"] = protocol.totals()
     result["lineages"] = protocol.lineage_totals() or None
     result["stage_count"] = len(protocol.stages)
@@ -444,14 +506,229 @@ def write_plan_outputs(sim, settings, base_directory, targets: Dict[str, str],
     return result
 
 
-def discover_draft(base_directory, recursive=True, pattern=None):
-    from ambermeta.simulation import Simulation, Phase, Step, Topology, InputCoords
+def _propose_handoffs(sim, proposal, mdout_for):
+    """The cross-directory restart handoffs AMBER's own File Assignments block evidences,
+    scoped to `proposal`'s members. Returns a list; writes nothing.
+
+    Shared by `discover_draft` and `build_lineage_proposal` rather than living in the
+    former alone, which is the defect this function exists to close: the segment picker
+    (`POST /steps/infer-lineages`, which goes through `build_lineage_proposal`) replaced
+    the shown proposal WHOLESALE, so a user who clicked `Change`, looked at another column
+    and tapped back lost all five handoff rows with no message -- the entire payoff of the
+    handoff work, gone to a UI affordance whose whole purpose is to be reversible. One
+    implementation means the rows come back because they are RECOMPUTED for whichever
+    grouping is now shown, not because the frontend cached the old ones: handoffs are
+    member-scoped, so a different segmentation genuinely has different (or no) handoffs,
+    and showing the previous column's answers against this column's members would be worse
+    than showing none.
+
+    `mdout_for(step) -> Optional[str]` is how the caller says where a step's mdout can be
+    opened. `discover_draft` has the scan's own absolute paths in `grouped`;
+    `build_lineage_proposal` has `step.mdout`, which has been relativized against the base
+    directory and will not open on its own. Neither is derivable from `sim` alone, which is
+    why this is a parameter rather than an attribute read.
+
+    It is CORROBORATION, not identification. AMBER records a bare relative filename
+    (`INPCRD: 18_ntp_equi.restrt`), resolved against the run's own directory, and on the
+    campaign this was written against ALL FIVE replicas record the identical string. A
+    document-wide basename->step lookup therefore collapses every replica's tail into one
+    entry and points every head at whichever was seen last: measured, 10 proposed edges on
+    sys021_tree of which 9 are wrong. The member grouping is what disambiguates -- the
+    match is scoped to ONE member, so structure identifies the pair and AMBER's record
+    only corroborates that a handoff happened at all.
+
+    Three consequences, all deliberate: no member proposal means no handoffs (without
+    knowing which directories are one replica there is nothing to justify pairing them); a
+    basename two of the member's OWN steps wrote is ambiguous and proposes nothing, for
+    the same reason the document-wide lookup was wrong; and a producer in the consumer's
+    own directory is skipped, since the chunked chain discovery builds already covers it.
+
+    `assignment` returns None when AMBER clipped the value at the field width -- common
+    for long paths; every PARM on the real campaign is clipped. That is no evidence, not
+    no producer, so such a step simply gets no proposed edge.
+
+    Fault tolerance matches `discover_draft`'s mdin parse: a header that will not read
+    costs this one edge, not the scan.
+    """
+    from ambermeta.mdout_header import read_mdout_header
+    from ambermeta.simulation import iter_steps
+
+    handoffs: List[Dict[str, Any]] = []
+    step_by_id = {s.id: s for _, s in iter_steps(sim)}
+    for member in proposal["members"]:
+        member_steps = [step_by_id[i] for i in member["step_ids"] if i in step_by_id]
+        writes: Dict[str, List[str]] = {}
+        for producer in member_steps:
+            if producer.rst:
+                writes.setdefault(os.path.basename(producer.rst), []).append(producer.id)
+        for step in member_steps:
+            mdout = mdout_for(step)
+            if not mdout:
+                continue
+            try:
+                named = read_mdout_header(mdout).assignment("INPCRD")
+            except (IOError, OSError, ValueError, LookupError):
+                continue
+            if not named:
+                continue
+            candidates = [i for i in writes.get(os.path.basename(named), [])
+                          if i != step.id]
+            if len(candidates) != 1:
+                continue
+            producer = step_by_id[candidates[0]]
+            if producer.name.rpartition("/")[0] == step.name.rpartition("/")[0]:
+                continue
+            handoffs.append({
+                "consumer_id": step.id, "producer_id": producer.id,
+                "consumer": step.name, "producer": producer.name,
+                "evidence": f"mdout File Assignments: INPCRD: {named}",
+            })
+    return handoffs
+
+
+def build_lineage_proposal(sim, segment_index=None, base_directory=None):
+    """Propose a lineage grouping for `sim`'s CURRENT steps. Writes nothing.
+
+    Reads step NAMES only — the posix stems `discover_draft` builds them from, e.g.
+    `rep1/prod_0001` — so this works for any Simulation: a fresh scan, a manifest reopened
+    from disk, or one hand-edited on the canvas since. `discover_draft` calls this once,
+    right after building the draft, for the object it returns as `"proposal"`.
+    `POST /steps/infer-lineages` calls it again on demand — with or without a caller's own
+    `segment_index` — to re-propose against whatever the OPEN document says right now,
+    which is not necessarily the tree `discover` last scanned.
+
+    `segment_index=None` (the default, and everything `discover_draft` ever passes) runs
+    the same cohort/nesting inference `infer_lineages_from_layout` performs, refusing
+    exactly what that function refuses — ambiguity resolves to no proposal, never to a
+    guess (see its docstring for the rule in full). An explicit `segment_index` instead is
+    the picker's "try this column": every step's stem is tagged by its OWN segment at that
+    index, with no cohort reconciliation and no refusal, because a caller naming an index
+    is asserting the boundary rather than asking the tool to infer one.
+
+    Returns ``None`` — no proposal — when `segment_index` is `None` and the inference
+    tags nothing, or when an explicit `segment_index` reaches no step's stem at all.
+
+    The returned dict: ``{"segment_index": int, "segments": List[List[str]],
+    "members": [{"tag": str, "step_ids": [...], "sources": [{"directory": str,
+    "run_count": int}, ...]}, ...]}``. `segment_index`/`segments` are what a segment
+    picker renders from and are pinned precisely because nothing else specifies them:
+    `segment_index` indexes ``stem.split("/")`` — directory parts, then the run stem
+    itself — and `segments[i]` is the ordered, first-appearance-deduplicated list of
+    values every run stem holds at index `i`. Only indices every run stem actually HAS a
+    part at are offered, which in practice is ``range(the shortest stem's depth)``: a stem
+    short at index i is short at every later index too, so that range never has a gap in
+    it. `members` is in first-appearance order over `sim`'s own step order (phase-major
+    for a multi-member draft, so NOT the order runs were found on disk); a step whose stem
+    the chosen index/inference does not tag is simply absent from every member's
+    `step_ids` — the untagged bucket has no member entry of its own, same as `lineages()`.
+
+    `base_directory` is what makes `handoffs` reachable from here at all: `Step.mdout` has
+    been relativized against it and will not open on its own, and the handoff evidence
+    lives inside those mdouts. Omitted, the key is present and empty — which was this
+    function's ONLY behaviour before, and is why the segment picker silently dropped every
+    handoff row the moment a user looked at another column. Callers that can supply it
+    should: `POST /steps/infer-lineages` does.
+    """
+    from ambermeta.lineages import infer_lineages_from_layout
+    from ambermeta.simulation import iter_steps
+
+    steps = [s for _, s in iter_steps(sim)]
+    stems = [s.name for s in steps]
+    split_stems = [stem.split("/") for stem in stems]
+
+    if segment_index is None:
+        tags = infer_lineages_from_layout(stems)
+        if not tags:
+            return None
+        # Back-solve the one index the tags actually vary at: infer_lineages_from_layout
+        # decides it internally but does not hand it back, and every stem it tagged agrees
+        # with its own tag at exactly that index by construction — so the first index
+        # every tagged stem agrees with simultaneously IS it.
+        tagged = [(stem.split("/"), tag) for stem, tag in tags.items()]
+        shortest_tagged = min(len(parts) for parts, _ in tagged)
+        index = next(i for i in range(shortest_tagged)
+                     if all(parts[i] == tag for parts, tag in tagged))
+    else:
+        index = segment_index
+        tags = {stem: parts[index] for stem, parts in zip(stems, split_stems)
+                if len(parts) > index}
+        if not tags:
+            return None
+
+    shortest_stem = min((len(parts) for parts in split_stems), default=0)
+    segments: List[List[str]] = []
+    for i in range(shortest_stem):
+        ordered: List[str] = []
+        for parts in split_stems:
+            if parts[i] not in ordered:
+                ordered.append(parts[i])
+        segments.append(ordered)
+
+    members: Dict[str, Dict[str, Any]] = {}
+    order: List[str] = []
+    for stem, step in zip(stems, steps):
+        tag = tags.get(stem)
+        if tag is None:
+            continue
+        if tag not in members:
+            members[tag] = {"tag": tag, "step_ids": [], "sources": []}
+            order.append(tag)
+        member = members[tag]
+        member["step_ids"].append(step.id)
+        directory = stem.rpartition("/")[0]
+        source = next((s for s in member["sources"] if s["directory"] == directory), None)
+        if source is None:
+            member["sources"].append({"directory": directory, "run_count": 1})
+        else:
+            source["run_count"] += 1
+
+    proposal = {"segment_index": index, "segments": segments,
+                "members": [members[tag] for tag in order]}
+    # Always present, never omitted, so the returned dict has ONE shape whether or not the
+    # caller could supply a base directory -- `LineageProposal.handoffs` would default it
+    # to `[]` anyway, and a key that appears only sometimes is how a consumer comes to read
+    # `proposal.handoffs` on an object that has none.
+    proposal["handoffs"] = (
+        _propose_handoffs(sim, proposal,
+                          lambda step: (os.path.join(base_directory, step.mdout)
+                                        if step.mdout else None))
+        if base_directory else [])
+    return proposal
+
+
+def discover_draft(base_directory, recursive=True, pattern=None, apply_tags=True):
+    """Scan `base_directory` into a Simulation draft, with a proposal beside it.
+
+    `apply_tags` decides whether the inferred grouping (see `infer_lineages_from_layout`)
+    is WRITTEN onto `Step.lineage` (`True`, the default) or only PROPOSED, in the returned
+    `"proposal"`, with every step left untagged (`False`). The two callers want opposite
+    answers and both are load-bearing:
+
+    * `ambermeta discover` (cli.py) passes `apply_tags=True` — its default, unstated. The
+      CLI is batch and has no confirmation surface of its own; `--write`ing the manifest
+      IS the user's accept, and printing `[applied] Runs carry N declared lineage(s)` is
+      how it states the claim it just wrote. Withholding tags here would ship every
+      `discover --write` manifest untagged, with no way to accept it and the crashed-
+      replica finding gone from the file for good.
+    * The GUI's `POST /document/discover` route passes `apply_tags=False`. A fresh scan of
+      someone else's directory tree is a claim about THEIR data the tool has not been told
+      to make; the GUI has a real confirmation step (the proposal strip, accepted a member
+      at a time through `PATCH /steps/lineage`), so nothing is asserted until the user
+      does. `build_suggestions` is still handed the proposed tags (`proposed=tags` below),
+      so the per-member sequence-hole finding — this feature's headline payoff — still
+      appears in `"suggestions"` even though nothing landed on the document.
+
+    Only this one assignment differs between the two; everything else about the draft
+    (chaining, phase grouping, the proposal itself) is identical either way.
+    """
+    from ambermeta.simulation import Simulation, Phase, Step, Topology, InputCoords, iter_steps
     from ambermeta.lineages import UNTAGGED, infer_lineages_from_layout
     from ambermeta.roles import classify_role
     from ambermeta.topology_pool import classify_topology_pool, implies_hmr
     from ambermeta.coords import sniff_coordinate_kind
-    from ambermeta.protocol import smart_group_files, _run_stems
+    from ambermeta.protocol import smart_group_files, _run_stems, _looks_queued
     from ambermeta.parsers import MdinParser
+    from ambermeta.mdout_header import read_mdout_header
     import uuid
 
     grouped = smart_group_files(base_directory, pattern=pattern, recursive=recursive)
@@ -494,9 +771,38 @@ def discover_draft(base_directory, recursive=True, pattern=None):
     # one member and takes the single flat chain and contiguous phases it always had.
     multi_lineage = len({tags.get(stem) or UNTAGGED for stem in run_stems}) >= 2
 
-    prev_by_lineage = {}
-    # Where each member's previous step landed. A phase lookup that may only start here
-    # can never move a member backwards, which is what keeps its steps in order.
+    # Keyed on the run DIRECTORY, not on the lineage bucket. On an untagged tree every
+    # stem shared the UNTAGGED bucket, which is exactly how one flat chain came to run
+    # equil/01 -> equil/02 -> ... -> prod/05: nine edges nobody asserted, published with
+    # ok: true, and self-validating because resolve_input_coords hands the consumer the
+    # producer's own restart so the gap is always 0.0.
+    #
+    # A directory boundary is the only boundary discovery can justify. Within one, the
+    # chunked chain prod_0001 -> prod_0002 is what the numbering means. Across one, the
+    # evidence lives in the mdout's File Assignments block, and that is PROPOSED rather
+    # than written -- see the handoff proposal.
+    prev_by_directory: Dict[str, str] = {}
+    # Directories where at least one run demonstrably wrote a restart (an inpcrd-kind file
+    # sitting beside it: `.rst`/`.rst7`/`.ncrst`/`.restrt`/`.inpcrd`). This is the
+    # directory-context rule a step's OWN producer-eligibility is checked against below:
+    # restart absence is only evidence that a step did not run -- and so cannot hand
+    # anything to whatever comes after it -- where the directory shows restarts are being
+    # tracked at all. `sys021_tree`'s `prod/01` is exactly that: `nvt_prod_0001..0003` each
+    # write one, so `cpptraj`'s silence (a leftover cpptraj post-processing script, not a
+    # run) is meaningful and it drops out as a producer -- and so does a queued run sitting
+    # between two real chunks, same directory, same rule, real cntrl_parameters but nothing
+    # written yet. A directory with NO restart evidence anywhere is a purely planned
+    # campaign -- every run just an mdin, nothing executed -- where the chain IS the plan
+    # and demanding restart proof that could never exist would silently unchain every
+    # existing single-replica project's default output. That is also every mdin-only
+    # fixture in this repo, which is why none of them needed to change for this rule to
+    # land: the rule never fires in a directory it has no evidence to fire in.
+    directories_with_restart_evidence = {
+        stem.rpartition("/")[0] for stem in run_stems if grouped[stem].get("inpcrd")
+    }
+    # Where each member's previous step landed, for phase grouping only (Task 7 changes
+    # how `multi_lineage` is derived, not what this does). A phase lookup that may only
+    # start here can never move a member backwards, which is what keeps its steps in order.
     phase_index_by_lineage = {}
     for stem in run_stems:
         kinds = grouped[stem]
@@ -512,17 +818,31 @@ def discover_draft(base_directory, recursive=True, pattern=None):
         topology = hmr_topo if (hmr_topo and implies_hmr(dt)) else default_topo
         tag = tags.get(stem)
         member = tag or UNTAGGED
-        prev_step_id = prev_by_lineage.get(member)
+        # The chain boundary is the run DIRECTORY, not the lineage member. Two directories
+        # sharing one member -- `equil/05` and `prod/01` on an untagged tree, or two
+        # replicas that both fell into UNTAGGED -- are not evidence that one continues the
+        # other; that evidence is the mdout's File Assignments block, which this scan does
+        # not read. So the first step written in EACH directory starts over here, however
+        # many members or lineages that directory's stems share.
+        directory = stem.rpartition("/")[0]
+        prev_step_id = prev_by_directory.get(directory)
         if prev_step_id is None:
-            # The first run of each member reads what tLEaP wrote alongside the topology.
-            # Which member is the point: one flat "is this the first run at all?" test is
-            # what chained replica 2 onto replica 1.
+            # The first run of each directory reads what tLEaP wrote alongside the
+            # topology. Which DIRECTORY is the point: keying this on the lineage member
+            # instead is what let `equil/05` hand its restart to `prod/01`, and let an
+            # untagged tree's one shared UNTAGGED bucket hand rep1's tail to rep2's head.
             ic = InputCoords(source="starting_structure")
         else:
             # Chained: this run's input coords ARE the previous run's output restart.
             # The path lives on that producing step's `rst`, so the link is the ref alone
             # and the file is named once rather than copied onto every consumer.
             ic = InputCoords(source="step", ref=prev_step_id)
+        # Same rule the engine uses (`_looks_queued`), reused rather than reimplemented: an
+        # mdin declared with no mdout beside it, EXCEPT a same-extension file that never
+        # was a real AMBER input (`sys021_tree`'s stray `cpptraj.in`) -- `mdin_details`
+        # above is already the parse this needs, so no second file read is spent on it.
+        status = "queued" if _looks_queued(
+            mdin_details, bool(kinds.get("mdin")), bool(kinds.get("mdout"))) else None
         step = Step(
             id=uuid.uuid4().hex[:8], name=stem, topology=topology, input_coords=ic,
             mdin=_relativize(kinds.get("mdin"), base_directory),
@@ -531,7 +851,7 @@ def discover_draft(base_directory, recursive=True, pattern=None):
             # A run's single-frame coordinate sibling is the restart it wrote (-r restrt),
             # which is exactly what the next run reads.
             rst=_relativize(kinds.get("inpcrd"), base_directory),
-            lineage=tag,
+            lineage=(tag if apply_tags else None), status=status,
         )
         if multi_lineage:
             # One phase per role, shared by every member. Left contiguous, the replica-major
@@ -563,10 +883,54 @@ def discover_draft(base_directory, recursive=True, pattern=None):
                                         name=(role.title() if role else "Stage"), role=role))
             phase = sim.phases[-1]
         phase.steps.append(step)
-        prev_by_lineage[member] = step.id
+        # A step becomes eligible to hand its restart to whatever comes next in this
+        # directory only if it wrote one itself, OR the directory has no restart evidence
+        # at all -- see the comment on `directories_with_restart_evidence` above for why
+        # the second half of this condition is not optional.
+        if step.rst or directory not in directories_with_restart_evidence:
+            prev_by_directory[directory] = step.id
 
     warnings = []
     if len(sim.topologies) > 1:
         warnings.append(f"{len(sim.topologies)} topologies found; confirm normal vs HMR.")
-    return {"simulation": sim, "suggestions": build_suggestions(sim, base_directory),
+
+    # The proposal is built from `sim` itself (not from `tags` directly) so discover_draft
+    # and `POST /steps/infer-lineages` share one implementation of what a proposal IS —
+    # segment_index, segments, members — rather than each assembling that shape by hand.
+    # Independent of `apply_tags`: `build_lineage_proposal` re-derives the same tags from
+    # `sim`'s own step names regardless of whether those names' steps are ALSO carrying
+    # `lineage` right now, so the CLI gets a (currently unused) proposal too.
+    proposal = build_lineage_proposal(sim)
+
+    # AMBER wrote down which restart it actually read; `read_mdout_header` has parsed that
+    # block since before lineages existed, and `assignment()` had zero call sites -- the
+    # record was read off every mdout and thrown away. `_propose_handoffs` is where the
+    # rule for reading it lives, shared with `build_lineage_proposal` so the segment picker
+    # re-proposes handoffs for whatever grouping it lands on instead of dropping them.
+    #
+    # The mdout paths come from `grouped`, the scan's own absolute ones, NOT from
+    # `step.mdout`, which has been relativized against base_directory and will not open.
+    if proposal:
+        proposal["handoffs"] = _propose_handoffs(
+            sim, proposal, lambda step: grouped.get(step.name, {}).get("mdout"))
+
+    suggestions = build_suggestions(sim, base_directory, proposed=tags)
+    if proposal is None:
+        # Gated on the tree PLAUSIBLY having members to declare, not merely on the
+        # inference having refused: `tags` (and so `proposal`) is empty for every tree with
+        # fewer than two run sub-directories, which is the commonest shape there is —
+        # nagging "which runs are replicas?" at a plain single-directory campaign would be
+        # noise on nearly every project. Two or more directories actually holding runs is
+        # the one shape where the inference had a real choice to make and refused it.
+        rival_dirs = {stem.rpartition("/")[0] for stem in run_stems if "/" in stem}
+        if len(rival_dirs) >= 2:
+            suggestions.append({
+                "id": f"sug_{len(suggestions) + 1}", "kind": "lineage_needs_you",
+                "severity": "needs_you", "title": "Which runs are replicas?",
+                "evidence": ("could not tell from the directory layout: no single path "
+                             "segment names the member"),
+                "actions": ["Define replicas", "Ignore"],
+            })
+
+    return {"simulation": sim, "proposal": proposal, "suggestions": suggestions,
             "warnings": warnings}

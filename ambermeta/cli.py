@@ -263,10 +263,13 @@ def _print_simulation(sim, report=None, *, verbose: bool = False,
                 f"{k}={getattr(step, k)}" for k in ("mdin", "mdout", "mdcrd") if getattr(step, k)
             )
             # Emit-when-set, like every other spelling of the tag: an untagged document's
-            # output is unchanged character for character.
+            # output is unchanged character for character. `status` is the only other
+            # field on Step with the same discipline — a step that ran carries none, so
+            # this line is unchanged for it too, and only a queued step gains the suffix.
             tag = f"  lineage={step.lineage}" if step.lineage else ""
+            status = f"  status={step.status}" if step.status else ""
             line = (f"  - {step.name}  topology={topo}"
-                    f"  input={_input_source_label(sim, step)}{tag}")
+                    f"  input={_input_source_label(sim, step)}{tag}{status}")
             _out(line + (f"  ({files})" if files else ""))
     if report is not None:
         if verbose:
@@ -345,7 +348,12 @@ def _discover_command(args: argparse.Namespace) -> int:
         print(Colors.error(f"ERROR: Directory not found: {directory}"), file=sys.stderr)
         return 1
 
-    result = discover_draft(directory, recursive=args.recursive, pattern=args.pattern)
+    # apply_tags=True (also the default): `discover --write`'s manifest IS this command's
+    # confirmation step, so unlike the GUI's Discover it writes the inferred grouping
+    # straight onto the steps. Stated explicitly here rather than left to the default so
+    # this call site reads as a decision, not an oversight.
+    result = discover_draft(directory, recursive=args.recursive, pattern=args.pattern,
+                            apply_tags=True)
     sim = result["simulation"]
     if not sim.phases:
         _out("No simulation files discovered; nothing to draft.")
@@ -449,11 +457,21 @@ def _print_protocol(protocol: SimulationProtocol, verbose: bool = False) -> None
     _out(f"Total simulated time (ps): {totals['time_ps']:.3f}")
     if "lineage_count" in totals:
         _out(f"Declared lineages: {totals['lineage_count']:.0f}")
+    # Emit-when-nonzero, matching `totals()` itself: a directory with nothing queued prints
+    # exactly what it always did. Without this line the terminal said nothing at all about
+    # `queued_count` -- the JSON/GUI surfaces carried it, the CLI's own summary did not.
+    if "queued_count" in totals:
+        _out(f"Queued (no output): {totals['queued_count']:.0f}")
     _print_lineage_totals(protocol.lineage_totals())
 
     for stage in protocol.stages:
         summary = stage.summary()
         _out(f"\n- {stage.name}")
+        # Emit-when-set, like `lineage=`/`status=` on the per-step manifest line in
+        # `_print_simulation`: a stage that ran prints exactly what it always did, and only
+        # a queued one gains this line.
+        if stage.status:
+            _out(f"  status: {stage.status}")
         _out(f"  intent: {summary['intent']}")
         _out(f"  result: {summary['result']}")
         metadata_lines = []
@@ -1140,6 +1158,14 @@ steps:
 """
 
 
+# `_totals_delta` used to be defined here. It now lives in `ambermeta.protocol` beside
+# `write_protocol_outputs`, because the GUI's Plan action goes through
+# `core_bridge.write_plan_outputs` and had NO equivalent -- a user who pressed Plan in the
+# browser had summary.json overwritten with a materially different total and was told
+# nothing. Imported rather than copied: two implementations of "what changed since the last
+# artifact" drifting apart is the exact class of defect this branch exists to remove.
+
+
 def _write_plan_artifacts(args: argparse.Namespace, protocol: SimulationProtocol) -> int:
     """Build the requested plan artifacts from an already-built protocol and report
     the outcome.
@@ -1151,7 +1177,8 @@ def _write_plan_artifacts(args: argparse.Namespace, protocol: SimulationProtocol
     Returns 0 on success (or nothing requested), 2 if two artifacts target the same
     file, 1 if any artifact failed to write.
     """
-    from ambermeta.protocol import write_protocol_outputs
+    from ambermeta.protocol import (
+        read_prior_summary, totals_delta, write_protocol_outputs)
 
     targets = {}
     for artifact, raw in (("summary", args.summary_path),
@@ -1176,6 +1203,29 @@ def _write_plan_artifacts(args: argparse.Namespace, protocol: SimulationProtocol
         return 2
 
     fmt = _resolve_sim_format(args.summary_path or "", args.summary_format)
+
+    # Read any prior summary BEFORE write_protocol_outputs (below) overwrites it, and see
+    # `read_prior_summary`'s docstring for why reading afterwards would disable the whole
+    # feature permanently rather than merely miss this one report. Both the read and the
+    # comparison now live in `ambermeta.protocol` so the GUI's Plan action runs the
+    # identical pair.
+    #
+    # Guarded on "summary" in targets, not on `args.summary_path` being truthy:
+    # `_write_plan_artifacts` also runs for `--stats-csv`/`--methods-summary-path` alone,
+    # where `args.summary_path` is None, and `open(None)` raises TypeError — not caught
+    # anywhere before main()'s broad top-level guard, so it would turn a working
+    # `plan --stats-csv` into an "Unexpected error (TypeError: ...)" exit instead of the
+    # CSV it used to write.
+    if "summary" in targets:
+        previous = read_prior_summary(targets["summary"], fmt)
+        delta = totals_delta(previous, protocol.totals(), targets["summary"])
+        if delta:
+            # stdout via _out, deliberately not stderr like the WARNING lines a few lines
+            # below: this reports on the artifact plan is about to write, so it belongs
+            # with the "Wrote summary: ..." line the user is already reading, not in the
+            # error channel a script would filter out.
+            _out(Colors.warning(delta))
+
     result = write_protocol_outputs(protocol, targets, summary_format=fmt)
     for item in result["written"]:
         _out(f"Wrote {item['artifact']}: {item['path']}")

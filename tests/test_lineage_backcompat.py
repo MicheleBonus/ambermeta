@@ -56,7 +56,15 @@ RUN_DIR = "<RUNDIR>"
 
 # sha256 of the normalised stats CSV. Regenerate with
 # `python tests/data/lineage_backcompat/regenerate.py` and say why in the commit message.
-STATS_CSV_SHA256 = "91a3177f22f553c58172e6d7f2e18cd7e12b3241de68c5a68c73f4dc18446217"
+#
+# Moved once, deliberately: `duration_ns` used to read `stats.duration_ns`
+# (`time_end - time_start`, short by one ntpr interval), which put this CSV's
+# per-chunk duration at 19.9 ns against summary.json's true 20.0 ns for the same
+# run -- two artifacts in one bundle disagreeing about the same number. The column
+# now reads `_elapsed_ps(stage)`, the same source summary.json's totals use, so the
+# only cells that changed are `duration_ns`: 19.9 -> 20.0 ns per chunk, five times.
+# See `write_stats_csv` and the commit that moved this hash for the verification.
+STATS_CSV_SHA256 = "331b42b93abadcf509c1e882c33543fc44ce89afcee50d0f7c19606a303cc1f9"
 
 
 # ---------------------------------------------------------------------------

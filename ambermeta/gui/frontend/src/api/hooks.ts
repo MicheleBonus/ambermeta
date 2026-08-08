@@ -48,7 +48,18 @@ export const useDeletePhase = () => docMutation((a: { id: string; reassignTo?: s
 export const useCreateStep = () => docMutation((a: { phaseId: string; body: StepCreatePayload }) => api.createStep(a.phaseId, a.body));
 export const useUpdateStep = () => docMutation((a: { id: string; body: StepUpdatePayload }) => api.updateStep(a.id, a.body));
 export const useSetLineages = () => docMutation((b: StepsLineagePayload) => api.setLineages(b));
-export const useInferLineages = () => docMutation(() => api.inferLineages());
+// Bare useMutation, not docMutation: `/steps/infer-lineages` never touches the document
+// (routes.py: "Writes nothing"), so there is no DocumentResponse to fold into the query
+// cache here. The proposal it returns is applied later, member by member, through
+// useSetLineages -- each of THOSE calls is the actual edit and goes through docMutation
+// normally, pushing its own undo frame. Warnings are still surfaced as toasts: a refusal
+// ("No lineages inferred: ...") is the entire content of that response on the null path,
+// and saying nothing there would leave the picker looking like it silently did nothing.
+export const useInferLineages = () =>
+  useMutation({
+    mutationFn: (segmentIndex?: number) => api.inferLineages(segmentIndex),
+    onSuccess: (res) => res.warnings.forEach((w) => pushToast(w, "warning")),
+  });
 export const useDeleteStep = () => docMutation((id: string) => api.deleteStep(id));
 export const useMoveStep = () => docMutation((a: { id: string; body: StepMovePayload }) => api.moveStep(a.id, a.body));
 export const useReorderSteps = () => docMutation((a: { phaseId: string; ids: string[] }) => api.reorderSteps(a.phaseId, a.ids));

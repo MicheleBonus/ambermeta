@@ -1,7 +1,7 @@
 # ambermeta/mdout_header.py
 """The first ~250 lines of an mdout: what AMBER says about the run before it starts.
 
-Three facts live in the header and nowhere else, and none of them is reachable from the
+Four facts live in the header and nowhere else, and none of them is reachable from the
 mdin:
 
 * the **resolved random seed**. Under the common ``ig = -1`` the mdin says only "pick one",
@@ -11,6 +11,9 @@ mdin:
   fixtures say ``t = 1000.0`` for a run that began at 920.000 ps — and the first *printed*
   frame is one ``ntpr`` interval later still. Only this line says when the run actually
   started;
+* the **resolved CONTROL DATA block** — ``irest``, ``t`` and ``dt`` as AMBER itself settled
+  them, defaults filled in. This is what tells the begin-time line above apart from the
+  clock origin when ``irest = 0``; see :attr:`MdoutHeader.irest`;
 * the **File Assignments** block, which is the chain AMBER itself asserts: the INPCRD it
   read and the RESTRT it wrote, rather than an inference from filename adjacency.
 
@@ -55,6 +58,28 @@ _SEED_WINDOW = 12
 # varies with the input.
 _END = re.compile(r"^\s*4\.\s+RESULTS|^ NSTEP =")
 
+# `   2.  CONTROL  DATA  FOR  THE  RUN`, and where that block gives out again (`   3.
+# ATOMIC COORDINATES AND VELOCITIES`, or anything else numbered). Scoping matters: the
+# header also contains a VERBATIM ECHO of the user's mdin, several dozen lines ABOVE this
+# banner, and that echo carries its own `irest = 1,` / `t = 1800.0,` lines. Reading those
+# would report what the user typed rather than what AMBER resolved — the echo omits every
+# defaulted variable, so a run that never wrote `t` at all would come back with no `t`
+# instead of the 0.0 AMBER actually used. Only the block below has the resolved values.
+_CONTROL_DATA = re.compile(r"CONTROL\s+DATA\s+FOR\s+THE\s+RUN")
+_SECTION = re.compile(r"^\s*\d+\.\s+[A-Z]")
+
+# Every one of these is anchored to the START of its field — line start or the comma that
+# ends the previous field — never merely `\b`. AMBER lays the block out as
+# `     t       =1800.00000, dt      =   0.00200, vlimit  =  -1.00000`, and a bare `\bt\s*=`
+# would be safe there by luck rather than by construction; anchoring says so.
+_IREST = re.compile(r"(?:^|,)\s*irest\s*=\s*(-?\d+)")
+# `t` and `dt` share a field width AMBER OVERFLOWS: the repo's own back-compat fixtures
+# print `t       =**********` from 21000 ps on. `[\d.]` therefore does not match and the
+# value comes back None, which is the truthful answer — the same overflow `_BEGIN_TIME`
+# already degrades on, for the same reason.
+_CONTROL_T = re.compile(r"(?:^|,)\s*t\s*=\s*(-?[\d.]+)")
+_CONTROL_DT = re.compile(r"(?:^|,)\s*dt\s*=\s*(-?[\d.]+)")
+
 # The File Assignments prefix is columns 1-10: `|`, the tag right-aligned in 7, then `: `.
 _ASSIGNMENT_VALUE_COLUMN = 10
 
@@ -71,6 +96,26 @@ class MdoutHeader:
     truncated: Set[str] = field(default_factory=set)
     resolved_ig: Optional[int] = None
     begin_time_ps: Optional[float] = None
+    #: `irest` as AMBER resolved it. **The one field that says whether
+    #: :attr:`begin_time_ps` means anything.** Under ``irest = 1`` AMBER takes the clock
+    #: from the coordinate file and that line is authoritative. Under ``irest = 0`` it
+    #: takes the clock from the mdin's ``t`` and does not read a time from the coordinates
+    #: at all — so it prints ``begin time read from input coords = 0.000`` (it read none)
+    #: while the trajectory starts at ``t``. On the campaign this was written against that
+    #: cost 1800 ps of phantom simulation per replica: five runs stated 3200 ps of dynamics
+    #: (``nstlim x dt``), ran from 1800 to 5000 ps, and were counted as 5000 because
+    #: ``time_end - 0.0`` looks like an elapsed time and is not one.
+    irest: Optional[int] = None
+    #: `t` as AMBER resolved it: the clock origin under ``irest = 0``, and a value AMBER
+    #: ignores under ``irest = 1`` (the fixtures say ``t = 1000.0`` for a run that began at
+    #: 920.0). Never read without checking :attr:`irest` first.
+    control_t_ps: Optional[float] = None
+    #: `dt` as AMBER resolved it, in ps. Distinct from ``MdoutMetadata.dt``, which defaults
+    #: to a TRUTHY 0.001 and so cannot be told apart from an mdout that stated 0.001 —
+    #: making every "fall back to the mdin's dt if the mdout had none" guard dead code and
+    #: doubling the published `steps` of a 0.002 run whose CONTROL DATA block did not
+    #: parse. `None` here means "not stated", unambiguously.
+    control_dt_ps: Optional[float] = None
 
     def assignment(self, tag: str) -> Optional[str]:
         """The value for `tag`, or None when it is absent **or** was clipped.
@@ -88,6 +133,7 @@ def read_mdout_header(path: str) -> MdoutHeader:
     """Read the header of the mdout at `path`, stopping at the results banner."""
     header = MdoutHeader()
     in_assignments = False
+    in_control_data = False
     seed_countdown = 0
 
     with open(path, "r", encoding="utf-8", errors="replace") as handle:
@@ -104,6 +150,25 @@ def read_mdout_header(path: str) -> MdoutHeader:
                 if _read_assignment(line, header):
                     continue
                 in_assignments = False
+
+            if _CONTROL_DATA.search(line):
+                in_control_data = True
+                continue
+            if in_control_data:
+                # Any later numbered banner closes the block. `_END` already breaks out at
+                # `4. RESULTS`, so in practice this is `3. ATOMIC COORDINATES AND
+                # VELOCITIES` — below which sits the begin-time line, which must NOT be
+                # read as control data (`input coords =` is not an `irest`/`t`/`dt` field,
+                # but relying on that is relying on a near miss).
+                if _SECTION.match(line):
+                    in_control_data = False
+                else:
+                    # Deliberately NOT `continue`. The Langevin seed block
+                    # (`_SEED_SECTION`) lives INSIDE the CONTROL DATA block, so short-
+                    # circuiting here silently stopped `resolved_ig` being read at all —
+                    # every replica's seed reported as unknown, which is the one file-level
+                    # fact this module exists to establish.
+                    _read_control_data(line, header)
 
             if header.begin_time_ps is None:
                 match = _BEGIN_TIME.search(line)
@@ -127,6 +192,40 @@ def read_mdout_header(path: str) -> MdoutHeader:
                     seed_countdown = 0
 
     return header
+
+
+def _read_control_data(line: str, header: MdoutHeader) -> None:
+    """Record `irest`/`t`/`dt` off one line of the CONTROL DATA block.
+
+    First value wins for each field, so a later section that happens to spell one of these
+    names cannot overwrite what AMBER printed under `Molecular dynamics:`. Everything stays
+    optional: a truncated mdout that never reached this block, or an engine that lays it out
+    differently, leaves all three `None`, and every caller treats `None` as "the file did
+    not say" rather than as a value.
+    """
+    if header.irest is None:
+        match = _IREST.search(line)
+        if match:
+            header.irest = int(match.group(1))
+    if header.control_t_ps is None:
+        header.control_t_ps = _matched_float(_CONTROL_T, line)
+    if header.control_dt_ps is None:
+        header.control_dt_ps = _matched_float(_CONTROL_DT, line)
+
+
+def _matched_float(pattern: "re.Pattern", line: str) -> Optional[float]:
+    """`pattern`'s first group as a float, or None when it does not match or does not
+    convert. `[\\d.]+` admits `.` and `1.2.3` as well as real numbers; a malformed field is
+    a field the file did not usefully state, and must degrade to `None` like every other
+    absent value here rather than raise out of `read_mdout_header` and cost the caller the
+    whole file."""
+    match = pattern.search(line)
+    if not match:
+        return None
+    try:
+        return float(match.group(1))
+    except ValueError:
+        return None
 
 
 def _read_assignment(line: str, header: MdoutHeader) -> bool:

@@ -68,9 +68,17 @@ class StepModel(BaseModel):
     mdcrd: Optional[str] = None
     rst: Optional[str] = None            # the restart this step writes; the next step reads it
     # Which run lineage (replica, branch, pose) this step belongs to; null is the implicit
-    # single member. Written by `discover`'s inference or by editing the manifest, so the
-    # GUI only displays it.
+    # single member. Three routes write it -- POST /phases/{id}/steps (routes.py:391),
+    # PUT /steps/{id} (routes.py:432-433) and PATCH /steps/lineage -- as does editing the
+    # manifest. The CLI's `discover` applies inferred tags directly; the GUI's Discover only
+    # *proposes* them and re-applies ones already declared, inventing none of its own.
+    # Nothing about this field is display-only.
     lineage: Optional[str] = None
+    # Whether this run produced output. The only value ever emitted is "queued": an mdin
+    # that was set up and never executed. Written by discover's scan (core_bridge) and
+    # read from the manifest; unlike `lineage` above, no route accepts it, so this one
+    # really is read-only at the HTTP surface.
+    status: Optional[str] = None
     # The coordinate file this step actually reads, resolved through the chain. Read-only:
     # the GUI shows it without re-implementing the resolution rules.
     resolved_input_coords: Optional[str] = None
@@ -197,9 +205,13 @@ class StepUpdate(BaseModel):
     # dropped, so a gap once set could never be removed — only overwritten with 0.
     name: Optional[str] = None
     topology: Optional[str] = None
-    # The tag is read-only at this surface today: no route writes it. Declared as a
-    # top-level field so it inherits `topology`'s presence semantics when a write path
-    # arrives, rather than `files`' ""-clears rule — a lineage is a label, not a file slot.
+    # `PUT /steps/{id}` writes this (routes.py:432-433, present-vs-absent like `topology`):
+    # `tests/test_gui_bulk_lineage.py:59-65` drives it with {"lineage": "rep9"}. Declared as
+    # a top-level field so it inherits `topology`'s presence semantics rather than `files`'
+    # ""-clears rule — a lineage is a label, not a file slot. This comment used to say the
+    # tag was read-only here — true when PR 2a wrote it, false since PR 2b gave this route
+    # a write path and never came back to fix the comment — which is the likeliest reason
+    # the frontend never grew a tagging control of its own.
     lineage: Optional[str] = None
     input_coords: Optional[InputCoordsModel] = None
     files: Optional[StageFiles] = None
@@ -261,7 +273,11 @@ class FailedFile(BaseModel):
 
 class Suggestion(BaseModel):
     id: str
-    kind: str        # missing_run|continuity_gap|topology_confirm|restart_link|role_guess|starting_structure|lineage_group
+    # missing_run|continuity_gap|topology_confirm|restart_link|role_guess|starting_structure
+    # |lineage_group|lineage_needs_you — `lineage_needs_you` is the card a tree the layout
+    # inference refuses gets, when the tree plausibly had members to declare (see
+    # `discover_draft`'s `rival_dirs` gate). `needs_you` is never a `kind` — see `severity`.
+    kind: str
     severity: str    # needs_you|applied|info
     title: str
     evidence: str
@@ -289,11 +305,69 @@ class LineageTotals(BaseModel):
     step_count: int = 0
 
 
+# ---- Lineage proposal: what Discover found, never what it wrote (P2.2) ----
+
+class ProposedSource(BaseModel):
+    """One directory a proposed member's runs came from, and how many of them."""
+    directory: str
+    run_count: int
+
+
+class ProposedMember(BaseModel):
+    """One member `core_bridge.build_lineage_proposal` proposes — NOT a declared lineage.
+
+    Nothing here is on any step's `lineage` yet; `step_ids` is what a PATCH /steps/lineage
+    accepting this member would tag, and `sources` is the evidence a reviewer reads before
+    doing that — which directories fed it and how many runs each held.
+    """
+    tag: str
+    step_ids: List[str] = Field(default_factory=list)
+    sources: List[ProposedSource] = Field(default_factory=list)
+
+
+class ProposedHandoff(BaseModel):
+    """One cross-directory restart handoff read off AMBER's own File Assignments block.
+
+    Populated starting with the handoff-proposal task (P2.4), not this one — declared now
+    so `LineageProposal.handoffs` has a shape from the day the wire contract exists, and
+    the field is never a silent extra='ignore' drop the moment it starts carrying data.
+    """
+    consumer_id: str
+    producer_id: str
+    consumer: str
+    producer: str
+    evidence: str
+
+
+class LineageProposal(BaseModel):
+    """What Discover — or the layout inference re-run on the open document — proposes.
+
+    Never written: nothing in this model corresponds to a `Step.lineage` that has actually
+    been set. See `core_bridge.build_lineage_proposal` for exactly what `segment_index` and
+    `segments` count over and where the offered indices come from — a segment picker
+    renders directly off `segments`, so the server, not the frontend, owns that math.
+    """
+    segment_index: int
+    segments: List[List[str]] = Field(default_factory=list)
+    members: List[ProposedMember] = Field(default_factory=list)
+    # Always present, possibly empty, rather than omitted — so the wire shape does not
+    # change the day the handoff-proposal task starts populating it.
+    handoffs: List[ProposedHandoff] = Field(default_factory=list)
+
+
 class PlanResult(BaseModel):
     written: List[WrittenFile] = Field(default_factory=list)
     # One unwritable path does not hide the artifacts that did land: the response names
     # both, so the user is never told "it failed" about a run that wrote three files.
     failed: List[FailedFile] = Field(default_factory=list)
+    # Also the channel the TOTALS-DELTA report rides (`core_bridge.write_plan_outputs`):
+    # "totals changed since the last summary.json (...)" is a caveat about a file this
+    # call just overwrote, and this is the field the GUI already puts in front of the user
+    # at that exact moment -- `PlanModal` renders each entry inline under the written-files
+    # list, and `usePlan`'s onSuccess toasts it. Deliberately NOT a new key: an undeclared
+    # one is dropped in silence by `extra='ignore'`, which has cost this file two findings
+    # already (see `suggestions` below and `StageIssue.continuity`), and the delta is the
+    # one sentence a researcher reads before quoting a number.
     warnings: List[str] = Field(default_factory=list)
     stage_count: int = 0
     totals: Dict[str, float] = Field(default_factory=dict)
@@ -393,6 +467,37 @@ class DiscoverRequest(BaseModel):
 class DiscoverResult(BaseModel):
     document: DocumentResponse
     suggestions: List[Suggestion] = Field(default_factory=list)
+    # Optional so the field is absent-tolerant on the wire — every discover response
+    # carries the key (pydantic serialises a declared field whether or not it was set),
+    # but `null` is a legitimate value: a tree the layout inference refuses proposes
+    # nothing. The GUI route calls `discover_draft(..., apply_tags=False)`, so this is the
+    # ONLY place the grouping reaches the client at all until it is accepted.
+    proposal: Optional[LineageProposal] = None
+    warnings: List[str] = Field(default_factory=list)
+
+
+class InferLineagesRequest(BaseModel):
+    """Which path segment to try, or `None` to run the layout inference `discover` uses.
+
+    `segment_index` indexes `stem.split("/")` on the OPEN document's own step names — the
+    same posix stems `discover` built them from — directory parts first, then the run stem
+    itself. See `core_bridge.build_lineage_proposal` for exactly what index a given value
+    selects and where the offered indices (`LineageProposal.segments`) come from; this is
+    the segment-picker's "try this column" request.
+    """
+    segment_index: Optional[int] = None
+
+
+class LineageProposalResponse(BaseModel):
+    """`POST /steps/infer-lineages`'s reply: a proposal, or none, plus why not.
+
+    Its own model rather than a reuse of `DocumentResponse` — this route no longer touches
+    the document at all (it only reads it), so returning one would claim an edit that never
+    happened. Both fields are declared, not just `proposal`, because a bare
+    `Optional[LineageProposal]` has no `warnings` field at all and is `null` on exactly the
+    refusal path two existing tests read `body["warnings"][0]` off.
+    """
+    proposal: Optional[LineageProposal] = None
     warnings: List[str] = Field(default_factory=list)
 
 

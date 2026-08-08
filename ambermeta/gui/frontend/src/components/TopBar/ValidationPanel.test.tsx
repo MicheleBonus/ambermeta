@@ -87,3 +87,21 @@ it("still reports a stage error when the lineages agree", async () => {
   await waitFor(() =>
     expect(screen.getByText("1 stage(s) with errors")).toBeInTheDocument());
 });
+
+it("breaks the totals down per lineage when the document declares more than one", async () => {
+  await show(report({
+    totals: { stage_count: 7, time_ps: 35000, lineage_count: 2 },
+    lineages: {
+      rep1: { steps: 10000000, time_ps: 20000, step_count: 4 },
+      rep2: { steps: 7500000, time_ps: 15000, step_count: 3 },
+    },
+  }));
+  expect(await screen.findByText("rep1")).toBeInTheDocument();
+  expect(screen.getByText(/4 run\(s\)/)).toBeInTheDocument();
+  expect(screen.getByText(/20000\.000 ps/)).toBeInTheDocument();
+});
+
+it("says nothing about lineages when the report carries none", async () => {
+  await show(report());
+  expect(screen.queryByText("Per lineage")).not.toBeInTheDocument();
+});

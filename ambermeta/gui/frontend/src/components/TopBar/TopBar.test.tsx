@@ -1,5 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
+import type { ComponentProps } from "react";
 import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { http, HttpResponse } from "msw";
 import { server, emptyDocument } from "@/test/server";
@@ -7,12 +9,18 @@ import { queryClient } from "@/api/queryClient";
 import { TopBar } from "./TopBar";
 import { ExportModal } from "./ExportModal";
 
-function renderTopBar() {
+// Accepts overrides rather than hard-coding all seven spies, so a test that only cares
+// about one callback (e.g. onDefineReplicas below) can supply just that one and still get
+// working no-op spies for the rest -- the previous zero-argument version forced every new
+// action to either grow yet another hard-coded vi.fn() here or silently receive one that
+// no test could ever assert against.
+function renderTopBar(overrides: Partial<ComponentProps<typeof TopBar>> = {}) {
   queryClient.clear();
   return render(
     <QueryClientProvider client={queryClient}>
       <TopBar onOpen={vi.fn()} onSave={vi.fn()} onDiscover={vi.fn()}
-        onExport={vi.fn()} onValidate={vi.fn()} onPlan={vi.fn()} />
+        onExport={vi.fn()} onValidate={vi.fn()} onPlan={vi.fn()}
+        onDefineReplicas={vi.fn()} {...overrides} />
     </QueryClientProvider>
   );
 }
@@ -42,6 +50,13 @@ describe("TopBar", () => {
     renderTopBar();
     await waitFor(() => expect(screen.getByRole("button", { name: "Undo" })).not.toBeDisabled());
     expect(screen.getByRole("button", { name: "Redo" })).not.toBeDisabled();
+  });
+
+  it("offers a way to declare replicas whatever state the document is in", async () => {
+    const onDefineReplicas = vi.fn();
+    renderTopBar({ onDefineReplicas });
+    await userEvent.click(screen.getByRole("button", { name: "Define replicas…" }));
+    expect(onDefineReplicas).toHaveBeenCalled();
   });
 });
 

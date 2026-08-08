@@ -3,7 +3,7 @@ import type {
   RuntimeSettings, FileInfo, FileMetadata, RawFile, ExportFormat,
   AddTopology, UpdateTopology, PhaseCreate, PhaseUpdate,
   StepCreatePayload, StepUpdatePayload, StepsLineagePayload, StepMovePayload, AssignRequest,
-  PlanRequest, PlanResult,
+  PlanRequest, PlanResult, LineageProposalResponse,
 } from "@/types";
 // (SaveResult / PreviewResponse / SettingsPatch are client-response shapes, not part of @/types)
 export interface SaveResult { document: DocumentResponse; warnings: string[]; }
@@ -77,7 +77,12 @@ export const api = {
   reorderSteps: (phaseId: string, step_ids: string[]) => post<DocumentResponse>(`/phases/${phaseId}/steps/reorder`, { step_ids }),
   updateStep: (id: string, b: StepUpdatePayload) => put<DocumentResponse>(`/steps/${id}`, b),
   setLineages: (b: StepsLineagePayload) => patch<DocumentResponse>("/steps/lineage", b),
-  inferLineages: () => post<DocumentResponse>("/steps/infer-lineages", {}),
+  // `segment_index` omitted (rather than sent as `null`) runs the same layout inference
+  // `discover` uses; an explicit index is the segment picker's "try this column" request.
+  // The response is a LineageProposalResponse, not a DocumentResponse: this route only
+  // reads the document (see routes.py's docstring), so it has nothing to write back.
+  inferLineages: (segment_index?: number) =>
+    post<LineageProposalResponse>("/steps/infer-lineages", { segment_index }),
   deleteStep: (id: string) => del<DocumentResponse>(`/steps/${id}`),
   moveStep: (id: string, b: StepMovePayload) => post<DocumentResponse>(`/steps/${id}/move`, b),
 

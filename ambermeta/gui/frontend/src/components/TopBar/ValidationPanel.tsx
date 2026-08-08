@@ -90,9 +90,22 @@ export function ValidationPanel(
           </div>
         ))}
       </section>
+      {report?.lineages ? (
+        <section className="mb-3">
+          <h3 className="text-sm font-semibold mb-1">Per lineage</h3>
+          <ul className="text-sm space-y-0.5 font-mono">
+            {Object.entries(report.lineages).map(([tag, t]) => (
+              <li key={tag}>
+                <span className="font-semibold">{tag}</span>
+                {` · ${t.step_count} run(s) · ${t.time_ps.toFixed(3)} ps`}
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
       {report && (
         <footer className="mt-3 text-xs text-ink-muted font-mono">
-          {report.totals.stage_count ?? 0} step(s) · {report.totals.time_ps ?? 0} ps total
+          {report.totals.stage_count ?? 0} step(s) · {(report.totals.time_ps ?? 0).toFixed(3)} ps total
         </footer>
       )}
     </Modal>

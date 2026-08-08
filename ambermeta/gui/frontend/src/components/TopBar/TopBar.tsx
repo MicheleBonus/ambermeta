@@ -8,9 +8,12 @@ interface Props {
   onExport: () => void;
   onValidate: () => void;
   onPlan: () => void;
+  onDefineReplicas: () => void;
 }
 
-export function TopBar({ onOpen, onSave, onDiscover, onExport, onValidate, onPlan }: Props) {
+export function TopBar({
+  onOpen, onSave, onDiscover, onExport, onValidate, onPlan, onDefineReplicas,
+}: Props) {
   const { data: doc } = useDocument();
   const undo = useUndo();
   const redo = useRedo();
@@ -26,6 +29,14 @@ export function TopBar({ onOpen, onSave, onDiscover, onExport, onValidate, onPla
       )}
       <span className="flex-1" />
       <Button onClick={onDiscover}>Discover</Button>
+      {/* Lives here, in the top bar, and not tucked inside SimHeader the way the old
+          "Infer lineages" link was -- discoverability, not capability, was the original
+          complaint, and a muted control inside the simulation header is exactly what went
+          unnoticed. Never gated on document state (see App.tsx's onDefineReplicas for why
+          it still works on a tree the smart inference declines to tag): the old control's
+          `disabled={sim.phases.every(...)}` guard does not carry over, because this is the
+          only path back to a manual picker once that smart inference has refused. */}
+      <Button onClick={onDefineReplicas}>Define replicas…</Button>
       <Button onClick={onValidate}>Validate</Button>
       {/* The step after the manifest: the summaries `ambermeta plan` writes. */}
       <Button onClick={onPlan} title="Write the manifest and plan summaries to disk">Plan</Button>

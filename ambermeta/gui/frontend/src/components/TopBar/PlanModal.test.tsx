@@ -136,6 +136,43 @@ it("surfaces a warning from the server instead of reporting a clean run", async 
   expect(await screen.findByText(/headers only/)).toBeInTheDocument();
 });
 
+it("keeps the totals-delta warning's line breaks, instead of collapsing it into a run-on sentence", async () => {
+  // `totals_delta` (protocol.py) builds exactly this shape: embedded "\n"s separating a
+  // steps/time_ps/note/queued line each, with space-padded column alignment. Before this
+  // fix the warning `<p>` used the browser default `white-space: normal`, which collapses
+  // every "\n" into a space -- a four-line block a user reads perfectly well in the CLI
+  // arrived here as one run-on sentence.
+  const delta = "totals changed since the last summary.json (/work/summary.json):\n"
+    + "  steps     20000000.000 -> 17500000.000\n"
+    + "  time_ps   40000.000 -> 35000.000\n"
+    + "  note      totals count what each run's mdout shows it RAN, not what its mdin declared";
+  capturePlan([{ artifact: "summary", path: "/work/summary.json" }], [delta]);
+  await renderPlan();
+
+  await userEvent.click(screen.getByRole("button", { name: "Write" }));
+
+  // jsdom does not lay out CSS, so nothing here can assert the actual visual line
+  // wrapping -- asserting the CLASS is what proves this test would fail without the fix.
+  const rendered = await screen.findByText((_, el) => el?.textContent === delta);
+  expect(rendered).toHaveClass("whitespace-pre-line");
+  expect(rendered.tagName).toBe("P");
+});
+
+it("still renders an ordinary single-line warning exactly as before", async () => {
+  // `whitespace-pre-line` only changes how an EXISTING "\n" is honoured; a warning with
+  // none of them -- every warning this component rendered before totals_delta existed --
+  // must read and wrap exactly as `white-space: normal` already had it.
+  const message = "No step has an mdout, so the statistics CSV has headers only.";
+  capturePlan([{ artifact: "stats_csv", path: "/work/stats.csv" }], [message]);
+  await renderPlan();
+
+  await userEvent.click(screen.getByRole("button", { name: "Write" }));
+
+  const rendered = await screen.findByText(message);
+  expect(rendered).toHaveClass("whitespace-pre-line");
+  expect(rendered.textContent).toBe(message);
+});
+
 it("will not run while a ticked output has no filename, instead of dropping it silently", async () => {
   // The request used to null out a ticked-but-blank path: the user asked for the file,
   // got nothing, and was shown a clean result listing the other three.

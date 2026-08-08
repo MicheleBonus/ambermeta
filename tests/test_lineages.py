@@ -199,6 +199,182 @@ def test_two_rival_families_tag_neither():
         "rep1/prod_0001", "rep2/prod_0001", "ctrl1/eq_0001", "ctrl2/eq_0001"]) == {}
 
 
+# --- cohort reconciliation ---
+
+def test_a_prep_tree_beside_a_production_tree_is_one_campaign():
+    """The shape the whole feature exists for, and the one the first draft of this rule
+    refused. equil/* and prod/* run different sets of things, so they are rival cohorts
+    under the old one-cohort rule and the campaign came back untagged."""
+    names = [f"equil/{n}/18_ntp_equi" for n in ("01", "02", "03", "04", "05")]
+    names += [f"prod/{n}/nvt_prod_{i:04d}"
+              for n in ("01", "02", "03", "04", "05") for i in (1, 2)]
+    tags = infer_lineages_from_layout(names)
+    assert tags["equil/01/18_ntp_equi"] == "01"
+    assert tags["prod/01/nvt_prod_0001"] == "01"
+    assert tags["prod/05/nvt_prod_0002"] == "05"
+    assert set(tags.values()) == {"01", "02", "03", "04", "05"}
+
+
+def test_a_stray_analysis_file_does_not_cost_its_directory_its_tag():
+    """prod/01 also holds a cpptraj run, which the extension-based typing reads as an
+    mdin. That put it in a cohort of one, where len(dirs) > 1 drops it. Absorption exists
+    for exactly this: its segment at the agreed index is already a reconciled tag."""
+    names = [f"equil/{n}/18_ntp_equi" for n in ("01", "02", "03", "04", "05")]
+    names += [f"prod/{n}/nvt_prod_0001" for n in ("01", "02", "03", "04", "05")]
+    names += ["prod/01/cpptraj"]
+    tags = infer_lineages_from_layout(names)
+    assert tags["prod/01/nvt_prod_0001"] == "01"
+    assert tags["prod/01/cpptraj"] == "01"
+
+
+def test_a_member_missing_from_one_cohort_does_not_refuse_the_tree():
+    """A replica that never reached production is still a replica. Nesting, not equality:
+    the prod cohort's tag set is a subset of the equil cohort's."""
+    names = [f"equil/{n}/18_ntp_equi" for n in ("01", "02", "03")]
+    names += [f"prod/{n}/nvt_prod_0001" for n in ("01", "02")]
+    tags = infer_lineages_from_layout(names)
+    assert set(tags.values()) == {"01", "02", "03"}
+
+
+def test_two_cohorts_naming_their_member_at_different_segment_indices_refuse():
+    """Step 3 of the rule, genuinely exercised. Each shape's two cohorts run DISJOINT
+    bases (so the step-4 disjointness/nesting checks cannot be what refuses them) and each
+    cohort DOES report a segment of its own -- but at a different index, so merging them
+    would tag two unrelated axes as though they were the same replica.
+
+    `["p/01/x", "p/02/x", "q1/z", "q2/z"]` used to stand in for this, but it is refused by
+    step 4 (its tag sets `{01,02}` and `{q1,q2}` are disjoint) whether or not step 3 exists
+    -- deleting step 3 left the whole suite green. These three do not have that escape
+    hatch: verified by deleting the step-3 check and watching each one fail.
+    """
+    # p/01, p/02 name the member at index 1; 01, 02 name it at index 0.
+    assert infer_lineages_from_layout(["p/01/x", "p/02/x", "01/z", "02/z"]) == {}
+    # rep1, rep2 name the member at index 0; a/rep1, a/rep2 name it at index 1.
+    assert infer_lineages_from_layout(
+        ["rep1/prod", "rep2/prod", "a/rep1/heat", "a/rep2/heat"]) == {}
+    # 01, 02, 03 name the member at index 0; p/01, p/02 name it at index 1.
+    assert infer_lineages_from_layout(
+        ["01/x", "02/x", "03/x", "p/01/z", "p/02/z"]) == {}
+
+
+def test_a_prep_directory_is_absorbed_only_when_its_segment_is_a_tag():
+    """Absorption's negative half. `prod/common` sits at the agreed depth and is alone in
+    its cohort, but `common` is not one of the reconciled tags, so it stays untagged."""
+    names = [f"equil/{n}/eq" for n in ("01", "02", "03")]
+    names += [f"prod/{n}/pr" for n in ("01", "02", "03")]
+    names += ["prod/common/setup"]
+    tags = infer_lineages_from_layout(names)
+    assert "prod/common/setup" not in tags
+    assert sorted(set(tags.values())) == ["01", "02", "03"]
+
+
+def test_directories_sharing_a_base_but_not_a_depth_never_share_a_cohort():
+    """Depth lives in the cohort key (`(bases, depth)`), not in a post-hoc uniformity check
+    on the cohort's members -- so `extra/` and `extra/deep/`, which share a run base
+    (`min`) but sit at different depths, can never be grouped together in the first place.
+    Each becomes its own single-directory cohort, dropped as a singleton rather than as a
+    same-cohort depth mismatch. The unrelated `prod` cohort still tags. This used to be a
+    `continue` on a `depths != 1` check inside one cohort; folding depth into the key is
+    what fixes I5 below, and this pins the small-scale half of that mechanism."""
+    names = ["rep1/prod_0001", "rep2/prod_0001",
+             "extra/min_0001", "extra/deep/min_0001"]
+    assert infer_lineages_from_layout(names) == {
+        "rep1/prod_0001": "rep1", "rep2/prod_0001": "rep2"}
+
+
+def test_a_cohort_with_two_varying_segments_contributes_nothing_but_does_not_refuse():
+    """Step 2's other half, isolated. `sweepA/armX/` and `sweepB/armY/` share a run base
+    (`misc`) and sit at the same depth -- so this is not the depth-uniformity check above
+    -- but two segments vary between them, not one, and that cohort cannot report a segment
+    either. The `prod` cohort still tags. Mutating the single-varying-segment `continue`
+    into a `return {}` empties this result."""
+    names = ["rep1/prod_0001", "rep2/prod_0001",
+             "sweepA/armX/misc_0001", "sweepB/armY/misc_0001"]
+    assert infer_lineages_from_layout(names) == {
+        "rep1/prod_0001": "rep1", "rep2/prod_0001": "rep2"}
+
+
+def test_absorption_requires_the_singletons_depth_to_match_a_reporting_cohort():
+    """The depth half of absorption. `analysis/01/rmsd/calc` sits three segments deep --
+    one deeper than the equil/prod cohorts, which both report at depth 2 -- so its second
+    segment spelling `01` is a coincidence the layout gives no support for, not a claim,
+    and it is not absorbed even though `01` is a reconciled tag. Without this check it
+    would be: `len(parts) > index` alone (the pre-fix guard) says nothing about which depth
+    the reporting cohorts actually agreed on."""
+    names = [f"equil/{n}/eq" for n in ("01", "02", "03")]
+    names += [f"prod/{n}/pr" for n in ("01", "02", "03")]
+    names += ["analysis/01/rmsd/calc"]
+    tags = infer_lineages_from_layout(names)
+    assert "analysis/01/rmsd/calc" not in tags
+    assert sorted(set(tags.values())) == ["01", "02", "03"]
+
+
+def test_a_stray_directory_sharing_a_whole_cohorts_base_set_does_not_drop_that_cohort():
+    """I5: a real defect this reconciliation model shipped with, found in review round 1,
+    deferred and disclosed there, and fixed here by keying cohorts on `(bases, depth)`
+    rather than on `bases` alone.
+
+    `rerun/deep/here` runs only `prod_0001` -- the SAME single run base as the ENTIRE
+    `prod/01..03` cohort, just three segments deep instead of two. Keyed on bases alone,
+    it landed in `prod/01..03`'s own cohort rather than one of its own, and its mismatched
+    depth pulled the WHOLE cohort out of depth-uniformity -- not just the stray directory.
+    The result was `equil` tagged `01..03` and every actual `prod` run silently gone: a
+    campaign reported `[applied]` with none of its production runs in it, which is worse
+    than the honest refusal this rule otherwise gives, and it is exactly the shape the real
+    campaign this feature was built for has (`prod/01..05`, all running only `nvt_prod` --
+    a single-base cohort, the vulnerable case). Keying cohorts on `(bases, depth)` means
+    `rerun/deep/here` can never merge into a cohort it does not belong to: it forms its own
+    single-directory cohort, dropped there as a singleton, and `prod/01..03` tags normally
+    -- 6 of the 7 runs here, everything but the stray one."""
+    names = [f"equil/{n}/equil_0001" for n in ("01", "02", "03")]
+    names += [f"prod/{n}/prod_0001" for n in ("01", "02", "03")]
+    names += ["rerun/deep/here/prod_0001"]
+    tags = infer_lineages_from_layout(names)
+    assert "rerun/deep/here/prod_0001" not in tags
+    assert len(tags) == 6
+    assert sorted(set(tags.values())) == ["01", "02", "03"]
+    assert tags["equil/01/equil_0001"] == "01"
+    assert tags["prod/01/prod_0001"] == "01"
+    assert tags["prod/03/prod_0001"] == "03"
+
+
+def test_two_temperature_arms_sharing_a_run_base_refuse_even_when_replica_numbers_nest():
+    """The rule that fixes the over-tagging defect this round's review found. `310K` ran
+    one extra minimisation on top of `production`, splitting into a `{prod}` cohort
+    (`300K/*`) and a `{prod, min}` cohort (`310K/*`) that still SHARE `prod` -- two arms of
+    one sweep, not two phases of a pipeline. Both cohorts happen to report at the same
+    index with matching replica numbering (`rep1`, `rep2` in both), so nesting alone would
+    have merged two different temperatures into one lineage. This is the shape that used to
+    return a tagged dict instead of `{}` before the disjointness check existed."""
+    names = ["300K/rep1/prod_0001", "300K/rep2/prod_0001",
+             "310K/rep1/prod_0001", "310K/rep2/prod_0001",
+             "310K/rep1/min_0001", "310K/rep2/min_0001"]
+    assert infer_lineages_from_layout(names) == {}
+
+
+def test_a_per_replica_extra_run_does_not_cross_the_temperature_axis():
+    """The worse half of the same defect: the extra minimisation lands on one replica per
+    arm (`310K/rep1` only) rather than the whole arm, so without the disjointness check
+    `310K/rep1` and `310K/rep2` would still land in the SAME cohort as `300K/rep1` and
+    `300K/rep2` by run base -- tagging `rep1` across both temperatures as one member."""
+    names = ["300K/rep1/prod_0001", "300K/rep2/prod_0001",
+             "310K/rep1/prod_0001", "310K/rep1/min_0001",
+             "310K/rep2/prod_0001", "310K/rep2/min_0001"]
+    assert infer_lineages_from_layout(names) == {}
+
+
+def test_deliberately_parallel_arms_with_disjoint_bases_still_merge_a_known_limitation():
+    """A documented, accepted gap, not a defect: `apo/*` and `holo/*` use entirely distinct
+    run names of their own, so their bases are genuinely disjoint -- the same shape that
+    lets `equil/*` and `prod/*` reconcile into one pipeline. Directory layout alone cannot
+    tell a pipeline's phases apart from two rival arms that happen to use different names,
+    so this still merges. Deferred to the multi-axis design; see manifest.md §9.1."""
+    names = [f"apo/{n}/prod_apo_0001" for n in ("01", "02", "03")]
+    names += [f"holo/{n}/prod_holo_0001" for n in ("01", "02")]
+    tags = infer_lineages_from_layout(names)
+    assert set(tags.values()) == {"01", "02", "03"}
+
+
 # --- the four in-scope topologies of design section 1.1 ----------------------
 
 def test_topology_1_n_equilibrations_each_feeding_one_production():
@@ -226,3 +402,21 @@ def test_topology_4_one_topology_with_different_starting_coordinates():
     sim = _tagged(["pose1/prod_0001", "pose2/prod_0001", "pose3/prod_0001"])
     assert list(lineages(sim)) == ["pose1", "pose2", "pose3"]
     assert is_multi_lineage(sim) is True
+
+
+# --- the sys021 shape ---
+
+def test_the_sys021_fixture_has_five_equil_and_five_prod_directories(sys021_tree):
+    """The fixture the whole spec is written against, pinned so a later edit cannot
+    quietly reshape it. `prod/01` carries the stray `cpptraj` run that put it in a cohort
+    of its own -- removing it would make the reconciliation task pass for the wrong
+    reason."""
+    equil = sorted(p.name for p in (sys021_tree / "equil").iterdir())
+    prod = sorted(p.name for p in (sys021_tree / "prod").iterdir())
+    assert equil == ["01", "02", "03", "04", "05"]
+    assert prod == ["01", "02", "03", "04", "05"]
+    assert (sys021_tree / "prod" / "01" / "cpptraj.in").exists()
+    # rep 01 ran one chunk further than the rest, and every rep has one queued chunk.
+    assert (sys021_tree / "prod" / "01" / "nvt_prod_0003.mdout").exists()
+    assert not (sys021_tree / "prod" / "01" / "nvt_prod_0004.mdout").exists()
+    assert (sys021_tree / "prod" / "01" / "nvt_prod_0004.mdin").exists()

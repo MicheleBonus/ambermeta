@@ -14,7 +14,7 @@ import { pushToast } from "@/lib/toast";
 import {
   useDocument, useAssign, useReorderSteps, useMoveStep, useReorderPhases,
   useCreatePhase, useCreateStep, useUpdateStep,
-  useOpen, useSave, useDiscover, useValidate, useUndo, useRedo,
+  useOpen, useSave, useDiscover, useValidate, useUndo, useRedo, useInferLineages,
 } from "@/api/hooks";
 import { TopBar } from "@/components/TopBar/TopBar";
 import { DiscoverModal } from "@/components/TopBar/DiscoverModal";
@@ -24,13 +24,14 @@ import { ValidationPanel } from "@/components/TopBar/ValidationPanel";
 import { FilePicker } from "@/components/FilePicker/FilePicker";
 import { FilePanel } from "@/components/FilePanel/FilePanel";
 import { Canvas } from "@/components/Canvas/Canvas";
+import { ProposalStrip } from "@/components/Canvas/ProposalStrip";
 import { SuggestionsContext } from "@/components/Suggestions/suggestionsContext";
 import { Inspector } from "@/components/Inspector/Inspector";
 import { resolveDrop, type SlotKind } from "@/components/Canvas/resolveDrop";
 import { canvasCollisionDetection } from "@/components/Canvas/dropSpecificity";
 import { DragChip, type ActiveDrag } from "@/components/Canvas/DragChip";
 import { reorderIds } from "@/components/Canvas/reorderIds";
-import type { FileType, StepCreatePayload, Suggestion } from "@/types";
+import type { FileType, LineageProposal, StepCreatePayload, Suggestion } from "@/types";
 
 /** A create-step body naming the step after the file that fills one of its slots. */
 function stepFromFile(path: string, slot: SlotKind): StepCreatePayload {
@@ -57,6 +58,7 @@ export default function App() {
   const save = useSave();
   const discover = useDiscover();
   const validate = useValidate();
+  const inferLineages = useInferLineages();
 
   const [picker, setPicker] = useState<"open" | "save" | null>(null);
   const [discoverOpen, setDiscoverOpen] = useState(false);
@@ -64,6 +66,12 @@ export default function App() {
   const [validateOpen, setValidateOpen] = useState(false);
   const [planOpen, setPlanOpen] = useState(false);
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
+  // One field, not two booleans (`proposal` + `mode` held apart): the strip needs both or
+  // neither, and a pair of independent setState calls invites a render where one has
+  // updated and the other has not -- ProposalStrip would then either mount without a
+  // proposal (its prop is non-nullable, so this misrenders rather than type-checks) or
+  // stay closed with a proposal already sitting in state.
+  const [strip, setStrip] = useState<{ proposal: LineageProposal; mode: "proposed" | "manual" } | null>(null);
   const [drag, setDrag] = useState<ActiveDrag | null>(null);
   const modalOpen = useAnyModalOpen();
 
@@ -180,6 +188,36 @@ export default function App() {
     else setPicker("save");
   };
   const onDiscover = () => { if (confirmIfDirty()) setDiscoverOpen(true); };
+  const onDefineReplicas = () => {
+    // The bare call runs the same cohort/nesting inference Discover's own proposal uses,
+    // and it refuses on purpose for exactly the trees this button exists for -- a nested
+    // sweep, or a flat chain with no directory segment at all (see
+    // build_lineage_proposal's docstring). Reusing it first is not wasted work, though:
+    // when the document DOES have a clean cohort structure (a reopened manifest, steps
+    // built by hand since the last scan), this gives a correctly-pre-selected segment
+    // instead of the crude one below.
+    inferLineages.mutate(undefined, {
+      onSuccess: (res) => {
+        if (res.proposal) return void setStrip({ proposal: res.proposal, mode: "manual" });
+        // Declined. An explicit segment_index never refuses the way the bare call just
+        // did: it tags every run by its OWN value at that index, with no cohort
+        // reconciliation, so index 0 -- a run's first path part, or its whole name where
+        // there is no "/" at all -- always seeds a real, editable picker as long as the
+        // document holds at least one step. Skipping this second call is the one thing
+        // the pre-audit draft of this button got wrong: it left "Define replicas..." dead
+        // on precisely the trees it was built to rescue, which is what turned that draft
+        // into a blocker rather than a nice-to-have.
+        inferLineages.mutate(0, {
+          onSuccess: (res2) => {
+            if (res2.proposal) setStrip({ proposal: res2.proposal, mode: "manual" });
+            // else: truly nothing to group (the document has no steps at all). The
+            // hook's own onSuccess (hooks.ts) has already toasted res2.warnings, so
+            // there is nothing left to say here.
+          },
+        });
+      },
+    });
+  };
 
   return (
     <SelectionProvider>
@@ -194,7 +232,7 @@ export default function App() {
           <div className="flex flex-col h-full">
             <TopBar onOpen={onOpen} onSave={onSave} onDiscover={onDiscover}
               onExport={() => setExportOpen(true)} onValidate={() => setValidateOpen(true)}
-              onPlan={() => setPlanOpen(true)} />
+              onPlan={() => setPlanOpen(true)} onDefineReplicas={onDefineReplicas} />
             <div className="flex flex-1 min-h-0">
               <div data-testid="pane-files" style={{ width: filesW }}
                 className="shrink-0 border-r border-hairline overflow-auto bg-surface"><FilePanel /></div>
@@ -213,11 +251,24 @@ export default function App() {
             onClose={() => setPicker(null)}
             onPick={({ path, format }) => { setPicker(null); save.mutate({ path, format }); }} />
           <DiscoverModal open={discoverOpen} onClose={() => setDiscoverOpen(false)}
-            onRun={(a) => discover.mutate(a, { onSuccess: (res) => setSuggestions(res.suggestions) })} />
+            onRun={(a) => discover.mutate(a, {
+              onSuccess: (res) => {
+                setSuggestions(res.suggestions);
+                // `discover_draft` runs with `apply_tags=False` from this route (see its
+                // own docstring): a fresh scan of someone else's tree is a claim about
+                // THEIR data the tool has not been told to make, so nothing here is
+                // written to any step yet -- only proposed, in "proposed" mode, and the
+                // user accepts or corrects it through ProposalStrip itself.
+                if (res.proposal) setStrip({ proposal: res.proposal, mode: "proposed" });
+              },
+            })} />
           <ExportModal open={exportOpen} onClose={() => setExportOpen(false)} />
           <PlanModal open={planOpen} onClose={() => setPlanOpen(false)} />
           <ValidationPanel open={validateOpen} onClose={() => setValidateOpen(false)}
             onSuggestions={setSuggestions} />
+          {strip && (
+            <ProposalStrip proposal={strip.proposal} mode={strip.mode} onClose={() => setStrip(null)} />
+          )}
 
           <DragOverlay dropAnimation={null}>
             {drag && <DragChip drag={drag} sim={doc?.simulation} base={doc?.base_directory ?? null} />}

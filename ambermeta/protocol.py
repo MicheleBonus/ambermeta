@@ -147,6 +147,12 @@ class SimulationStage:
     lineage: Optional[str] = None
     step_id: Optional[str] = None
     parent_id: Optional[str] = None
+    # Whether this stage produced output. The only non-default value is "queued": an mdin
+    # with no mdout, set by both engine entry points (the manifest path and the scan path
+    # — see `_looks_queued`) rather than derived here, because they are the two places
+    # that still have the raw file-presence facts (which kinds were even declared) in
+    # front of them; by the time a stage reaches `totals()` that distinction is gone.
+    status: Optional[str] = None
     # What the mdout stated before the run started: the resolved seed, the authoritative
     # begin time, and the chain AMBER itself asserts through File Assignments. Kept beside
     # `mdout` rather than on `MdoutData.details`, because that dataclass is serialised with
@@ -169,6 +175,7 @@ class SimulationStage:
             + self._validate_box()
             + self._validate_timing()
             + self._validate_sampling()
+            + self._validate_elapsed_time()
         ):
             if msg not in existing:
                 self.validation.append(msg)
@@ -310,6 +317,63 @@ class SimulationStage:
                     notes.append(f"Coordinate write frequency differs between {base[0]} and {label} ({base[1]} vs {val}).")
         return notes
 
+    def _validate_elapsed_time(self) -> List[str]:
+        """"Ran, mdout unusable -> contributes nothing, plus a note" — the one run state
+        in the design's table that no earlier task gave a voice to. `_elapsed_ps`'s own
+        docstring names the note and defers it ("...for the note it writes, but not
+        here"); nothing downstream ever picked it up, so a truncated or corrupt mdout
+        silently contributed a zero indistinguishable from a stage that never ran at all —
+        the exact silence `status="queued"` exists to remove for the *other* zero-
+        contributing state, left open for this one.
+
+        Deliberately excludes the two situations `_elapsed_ps` also returns `None` for
+        that are NOT "unusable":
+
+        * queued -- `self.mdout is None` covers it (no mdout was ever declared, so nothing
+          was attempted), and it already has its own `status`; a note here would say the
+          same thing twice in two different vocabularies.
+        * minimisation -- checked before `_elapsed_ps` is even called, matching that
+          function's own run_type-before-stats order (see
+          test_a_minimisation_is_recognised_by_run_type_before_stats_are_ever_read). A min
+          mdout legitimately has no elapsed time and never had one; noting it would send a
+          user to go investigate a stage with nothing wrong with it, which is the test
+          `test_a_minimisation_gets_no_note_despite_never_having_an_elapsed_time` pins.
+
+        A third outcome lives here too, added alongside `_fenced_elapsed_ps`: a stage whose
+        elapsed time WAS produced, but not read off the header -- the header's begin time
+        overflowed AMBER's fixed-width field and `_elapsed_ps_and_source` fell back to the
+        fencepost estimate. That is not "unusable" (a real number reached `totals()`), so
+        it must not get the note above; but silently substituting a derived number for a
+        stated one would erase precisely the distinction that matters most on a long
+        campaign, where the estimate's small error compounds across many overflowed
+        chunks. Reusing the established `INFO:` convention here, rather than inventing a
+        second mechanism, is what keeps this note showing up in the same places (
+        `stage.validation`, `to_dict()`'s `summary.evidence`) a reader already knows to
+        check for the first one.
+        """
+        if self.mdout is None or self.mdout.details is None:
+            return []
+        if getattr(self.mdout.details, "run_type", None) == "Minimization":
+            return []
+        elapsed, source = _elapsed_ps_and_source(self)
+        if elapsed is None:
+            return [f"INFO: Elapsed time for {self.name} could not be measured "
+                    "(mdout present but unusable)."]
+        if source == ORIGIN_FENCEPOST:
+            return [f"INFO: Elapsed time for {self.name} was derived from frame spacing, "
+                    "not read from the header (its stated begin time overflowed AMBER's "
+                    "fixed-width field)."]
+        if source == ORIGIN_FIRST_FRAME:
+            # A DIFFERENT inference from the fencepost one above, and it must not borrow
+            # that sentence: nothing here was derived from spacing, and the header's begin
+            # time did not overflow -- it is present, reads 0.000, and is simply not the
+            # clock origin under irest=0. Saying "overflowed" would send a reader looking
+            # for a `**********` that is not in the file.
+            return [f"INFO: Elapsed time for {self.name} was measured from its first "
+                    "printed frame: the run set its own clock (irest = 0) and the CONTROL "
+                    "DATA `t` it started from could not be read."]
+        return []
+
     def _add_continuity_note(self, message: str) -> None:
         self.continuity.append(message)
         self.validation.append(message)
@@ -338,13 +402,25 @@ class SimulationStage:
         }
 
     def to_dict(self) -> Dict[str, Any]:
-        return {
+        out: Dict[str, Any] = {
             "name": self.name,
             "stage_role": self.stage_role,
             "expected_gap_ps": self.expected_gap_ps,
             "gap_tolerance_ps": self.gap_tolerance_ps,
             "observed_gap_ps": self.observed_gap_ps,
             "restart_path": self.restart_path,
+        }
+        # Emitted only when queued, so an ordinary (non-queued) stage's summary.json block
+        # is unchanged from what it was before this field existed — `to_dict()` feeds
+        # summary.json, byte-pinned by test_lineage_backcompat.py's `assert_matches_golden`,
+        # which fails on any ADDED key path, even a null one. `queued_count` in `totals()`
+        # said how many; this is what makes the artifact say WHICH ones, rather than
+        # leaving a reader to infer it from `files.mdout: null` plus the absence of a
+        # `load_errors` entry — the same silence this whole feature exists to remove, one
+        # level down.
+        if self.status is not None:
+            out["status"] = self.status
+        out.update({
             "summary": self.summary(),
             "validation": list(self.validation),
             "continuity": list(self.continuity),
@@ -357,7 +433,322 @@ class SimulationStage:
                 "mdout": _serialize_metadata(self.mdout),
                 "mdcrd": _serialize_metadata(self.mdcrd),
             },
-        }
+        })
+        return out
+
+
+def _fenced_elapsed_ps(stats: Optional["ThermoStats"]) -> Optional[float]:
+    """The fencepost estimate of `time_end - begin_time_ps`, used only when the header
+    itself cannot say what `begin_time_ps` was.
+
+    AMBER prints `begin time read from input coords` into a fixed-width Fortran field.
+    Once a restarted chain's accumulated simulated time passes roughly 1e6 ps the value no
+    longer fits and AMBER writes `**********` instead of a number -- `mdout_header.py`'s
+    `_BEGIN_TIME` requires a digit and simply does not match, so `begin_time_ps` comes back
+    `None` for a run that is otherwise perfectly healthy: same file size as its neighbours,
+    a full TIMINGS block, both a trajectory and a restart written. Reporting `None` here
+    unconditionally would make that run's whole elapsed time vanish from every total --
+    exactly the failure this module exists to prevent, pointed the other way, and it gets
+    worse with campaign length rather than better.
+
+    `ThermoStats` already carries what is needed to recover the number WITHOUT the header:
+    frames print at `begin+iv, begin+2*iv, ..., begin+count*iv = time_end`, so the first
+    PRINTED frame is `time_start = begin+iv`, and therefore
+    `time_end - time_start + iv = count*iv = time_end - begin` -- the same quantity the
+    header would have given, recovered purely from output spacing.
+
+    This is NOT the bare `stats.time_start` substitution `_check_stage_pair` documents and
+    rejects elsewhere in this module: using `time_start` alone is short by exactly one
+    `+iv`, which is what "manufactures a gap on every chunked run" there (1020.0 against a
+    true 920.0). The `+ iv` term is precisely what was missing from that rejected
+    substitution -- this is a different, complete formula, not a second attempt at the
+    same one.
+
+    `ThermoStats.true_coverage_ns` already computes this fencepost quantity (in ns), so it
+    is reused here rather than re-derived in ps -- but only once `count >= 2`, checked
+    BEFORE the call: `avg_interval_ps` (and therefore `true_coverage_ns`) returns exactly
+    `0.0` for a single-frame chunk, and a `0.0` returned from THIS function would be read
+    by every caller as "this stage really did contribute zero elapsed time" -- a false
+    zero indistinguishable from "the estimate could not be made" at all, which defeats the
+    whole point of falling back instead of reporting `None`. `count < 2` therefore has to
+    return `None` here, explicitly, before `true_coverage_ns` is ever asked.
+
+    The result is an INFERENCE, not a reading: it assumes `ntpr` (the coordinate/energy
+    print interval) was constant for the life of the run, which is standard AMBER
+    behaviour but not something a parser can verify from the file alone. Every caller that
+    substitutes this value for a missing header reading is expected to say so -- see the
+    "derived from frame spacing" notes in `_validate_elapsed_time` and `_check_stage_pair`.
+    """
+    if stats is None or getattr(stats, "count", 0) < 2:
+        return None
+    coverage_ns = stats.true_coverage_ns
+    if coverage_ns <= 0:
+        return None
+    # `true_coverage_ns` is ps/1000; undo that conversion rather than re-deriving
+    # `time_end - time_start + interval` in ps ourselves, so there is exactly one place
+    # that computes the fencepost quantity and this function only ever converts its units.
+    return coverage_ns * 1000.0
+
+
+def _fenced_begin_time_ps(stats: Optional["ThermoStats"]) -> Optional[float]:
+    """The fencepost estimate of the run's ABSOLUTE begin time, for `_check_stage_pair`'s
+    own independent read of `begin_time_ps` -- used for the continuity/gap check, separate
+    from `_elapsed_ps_and_source`'s read of the same header field for the totals.
+
+    `_fenced_elapsed_ps` already recovers `time_end - begin`; solving for `begin` given
+    `time_end` is one subtraction. Reusing it here rather than re-deriving
+    `time_start - interval` independently keeps the two call sites -- totals and
+    continuity -- agreeing on what "header unavailable" and "single frame" mean, instead
+    of risking two guards that quietly drift apart under a future edit to one of them.
+    """
+    if stats is None:
+        return None
+    fenced_elapsed = _fenced_elapsed_ps(stats)
+    if fenced_elapsed is None:
+        return None
+    end = getattr(stats, "time_end", None)
+    if end is None:
+        return None
+    return float(end) - fenced_elapsed
+
+
+# Where a run's ABSOLUTE clock origin came from. Two of these are readings and two are
+# inferences, and `_STATED_ORIGINS` is the line between them: a caller substituting an
+# inference for a reading has to say so (see `_validate_elapsed_time` and
+# `_check_stage_pair`), because on a long campaign the inference's small error compounds
+# across every chunk while a reading's does not.
+ORIGIN_HEADER = "header"          # `begin time read from input coords` -- irest=1
+ORIGIN_CONTROL_T = "control-t"    # CONTROL DATA `t` -- irest=0, where the header is a 0.0
+ORIGIN_FIRST_FRAME = "first-frame"  # the NSTEP = 0 record -- irest=0 with `t` unreadable
+ORIGIN_FENCEPOST = "fencepost"    # time_start - interval -- the header overflowed
+_STATED_ORIGINS = (ORIGIN_HEADER, ORIGIN_CONTROL_T)
+
+
+def _origin_time_ps(
+    header: Optional["MdoutHeader"],
+    stats: Optional["ThermoStats"],
+    *,
+    is_minimisation: bool = False,
+) -> Tuple[Optional[float], Optional[str]]:
+    """The ABSOLUTE AMBER clock reading this run started from, and where that came from.
+
+    ONE function for both readers of this quantity -- `_elapsed_ps_and_source` (totals) and
+    `_check_stage_pair` (continuity). They each used to read `begin_time_ps` and fall back
+    independently, and the ledger already records what that costs: the fencepost fallback
+    had to be added twice, and a fix to one left the other silently wrong for exactly the
+    runs the fix was about.
+
+    **`irest` decides whether the header's begin time means anything at all.** This is the
+    regression this function exists to close, measured on the campaign the branch was
+    written against:
+
+        equil/NN/18_ntp_equi:  ntx = 1, irest = 0, t = 1800.0, nstlim = 1600000, dt = 0.002
+        mdout: `begin time read from input coords =     0.000 ps`
+               `NSTEP =        0   TIME(PS) =    1800.000`   <- first frame
+               `NSTEP =  1600000   TIME(PS) =    5000.000`   <- last frame
+
+    Under `irest = 0` AMBER does not take the clock from the coordinate file -- it
+    initialises from the mdin's `t` -- so it prints "begin time read from input coords =
+    0.000" because it genuinely read none, and starts the trajectory at 1800. Reading that
+    0.000 as the origin reports 5000 ps of dynamics for a run that did 3200 (`nstlim x dt`,
+    the frame span 5000-1800, and 160 intervals x 20 ps all agree on 3200). Five runs, one
+    per replica: the campaign reported 5,039,000 ps against a true 5,030,000.
+
+    Verified over all 1091 mdouts of that campaign: `irest = 0` and an `NSTEP = 0` record
+    are the same set (10 MD runs, plus 70 minimisations with no TIME(PS) frames at all),
+    and `irest = 1` runs (1011 of them) never print one. That is why the `irest = 0` route
+    never takes the fencepost below: the fencepost adds one interval to `time_end -
+    time_start` on the assumption that the first PRINTED frame is one interval after the
+    origin, which is false exactly when an `NSTEP = 0` record exists -- measured 3220
+    against a true 3200 on these very runs. Routing `irest = 0` to `t` (or, failing that,
+    straight to the un-fenced first frame, which IS the origin) is what keeps that
+    overshoot unreachable rather than merely unreached.
+
+    `t` is NOT preferred unconditionally, and must never be: under `irest = 1` AMBER
+    ignores it. The repo's own back-compat fixtures say `t = 1000.0` for a run that began
+    at 920.0, and the real campaign's `nvt_prod_0201` says `t = 5000.0` for a run that
+    began at 1005019.992.
+
+    **`is_minimisation` narrows the `irest = 0` rule above -- it does not hold for a
+    minimisation, and this function used to apply it there anyway.** Real counterexample on
+    the campaign this branch was written against: `equil/01/07_min_red.out` is
+    `imin = 1, ntx = 1, irest = 0`, states no `t` anywhere in CONTROL DATA (a minimisation's
+    CONTROL DATA has no `Molecular dynamics:` section to state one in), and prints no
+    `NSTEP = 0` / `TIME(PS)` record (a minimisation prints `NSTEP ENERGY RMS GMAX` instead)
+    -- yet its header begin time is a perfectly valid, non-zero 1800.000. The `irest = 0`
+    rule above is about DYNAMICS specifically: AMBER substitutes the mdin's `t` for the
+    coordinate file's time only because it is initialising an MD clock it is about to
+    integrate forward, and a minimisation has no such clock to initialise. Nothing in AMBER
+    suppresses the coordinate file's stated time for a minimisation, `irest` notwithstanding,
+    so the header's `begin_time_ps` remains a READING, not the meaningless 0.000 a dynamics
+    run under the same `irest = 0` would print. Before this parameter existed, the two
+    routes above both failed here (no stated `t`, no first frame -- a minimisation has
+    neither) and this function returned `(None, None)`, discarding a begin time that was
+    never untrustworthy in the first place -- a regression this file's own re-review caught:
+    the pre-`_origin_time_ps` code used 1800.0 for exactly this file via `begin_time_ps`
+    directly, and `_check_stage_pair` started reporting "Cannot verify continuity" instead.
+    Costs nothing on the TOTALS path: `_elapsed_ps_and_source` excludes minimisations by
+    `run_type` before it ever calls this function (a minimisation has no elapsed dynamics
+    time to measure), so this widens only what CONTINUITY (`_check_stage_pair`) can verify.
+    A DYNAMICS `irest = 0` run with neither a stated `t` nor a first frame still returns
+    `(None, None)`: unlike a minimisation, its header begin remains exactly the untrustworthy
+    0.000 the C1 fix this function exists to hold was about, and trusting it would
+    reintroduce the over-count on any dynamics mdout whose CONTROL DATA `t` failed to parse.
+    """
+    if header is None:
+        return None, None
+    if getattr(header, "irest", None) == 0:
+        stated_t = getattr(header, "control_t_ps", None)
+        if stated_t is not None:
+            return float(stated_t), ORIGIN_CONTROL_T
+        # `t` shares AMBER's overflowing fixed-width field with the begin time (the repo's
+        # own back-compat fixtures print `t       =**********` from 21000 ps on), so an
+        # irest=0 run whose clock was set past ~1e6 states no readable `t` either. The
+        # NSTEP = 0 record it printed carries the same number, un-fenced.
+        if stats is not None and getattr(stats, "count", 0):
+            first = getattr(stats, "time_start", None)
+            if first is not None:
+                return float(first), ORIGIN_FIRST_FRAME
+        # LAST resort, and gated on `is_minimisation` for exactly the reason the docstring
+        # above walks through at length: a minimisation's header begin time was never put
+        # through the substitution that makes a DYNAMICS irest=0 run's begin time
+        # meaningless, so it is safe to trust here where a dynamics run's would not be.
+        if is_minimisation:
+            begin = getattr(header, "begin_time_ps", None)
+            if begin is not None:
+                return float(begin), ORIGIN_HEADER
+        return None, None
+    begin = getattr(header, "begin_time_ps", None)
+    if begin is not None:
+        return float(begin), ORIGIN_HEADER
+    # The header states nothing: either AMBER's fixed-width field overflowed once this
+    # chain passed ~1e6 ps of accumulated time (`**********`), or the block is absent
+    # entirely. `read_mdout_header` cannot tell those apart and neither can this function.
+    fenced = _fenced_begin_time_ps(stats)
+    return (fenced, ORIGIN_FENCEPOST) if fenced is not None else (None, None)
+
+
+def _elapsed_ps_and_source(stage: "SimulationStage") -> Tuple[Optional[float], Optional[str]]:
+    """How much simulated time this stage actually produced, and which of
+    `_origin_time_ps`'s four routes the clock origin it was measured against came from.
+
+    The `Optional[float]` half is `None` for four different situations that all have to be
+    told apart by the caller for the note it writes, but not here:
+
+    * queued -- an mdin with no mdout. The run was set up and never executed. Counting it
+      was the bug: on the campaign this was written against it was 25 ns of simulation
+      that never happened, reported with ok: true;
+    * minimisation -- a min mdout prints `NSTEP ENERGY RMS GMAX`, never `TIME(PS)`, so it
+      has no elapsed time and never had one. It contributed 0 under the old rule too
+      (no nstlim/dt in the mdin), so this is not a change;
+    * unreadable -- `parse_mdout` catches nothing and returns a default-valued object
+      rather than raising, so a malformed-but-present mdout arrives as `stats.count == 0`
+      rather than as `stage.mdout is None`;
+    * no clock origin derivable by ANY of `_origin_time_ps`'s routes -- see there.
+      Falling back to 0.0 for any route would make an absolute time look like an
+      elapsed one, which is the 304,600-ps-against-100,000 bug, so silence is the only
+      truthful answer left.
+
+    `time_end` is ABSOLUTE. `time_end - time_start` is NOT the alternative in general:
+    on an `irest = 1` run `time_start` is the first PRINTED frame, one ntpr interval after
+    the true begin, which is short by one interval per run -- the trap already documented
+    at `_check_stage_pair`. (On an `irest = 0` run it is exactly right, because the
+    `NSTEP = 0` record IS the origin; `_origin_time_ps` is where that distinction lives.)
+
+    A STATED origin stays PRIMARY over an inferred one within each `irest` branch: the
+    header (or the control-data `t`) says what AMBER used, while the fencepost value is an
+    inference from output spacing (see `_fenced_elapsed_ps`'s docstring for why that
+    distinction matters and stays load-bearing all the way to the artifact).
+    """
+    if stage.mdout is None or stage.mdout.details is None:
+        return None, None
+    details = stage.mdout.details
+    if getattr(details, "run_type", None) == "Minimization":
+        return None, None
+    stats = getattr(details, "stats", None)
+    if stats is None or getattr(stats, "count", 0) == 0:
+        return None, None
+    if stage.mdout_header is None:
+        return None, None
+    end = getattr(stats, "time_end", None)
+    if end is None:
+        return None, None
+
+    origin, source = _origin_time_ps(stage.mdout_header, stats)
+    if origin is None:
+        return None, None
+    elapsed = float(end) - origin
+
+    # One guard for every route, run on whichever `elapsed` was produced, rather than a
+    # `> 0` check duplicated inside each branch: an estimate that comes out <= 0 is exactly
+    # as untrustworthy whichever origin produced it, and must be reported the same way to
+    # the caller -- `None`, never a negative or false-zero "elapsed" time. `count < 2` is
+    # already `None` before this point, via `_fenced_begin_time_ps`'s inherited guard.
+    if elapsed <= 0:
+        return None, None
+    return elapsed, source
+
+
+def _timestep_ps(stage: "SimulationStage") -> Optional[float]:
+    """This stage's integration timestep in ps, or None when nothing stated one.
+
+    Three sources, in decreasing order of what they actually establish:
+
+    1. the mdout header's CONTROL DATA `dt` -- what AMBER RESOLVED and ran with;
+    2. the mdin's `dt` -- what the user ASKED for;
+    3. `MdoutMetadata.dt` -- the same control-data line as (1), read by the legacy
+       whole-file parser.
+
+    The order exists because (3) alone is not safe to trust and the guard that was supposed
+    to protect against that was dead code. `MdoutMetadata.dt` defaults to **0.001**, which
+    is truthy and a perfectly ordinary real timestep, so `if not dt: <use the mdin>` never
+    fired: an mdout with frames but a CONTROL DATA block the legacy parser did not read
+    reported `dt = 0.001` for a 0.002 run and published `steps` at exactly TWICE the truth,
+    while the mdin sitting beside it plainly stated 0.002. `MdoutHeader.control_dt_ps` is
+    `None` when the file did not state one, which is what makes the fallback reachable at
+    all. (3) is kept last rather than deleted so an mdout the header reader stopped short
+    of -- it stops at the results banner; the legacy parser does not -- still contributes
+    what it has.
+
+    Returns `None`, not a default, when sources (1) and (2) both state nothing AND (3) is
+    itself absent (no mdout, or no `.details` on it) -- but NOT, despite the paragraph
+    above, whenever "no source states a usable timestep" in the sense a reader would take
+    that to mean. (3) is exactly the source this function exists to stop being trusted
+    blindly, and it is *still* trusted blindly once reached: `MdoutMetadata.dt`'s truthy
+    0.001 default cannot be told apart from a file that genuinely stated 0.001, because the
+    legacy parser records no separate "did I actually see a `dt =` line" flag. So a stage
+    whose header CONTROL DATA did not parse (1) and whose mdin is missing or unparseable (2)
+    reports 0.001 here whether or not ANY source ever stated a timestep -- doubling `steps`
+    for a genuine 0.002 run exactly as (3) alone always did, just one fallback further out
+    than before. This is PRE-EXISTING, not introduced by the ordering fix above, and not
+    closed by it: closing it means giving `MdoutMetadata.dt` an `Optional[float] = None`
+    default so "unstated" and "0.001" stop being the same value, and `MdoutMetadata` is the
+    exact dataclass `asdict()`-ed verbatim into `summary.json` per stage (see
+    `mdout_header.py`'s module docstring) -- so that default is not free to change; every
+    golden mdout that never printed a `dt =` line at all would flip its emitted
+    `mdout.details.dt` from `0.001` to `null`, and this repo's own goldens are byte-pinned
+    against exactly that field. The honest fix available here is this paragraph, not the
+    code: source (3) is a source of last resort in name only, and a stage that reaches it
+    with no genuine reading is a silent, pre-existing risk, not a closed one.
+    """
+    for value in (
+        getattr(stage.mdout_header, "control_dt_ps", None) if stage.mdout_header else None,
+        getattr(stage.mdin.details, "dt", None) if (stage.mdin and stage.mdin.details) else None,
+        getattr(stage.mdout.details, "dt", None) if (stage.mdout and stage.mdout.details) else None,
+    ):
+        if isinstance(value, (int, float)) and value > 0:
+            return float(value)
+    return None
+
+
+def _elapsed_ps(stage: "SimulationStage") -> Optional[float]:
+    """`_elapsed_ps_and_source`'s value alone, for the many callers that only need the
+    number -- totals, the stats CSV -- and not where the origin came from. Callers that
+    DO need to know (`_validate_elapsed_time`, `_check_stage_pair`'s own origin read)
+    call `_elapsed_ps_and_source` directly rather than reconstructing the source from this
+    function's return value, which cannot be told apart from a value AMBER actually wrote.
+    """
+    return _elapsed_ps_and_source(stage)[0]
 
 
 @dataclass
@@ -443,6 +834,7 @@ class SimulationProtocol:
         start_time = None
         if current.inpcrd and current.inpcrd.details:
             start_time = getattr(current.inpcrd.details, "time", None)
+        start_time_source = None
         if start_time is None and current.mdout_header is not None:
             # The mdout says when the run began, and says it whether or not the restart it
             # read is machine-readable here. On a bare install `netCDF4`/`scipy` are
@@ -451,10 +843,36 @@ class SimulationProtocol:
             #
             # Fallback rather than preference: where both exist they agree, and the inpcrd
             # is what the existing goldens were generated from. Note the mdout's *stats*
-            # are not an alternative — `stats.time_start` is the first printed frame, one
-            # `ntpr` interval later (1020.0 against a true 920.0), so reaching for it
-            # manufactures a gap on every chunked run.
-            start_time = current.mdout_header.begin_time_ps
+            # are not an alternative on their own — on an `irest = 1` run `stats.time_start`
+            # is the first printed frame, one `ntpr` interval later (1020.0 against a true
+            # 920.0), so reaching for it manufactures a gap on every chunked run.
+            #
+            # Routed through `_origin_time_ps`, the SAME function `_elapsed_ps_and_source`
+            # uses, rather than reading `begin_time_ps` here independently. This used to be
+            # its own read with its own fallback, and the ledger records what that cost:
+            # the fencepost fallback had to be written twice, and the `irest = 0` fix would
+            # otherwise correct the totals while leaving continuity comparing against a
+            # begin time of 0.000 for exactly the runs it had just corrected — a phantom
+            # multi-nanosecond "overlap" reported on five healthy runs.
+            #
+            # KNOWN LIMITATION, left as it is deliberately: `current.inpcrd`'s own time
+            # still wins above, and under `irest = 0` AMBER IGNORES that file's time. The
+            # two agree on the campaign this was written against (the restart handed over
+            # really was written at `t`), the goldens were generated from the inpcrd route,
+            # and changing the preference is a continuity change rather than a totals fix.
+            stats = None
+            run_type = None
+            if current.mdout and current.mdout.details:
+                stats = getattr(current.mdout.details, "stats", None)
+                run_type = getattr(current.mdout.details, "run_type", None)
+            # `is_minimisation` is what lets `_origin_time_ps` trust a valid header begin
+            # time under `irest = 0` here without reintroducing the over-count on a DYNAMICS
+            # run whose CONTROL DATA `t` failed to parse -- see that function's own
+            # docstring for the real counterexample (`equil/01/07_min_red.out`) this closes.
+            start_time, start_time_source = _origin_time_ps(
+                current.mdout_header, stats,
+                is_minimisation=(run_type == "Minimization"),
+            )
 
         if end_time is None or start_time is None:
             # Add informational note when continuity check is skipped
@@ -470,6 +888,23 @@ class SimulationProtocol:
             return
 
         gap = start_time - end_time
+
+        if start_time_source == ORIGIN_FENCEPOST:
+            # Same "derived from frame spacing" convention `_validate_elapsed_time` uses
+            # for the totals -- follow it here too rather than inventing a second way to
+            # say the same thing, so a reader who has already learned to look for this
+            # phrase in `summary.evidence` finds it for continuity as well.
+            current._add_continuity_note(
+                f"INFO: Start time for {current.name} was derived from frame spacing, "
+                "not read from the header (its stated begin time overflowed AMBER's "
+                "fixed-width field)."
+            )
+        elif start_time_source == ORIGIN_FIRST_FRAME:
+            current._add_continuity_note(
+                f"INFO: Start time for {current.name} was read from its first printed "
+                "frame: the run set its own clock (irest = 0) and the CONTROL DATA `t` it "
+                "started from could not be read."
+            )
 
         # Tolerance is a small absolute floor plus half a frame interval —
         # NOT scaled by elapsed time, which would hide real gaps in long runs.
@@ -539,22 +974,29 @@ class SimulationProtocol:
 
     @staticmethod
     def _sum_stages(stages: List[SimulationStage]) -> Dict[str, float]:
-        """`steps` and `time_ps` over any set of stages.
+        """`steps` and `time_ps` over any set of stages, counting only what ran.
+
+        Sourced from the mdout, not the mdin: the mdin states intent and a run that was
+        queued and never started, or started and was killed at 60%, states the same
+        intent as one that finished. See `_elapsed_ps_and_source` for what "ran" means,
+        for why the primary formula is `time_end - begin_time_ps`, and for the
+        frame-spacing fallback used when the header's `begin_time_ps` overflowed.
 
         Accumulated with ``+=`` rather than ``sum()`` on purpose: CPython 3.12 made
         ``builtins.sum`` compensated, and CI's matrix is 3.9 *and* 3.12, so a float total
-        built with ``sum()`` can differ in its last bits between the two jobs — on the one
+        built with ``sum()`` can differ in its last bits between the two jobs -- on the one
         artifact every lineage change is told to keep byte-stable.
         """
         total_steps = 0.0
         total_time = 0.0
         for stage in stages:
-            if stage.mdin and stage.mdin.details:
-                length = getattr(stage.mdin.details, "length_steps", 0) or 0
-                dt = getattr(stage.mdin.details, "dt", 0) or 0
-                if isinstance(length, (int, float)) and isinstance(dt, (int, float)):
-                    total_steps += float(length)
-                    total_time += float(length) * float(dt)
+            elapsed = _elapsed_ps(stage)
+            if elapsed is None:
+                continue
+            total_time += elapsed
+            dt = _timestep_ps(stage)
+            if dt is not None:
+                total_steps += elapsed / dt
         return {"steps": total_steps, "time_ps": total_time}
 
     def _members(self) -> Dict[Any, List[SimulationStage]]:
@@ -580,6 +1022,13 @@ class SimulationProtocol:
         # and pydantic coerces, exactly as it already does for `stage_count`.
         if len(members) >= 2:
             out["lineage_count"] = float(len(members) - (1 if UNTAGGED in members else 0))
+        # Emitted only when the document holds at least one queued run, so a document with
+        # none reports the totals it always did. `queued_count` is what makes a "smaller
+        # total than before" report distinguishable from "something broke": this many runs
+        # contributed nothing because they never ran, not because the arithmetic changed.
+        queued = sum(1 for s in self.stages if s.status == "queued")
+        if queued:
+            out["queued_count"] = float(queued)
         return out
 
     def lineage_totals(self) -> Dict[str, Dict[str, float]]:
@@ -675,6 +1124,17 @@ class SimulationProtocol:
 
         def _collect_md_engine(stage: SimulationStage) -> Dict[str, Any]:
             md_engine: Dict[str, Any] = {}
+            # F2 (fix-wave follow-up): this used to read `mdin.dt` then `mdout.dt` here,
+            # independently of `_timestep_ps` -- the SAME rule `totals()`/`stats.csv` use,
+            # already carrying the fix for the doubled-`steps` regression (header
+            # `control_dt_ps` first, so an mdin's stated `dt` is preferred over the legacy
+            # parser's truthy 0.001 default). A `methods_summary.json` built from the old
+            # order never consulted `control_dt_ps` at all, so it could still publish the
+            # doubled figure whenever `mdin.dt` was unavailable -- one rule, fixed in one
+            # place, drifting from its own unfixed copy. Computed once, here, rather than
+            # inline at each of the two sites below, so both branches read the identical
+            # value regardless of which one (or both) run.
+            timestep_ps = _timestep_ps(stage)
 
             def _collect_pme_indicators(
                 cntrl_parameters: Dict[str, Any], mdout_details: Optional[Any]
@@ -714,7 +1174,7 @@ class SimulationProtocol:
                         "cutoff": getattr(details, "cutoff", None),
                         "constraints": getattr(details, "constraints", None),
                         "pbc": getattr(details, "pbc", None),
-                        "timestep_ps": getattr(details, "dt", None),
+                        "timestep_ps": timestep_ps,
                         "run_length_steps": getattr(details, "length_steps", None),
                         "cntrl_parameters": cntrl_parameters or None,
                     }
@@ -726,7 +1186,7 @@ class SimulationProtocol:
                 details = stage.mdout.details
                 md_engine.setdefault("thermostat", getattr(details, "thermostat", None))
                 md_engine.setdefault("barostat", getattr(details, "barostat", None))
-                md_engine.setdefault("timestep_ps", getattr(details, "dt", None))
+                md_engine.setdefault("timestep_ps", timestep_ps)
                 md_engine.setdefault("run_length_steps", getattr(details, "nstlim", None))
                 if getattr(details, "cutoff", None) is not None:
                     md_engine.setdefault("cutoff", getattr(details, "cutoff", None))
@@ -741,6 +1201,26 @@ class SimulationProtocol:
                             existing_pme.setdefault(key, value)
                     else:
                         md_engine["pme"] = pme_indicators
+            # INTENT, deliberately, and it does NOT agree with `summary.json`'s totals for a
+            # run that did not finish what it declared. `md_engine` is an all-intent block:
+            # `cntrl_parameters` verbatim from the deck, `run_length_steps` from `nstlim`,
+            # the ensemble and thermostat the deck asked for. `run_length_ps` is
+            # `run_length_steps x timestep_ps` and belongs with them -- it is the protocol's
+            # stated length, which is what a Methods section reports.
+            #
+            # Making it execution-derived instead was considered and rejected: it would be
+            # the single measured number in a block of declarations, sitting immediately
+            # beside a `run_length_steps` it visibly is NOT the product of, which is a worse
+            # self-contradiction than the one it would fix and one a reader is far more
+            # likely to trip over. The honest fix is to say which is which, and docs/cli.md's
+            # plan-artifacts table now does, in the artifact's own terms: methods_summary is
+            # what was asked for, summary.json/stats.csv are what happened.
+            #
+            # This is also no longer the discrepancy it was found as. The five real runs that
+            # exposed it were `irest = 0` runs whose totals were being over-reported by 1800
+            # ps each; `run_length_ps` was RIGHT and the totals were wrong (see
+            # `_origin_time_ps`). With that fixed the two agree wherever a run did what it
+            # declared, and differ only where it genuinely did not.
             if md_engine.get("run_length_steps") and md_engine.get("timestep_ps"):
                 try:
                     md_engine["run_length_ps"] = float(md_engine["run_length_steps"]) * float(md_engine["timestep_ps"])
@@ -1105,6 +1585,47 @@ def _parse_mdout(path, stage, *, strict):
     return parsed
 
 
+def _looks_queued(mdin_details: Any, has_mdin: bool, has_mdout: bool) -> bool:
+    """Whether a run built from these facts is queued: set up and never executed.
+
+    Takes `mdin_details` -- an `MdinMetadata`-shaped object (specifically, anything with a
+    `.cntrl_parameters` attribute), or `None` -- rather than a whole `SimulationStage`, so
+    the ONE rule can be called from three places that do not all have a `SimulationStage`
+    to hand: both engine entry points already hold `stage.mdin.details` at the point they
+    call this, but `core_bridge.discover_draft` builds `ambermeta.simulation.Step` objects
+    and never constructs a `SimulationStage` at all -- it parses the mdin straight to its
+    `.details` (`mdin_details` in that function) to decide the step's role. A second,
+    forked copy of this predicate for `discover_draft` is exactly the kind of drift
+    `crosses_lineage`'s import note above already warns about for a different chaining
+    rule, so this function's signature bent to fit the odd caller out rather than being
+    duplicated for it.
+
+    Called together with the same two file-presence facts (was an mdin declared, was an
+    mdout declared) every caller already has on hand while it is building the run.
+
+    `has_mdin and not has_mdout` alone is not enough. `sys021_tree`'s stray `cpptraj.in`
+    satisfies exactly that and is not a run: it is a leftover cpptraj post-processing
+    script that the extension-based file typing reads as an mdin. `MdinParser` never
+    raises on content it does not recognise — same tolerant-parsing shape as
+    `parse_mdout`, documented on `_elapsed_ps` — so a non-AMBER file with a `.in`/`.mdin`
+    extension parses to a `MdinMetadata` with an empty `cntrl_parameters`, because nothing
+    in it ever matched a `&cntrl` namelist. A genuine AMBER mdin, minimisation or
+    dynamics, always has one — `nstlim`-based production and `maxcyc`-based minimisation
+    both populate it, which is why this checks `cntrl_parameters` rather than the
+    production-specific `length_steps` alone (a queued *minimisation* would otherwise be a
+    false negative too: a min mdin never sets `nstlim`, so `length_steps` stays 0 for a
+    genuine one exactly as it does for `cpptraj`). That refinement is what keeps `cpptraj`
+    out of `test_a_stem_with_an_mdin_and_no_mdout_is_marked_queued`'s five-name list.
+
+    A declared mdin that fails to parse at all (`mdin_details is None` — a missing or
+    unreadable file, recorded elsewhere as a `FileLoadError`) reads as NOT queued: that is
+    a broken reference, already flagged through `degraded`/`load_errors`, and a status
+    implying "a real run is waiting to happen" would be a second, misleading claim about
+    the same file.
+    """
+    return has_mdin and not has_mdout and bool(getattr(mdin_details, "cntrl_parameters", None))
+
+
 def _manifest_to_stages(
     manifest: Dict[str, Dict[str, str]] | List[Dict[str, str]],
     directory: Optional[str],
@@ -1199,6 +1720,9 @@ def _manifest_to_stages(
             stage.inpcrd = _safe_parse(InpcrdParser, resolved["inpcrd"], "inpcrd", stage, strict=strict)
             if stage.inpcrd is not None:
                 stage.restart_path = resolved["inpcrd"]
+
+        if _looks_queued(getattr(stage.mdin, "details", None), "mdin" in resolved, "mdout" in resolved):
+            stage.status = "queued"
 
         restart_source = None
         if restart_files:
@@ -2022,6 +2546,9 @@ def auto_discover(
             if stage.inpcrd is not None:
                 stage.restart_path = file_kinds["inpcrd"]
 
+        if _looks_queued(getattr(stage.mdin, "details", None), "mdin" in file_kinds, "mdout" in file_kinds):
+            stage.status = "queued"
+
         # Try content-based role inference if still no role
         if not stage.stage_role:
             inferred = infer_stage_role_from_content(stage.mdin, stage.mdout)
@@ -2360,7 +2887,6 @@ def write_stats_csv(protocol: "SimulationProtocol", filepath: str) -> None:
         if stats:
             row["time_start_ps"] = getattr(stats, "time_start", "")
             row["time_end_ps"] = getattr(stats, "time_end", "")
-            row["duration_ns"] = getattr(stats, "duration_ns", "")
             row["frame_count"] = getattr(stats, "count", "")
             for prefix, attr in (("temp", "temp_stats"), ("pressure", "pressure_stats"),
                                  ("density", "density_stats"), ("etot", "etot_stats")):
@@ -2369,6 +2895,26 @@ def write_stats_csv(protocol: "SimulationProtocol", filepath: str) -> None:
                     mean, std = series.get_stats()
                     row[f"{prefix}_avg"] = mean if mean is not None else ""
                     row[f"{prefix}_std"] = std if std is not None else ""
+        # `duration_ns` used to read `stats.duration_ns`, i.e. `(time_end - time_start) /
+        # 1000` -- and `time_start` is the first PRINTED frame, one ntpr interval after the
+        # true begin (the same trap documented at `_check_stage_pair`). That made this CSV
+        # disagree with `summary.json`'s `time_ps` for the identical run: 99.5 ns here
+        # against a true 100.0 ns there on the back-compat fixture, both shipped in the
+        # same artifact bundle. `_elapsed_ps` is the one place `time_end -
+        # mdout_header.begin_time_ps` is computed now; calling it here, rather than
+        # re-deriving the number from `stats` alone, is what keeps this column and
+        # `summary.json`'s total from drifting apart again -- the agreement is structural,
+        # not two formulas that happen to match today.
+        #
+        # `None` covers four situations -- queued, minimisation, unreadable, no elapsed
+        # time derivable by either the header or the frame-spacing fallback (see
+        # `_elapsed_ps_and_source`'s docstring) -- that are all truthfully "unknown", not
+        # zero, so the column is left blank rather than filled with a `0.0` that would
+        # read as "this stage ran no time" instead of "this stage's time could not be
+        # determined".
+        elapsed = _elapsed_ps(stage)
+        if elapsed is not None:
+            row["duration_ns"] = elapsed / 1000.0
         rows.append(row)
 
     with open(filepath, "w", newline="", encoding="utf-8") as fh:
@@ -2379,6 +2925,111 @@ def write_stats_csv(protocol: "SimulationProtocol", filepath: str) -> None:
 
 
 PLAN_ARTIFACTS = ("summary", "methods_summary", "stats_csv")
+
+
+def read_prior_summary(path: str, summary_format: str = "json") -> Any:
+    """Whatever the summary artifact at `path` currently says, or `{}` if it says nothing.
+
+    **Must be called BEFORE the artifact is rewritten.** Reading afterwards sees the file
+    this very run just wrote — new totals compared against themselves — so `totals_delta`
+    would return `None` forever, silently disabling the whole feature rather than reporting
+    anything. That ordering trap is the reason this lives beside the writer.
+
+    Read with the format the caller is about to WRITE this path in, not unconditionally as
+    JSON: `plan` writes YAML summaries when the path ends `.yaml`/`.yml`, and `json.load`
+    on a YAML document raises `JSONDecodeError` — a `ValueError` the guard below would
+    swallow into "no prior claim". Read blindly as JSON that swallow would be PERMANENT:
+    every future run against a YAML summary path would report nothing, not just this once.
+
+    The guard is broad on purpose, not `(OSError, ValueError)`: `yaml.YAMLError` is neither,
+    and any genuinely unreadable or malformed prior artifact — missing file, truncated
+    write, a document from an unrelated tool at the same path — is "no prior claim", never a
+    reason to fail a plan that is otherwise about to succeed.
+
+    Returns whatever the file parsed to, which is deliberately NOT narrowed to a dict —
+    `totals_delta` is typed `Any` for its first argument and does the `isinstance` itself.
+    """
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            if summary_format == "yaml":
+                import yaml as _yaml
+                return _yaml.safe_load(fh)
+            return json.load(fh)
+    except Exception:
+        return {}
+
+
+def totals_delta(previous: Any, current: Dict[str, float], path: str) -> Optional[str]:
+    """A line for each of `steps`/`time_ps` that moved since the summary at `path`, or
+    None if nothing did (including: there was no readable prior summary).
+
+    Lives here, beside `write_protocol_outputs`, rather than in `cli.py` where it started:
+    the GUI's Plan action goes through `core_bridge.write_plan_outputs` and had no
+    equivalent at all, so a user who pressed Plan in the browser had `summary.json`
+    overwritten with a materially different total and was told nothing — and that is the
+    user this whole feature was written for. Two copies of this logic drifting apart is the
+    exact class of defect the surrounding work spent six commits removing.
+
+    Reports the CHANGE and refuses to name its cause. Two `summary.json` artifacts carry
+    totals, not a per-stage ledger, so which runs moved and why is not in evidence here —
+    see the comment on the note lines below for what was claimed before and why it was
+    wrong in both directions.
+
+    Compared against a prior `summary.json`-shaped artifact rather than against the v2
+    manifest, because the manifest stores no totals to compare against —
+    `simulation_to_payload` emits version/simulation/phases/steps and nothing else — and
+    this is not adding any; the manifest format stays exactly as it is.
+
+    `previous` is deliberately typed `Any`, not `Dict[str, Any]`: it is whatever
+    `json.load`/`yaml.safe_load` handed back from a file this function does not control
+    the contents of. A prior artifact that is missing, unreadable, or parses to something
+    that is not an object at all (a bare JSON string or list, emptied mid-write, a
+    document from a wholly different tool at the same path) carries no claim about totals
+    — `isinstance` below turns all of those into "no prior claim" rather than an
+    AttributeError from calling `.get` on a non-dict, which is exactly what the naive
+    `(previous or {}).get("totals")` does when `previous` is a truthy non-dict.
+
+    `path` names the file this call actually read, not a fixed "this directory" — it is
+    whatever the caller passed as its summary target, which is free to be `s.json`,
+    `reports/summary.json`, or an absolute path outside the scanned tree altogether. A
+    message that assumes a fixed location would point the user at a file that both isn't
+    there and isn't the one that was actually compared against.
+    """
+    before = previous.get("totals") if isinstance(previous, dict) else None
+    before = before if isinstance(before, dict) else {}
+    lines = []
+    for key in ("steps", "time_ps"):
+        old, new = before.get(key), current.get(key)
+        if isinstance(old, (int, float)) and isinstance(new, (int, float)) and old != new:
+            lines.append(f"  {key:<9} {float(old):.3f} -> {float(new):.3f}")
+    if not lines:
+        return None
+    # NOT a causal claim, and it used to be one it had not established. The line read
+    # "{queued_count} queued run(s) no longer counted", built from the CURRENT ABSOLUTE
+    # queued count rather than from any decomposition of the delta -- so a single run that
+    # changed still got "5 queued run(s) no longer counted" attached to it (observed live),
+    # and a total that ROSE because new chunks finished got the same sentence, which is a
+    # non-sequitur. It is attached to the one sentence a researcher reads before quoting a
+    # number, which is exactly where a plausible-sounding wrong cause does the most damage.
+    #
+    # Nothing here CAN decompose the delta: two `summary.json` artifacts carry totals, not
+    # a per-stage ledger, so which runs moved and why is not in evidence. So the two things
+    # that are honestly available are said instead -- what the numbers MEAN (which is what
+    # makes "smaller than before" legible as something other than broken arithmetic), and
+    # the one component both artifacts really do carry, stated as a transition rather than
+    # as a cause.
+    lines.append("  note      totals count what each run's mdout shows it RAN, not what "
+                 "its mdin declared")
+    before_queued, current_queued = before.get("queued_count"), current.get("queued_count")
+    if isinstance(before_queued, (int, float)) or isinstance(current_queued, (int, float)):
+        # `queued_count` is emitted only when there is at least one, so an absent key on
+        # either side means zero rather than "unknown" -- but only once the OTHER side has
+        # stated one, which is what this guard is for. Two artifacts that both omit it say
+        # nothing about queued runs and get no line at all.
+        lines.append(f"  queued    {int(before_queued or 0)} -> "
+                     f"{int(current_queued or 0)} run(s) with an mdin and no mdout")
+    return (f"totals changed since the last summary.json ({path}):\n"
+            + "\n".join(lines))
 
 
 def write_protocol_outputs(protocol: "SimulationProtocol", targets: Dict[str, str],

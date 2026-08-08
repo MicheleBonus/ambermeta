@@ -180,7 +180,7 @@ steps:
 | `input_coords` | no (default `{source: starting_structure}`) | Where this Step's initial coordinates come from — see §6. |
 | `mdin`, `mdout`, `mdcrd` | no | File paths for this run. Provide at least one parseable file for `plan`/`validate` to do anything useful with the Step. |
 | `rst` | no | The restart this run **writes** (`-r restrt`). It is what the next Step reads — see §6. Omitted entirely when unset, so a Step that records no restart round-trips as no key. |
-| `lineage` | no | Which run lineage — replica, branch, pose — this Step belongs to. Steps sharing a tag are one member; a Step with no tag belongs to the implicit single member. Any string; `""` reads as unset, and a number is read as its string form (`lineage: 1` → `"1"`). Omitted entirely when unset, so an untagged Step round-trips as no key. `ambermeta discover` writes it when the directory layout names the members; otherwise it is yours to declare. |
+| `lineage` | no | Which run lineage — replica, branch, pose — this Step belongs to. Steps sharing a tag are one member; a Step with no tag belongs to the implicit single member. Any string; `""` reads as unset, and a number is read as its string form (`lineage: 1` → `"1"`). Omitted entirely when unset, so an untagged Step round-trips as no key. `ambermeta discover` applies it directly when the directory layout names the members (`--write`'s manifest is the confirmation step); the GUI's Discover only *proposes* the same grouping — accepting a member (`PATCH /steps/lineage`) is what writes it there. Otherwise it is yours to declare. |
 | `notes` | no (default `[]`) | List of free-text strings. |
 | `gaps` | no | `{expected, tolerance}` in ps — see below. Omitted entirely when both are unset (round-trips as no key, not as `null`s, unless you write it explicitly as in the template). |
 
@@ -354,10 +354,13 @@ ambermeta gui runs/                         # build it in the browser, drag file
 `ambermeta/gui/api/core_bridge.py`): they classify every prmtop into the topology pool, find a starting
 structure, group runs into role-named phases, and chain each step's `input_coords` off the previous step of
 its own lineage — surfacing each inference as an explainable suggestion rather than silently guessing. When
-the layout names members (`rep1/`, `rep2/`, … running the same set of runs) each one is tagged, chained
-separately from the head of the starting structure, and reported as an `[applied]` `lineage_group`
-suggestion; an ambiguous layout is left untagged rather than guessed at, and is chained and grouped exactly
-as it was before lineages existed. It is the only thing
+the layout names members (`rep1/`, `rep2/`, … sibling directories whose run sets the inference can
+reconcile), the **CLI** tags each one directly — chained separately from the head of the starting
+structure, and reported as an `[applied]` `lineage_group` suggestion — because `--write`ing the manifest is
+its own confirmation step. The **GUI**'s Discover instead returns the same grouping as a `proposal` (see the
+[GUI guide](gui.md#7-suggestions-tray)) and writes no tag on its own; `lineage_group` only shows up there
+once a member has actually been accepted (`PATCH /steps/lineage`). An ambiguous layout is left untagged
+either way — chained and grouped exactly as it was before lineages existed. `discover` is the only thing
 that scans a directory into a *v2 draft* — `plan --recursive` also scans from scratch, but through the flat
 analysis engine (§10), and prints a Protocol summary rather than producing a manifest. The member inference
 is shared, not exclusive to the draft: `plan --recursive` applies the same rule to the runs it finds, so its
@@ -373,12 +376,43 @@ See the [GUI guide](gui.md) and [CLI reference](cli.md).
 ### 9.1 How `discover` infers members
 
 A lineage is normally **declared** — you write `lineage:` on the steps (§5). `discover` is the one thing
-that will propose one for you, and it does so only from **directory layout**, never from file contents.
+that will name one for you, from **directory layout** alone, never from file contents — the CLI writes it
+straight onto the steps, while the GUI's Discover only proposes it, writing nothing until you accept a
+member (§9 above).
 
-**The rule.** Group the runs by their directory. A directory is a candidate member only if it sits beside
-at least one other directory running *the same set of run bases* — where the base of `prod_0001` is `prod`
-(the same stripping `detect_sequence_gaps` uses). Exactly one such cohort must exist, its directories must
-all be at the same depth, and exactly one path segment must vary across them. That segment becomes the tag.
+**The rule.** Group the runs by their directory, then group the directories into **cohorts** by the pair of
+*run bases they hold* **and** *their own depth* — where the base of `prod_0001` is `prod` (the same
+stripping `detect_sequence_gaps` uses). Depth is part of the cohort's identity, not a uniformity check
+applied after the fact: a directory whose runs happen to share an entire OTHER cohort's base set, at a
+different depth, forms (or joins) its own cohort at its own depth and can never drag that other cohort down
+with it — see the residual-gap note below for the shape this specifically fixes. Every cohort holding more
+than one directory reports its own varying path segment: exactly one segment must vary across its
+directories, and a cohort that cannot report one contributes nothing rather than refusing the whole tree.
+All reporting cohorts must name the member at the **same** segment index, and their run-base sets must be
+**disjoint** — cohorts that *share* a base are usually two arms of one sweep rather than two phases of a
+pipeline, and reconciling them would merge two different conditions (e.g. two temperatures) into one
+lineage. Their tag sets must also **nest** — every set a subset of the largest, which becomes the
+reconciled tag set; two disjoint tag sets are still two experiments and are still refused. Finally, a
+directory left alone in its cohort is **absorbed** when it sits at a depth some reporting cohort actually
+used *and* its segment at the agreed index is already a reconciled tag: `prod/01`, whose stray `cpptraj.in`
+gives it a run-base set of its own, is tagged `01` this way, while `common/` is not, because `common` is
+not a tag — and neither is a directory whose tag-shaped segment sits at the *wrong depth* to be a genuine
+sibling.
+
+Sharing a base is not *proof* of a sweep, though — it is a heuristic, and it can misfire toward the safe
+side. A genuine two-phase pipeline whose phases happen to reuse one run name — `equil/01..02/{min,heat}`
+beside `prod/01..02/{heat,nvt_prod}`, both cohorts running `heat` — is refused here too, even though each
+phase has its own multiple replicas and would otherwise reconcile cleanly: untagged, not a merged claim,
+but a user staring at that untagged tree is not told *why* by this rule alone.
+
+The disjoint-bases requirement only tells a pipeline's phases apart from a sweep's arms when the arms
+happen to *share* a run name — a stray minimisation on one temperature arm, for instance. It has no way to
+tell a pipeline apart from two deliberately parallel arms that use entirely distinct run names of their own
+throughout, whether cross-system (`apo/*` beside `holo/*`, or `wt/*` beside `mut/*`) or, more easily missed
+because it looks like an ordinary sweep, the *same* system under two conditions with condition-specific run
+names — `300K/*/prodA` beside `310K/*/prodB`. Both shapes have disjoint bases, on purpose, and directory
+layout alone cannot distinguish either of them from a pipeline's phases. Such arms still merge today — a
+known, accepted gap, deferred to a multi-axis design rather than fixed here.
 
 Bases, not whole run names, is deliberate: **a replica that died early is the single most important thing
 this feature has to catch.** `rep1/prod_0001..0003` beside `rep2/prod_0001` is one crashed member, not two
@@ -397,8 +431,16 @@ is a claim, and a wrong claim here is exactly what lineages exist to stop:
 | `common/{min,heat,equil}` beside `rep1..3/prod_*` | `rep1..3` tagged; `common` runs different bases, fails the predicate, stays **untagged** |
 | Run files at the tree root beside `rep1/`, `rep2/` | the root runs carry no segment and stay untagged; **the subdirectories are still tagged** |
 | One lineage in one subdirectory (`rep1/` alone) | nothing to differ from — untagged |
-| `300K/rep1/`, `300K/rep2/`, `310K/rep1/`, `310K/rep2/` (a nested sweep) | two segments vary at once; neither can be shown to name the member — untagged |
-| `a1/prod`, `a2/prod` beside `b1/heat`, `b2/heat` (two rival cohorts) | two experiments in one manifest, which this model does not represent — untagged |
+| `300K/rep1/`, `300K/rep2/`, `310K/rep1/`, `310K/rep2/` (a nested sweep, one run base shared by every dir) | two segments vary at once, all in **one** cohort; neither can be shown to name the member — untagged |
+| `300K/rep{1,2}/prod_0001` beside `310K/rep{1,2}/{prod_0001,min_0001}` (one arm ran an extra minimisation) | two **separate** cohorts (`{prod}` and `{prod, min}`) that still share `prod` — refused for sharing a base, even though the replica numbering would otherwise nest |
+| `a1/prod`, `a2/prod` beside `b1/heat`, `b2/heat` (two rival cohorts, disjoint **tag** sets) | two experiments in one manifest, which this model does not represent — untagged |
+| `equil/01..05/*` beside `prod/01..05/*` (a prep tree feeding a production tree) | tagged `01..05` — the cohorts run disjoint bases, agree on the segment, and their tag sets nest |
+| `equil/01..05` beside `prod/02..05` (a replica that never reached production) | tagged `01..05`; `{02..05}` nests inside `{01..05}` |
+| `prod/01` also holding a stray `cpptraj.in` | still tagged `01` — a directory alone in its cohort is absorbed when it sits at a depth the tree reported and its segment is already a reconciled tag |
+| `analysis/01/rmsd/calc` beside a `equil/01../prod/01..` tree (a coincidental tag-shaped segment, wrong depth) | untagged — absorption requires the singleton's *depth* to match a reporting cohort's, not just the segment spelling |
+| `prod/01..03/prod_0001` also beside a `rerun/deep/here/prod_0001` (a stray rerun sharing the WHOLE cohort's base, at another depth) | `01..03` still tagged — the stray forms its own cohort at its own depth instead of dragging `prod/01..03`'s cohort down with it |
+| `apo/01..03/prod_apo_*` beside `holo/01..02/prod_holo_*` (deliberately parallel arms, disjoint run names of their own, cross-system) | tagged `01..03` / `01..02` and merged into one campaign — **known, accepted limitation**: disjoint bases cannot be told apart from a pipeline's phases by directory layout alone; deferred to a multi-axis design |
+| `300K/01..03/prodA` beside `310K/01..03/prodB` (same system, two conditions, condition-specific run names) | tagged and merged the same way — the harder-to-notice case of the same limitation: it looks like an ordinary sweep, but each arm's OWN run name makes the bases disjoint, so it reconciles instead of refusing |
 | `rep1/prod_0001` beside `x/rep2/prod_0001` (mismatched depth) | untagged |
 | `rep1_prod_0001`, `rep2_prod_0001` — flat, replica in the **filename** | **untagged.** Only directory segments are read |
 | `01_min_rep1`, `01_min_rep2` — flat, replica as a filename *suffix* | **untagged**, same reason |
@@ -406,6 +448,21 @@ is a claim, and a wrong claim here is exactly what lineages exist to stop:
 The last two rows are the ones people expect to work. Splitting a stem into tokens has no non-arbitrary
 rule, and the obvious one tags a plain chunked chain `prod_0001`/`prod_0002` as two members — breaking
 every untagged document in the process of helping a few. Tag those layouts by hand instead.
+
+**A residual gap the depth-keyed cohort fixed, and one it did not.** An earlier version of this rule
+grouped directories by run-base SET alone, so a directory that happened to run only the same single base as
+an entire replica tree — a one-off rerun tucked away at an unrelated depth, say `rerun/deep/here/prod_0001`
+beside `prod/01..03`'s `prod_0001` — fell into that tree's *own* cohort instead of one of its own, and its
+mismatched depth silently dropped the whole cohort, replicas included: `equil` tagged `01..03`, **every**
+`prod` run gone, reported as success. Keying cohorts on `(bases, depth)` fixed this: a directory can no
+longer merge into a cohort it does not belong to, so the stray rerun above forms its own single-directory
+cohort and `prod/01..03` tags normally (see the table row above).
+
+What depth-keying does **not** catch: two directories at the exact SAME depth the reporting cohorts agreed
+on, coincidentally sharing a segment spelling (`scratch/01` beside a `rep/01`-shaped tree, or `.cache/01`).
+Depth alone cannot distinguish a genuine sibling from a same-depth coincidence, and absorption will tag
+`scratch/01` (or `.cache/01`) as `01` if that segment happens to be a reconciled tag. This is a narrower,
+still-open gap — bounded to exact depth matches, unlike the one above — and is not fixed here.
 
 ### 9.2 A multi-lineage document is phase-major
 
@@ -445,7 +502,7 @@ run order.
 | `load_simulation(path, expand_env=True)` | Read a v2 manifest into a `Simulation`. Raises if the file has no `steps` list (§11). |
 | `write_simulation(sim, path, fmt)` | Write a `Simulation` as v2; `fmt` ∈ `{"json", "yaml"}`. |
 | `simulation_to_payload(sim)` / `payload_to_simulation(payload)` | v2 dict round-trip (what the GUI's HTTP API sends/receives, and what `load_simulation`/`write_simulation` sit on top of). |
-| `discover_draft(base_directory, recursive=True, pattern=None)` | Scan a directory into a draft `Simulation` + suggestions + warnings — powers `ambermeta discover` and the GUI's **Discover**. |
+| `discover_draft(base_directory, recursive=True, pattern=None, apply_tags=True)` | Scan a directory into a draft `Simulation` + a lineage proposal + suggestions + warnings — powers `ambermeta discover` and the GUI's **Discover**. `apply_tags=True` (the default, and always the CLI's) writes the inferred grouping onto `Step.lineage`; the GUI's Discover passes `apply_tags=False` and leaves every step untagged, since a fresh scan proposes a claim about the user's data rather than asserting it — see [gui.md §7](gui.md#7-suggestions-tray). |
 | `validate_simulation(sim, settings, base_directory)` | Continuity + sequence-hole validation over a `Simulation` — powers `ambermeta validate --manifest` and the GUI's **Validate** panel. `settings` is the caller's dict, never read from the manifest (§2). |
 | `ambermeta plan --manifest …` | The CLI front end: loads the manifest, flattens it for the validation engine, and prints the Simulation → Phase → Step structure. |
 

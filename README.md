@@ -264,9 +264,11 @@ A rebuilt three-pane browser app for assembling and auditing a Simulation:
 
 - **Files** (left) — a searchable file list; drag a file onto the topology pool, the starting-structure slot, a step's topology, or a step's `mdin`/`mdout`/`mdcrd` slot.
 - **Canvas** (center) — a continuous vertical timeline: phases as sections, steps as cards showing their bound topology and input-coordinate source, continuity arrows between chained steps (amber where a real gap exists), and ghost cards for missing members of a numbered sequence. Drag to reorder steps, move a step across phases, or reorder phases.
-- **Inspector** (right) — peek and full-details/raw tabs for whatever's selected, plus assign actions. The step/phase inline editors are still stubs — edit those fields by dragging files or via the manifest for now.
+- **Inspector** (right) — peek and full-details/raw tabs for whatever's selected, plus assign actions and inline editors for the selected step or phase (name, topology, input-coordinate source and "continues from", restart, gaps, notes; name and role for a phase).
 
 A **Suggestions** tray surfaces every inferred thing (roles, HMR topology, starting structure, sequence holes, continuity gaps) as an explainable, undoable suggestion rather than applying it silently. **Discover** re-runs discover-as-draft on the launch directory; **Open**/**Save** read and write the same v2 manifest the CLI does; **Validate** lists issues.
+
+Run lineages are **proposed, never written**. After a Discover that found a grouping, a **proposal strip** shows the members it inferred, the directories each was built from, an editable name per member, and a segment picker for regrouping by a different part of the path — plus, where AMBER's own mdout `File Assignments` records evidence one, the cross-directory restart handoffs (`equil/01/18_ntp_equi → prod/01/nvt_prod_0001`) you can choose to wire at the same time. Nothing lands until you press **Accept**. The inference refuses more layouts than it accepts; **Define replicas…** in the top bar opens the same picker on demand and never refuses, so a tree it could not reconcile is still one click from being declared. See [GUI guide §5a](docs/gui.md).
 
 The server is server-authoritative (a single document held server-side; every mutation returns the new document; undo/redo call the server), single-user, **localhost-only**, and confines all file access to the launch directory. Full walkthrough, including the HTTP API surface: [GUI guide](docs/gui.md).
 
@@ -312,7 +314,6 @@ A single-page, fully offline HTML version of these docs lives at [`docs/ambermet
 - **NetCDF:** `.nc` trajectories and `.ncrst` restarts require the `netcdf` extra. Without it, ASCII trajectories/restarts still parse; NetCDF files are reported as unreadable rather than crashing the run.
 - **Fault tolerance:** `ambermeta plan` is fault-tolerant by default — an unreadable or malformed file is skipped, the error is recorded against its stage/step, and the run still completes (exit `0`). Pass `--strict` to make the first bad file a hard error.
 - **Role inference is heuristic.** When a phase or stage omits its role, AmberMeta infers it from the `mdin`/`mdout` content first, then the file/path name (word-boundary matching, via the shared classifier in `ambermeta/roles.py`) — and records that it did so. Verify inferred roles before publishing.
-- **The GUI's Inspector editors are stubs.** You can drag files onto slots and reorder phases/steps on the canvas, but there's no inline form yet for hand-editing a step's or phase's fields — do that in the manifest, or via the HTTP API.
 - **Manifest formats:** JSON or YAML, in both directions. TOML and CSV are not manifest formats — a `.toml`/`.csv` manifest path is refused with a message that says so. (`--stats-csv` still writes a per-stage statistics CSV; that is a report, not a manifest.)
 
 ---

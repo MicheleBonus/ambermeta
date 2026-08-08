@@ -40,7 +40,8 @@ The server (FastAPI + Uvicorn) binds the host/port, resolves `directory` to an a
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────────┐
-│ AmberMeta [Open] [Save] ●   [Discover] [Validate] [Plan] [Export] [↶] [↷]    │
+│ AmberMeta [Open] [Save] ●  [Discover] [Define replicas…] [Validate] [Plan]   │
+│                                                          [Export] [↶] [↷]    │
 ├───────────────┬────────────────────────────────────┬─────────────────────────┤
 │               │  Simulation                        │                         │
 │  FILES        │  ┌ pool ───────────────────────┐   │  INSPECTOR              │
@@ -63,9 +64,10 @@ The server (FastAPI + Uvicorn) binds the host/port, resolves `directory` to an a
 |---|---|
 | **Files** (left) | A searchable, drag-source file list scanned from the launch directory. |
 | **Canvas** (center) | The Simulation header (topology pool + starting structure) above a vertical timeline of phase sections and step cards. |
-| **Inspector** (right) | Peek/details/assign actions for the selected file; a stub editor for a selected step or phase; the suggestions tray when the Simulation itself or nothing is selected (§6). |
+| **Inspector** (right) | Peek/details/assign actions for the selected file; an editor for a selected step or phase (§6); the suggestions tray when the Simulation itself or nothing is selected. |
 | **Open / Save** | Load an existing manifest / write the current one to disk (dot = unsaved changes). |
 | **Discover** | Discover-as-draft: scan the launch directory into a Simulation draft. |
+| **Define replicas…** | Open the proposal strip's segment picker (§5a) to declare run lineages by hand. Always enabled — it is the way back when the automatic inference refuses, which is most of the time. |
 | **Validate** | Run full validation and show the report. |
 | **Plan** | Write the manifest and the summaries `ambermeta plan` produces, in one action. |
 | **Export** | Preview the manifest as YAML or JSON and copy it. |
@@ -77,11 +79,12 @@ Each pane is resizable (drag the divider); widths persist across sessions.
 
 ## 3. A typical session
 
-1. **Discover.** Click **Discover**, optionally uncheck "Search subdirectories" or set a filename pattern, then **Run discover**. The server scans the launch directory, groups files by stem, classifies the topology pool (normal vs. HMR), picks a starting structure, and chains later steps' input coordinates to the previous step's output restart — the previous step **of the same lineage**, when the directory layout names members (`rep1/`, `rep2/`, … running the same set of runs); each member then starts from the starting structure and same-role steps of every member share one phase. This **replaces** the current draft (a confirmation guards unsaved changes) and repopulates the suggestions tray.
-2. **Assign & adjust.** Drag a file from **Files** onto the topology pool, the starting-structure slot, a step's `mdin`/`mdout`/`mdcrd`/`rst` slot, or a phase's/step's topology target. Or select a file in **Files** and use the Inspector's **Assign** actions (§6) — the same mutations, without dragging.
-3. **Arrange.** In the **Canvas**, drag a step's grip handle to reorder it within a phase or drop it onto another phase to move it; drag a phase's grip handle to reorder phases.
-4. **Validate.** Click **Validate**. The panel lists per-step issues (missing files, continuity/sequence problems) and protocol-level notes, and lets you jump to a step. A simulation with continuity notes shows as *valid, with N protocol note(s)* — never a silent clean pass when something is worth a look.
-5. **Save / Plan / Export.** **Save** writes the canonical **v2 manifest** to disk (YAML or JSON) and reports the path it wrote. **Plan** is the step after that: it writes the manifest *and* the artifacts [`ambermeta plan`](cli.md) produces — `summary.json`, `methods_summary.json`, and optionally a statistics CSV — so the whole pipeline is one action rather than a save followed by a trip to a terminal. **Export** previews YAML or JSON for copying without writing anything.
+1. **Discover.** Click **Discover**, optionally uncheck "Search subdirectories" or set a filename pattern, then **Run discover**. The server scans the launch directory, groups files by stem, classifies the topology pool (normal vs. HMR), picks a starting structure, and chains later steps' input coordinates to the previous step's output restart — the previous step **of the same lineage**, when the directory layout names members (`rep1/`, `rep2/`, … sibling directories whose run sets the inference can reconcile); each member then starts from the starting structure and same-role steps of every member share one phase. This **replaces** the current draft (a confirmation guards unsaved changes) and repopulates the suggestions tray.
+2. **Declare the replicas.** If the scan found a grouping, the **proposal strip** (§5a) opens on top of the result: the members it inferred, the directories each was built from, and — where AMBER's own mdouts evidence it — the restart handoffs that cross a directory boundary. Nothing is written until you press **Accept**; **Not replicas** dismisses it and leaves every run untagged. If the scan refused to infer a grouping (it refuses more layouts than it accepts), press **Define replicas…** in the top bar and pick the path segment yourself.
+3. **Assign & adjust.** Drag a file from **Files** onto the topology pool, the starting-structure slot, a step's `mdin`/`mdout`/`mdcrd`/`rst` slot, or a phase's/step's topology target. Or select a file in **Files** and use the Inspector's **Assign** actions (§6) — the same mutations, without dragging.
+4. **Arrange.** In the **Canvas**, drag a step's grip handle to reorder it within a phase or drop it onto another phase to move it; drag a phase's grip handle to reorder phases.
+5. **Validate.** Click **Validate**. The panel lists per-step issues (missing files, continuity/sequence problems) and protocol-level notes, and lets you jump to a step. A simulation with continuity notes shows as *valid, with N protocol note(s)* — never a silent clean pass when something is worth a look.
+6. **Save / Plan / Export.** **Save** writes the canonical **v2 manifest** to disk (YAML or JSON) and reports the path it wrote. **Plan** is the step after that: it writes the manifest *and* the artifacts [`ambermeta plan`](cli.md) produces — `summary.json`, `methods_summary.json`, and optionally a statistics CSV — so the whole pipeline is one action rather than a save followed by a trip to a terminal. If it is about to overwrite a `summary.json` whose totals differ from what it is writing, it says so — inline under the list of files it wrote, and as a toast — so a number you quoted from the old file is never replaced in silence. **Export** previews YAML or JSON for copying without writing anything.
 
 Undo/redo (**Ctrl+Z** / **Ctrl+Shift+Z**, **Ctrl+Y**) and a dirty-state dot live in the top bar; history is kept on the server (100 steps). **Open** resets it — a different manifest is a new editing session — while **Discover** does not, so a discovery run on the wrong directory is one undo away. Removing something (a step, a phase, a topology, the starting structure) reports itself with an **Undo** button; that offer disappears as soon as you make another change, because undo always reverses the most recent one.
 
@@ -126,7 +129,7 @@ The canvas is a continuous vertical timeline, not a flat list of cards.
 
 **Lineage bands** — where the document declares members, each member's runs sit in their own band with a header naming it and how many runs it holds. The band name is editable: click it to rename the member, which retags every run in the band in one request and one undo entry, or **clear** to untag them. Bands are the outer grouping level and the numeric grouping above stays as the inner one, so collapsing and ghosts keep working. A document that declares nothing gets no band chrome at all.
 
-**Infer lineages** in the Simulation header applies the directory-layout inference to the open document — the same rule `discover` reports as `[applied]`, offered again because a document also arrives here by being opened rather than scanned. It refuses far more layouts than it accepts, and says so when it does; everything it refuses is yours to tag by band.
+Bands appear once the document *declares* members. To declare them, use the **proposal strip** — see §5a.
 
 **Continuity arrows** sit between consecutive steps in a sequence. When the lower step continues from the upper one, the arrow is labelled with the restart file that passes between them — that file belongs to neither card alone, so the edge is where it is shown. An amber arrow annotated with the gap magnitude (e.g. `20 ps`) marks a real continuity gap. **No arrow is drawn between bands**: what precedes a member's first run in document order is another member's last run, and that adjacency means nothing. Where the members all branch from one run, a line above the bands names it (`3 lineages branch from common/equil`) rather than drawing three arrows across boundaries the bands exist to keep apart.
 
@@ -138,12 +141,41 @@ If the Simulation has no phases yet, the canvas shows "Discover or drop files to
 
 ---
 
+## 5a. Declaring run lineages: the proposal strip
+
+A **run lineage** is a member of a repeated set — replica 01, replica 02, … — declared on each run as `lineage: "01"`. Nothing declares one for you: **Discover proposes, you accept.** The proposal strip is where that happens, and it is the only place a lineage can be created from nothing (the band name in §5 renames a member that already exists).
+
+It opens two ways:
+
+| How | Mode | What you get |
+|---|---|---|
+| Automatically, after **Discover**, when the layout inference reconciled the tree into members | *Proposed* | The members it inferred, with **Accept** / **Not replicas** and a collapsed `Change ▾` picker |
+| **Define replicas…** in the top bar, any time | *Manual* | The segment picker, always open, seeded with the best segment available |
+
+**What the strip shows**
+
+- A headline: `N run directories look like M repeated members`.
+- One row per proposed member: an **editable tag field** (type over `01` to call it `rep1`; two members given the same name merge into one lineage in one request) and the directories it was built from, with run counts — `equil/01 (18) + prod/01 (202)`.
+- A **segment picker**: one button per path segment the run stems share, labelled with that segment's distinct values (`equil|prod`, `01|02|03…`). Clicking one regroups the preview live against that column — the server re-runs the proposal for it (`POST /steps/infer-lineages` with `segment_index`, §11) and the member rows, and the handoffs below them, are recomputed for the new grouping. Picking a column and picking back returns you to where you were.
+- A **handoff proposal**, when there is one: `AMBER's own restart files show these runs continuing across the directory boundary the tags above just drew`, then one row per edge — `equil/01/18_ntp_equi → prod/01/nvt_prod_0001`, with the evidence line `mdout File Assignments: INPCRD: 18_ntp_equi.restrt`. **Wire these** / **Leave unlinked** chooses whether accepting also writes them; *Leave unlinked* is the default.
+
+**Where the handoff evidence comes from.** Discovery chains runs *within* a directory only — a restart sitting in another directory is not evidence that this run read it. But AMBER records the coordinate file it actually opened, in the mdout's `File Assignments` block, and that record is read here. It **corroborates**, it does not identify: AMBER writes a bare filename (`18_ntp_equi.restrt`) that every replica repeats verbatim, so the *member grouping* is what says which `18_ntp_equi.restrt` is meant. A basename two runs of the same member wrote is ambiguous and proposes nothing rather than guessing, and a clipped assignment (AMBER pads to a fixed width; long paths run off the end) is treated as no evidence rather than as no producer.
+
+**Accept** applies the tags first and the handoffs second, one request each. That order matters: tagging first makes each handoff intra-member, so the edge is an ordinary continuation rather than a cross-lineage branch that the server would sever a moment later. A failure partway through reports `applied N of M` and leaves the strip open rather than claiming success — there is no transaction across separate requests.
+
+**If the inference refuses.** It refuses far more layouts than it accepts — a nested sweep where two segments vary at once, arms that ran the same run names, a tree with fewer than two run directories. You then get `No lineages inferred: the directory layout could not be resolved into one unambiguous set of members. Use Define replicas… to pick the segment yourself.` That button always opens a working picker: naming a segment index yourself asserts the boundary instead of asking the tool to infer one, so it never refuses on a document that holds any steps at all.
+
+**Re-running Discover** keeps what you declared: tags and accepted cross-directory handoffs are both carried onto the fresh scan, matched by run name, in the single undo entry Discover has always cost. Anything that could not be carried — a tagged run the new scan did not find, a handoff one of whose ends is gone, an edge the tags now forbid — is reported in the toasts rather than dropped in silence.
+
+---
+
 ## 6. Inspector pane
 
 The Inspector's content depends on what's selected:
 
 - **A file** (from the Files pane, or a step's bound topology) — a **peek** header (filename plus a few curated fields: atoms, residues, frames, steps, `hmr_active`, box), an **Assign** section (below), and a tabbed detail view: **Overview** (parsed-field count, warning count), **Full details** (every parsed field), **Raw file** (a byte-capped prefix of the file), **Warnings**.
-- **A step or a phase** — a placeholder (`Step editor.` / `Phase editor.`). **These inline editors are stubs today**: selecting a step or phase does highlight it and lets Validate jump to it, but editing its name, role, gap tolerance, or notes from the Inspector is not yet wired up. Use drag-and-drop assignment, the Inspector's file-side Assign actions, or the [HTTP API](#11-http-api)/CLI to change those fields in the meantime.
+- **A step** — an inline editor for its name, topology, input-coordinate source and "continues from", output restart (with a readback of who reads it), expected gap, gap tolerance and notes, plus Delete.
+- **A phase** — an inline editor for its name and role, plus Delete (with an optional "move its steps to" reassignment).
 - **The Simulation, or nothing** — the **suggestions tray** (§7).
 
 ### Assign actions (per selected file type)
@@ -161,7 +193,7 @@ The Inspector's content depends on what's selected:
 
 Every inferred thing is surfaced as an explainable suggestion rather than applied silently — this is the draft-first design: roles, the HMR topology, the starting structure, sequence holes, and continuity gaps all show up here. Suggestions are grouped:
 
-- **Needs you** — something the tool can't resolve on its own (`missing_run`: a numbered-sequence hole; `continuity_gap`: a genuine start/end mismatch between consecutive steps; `topology_confirm`: more than one topology in the pool, confirm which is HMR). Each card offers **Accept** / **Adjust** / **Ignore**.
+- **Needs you** — something the tool can't resolve on its own (`missing_run`: a numbered-sequence hole; `continuity_gap`: a genuine start/end mismatch between consecutive steps; `topology_confirm`: more than one topology in the pool, confirm which is HMR; `lineage_needs_you`: the directory layout could not be reconciled into a grouping, on a tree that plausibly had one to declare). Each card offers **Accept** / **Adjust** / **Ignore**.
 - **Applied** — something already reflected in the draft, shown for transparency (`starting_structure`, `role_guess`, `lineage_group`: the run lineages the document declares, how many runs each holds, and how many carry none). Each card offers **Dismiss**, plus **Undo** (calls the server's undo) when the suggestion says it can be undone.
 
 Every card shows a `title` and a monospace `evidence` string explaining the inference. Dismissing a card only hides it in this browser session — it does not mutate the document; **Undo** is the only action here that does.
@@ -185,7 +217,9 @@ A `missing_run` card carries a `lineage` field naming the member it is scoped to
   "actions": ["Undo"] }
 ```
 
-That card reports what the document **declares**, not where the tags came from — nothing after the fact can tell an inferred tag from a hand-written one, so a manifest whose lineages you typed yourself is described the same way. `discover` announces its own inference by running this over the draft it just built.
+That card reports what the document **declares**, not where the tags came from — nothing after the fact can tell an inferred tag from a hand-written one, so a manifest whose lineages you typed yourself is described the same way.
+
+**Discover does not declare anything.** The GUI's Discover proposes a grouping — a `proposal` beside `suggestions` (§11) — without writing it, so `lineage_group` does not appear right after it; a fresh scan of your directory tree is not yet a claim you've made about your data. Accepting a member (`PATCH /steps/lineage`, one call per proposed tag) is what turns the proposal into a declaration, at which point the next validate finds real tags on the steps and shows this card same as it would for a manifest whose lineages you typed by hand. A tree the inference cannot reconcile gets `lineage_needs_you` instead, in `suggestions`, right away — that card fires whether or not anything is ever accepted.
 
 (Both blocks above elide the always-present `step_id`/`phase_id`/`base`/`missing`/`lineage` keys where they are `null` — no route sets `exclude_none`, so every key is on the wire on every card.)
 
@@ -292,7 +326,7 @@ Real output (`POST /api/validate` after Discover, on the sample data):
 }
 ```
 
-The panel shows a status badge — `N stage(s) with errors` if any step failed, else `Valid, with N protocol note(s)` if there are protocol-level notes, else `All checks passed` — then any protocol notes, then a per-step card (`ok`/`error` badge, errors/warnings/info) you can click to select that step (subject to the Inspector's step-editor stub, §6). A non-empty `protocol_issues` list means the simulation is *not* fully clean even when every step reports `ok` — the panel reflects that rather than reporting a false all-clear.
+The panel shows a status badge — `N stage(s) with errors` if any step failed, else `Valid, with N protocol note(s)` if there are protocol-level notes, else `All checks passed` — then any protocol notes, then a per-step card (`ok`/`error` badge, errors/warnings/info) you can click to select that step (§6). A non-empty `protocol_issues` list means the simulation is *not* fully clean even when every step reports `ok` — the panel reflects that rather than reporting a false all-clear.
 
 ---
 
@@ -324,7 +358,7 @@ The frontend talks to a small REST API under `/api` (`ambermeta/gui/api/routes.p
 | `POST` | `/api/document/open` | `{ path }` | Document (history reset); `404` if the file doesn't exist, `400` if it isn't a v2 YAML/JSON manifest |
 | `POST` | `/api/document/save` | `{ path?, format? }` | `{ document, warnings[] }`; `400` if no path is known and none is given |
 | `POST` | `/api/document/preview` | `{ format }` | `{ content, warnings[], format }` |
-| `POST` | `/api/document/discover` | `{ recursive, pattern? }` | `{ document, suggestions[], warnings[] }` |
+| `POST` | `/api/document/discover` | `{ recursive, pattern? }` | `{ document, suggestions[], proposal, warnings[] }` |
 
 ### Topologies & starting structure
 
@@ -345,7 +379,7 @@ The frontend talks to a small REST API under `/api` (`ambermeta/gui/api/routes.p
 | `DELETE` | `/api/phases/{id}?reassign_to=<phase_id>` | — | Document (`404`; `400` if `reassign_to` is the phase being deleted); moves the deleted phase's steps to `reassign_to` if given |
 | `POST` | `/api/phases/{id}/steps` | `{ name, topology?, input_coords?, mdin?, mdout?, mdcrd?, rst?, lineage?, index?, expected_gap_ps?, gap_tolerance_ps?, notes? }` — `lineage` places the step in that member; `index` (default `-1`) is the position within the phase, appending **within the step's own lineage** | Document (`404` if phase unknown, `400` for an unusable `input_coords.ref` — see below) |
 | `POST` | `/api/phases/{id}/steps/reorder` | `{ step_ids[] }` | Document (`404`/`400`) |
-| `PUT` | `/api/steps/{id}` | `{ name?, topology?, input_coords?, files?: {mdin?,mdout?,mdcrd?,rst?}, expected_gap_ps?, gap_tolerance_ps?, notes? }` — `topology`, `expected_gap_ps` and `gap_tolerance_ps` use present-vs-absent: sending `null` clears, omitting leaves alone | Document (`404`; `400` for an unusable `input_coords.ref` — see below) |
+| `PUT` | `/api/steps/{id}` | `{ name?, topology?, lineage?, input_coords?, files?: {mdin?,mdout?,mdcrd?,rst?}, expected_gap_ps?, gap_tolerance_ps?, notes? }` — `topology`, `lineage`, `expected_gap_ps` and `gap_tolerance_ps` use present-vs-absent: sending `null` clears, omitting leaves alone | Document (`404`; `400` for an unusable `input_coords.ref` — see below) |
 | `DELETE` | `/api/steps/{id}` | — | Document (`404`) |
 | `POST` | `/api/steps/{id}/move` | `{ phase_id, index? }` (`index` default `-1` = append) | Document (`404`) |
 
@@ -384,7 +418,7 @@ file slot. And `PATCH /api/steps/lineage` tags many steps at once:
 | Method | Path | Body | Returns |
 |---|---|---|---|
 | `PATCH` | `/api/steps/lineage` | `{ ids[], lineage }` — `lineage: null` clears | Document (`404` naming the first unknown id) |
-| `POST` | `/api/steps/infer-lineages` | — | Document; `warnings[]` says so when the layout was too ambiguous to tag |
+| `POST` | `/api/steps/infer-lineages` | `{ segment_index? }` | `{ proposal, warnings[] }` — nothing is written; `warnings[]` says so when the layout was too ambiguous to tag. `segment_index` is the picker's "try this column" and never refuses; omitted, the reconciling inference runs and may. `proposal.handoffs` is recomputed for whichever grouping comes back, so re-picking a column does not lose them |
 
 The bulk route exists because a loop of per-step `PUT`s is not merely slower: every write deep-copies
 the document onto the undo stack, and `history_limit` is 100, so annotating a 20 × 10 campaign evicts
@@ -409,7 +443,7 @@ nothing about membership.
 | `POST` | `/api/assign` | `{ path, target_type, target_id?, kind?, slot? }` — `target_type` ∈ `pool \| starting_structure \| phase_topology \| step_topology \| step_slot` (`step_slot` also needs `slot` ∈ `mdin\|mdout\|mdcrd\|rst`) | Document (`404`/`400`) |
 | `GET` / `PUT` | `/api/settings` | _(GET)_ / `{ auto_link_restarts?, strict_validation?, allow_gaps?, use_relative_paths? }` | Settings / Document |
 | `POST` | `/api/undo` · `/api/redo` | — | Document |
-| `POST` | `/api/plan` | `{ save_manifest_path?, summary_path?, methods_summary_path?, stats_csv_path?, summary_format? }` — a `null` path skips that artifact; `summary_format` is `json`\|`yaml` and the methods summary is always JSON | `{ written[], failed[], warnings[], stage_count, totals, lineages, suggestions[], document }` — `failed[]` names any artifact that could not be written, so a partial success is reported rather than implied (`400` if nothing was selected or a format is unsupported, `403` outside the launch directory) |
+| `POST` | `/api/plan` | `{ save_manifest_path?, summary_path?, methods_summary_path?, stats_csv_path?, summary_format? }` — a `null` path skips that artifact; `summary_format` is `json`\|`yaml` and the methods summary is always JSON | `{ written[], failed[], warnings[], stage_count, totals, lineages, suggestions[], document }` — `failed[]` names any artifact that could not be written, so a partial success is reported rather than implied (`400` if nothing was selected or a format is unsupported, `403` outside the launch directory). `warnings[]` also carries the **totals delta**: when `summary_path` names an artifact that already exists and its `totals` disagree with what this call is about to write, the prior file is read *before* it is overwritten and the change is reported — the same message, from the same function, that `ambermeta plan` prints |
 | `POST` | `/api/validate` | — | Validation report (§9) |
 
 ### Files
@@ -433,7 +467,11 @@ $ curl -s http://127.0.0.1:8799/api/document
 $ curl -s -X POST http://127.0.0.1:8799/api/document/discover \
     -H 'Content-Type: application/json' -d '{"recursive": true}'
 # -> {"document": {... 1 topology, starting_structure set, 1 phase "Production" with 5 chained steps ...},
-#     "suggestions": [{"kind":"starting_structure", ...}, {"kind":"role_guess", ...}], "warnings": []}
+#     "suggestions": [{"kind":"starting_structure", ...}, {"kind":"role_guess", ...}],
+#     "proposal": null, "warnings": []}
+# `proposal` is null here because a single flat directory has nothing for the layout
+# inference to name a member from — it is not `null` because tags were withheld; see
+# `discover_draft`'s `apply_tags` in api.md for why nothing is tagged either way.
 
 $ curl -s "http://127.0.0.1:8799/api/files?recursive=false" | head -c 200
 [{"path":"...CH3L1_HUMAN_6NAG.crd","name":"CH3L1_HUMAN_6NAG.crd","file_type":"mdcrd",
@@ -486,7 +524,6 @@ One field here has no counterpart on disk: **`resolved_input_coords` is read-onl
 
 ## 12. Known limitations
 
-- **Step and phase inline editing is stubbed.** The Inspector shows a placeholder (`Step editor.` / `Phase editor.`) when a step or phase is selected — you cannot yet rename a step, change its role, or set its gap tolerance/notes from there. Reach those fields via drag-and-drop assignment, the file-side Assign actions (§6), the HTTP API (§11), or by editing the saved manifest and reopening it.
 - **Suggestion cards are advisory**, not bound to their nominal actions beyond Dismiss/Undo — "Accept"/"Adjust"/"Ignore" currently just dismiss the card in the browser; the underlying condition (e.g. a sequence hole) still needs to be fixed via assignment or by adding the missing run's files.
 - **Save and Preview write v2 only, as YAML or JSON.** `write_simulation` accepts no other format (anything else raises `ValueError: v2 write supports json/yaml only, got: <fmt>`), and there is no other on-disk form to fall back to — so a manifest leaving the GUI is always one of those two.
 

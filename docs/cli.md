@@ -227,6 +227,19 @@ options:
 | `--methods-summary-path FILE` | Materials-&-Methods JSON: software, MD engine settings, system composition, restraints |
 | `--stats-csv FILE` | Per-stage statistics (one row per stage) |
 
+> **Intent and execution are different numbers, and the bundle carries both.**
+> `methods_summary.json` describes the **protocol that was specified**: everything under a
+> stage's `md_engine` — `cntrl_parameters`, `run_length_steps`, and `run_length_ps`
+> (`run_length_steps × timestep_ps`) — is read from the input deck and states what the run
+> was *asked* to do. `summary.json`'s `totals` and `stats.csv`'s `duration_ns` describe what
+> the run *did*: they are measured from each mdout's own frames and count nothing for a run
+> that was queued and never started, or that was killed part-way.
+>
+> The two therefore disagree, correctly, for any truncated run: a chunk that declared
+> `nstlim = 2500000, dt = 0.002` reports `run_length_ps: 5000.0` in the methods summary and
+> contributes 3000 ps to the totals if that is where it stopped. Quote `run_length_ps` when
+> writing up the protocol; quote the totals when reporting sampling.
+
 The CSV header is exactly:
 
 ```text
@@ -370,7 +383,7 @@ Suggestions:
 
 ### Replica trees
 
-When the layout names members — sibling directories running the same set of runs — `discover` tags each
+When the layout names members — sibling directories whose run sets the inference can reconcile — `discover` tags each
 step with a `lineage` and chains each member separately from the starting structure:
 
 ```text
@@ -608,10 +621,27 @@ Lineage coherence:
   INFO 3 steps read the restart written by common/equil and carry 3 distinct resolved seeds.
 ```
 
-Only a **category error** is fatal — different atom counts, or a member that ran no dynamics beside
-one that did. Those exit `1` with or without `--strict`, because members that differ that way are not
-runs of one experiment. Everything else (`temp0`, `cut`, `ntt`, `ntp`, `dt`, a repeated seed) is a
-finding `--strict` escalates. The output states graph facts and never a statistical property: it will
+Only a **category error** is fatal — different atom counts *between* members, different atom counts
+*within* one member, or a member that ran no dynamics beside one that did. Those exit `1` with or
+without `--strict`, because members that differ that way are not runs of one experiment. Everything
+else (`temp0`, `cut`, `ntt`, `ntp`, `dt`, a repeated seed) is a finding `--strict` escalates.
+
+The within-member check is what catches a **mis-grouping**, and it exists because the between-member
+one cannot: a member holding two atom counts has no single value to compare, so it drops out of that
+comparison entirely. Two independent campaigns that share replica labels — `apo/01..03` beside
+`holo/01..03`, with distinct run names in each arm — are reconciled into three members each holding
+one apo run and one holo run, and before this check that merge silently switched off the only finding
+that would have named it:
+
+```
+Lineage coherence:
+  ERROR Runs within one member hold different numbers of atoms (01: 50000, 50800; …).
+        These are not runs of one system, so the grouping is wrong.
+```
+
+You will see this alongside the tags themselves: `discover` and `plan` apply a grouping they resolved,
+so the run is tagged *and* told the tags are wrong. Declare the members yourself (`lineage:` in the
+manifest, or **Define replicas…** in the GUI) to fix it. The output states graph facts and never a statistical property: it will
 tell you three runs read one restart and carry three distinct seeds, and it will not tell you they are
 independent samples.
 

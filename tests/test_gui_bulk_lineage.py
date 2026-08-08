@@ -161,32 +161,36 @@ def test_tagging_everything_the_same_severs_nothing(client, chain):
 
 
 # ---------------------------------------------------------------------------
-# Applying the layout inference to an open document
+# Proposing a grouping for an open document — P2.2 repointed this route from
+# "apply the inference" to "propose it"; nothing here writes to the document any more.
 # ---------------------------------------------------------------------------
 
-def test_inference_tags_a_replica_layout_in_one_undo(client, crashed_replica_tree):
+def test_infer_lineages_proposes_a_replica_layout_and_writes_nothing(
+        client, crashed_replica_tree):
     routes.set_base_directory(str(crashed_replica_tree))
     client.post("/api/document/discover", json={"recursive": True})
-    # Discover already tagged it; clear the tags so the action has something to do.
-    ids = [s["id"] for s in _steps(client)]
-    client.patch("/api/steps/lineage", json={"ids": ids, "lineage": None})
+    # Discover itself writes nothing now — the GUI route calls
+    # `discover_draft(..., apply_tags=False)` — so this is the baseline, not a setup step.
     assert {s["lineage"] for s in _steps(client)} == {None}
 
     body = client.post("/api/steps/infer-lineages").json()
-    assert {s["lineage"] for s in _steps(client)} == {"rep1", "rep2", "rep3"}
+    assert {m["tag"] for m in body["proposal"]["members"]} == {"rep1", "rep2", "rep3"}
     assert body["warnings"] == []
-    client.post("/api/undo")
+    # Proposing is not an edit: the document is exactly what Discover left it as.
     assert {s["lineage"] for s in _steps(client)} == {None}
 
 
-def test_inference_leaves_a_tag_it_did_not_produce(client, campaign_tree):
-    """It applies what it inferred; it does not clear what it did not.
+def test_infer_lineages_proposes_replicas_without_disturbing_a_hand_set_tag(
+        client, campaign_tree):
+    """It proposes what it infers; it never touches what the document already says.
 
-    The campaign layout is the case that makes the difference visible: the inference names
-    the three replica directories and deliberately refuses `common/`, whose runs are a
-    shared prep rather than a fourth member. Assigning the inference's answer across the
-    board would delete a tag the user had put on those prep runs by hand — silently, and
-    the more so on a layout where the inference names nothing at all.
+    The campaign layout is the case that makes the distinction visible: the inference
+    names the three replica directories and deliberately refuses `common/`, whose runs are
+    a shared prep rather than a fourth member. This route writes nothing at all now, so a
+    tag the user put on those prep runs by hand survives calling it — trivially true today,
+    but worth pinning: the bug this test used to guard against (assigning the inference's
+    answer across the board silently deleted a hand-set tag it did not also name) can only
+    recur if a later change has this route start writing again.
     """
     routes.set_base_directory(str(campaign_tree))
     client.post("/api/document/discover", json={"recursive": True})
@@ -196,20 +200,47 @@ def test_inference_leaves_a_tag_it_did_not_produce(client, campaign_tree):
     assert prep, "the campaign fixture should hold a shared prep directory"
     client.patch("/api/steps/lineage", json={"ids": prep, "lineage": "shared_prep"})
 
-    client.post("/api/steps/infer-lineages")
+    body = client.post("/api/steps/infer-lineages").json()
+    assert {m["tag"] for m in body["proposal"]["members"]} == {"rep1", "rep2", "rep3"}
+
     tags = {s["name"]: s["lineage"]
             for p in client.get("/api/document").json()["simulation"]["phases"]
             for s in p["steps"]}
     assert {t for n, t in tags.items() if n.startswith("common/")} == {"shared_prep"}
-    assert {t for n, t in tags.items() if n.startswith("rep")} == {"rep1", "rep2", "rep3"}
+    # Untouched by the proposal: discover left them None, and infer-lineages writes
+    # nothing, so they are still None — not the "rep1"/"rep2"/"rep3" a route that applied
+    # its proposal would have written.
+    assert {t for n, t in tags.items() if n.startswith("rep")} == {None}
+
+
+def test_infer_lineages_honours_an_explicit_segment_index(client, sys021_tree):
+    """The picker's "try this column": an explicit `segment_index` bypasses the
+    cohort/nesting inference entirely and tags every step by its own segment at that index.
+
+    Index 0 of `equil/NN/<run>` / `prod/NN/<run>` is `equil`/`prod` — the phase the
+    default inference (index 1, `NN`) does NOT choose — so this also proves the parameter
+    actually changes which grouping comes back, not just that it is accepted.
+    """
+    routes.set_base_directory(str(sys021_tree))
+    client.post("/api/document/discover", json={"recursive": True})
+
+    default = client.post("/api/steps/infer-lineages").json()
+    assert default["proposal"]["segment_index"] == 1
+    assert sorted(m["tag"] for m in default["proposal"]["members"]) == (
+        ["01", "02", "03", "04", "05"])
+
+    picked = client.post("/api/steps/infer-lineages", json={"segment_index": 0}).json()
+    assert picked["proposal"]["segment_index"] == 0
+    assert sorted(m["tag"] for m in picked["proposal"]["members"]) == ["equil", "prod"]
 
 
 def test_a_layout_the_inference_refuses_leaves_hand_tags_alone(client, chain):
-    """The commonest case, and the one where clearing would hurt most: the inference
-    names nothing, so it must change nothing."""
+    """The commonest case: the inference names nothing, and this route writes nothing
+    regardless, so a hand-set tag is exactly where it was before the call."""
     client.patch("/api/steps/lineage", json={"ids": chain, "lineage": "mine"})
     body = client.post("/api/steps/infer-lineages").json()
     assert [s["lineage"] for s in _steps(client)] == ["mine"] * 4
+    assert body["proposal"] is None
     assert "No lineages inferred" in body["warnings"][0]
 
 
@@ -219,4 +250,5 @@ def test_a_layout_the_inference_refuses_says_so(client, chain):
     do nothing has to say why."""
     body = client.post("/api/steps/infer-lineages").json()
     assert {s["lineage"] for s in _steps(client)} == {None}
+    assert body["proposal"] is None
     assert "No lineages inferred" in body["warnings"][0]

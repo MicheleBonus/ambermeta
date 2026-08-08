@@ -53,3 +53,45 @@ def test_print_protocol_includes_mdcrd_box_and_remd_metadata(capsys):
     output = capsys.readouterr().out
 
     assert "mdcrd: frames=10, time=0–9 ps, dt≈1 ps, box=Triclinic, volume≈100.00 Å³, T (280.0–320.0K, avg 300.0K)" in output
+
+
+def test_print_protocol_reports_the_queued_count_and_marks_each_queued_stage(capsys, sys021_tree):
+    """`plan --recursive`'s own terminal output, not only the JSON/GUI report, has to say
+    a run was queued -- this was the third of three surfaces (`Step.status` via
+    `discover_draft`, `SimulationStage.to_dict()`, and this one) that stayed silent after
+    the engine started computing the right answer."""
+    protocol = auto_discover(str(sys021_tree), recursive=True)
+
+    _print_protocol(protocol)
+    output = capsys.readouterr().out
+
+    assert "Queued (no output): 5" in output
+    assert "- prod/01/nvt_prod_0004" in output
+    # The line belongs to that stage's own block, immediately under its name -- not merely
+    # present anywhere in the output, which a query-string match would not catch a queued
+    # stage's line drifting under the WRONG stage's header.
+    block_start = output.index("- prod/01/nvt_prod_0004")
+    block = output[block_start:output.index("\n\n", block_start)]
+    assert "status: queued" in block
+
+
+def test_print_protocol_prints_no_status_line_for_a_run_that_produced_output(capsys, sys021_tree):
+    protocol = auto_discover(str(sys021_tree), recursive=True)
+
+    _print_protocol(protocol)
+    output = capsys.readouterr().out
+
+    block_start = output.index("- prod/01/nvt_prod_0001")
+    block = output[block_start:output.index("\n\n", block_start)]
+    assert "status:" not in block
+
+
+def test_print_protocol_says_nothing_about_queued_runs_when_there_are_none(capsys, sample_md_data_dir):
+    """Emit-when-nonzero: a directory with nothing queued prints exactly what it always
+    did, with no new "Queued" line to explain."""
+    protocol = auto_discover(str(sample_md_data_dir), recursive=True)
+
+    _print_protocol(protocol)
+    output = capsys.readouterr().out
+
+    assert "Queued" not in output

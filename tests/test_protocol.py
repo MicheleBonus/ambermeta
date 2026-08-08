@@ -562,6 +562,34 @@ def test_methods_summary_prunes_stats_and_includes_reproducibility_metadata():
     assert "stats" not in methods_json
 
 
+def test_methods_summary_timestep_prefers_the_header_over_the_legacy_default():
+    """F2 (fix-wave follow-up): `to_methods_dict` used to read `mdin.dt` then
+    `mdout.details.dt` directly, never consulting `mdout_header.control_dt_ps` -- the SAME
+    pre-fix order `_timestep_ps` (used by `totals()`/`stats.csv`) was corrected out of,
+    because `MdoutMetadata.dt` (the legacy whole-file parser's reading) defaults to a
+    TRUTHY `0.001` indistinguishable from a genuinely-stated one.
+
+    Shape that discriminates the two orders: no `mdin` at all (an archived input deck, or a
+    directory scan that never found one -- `to_dict()`'s own `md_engine` block is built to
+    tolerate this), a legacy-parsed mdout stuck at its untrue default `0.001`, and a header
+    that DID resolve the real `dt` from CONTROL DATA, `0.002`. The pre-migration code had no
+    `mdin` branch to run at all here, so only the mdout branch fired and reported the wrong
+    `0.001`; `_timestep_ps` -- and therefore this, post-migration -- reports the header's
+    `0.002` because it is checked FIRST, before the legacy reading is ever reached.
+    """
+    from types import SimpleNamespace
+
+    stage = protocol.SimulationStage(name="stage1", stage_role="equilibration")
+    stage.mdout_header = SimpleNamespace(control_dt_ps=0.002)
+    stage.mdout = SimpleNamespace(details=SimpleNamespace(dt=0.001))  # the untrue 0.001 default
+
+    proto = protocol.SimulationProtocol(stages=[stage])
+    methods = proto.to_methods_dict()
+
+    assert methods["stages"][0]["md_engine"]["timestep_ps"] == 0.002
+    assert methods["stages"][0]["md_engine"]["timestep_ps"] != 0.001
+
+
 def _fan_out_protocol():
     """One shared equilibration, three replicas branching off it.
 

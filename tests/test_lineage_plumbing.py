@@ -126,3 +126,26 @@ def test_an_untagged_step_adds_no_key_to_the_engine_payload(tmp_path):
         [stage], dict(SETTINGS), str(tmp_path))
     assert payload["stages"] == [{"name": "prod_001", "stage_role": "production",
                                  "mdin": "prod_001.in"}]
+
+
+def test_a_queued_status_reaches_the_engine_payload(tmp_path):
+    """Adding a field to Step is a six-place change and three of the six fail silently:
+    validate_manifest rejects no unknown key and pydantic's `extra='ignore'` drops
+    another. This is the test that catches a status that never left the whitelist gate.
+
+    Built from a raw stage dict, like `test_an_untagged_step_adds_no_key_to_the_engine_payload`
+    above, rather than through `_flatten_simulation` — the brief's own version of this test
+    calls `document_to_payload(sim)` with a bare `Simulation`, which matches neither
+    `document_to_payload`'s three-argument signature (stages, settings, base_directory)
+    nor takes a `Simulation` at all; it takes the flat stage dicts `_flatten_simulation`
+    produces. Brief-originated, fixed here rather than reproduced, matching the pattern of
+    prior brief-only defects logged in progress.md for Tasks 1 and 2.
+    """
+    stage = {"id": "deadbeef", "name": "prod_0002", "role": "production",
+             "step_id": None, "parent_id": None, "lineage": None, "status": "queued",
+             "prmtop": None, "mdin": "prod_0002.in", "mdout": None, "mdcrd": None,
+             "inpcrd": None, "expected_gap_ps": None, "gap_tolerance_ps": None,
+             "notes": []}
+    payload = core_bridge.document_to_payload(
+        [stage], dict(SETTINGS), str(tmp_path))
+    assert payload["stages"][0]["status"] == "queued"

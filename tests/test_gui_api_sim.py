@@ -5,6 +5,8 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from ambermeta.gui.api import routes
 
+from tests.conftest import RunSpec, write_run_tree, _PROD_MDIN
+
 
 def _client(base):
     routes.set_base_directory(str(base))
@@ -53,6 +55,240 @@ def test_the_missing_run_card_names_its_member_on_the_wire(crashed_replica_tree)
     card, = [s for s in r.json()["suggestions"] if s["kind"] == "missing_run"]
     assert card["lineage"] == "rep2"
     assert card["base"] == "prod" and card["missing"] == [2, 3]
+
+
+# --- re-discovering an already-tagged document --------------------------------
+
+def test_rediscovering_keeps_the_tags_already_declared(sys021_tree):
+    """Discover is the most prominent button in the top bar and the natural reflex after
+    adding files. It replaced the document wholesale, so every tag vanished with no warning
+    -- recoverable with Ctrl+Z, but nothing said so."""
+    client = _client(sys021_tree)
+    client.post("/api/document/discover", json={"recursive": True})
+    doc = client.get("/api/document").json()["simulation"]
+    ids = [s["id"] for p in doc["phases"] for s in p["steps"]
+           if s["name"].startswith("equil/01/") or s["name"].startswith("prod/01/")]
+    client.patch("/api/steps/lineage", json={"ids": ids, "lineage": "01"})
+
+    body = client.post("/api/document/discover", json={"recursive": True}).json()
+    after = body["document"]["simulation"]
+    tagged = {s["name"] for p in after["phases"] for s in p["steps"] if s["lineage"] == "01"}
+    assert "prod/01/nvt_prod_0001" in tagged
+    assert body["warnings"] == []
+
+
+def test_a_tag_on_a_run_that_vanished_is_reported_not_silently_dropped(sys021_tree):
+    """A run that carried a tag last scan and is not found again this scan must be named
+    in the response, not folded silently into "the document changed"."""
+    client = _client(sys021_tree)
+    client.post("/api/document/discover", json={"recursive": True})
+    doc = client.get("/api/document").json()["simulation"]
+    victim = [s for p in doc["phases"] for s in p["steps"]
+              if s["name"] == "prod/05/nvt_prod_0002"][0]
+    client.patch("/api/steps/lineage", json={"ids": [victim["id"]], "lineage": "05"})
+    # All three files `write_run_tree`'s pair form wrote for this run. Unlinking only the
+    # `.mdin`/`.mdout` pair -- an earlier draft of this test did exactly that -- leaves the
+    # `.restrt` behind as the tree's only non-run coordinate file, which discovery then
+    # adopts as `starting_structure` for the WHOLE document: a second, unrelated field
+    # would have silently flipped alongside the one this test means to check.
+    for suffix in (".mdin", ".mdout", ".restrt"):
+        (sys021_tree / "prod" / "05" / f"nvt_prod_0002{suffix}").unlink()
+    body = client.post("/api/document/discover", json={"recursive": True}).json()
+    assert any("did not find again" in w for w in body["warnings"])
+    assert body["document"]["simulation"]["starting_structure"] is None
+
+
+def test_rediscovering_does_not_rebuild_an_edge_the_tags_forbid(tmp_path):
+    """The severing case, and the reason this feature is not just "copy the dict back".
+
+    `prod/rep1_0001 -> rep1_0002 -> rep2_0001` is the chain discovery builds inside one
+    directory before anything is tagged: `rep2_0001` looks, to a scan that knows nothing
+    about replicas, like the run that comes after `rep1_0002`. Tagging the two apart makes
+    `PATCH /steps/lineage` sever that edge and warn about it -- a restart replica 2 never
+    read from replica 1 is exactly the fact `simulation.py`'s module docstring says no
+    automatic operation may invent. Re-running Discover must not silently rebuild it just
+    because the tags that make it a cross-lineage edge are being carried back on.
+    """
+    tree = write_run_tree(tmp_path, [
+        ("prod/rep1_0001", RunSpec(mdin=_PROD_MDIN, elapsed_ps=5000.0, begin_ps=0.0)),
+        ("prod/rep1_0002", RunSpec(mdin=_PROD_MDIN, elapsed_ps=5000.0, begin_ps=5000.0)),
+        ("prod/rep2_0001", RunSpec(mdin=_PROD_MDIN, elapsed_ps=5000.0, begin_ps=0.0)),
+    ])
+    client = _client(tree)
+    client.post("/api/document/discover", json={"recursive": True})
+    steps = [s for p in client.get("/api/document").json()["simulation"]["phases"]
+             for s in p["steps"]]
+    for tag in ("rep1", "rep2"):
+        client.patch("/api/steps/lineage", json={
+            "ids": [s["id"] for s in steps if s["name"].startswith("prod/" + tag)],
+            "lineage": tag})
+
+    after = client.post("/api/document/discover", json={"recursive": True}).json()
+    steps = [s for p in after["document"]["simulation"]["phases"] for s in p["steps"]]
+    by_id = {s["id"]: s for s in steps}
+    crossing = [(s["name"], by_id[s["input_coords"]["ref"]]["name"]) for s in steps
+                if s["input_coords"].get("ref")
+                and by_id[s["input_coords"]["ref"]]["lineage"] != s["lineage"]]
+    assert crossing == []
+    assert any("no longer continues" in w for w in after["warnings"])
+
+
+# ---------------------------------------------------------------------------
+# Re-Discover must not destroy the handoffs the user accepted. `discover_draft`
+# chains WITHIN a run directory only, deliberately -- a restart sitting in another
+# directory is not evidence that this run read it -- so a cross-directory edge exists
+# for exactly one reason: the user accepted the handoff proposal. It has to survive a
+# rescan, or accepting the proposal means nothing the moment new files arrive.
+# ---------------------------------------------------------------------------
+
+def _discovered_steps(client):
+    doc = client.get("/api/document").json()["simulation"]
+    return [s for p in doc["phases"] for s in p["steps"]]
+
+
+def _accept_the_sys021_handoffs(client):
+    """Tag the five members, then wire `equil/NN -> prod/NN`, in that order.
+
+    Mirrors what `ProposalStrip.accept` does, tags first: tagging leaves each handoff
+    intra-member, so `_check_continues_from` reports no branch and `_sever_crossed_refs`
+    has nothing crossing to sever. Returns {consumer name: producer name}.
+    """
+    steps = _discovered_steps(client)
+    for member in ("01", "02", "03", "04", "05"):
+        ids = [s["id"] for s in steps
+               if s["name"].startswith(f"equil/{member}/")
+               or s["name"].startswith(f"prod/{member}/")]
+        assert client.patch("/api/steps/lineage",
+                            json={"ids": ids, "lineage": member}).status_code == 200
+    by_name = {s["name"]: s["id"] for s in steps}
+    wired = {}
+    for member in ("01", "02", "03", "04", "05"):
+        consumer = f"prod/{member}/nvt_prod_0001"
+        producer = f"equil/{member}/18_ntp_equi"
+        r = client.put(f"/api/steps/{by_name[consumer]}", json={
+            "input_coords": {"source": "step", "ref": by_name[producer], "path": None}})
+        assert r.status_code == 200, r.text
+        wired[consumer] = producer
+    return wired
+
+
+def _cross_directory_edges(steps):
+    by_id = {s["id"]: s for s in steps}
+    return {s["name"]: by_id[s["input_coords"]["ref"]]["name"] for s in steps
+            if s["input_coords"].get("ref")
+            and by_id[s["input_coords"]["ref"]]["name"].rpartition("/")[0]
+            != s["name"].rpartition("/")[0]}
+
+
+def test_rediscovering_carries_accepted_handoffs_forward(sys021_tree):
+    """The defect: `step.lineage` was carried across a re-Discover and `input_coords` was
+    not, so every handoff the user explicitly accepted was wiped -- with `warnings: []`.
+
+    Measured before the fix on this exact flow: 5 cross-directory edges after Accept, 0
+    after re-Discover, nothing said. The fresh draft cannot rebuild them by design, so
+    nothing else in the system would ever put them back.
+    """
+    client = _client(sys021_tree)
+    client.post("/api/document/discover", json={"recursive": True})
+    wired = _accept_the_sys021_handoffs(client)
+    assert _cross_directory_edges(_discovered_steps(client)) == wired
+
+    after = client.post("/api/document/discover", json={"recursive": True}).json()
+    steps = [s for p in after["document"]["simulation"]["phases"] for s in p["steps"]]
+    assert _cross_directory_edges(steps) == wired
+    # And the tags they were accepted alongside are still there, on both ends of each edge.
+    tags = {s["name"]: s["lineage"] for s in steps}
+    for consumer, producer in wired.items():
+        assert tags[consumer] == tags[producer] is not None
+
+
+def test_a_carried_handoff_the_tags_forbid_is_severed_and_reported(sys021_tree):
+    """The carry-forward must not be able to smuggle a cross-lineage edge into a Discover
+    result. `_check_continues_from` accepts a deliberately declared branch, so the state
+    "cross-directory edge whose two ends are different members" is genuinely reachable; on
+    the next scan it has to meet exactly the rule an edge the scan itself built would meet.
+
+    Severing it, rather than dropping it silently, is the point: the user gets the
+    "no longer continues ... Set its input coordinates if that is wrong" line, which is the
+    sentence that tells them how to put it back.
+    """
+    client = _client(sys021_tree)
+    client.post("/api/document/discover", json={"recursive": True})
+    _accept_the_sys021_handoffs(client)
+    steps = _discovered_steps(client)
+    by_name = {s["name"]: s["id"] for s in steps}
+    # Member 02's production head declared as continuing member 01's equilibration: a
+    # branch, accepted and reported rather than refused.
+    r = client.put(f"/api/steps/{by_name['prod/02/nvt_prod_0001']}", json={
+        "input_coords": {"source": "step",
+                         "ref": by_name["equil/01/18_ntp_equi"], "path": None}})
+    assert r.status_code == 200
+    assert _cross_directory_edges(_discovered_steps(client))[
+        "prod/02/nvt_prod_0001"] == "equil/01/18_ntp_equi"
+
+    after = client.post("/api/document/discover", json={"recursive": True}).json()
+    steps = [s for p in after["document"]["simulation"]["phases"] for s in p["steps"]]
+    edges = _cross_directory_edges(steps)
+    assert "prod/02/nvt_prod_0001" not in edges
+    assert any("prod/02/nvt_prod_0001 no longer continues" in w for w in after["warnings"])
+    # The four handoffs that the tags DO permit are untouched by the severing.
+    assert len(edges) == 4
+
+
+def test_a_handoff_whose_producer_vanished_is_reported_not_silently_dropped(sys021_tree):
+    """One end of a declared edge is gone from the tree, so there is nothing to re-point
+    at. The declaration is being discarded either way -- what must not happen is
+    discarding it in silence, which is what the whole re-Discover path used to do to
+    every handoff at once."""
+    client = _client(sys021_tree)
+    client.post("/api/document/discover", json={"recursive": True})
+    _accept_the_sys021_handoffs(client)
+    for suffix in (".mdin", ".mdout", ".restrt"):
+        (sys021_tree / "equil" / "03" / f"18_ntp_equi{suffix}").unlink()
+
+    after = client.post("/api/document/discover", json={"recursive": True}).json()
+    steps = [s for p in after["document"]["simulation"]["phases"] for s in p["steps"]]
+    assert "prod/03/nvt_prod_0001" not in _cross_directory_edges(steps)
+    assert any("could not be carried forward" in w
+               and "prod/03/nvt_prod_0001 <- equil/03/18_ntp_equi" in w
+               for w in after["warnings"]), after["warnings"]
+    # The other four survive: one missing producer costs its own edge, not the feature.
+    assert len(_cross_directory_edges(steps)) == 4
+
+
+def test_rediscovering_costs_one_undo_frame_not_n(sys021_tree):
+    """`store.replace(..., reset_history=False)` already costs exactly one undo frame.
+    Re-applying N carried tags and N carried handoff edges through separate document
+    writes -- rather than onto the fresh scan's own Simulation object before the single
+    `replace` -- would push one frame per write and could evict the very Discover result
+    being annotated (`set_lineages`' docstring records this trap for the bulk-tag route).
+
+    TWO undos, not one, and that is the whole test. Undoing once and comparing tags was
+    vacuous: the carry-forward makes the post-Discover document ALREADY hold the same tags
+    as the pre-Discover one, so that assertion passed with zero undos and with any number
+    of extra frames -- adding a second `store.replace` to the route, the exact defect it
+    names, left the suite green. Stepping back TWICE has to land on the document as it
+    stood before the tagging edit: if Discover cost more than one frame, the second undo
+    lands in the middle of Discover's own writes and the tags are still there.
+    """
+    client = _client(sys021_tree)
+    client.post("/api/document/discover", json={"recursive": True})
+    untagged = client.get("/api/document").json()["simulation"]
+    ids = [s["id"] for p in untagged["phases"] for s in p["steps"]
+           if s["name"].startswith("equil/01/") or s["name"].startswith("prod/01/")]
+    client.patch("/api/steps/lineage", json={"ids": ids, "lineage": "01"})
+    tagged = client.get("/api/document").json()["simulation"]
+
+    client.post("/api/document/discover", json={"recursive": True})
+    # Frame 1: the Discover itself. Frame 2: the tagging edit before it.
+    assert client.post("/api/undo").json()["simulation"] == tagged
+    assert client.post("/api/undo").json()["simulation"] == untagged
+
+    # Named rather than left implicit: the second undo is only meaningful because the two
+    # states genuinely differ, and they differ in exactly the tags the carry-forward
+    # re-applies -- which is why comparing tags after ONE undo could not see anything.
+    assert any(s["lineage"] for p in tagged["phases"] for s in p["steps"])
+    assert not any(s["lineage"] for p in untagged["phases"] for s in p["steps"])
 
 
 def test_topology_routes(tmp_path):
@@ -452,6 +688,90 @@ def test_plan_can_write_the_summary_as_yaml_while_methods_stays_json(tmp_path):
                               "methods_summary_path": "m.json"})
     assert not (tmp_path / "s.yaml").read_text(encoding="utf-8").lstrip().startswith("{")
     json.loads((tmp_path / "m.json").read_text(encoding="utf-8"))   # still JSON
+
+
+# ---------------------------------------------------------------------------
+# The totals-delta report is a property of `plan`, not of the CLI. It existed only in
+# cli.py, so a user who pressed Plan in the browser had summary.json overwritten with a
+# materially different total and was told nothing -- and the GUI is the surface this whole
+# feature was written for. Driven end to end through the API, because the defect this
+# guards is an ORDERING one (read before write) that reads as correct in the source.
+# ---------------------------------------------------------------------------
+
+def test_the_gui_plan_reports_the_totals_delta(sys021_tree):
+    """A prior summary claiming numbers this tree does not produce, then Plan over it."""
+    (sys021_tree / "summary.json").write_text(json.dumps(
+        {"totals": {"steps": 50000000.0, "time_ps": 100000.0, "queued_count": 3.0},
+         "stages": []}), encoding="utf-8")
+    c = _client(sys021_tree)
+    c.post("/api/document/discover", json={"recursive": True})
+    r = c.post("/api/plan", json={"summary_path": "summary.json"})
+    assert r.status_code == 200
+
+    delta, = [w for w in r.json()["warnings"] if w.startswith("totals changed since")]
+    assert "steps     50000000.000 -> 35500000.000" in delta
+    assert "time_ps   100000.000 -> 71000.000" in delta
+    assert "queued    3 -> 5 run(s) with an mdin and no mdout" in delta
+    # The same words the CLI prints -- one implementation, in ambermeta.protocol, not two.
+    from ambermeta.protocol import totals_delta
+    assert delta.endswith(totals_delta(
+        {"totals": {"steps": 50000000.0, "time_ps": 100000.0, "queued_count": 3.0}},
+        {"steps": 35500000.0, "time_ps": 71000.0, "queued_count": 5.0},
+        "x").split("\n", 1)[1])
+
+
+def test_the_gui_plan_reads_the_prior_summary_before_overwriting_it(sys021_tree):
+    """The ordering trap, isolated. The file being compared against is the file this call
+    is about to rewrite, so a read placed after the write sees this run's own output --
+    new totals compared against themselves, `None` every time. That does not fail loudly;
+    it silently disables the feature forever, which is why this is driven end to end and
+    not asserted against the helper.
+
+    Proven by running Plan TWICE at the same path with the totals changed in between: the
+    first run reports against the planted prior, and the second reports nothing at all
+    because run 1's own artifact is now what is on disk and it agrees.
+    """
+    (sys021_tree / "summary.json").write_text(json.dumps(
+        {"totals": {"steps": 1.0, "time_ps": 2.0}, "stages": []}), encoding="utf-8")
+    c = _client(sys021_tree)
+    c.post("/api/document/discover", json={"recursive": True})
+
+    first = c.post("/api/plan", json={"summary_path": "summary.json"}).json()
+    assert any(w.startswith("totals changed since") for w in first["warnings"])
+    # Grounds it: run 1 really did overwrite the planted file.
+    on_disk = json.loads((sys021_tree / "summary.json").read_text(encoding="utf-8"))
+    assert on_disk["totals"]["time_ps"] == 71000.0
+
+    second = c.post("/api/plan", json={"summary_path": "summary.json"}).json()
+    assert not any(w.startswith("totals changed since") for w in second["warnings"])
+
+
+def test_the_gui_plan_says_nothing_when_no_summary_was_requested(sys021_tree):
+    """Guarded on "summary" in targets, matching the CLI. A Plan that asks only for the
+    stats CSV has no summary path to read and nothing for the comparison to be about --
+    and there is no path to hand `read_prior_summary`, which would be a TypeError."""
+    (sys021_tree / "summary.json").write_text(json.dumps(
+        {"totals": {"steps": 1.0, "time_ps": 2.0}, "stages": []}), encoding="utf-8")
+    c = _client(sys021_tree)
+    c.post("/api/document/discover", json={"recursive": True})
+    r = c.post("/api/plan", json={"stats_csv_path": "stats.csv"})
+    assert r.status_code == 200
+    assert not any(w.startswith("totals changed since") for w in r.json()["warnings"])
+
+
+def test_the_gui_plan_honours_a_yaml_prior_summary(sys021_tree):
+    """`summary_format: yaml` writes YAML, so the prior claim must be READ as YAML.
+    Feeding it to `json.load` raises, the guard swallows that into "no prior claim", and
+    the feature is off for every future run against that path -- not just this one."""
+    (sys021_tree / "summary.yaml").write_text(
+        "totals:\n  steps: 50000000.0\n  time_ps: 100000.0\nstages: []\n",
+        encoding="utf-8")
+    c = _client(sys021_tree)
+    c.post("/api/document/discover", json={"recursive": True})
+    r = c.post("/api/plan", json={"summary_path": "summary.yaml",
+                                  "summary_format": "yaml"})
+    assert r.status_code == 200
+    assert any("time_ps   100000.000 -> 71000.000" in w for w in r.json()["warnings"])
 
 
 def test_plan_refuses_to_write_nothing(tmp_path):

@@ -60,7 +60,7 @@ Suggestions:
   - [applied] Runs carry 3 declared lineage(s)
 ```
 
-`rep1/`, `rep2/`, `rep3/` run the same set of runs, so each is tagged as a member and gets its own chain from the starting structure — no `rep1/prod_0002 → rep2/prod_0001` edge. The tags land in the manifest as `lineage:` on each step. An ambiguous layout is left untagged rather than guessed at; the rule and everything it refuses is in [manifest §9.1](manifest.md#91-how-discover-infers-members).
+`rep1/`, `rep2/`, `rep3/` are sibling directories whose run sets the inference can reconcile, so each is tagged as a member and gets its own chain from the starting structure — no `rep1/prod_0002 → rep2/prod_0001` edge. The tags land in the manifest as `lineage:` on each step. An ambiguous layout is left untagged rather than guessed at; the rule and everything it refuses is in [manifest §9.1](manifest.md#91-how-discover-infers-members).
 
 ### Preview the draft without writing anything
 
