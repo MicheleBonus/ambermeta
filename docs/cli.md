@@ -621,10 +621,27 @@ Lineage coherence:
   INFO 3 steps read the restart written by common/equil and carry 3 distinct resolved seeds.
 ```
 
-Only a **category error** is fatal — different atom counts, or a member that ran no dynamics beside
-one that did. Those exit `1` with or without `--strict`, because members that differ that way are not
-runs of one experiment. Everything else (`temp0`, `cut`, `ntt`, `ntp`, `dt`, a repeated seed) is a
-finding `--strict` escalates. The output states graph facts and never a statistical property: it will
+Only a **category error** is fatal — different atom counts *between* members, different atom counts
+*within* one member, or a member that ran no dynamics beside one that did. Those exit `1` with or
+without `--strict`, because members that differ that way are not runs of one experiment. Everything
+else (`temp0`, `cut`, `ntt`, `ntp`, `dt`, a repeated seed) is a finding `--strict` escalates.
+
+The within-member check is what catches a **mis-grouping**, and it exists because the between-member
+one cannot: a member holding two atom counts has no single value to compare, so it drops out of that
+comparison entirely. Two independent campaigns that share replica labels — `apo/01..03` beside
+`holo/01..03`, with distinct run names in each arm — are reconciled into three members each holding
+one apo run and one holo run, and before this check that merge silently switched off the only finding
+that would have named it:
+
+```
+Lineage coherence:
+  ERROR Runs within one member hold different numbers of atoms (01: 50000, 50800; …).
+        These are not runs of one system, so the grouping is wrong.
+```
+
+You will see this alongside the tags themselves: `discover` and `plan` apply a grouping they resolved,
+so the run is tagged *and* told the tags are wrong. Declare the members yourself (`lineage:` in the
+manifest, or **Define replicas…** in the GUI) to fix it. The output states graph facts and never a statistical property: it will
 tell you three runs read one restart and carry three distinct seeds, and it will not tell you they are
 independent samples.
 

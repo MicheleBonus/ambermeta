@@ -221,7 +221,10 @@ def coherence(stages: Iterable[Any]) -> List[Finding]:
     answer.
 
     Silent for a document with fewer than two declared members — there is nothing to
-    compare — which is every untagged document.
+    compare — which is every untagged document. That gate applies to the within-member
+    atom-count check below as well, deliberately: a lone declared member is not a claim
+    that anything matches anything, and this function's contract is comparison between
+    members.
     """
     stages = list(stages)
     members = {tag: group for tag, group in buckets(stages).items() if tag is not UNTAGGED}
@@ -232,6 +235,43 @@ def coherence(stages: Iterable[Any]) -> List[Finding]:
     # --- category errors: the members are not runs of the same thing ------------
     counts = {tag: {c for c in map(_atom_count_of, group) if c is not None}
               for tag, group in members.items()}
+
+    # WITHIN a member, first. A member holding runs of two different systems is not a set of
+    # runs of one system, which is the same claim the cross-member check below makes, one
+    # level down -- so it carries the same `error` severity and the same `atom_count` kind.
+    #
+    # This exists because the cross-member check SILENTLY DISABLES ITSELF on exactly the
+    # shape that needs it most. `stated` below admits only tags holding ONE distinct count,
+    # which is right for that comparison (a member that disagrees with itself has no single
+    # value to compare) but means such a member drops out of the comparison entirely rather
+    # than being reported. Measured on two independent campaigns that share member labels --
+    # `apo/01..03` beside `holo/01..03`, which the layout inference merges into three
+    # members each holding one apo run and one holo run:
+    #
+    #     CORRECT grouping (apo | holo):  error atom_count -- Members do not hold the same
+    #                                     number of atoms (apo: 50000; holo: 50800).
+    #     MERGED grouping:                (nothing at all)
+    #
+    # The merge itself is an accepted limitation of cohort reconciliation (it belongs to the
+    # P4 decision the spec deferred). Its SILENCE was not accepted: the one check that would
+    # have caught the mis-grouping was the one the mis-grouping turned off. Because this
+    # fires on a DECLARED member it reaches the CLI's `[applied]` path too, so a user who
+    # discovers such a tree gets the tags AND an error saying the tags are wrong.
+    #
+    # Reported before the cross-member finding because it is the more fundamental one: a
+    # member that disagrees with itself makes its own contribution to that comparison
+    # meaningless. Neither masks the other -- both are appended, and a tree with one mixed
+    # member beside two consistent members that differ raises both findings.
+    mixed = {tag: values for tag, values in counts.items() if len(values) > 1}
+    if mixed:
+        spelled = "; ".join(
+            f"{tag}: {', '.join(str(c) for c in sorted(mixed[tag]))}"
+            for tag in sorted(mixed))
+        out.append(Finding(
+            "error", "atom_count",
+            f"Runs within one member hold different numbers of atoms ({spelled}). "
+            "These are not runs of one system, so the grouping is wrong."))
+
     stated = {tag: values for tag, values in counts.items() if len(values) == 1}
     if len({next(iter(v)) for v in stated.values()}) > 1:
         spelled = "; ".join(f"{tag}: {next(iter(stated[tag]))}"

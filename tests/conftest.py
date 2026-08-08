@@ -78,6 +78,16 @@ class RunSpec(NamedTuple):
     begin_overflowed: bool = False
     stated_ps: Optional[float] = None
     irest: int = 1
+    natoms: Optional[int] = None
+    """The system size AMBER reports in its `RESOURCE USE` block, or None to omit the block.
+
+    This is the ONLY source `lineages.coherence` reads an atom count from
+    (`_atom_count_of` -> `mdout.details.natoms`), and no fixture built through this helper
+    wrote one, so the whole atom-count half of coherence -- both the cross-member check and
+    the within-member one -- was unreachable from a real directory tree. It could be tested
+    against hand-built `SimulationStage` objects and nowhere else, which leaves the path
+    from files on disk to the finding a user sees entirely unexercised.
+    """
 
 
 def _mdout_text(spec: RunSpec) -> str:
@@ -137,8 +147,19 @@ def _mdout_text(spec: RunSpec) -> str:
         else f" begin time read from input coords = {printed_begin:.3f} ps\n\n"
     )
     stated_ps = spec.stated_ps if spec.stated_ps is not None else spec.elapsed_ps
+    # AMBER's `RESOURCE USE` block, and only when asked for -- the legacy parser scans the
+    # 14 lines after the banner for `NATOM`, stopping at the CONTROL DATA banner, so the
+    # two must appear in this order and close together. Omitted by default so every fixture
+    # that predates this field keeps parsing to `natoms = 0`, i.e. "not stated", which is
+    # what `_atom_count_of` reads as None and what those fixtures have always meant.
+    resources = (
+        "   1.  RESOURCE   USE: \n"
+        f" NATOM  = {spec.natoms:>7} NTYPES =       1 NBONH =       1 MBONA  =       0\n"
+        if spec.natoms is not None else ""
+    )
     head = (
         f"{assign}\n"
+        f"{resources}"
         "   2.  CONTROL  DATA  FOR  THE  RUN\n"
         "General flags:\n"
         "     imin    =       0, nmropt  =       0\n"

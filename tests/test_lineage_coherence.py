@@ -86,6 +86,104 @@ def test_members_holding_different_atom_counts_are_an_error():
     assert "rep3: 12000" in error.message
 
 
+# The shape the within-member check exists for: two independent campaigns that happen to
+# share member labels. `apo/01..03` beside `holo/01..03` reconciles into THREE members, each
+# holding one apo run and one holo run -- the accepted limitation the Task 6 ruling recorded
+# ("deliberate parallel arms with distinct run names (apo/holo, wt/mut) have disjoint bases
+# and still merge"), whose SILENCE was not accepted.
+#
+# The run stems are `apo_prod` / `holo_prod`, NOT a shared `prod`, and that is load-bearing
+# rather than decorative: arms that share a run base fail the disjointness gate and the
+# inference refuses them outright (verified -- `infer_lineages_from_layout` returns `{}`).
+# Distinct run names are the shape that actually reaches this code, so the fixture uses it.
+_APO_ATOMS, _HOLO_ATOMS = 50000, 50800
+
+
+def _apo_holo(*, merged: bool):
+    """The same six runs, grouped two ways.
+
+    `merged=True` is what `infer_lineages_from_layout` produces on this tree: the replica
+    index names the member, so `apo/01` and `holo/01` land in member `01`.
+    `merged=False` is the grouping a user would have declared by hand, where the SYSTEM
+    names the member. Same stages, same atom counts, different `lineage` strings -- which is
+    what makes the pair a controlled comparison of the grouping alone.
+    """
+    stages = []
+    for index in ("01", "02", "03"):
+        for system, natoms in (("apo", _APO_ATOMS), ("holo", _HOLO_ATOMS)):
+            stages.append(_stage(f"{system}/{index}/{system}_prod",
+                                 index if merged else system,
+                                 cntrl=MD, natoms=natoms))
+    return stages
+
+
+def test_a_member_holding_two_systems_is_an_error():
+    """Measured before this check existed: the CORRECT grouping raised
+    `error atom_count -- Members do not hold the same number of atoms (apo: 50000;
+    holo: 50800)` and the MERGED one raised nothing at all.
+
+    The cross-member check disabled itself on exactly the shape that needed it: it admits
+    only tags holding ONE distinct atom count, so every merged member dropped out of the
+    comparison rather than being reported. A merge the tool makes on its own must not be
+    able to switch off the check that would have caught it.
+    """
+    error, = [f for f in coherence(_apo_holo(merged=True)) if f.severity == "error"]
+    assert error.kind == "atom_count"
+    assert "within one member" in error.message
+    # Names the member and both counts, so the reader can see WHICH runs disagree.
+    assert "01: 50000, 50800" in error.message
+    assert "02: 50000, 50800" in error.message
+
+
+def test_the_correctly_grouped_version_of_the_same_runs_still_reports_the_systems():
+    """The control half. Same six stages, grouped by system instead of by index: the
+    cross-member check is the one that fires, with its own wording, and the new
+    within-member check stays quiet because each member really does hold one system.
+
+    Without this, a within-member check that fired indiscriminately -- or a cross-member
+    one broken while adding it -- would look identical to a correct implementation.
+    """
+    error, = [f for f in coherence(_apo_holo(merged=False)) if f.severity == "error"]
+    assert error.kind == "atom_count"
+    assert "within one member" not in error.message
+    assert "apo: 50000" in error.message and "holo: 50800" in error.message
+
+
+def test_a_mixed_member_does_not_mask_a_genuine_cross_member_difference():
+    """Both checks are appended, neither short-circuits the other. `rep1` disagrees with
+    itself while `rep2` and `rep3` each hold one count and disagree with each other -- two
+    distinct facts about one document, and reporting only the first would hide a real
+    category error behind a grouping complaint."""
+    stages = [_stage("rep1/a", "rep1", cntrl=MD, natoms=50000),
+              _stage("rep1/b", "rep1", cntrl=MD, natoms=50800),
+              _stage("rep2/prod", "rep2", cntrl=MD, natoms=64528),
+              _stage("rep3/prod", "rep3", cntrl=MD, natoms=12000)]
+    errors = [f for f in coherence(stages) if f.kind == "atom_count"]
+    assert len(errors) == 2
+    assert "within one member" in errors[0].message
+    assert "rep2: 64528" in errors[1].message and "rep3: 12000" in errors[1].message
+    # The mixed member is absent from the cross-member line: it has no single value to
+    # compare, which is what the first finding says.
+    assert "rep1" not in errors[1].message
+
+
+def test_one_declared_member_holding_two_systems_stays_silent():
+    """`coherence` compares members. A single declared member is not a claim that anything
+    matches anything, and the `len(members) < 2` gate covers the new check too -- so this
+    document reports exactly what it reported before, which is nothing."""
+    stages = [_stage("only/a", "only", cntrl=MD, natoms=50000),
+              _stage("only/b", "only", cntrl=MD, natoms=50800)]
+    assert coherence(stages) == []
+
+
+def test_a_member_whose_runs_agree_on_atoms_raises_nothing_new():
+    """The ordinary case, and the one every existing campaign is: several runs per member,
+    all of one system. Chunked production would otherwise raise this on every project."""
+    stages = [_stage(f"{tag}/prod_{i}", tag, cntrl=MD, natoms=64528)
+              for tag in ("rep1", "rep2") for i in (1, 2, 3)]
+    assert coherence(stages) == []
+
+
 def test_minimisation_mixed_with_dynamics_is_an_error():
     stages = [_stage("rep1/prod", "rep1", cntrl=MD),
               _stage("rep2/min", "rep2", cntrl={"imin": 1})]
@@ -315,6 +413,38 @@ def test_a_category_error_fails_the_scan_path_without_strict(tmp_path, capsys):
             encoding="utf-8")
     assert main(["plan", "--recursive", str(tmp_path)]) == 1
     assert "Members mix minimisation with dynamics" in capsys.readouterr().out
+
+
+def test_the_merged_apo_holo_tree_is_tagged_and_then_reported_on(tmp_path, capsys):
+    """End to end, from files on disk: `plan --recursive` tags the tree AND says the tags
+    are wrong.
+
+    Every other test in this section builds `SimulationStage` objects by hand, so the path
+    from an mdout's `RESOURCE USE` block to a finding a user reads had never been walked --
+    no fixture wrote a `NATOM` line at all, which made the entire atom-count half of
+    coherence unreachable from a real tree. `RunSpec.natoms` is what closes that.
+
+    The intended outcome, stated in full: the layout inference merges these six runs into
+    three members (`apo/01` and `holo/01` both become `01` -- the accepted limitation for
+    parallel arms with distinct run names), the runs are TAGGED because that is what
+    `discover`/`plan` do with a grouping they resolved, and the user is told in the same
+    breath that a member holds two different systems. Tags plus an error, not tags in
+    silence. Exit 1 without `--strict`, like every other category error.
+    """
+    from tests.conftest import RunSpec, write_run_tree, _PROD_MDIN
+
+    write_run_tree(tmp_path, [
+        (f"{system}/{index}/{system}_prod_0001",
+         RunSpec(mdin=_PROD_MDIN, elapsed_ps=5000.0, begin_ps=0.0, natoms=natoms))
+        for system, natoms in (("apo", _APO_ATOMS), ("holo", _HOLO_ATOMS))
+        for index in ("01", "02", "03")])
+
+    assert main(["plan", "--recursive", str(tmp_path)]) == 1
+    printed = capsys.readouterr().out
+    # Tagged: the merge really did happen, so the silence being fixed is the real one.
+    assert "3 declared lineage(s)" in printed or "Per lineage:" in printed
+    assert "Runs within one member hold different numbers of atoms" in printed
+    assert "50000, 50800" in printed
 
 
 def test_the_report_carries_the_findings_and_ok_reflects_them(differing_members):
