@@ -360,6 +360,14 @@ class PlanResult(BaseModel):
     # One unwritable path does not hide the artifacts that did land: the response names
     # both, so the user is never told "it failed" about a run that wrote three files.
     failed: List[FailedFile] = Field(default_factory=list)
+    # Also the channel the TOTALS-DELTA report rides (`core_bridge.write_plan_outputs`):
+    # "totals changed since the last summary.json (...)" is a caveat about a file this
+    # call just overwrote, and this is the field the GUI already puts in front of the user
+    # at that exact moment -- `PlanModal` renders each entry inline under the written-files
+    # list, and `usePlan`'s onSuccess toasts it. Deliberately NOT a new key: an undeclared
+    # one is dropped in silence by `extra='ignore'`, which has cost this file two findings
+    # already (see `suggestions` below and `StageIssue.continuity`), and the delta is the
+    # one sentence a researcher reads before quoting a number.
     warnings: List[str] = Field(default_factory=list)
     stage_count: int = 0
     totals: Dict[str, float] = Field(default_factory=dict)

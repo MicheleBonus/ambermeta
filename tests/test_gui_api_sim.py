@@ -690,6 +690,90 @@ def test_plan_can_write_the_summary_as_yaml_while_methods_stays_json(tmp_path):
     json.loads((tmp_path / "m.json").read_text(encoding="utf-8"))   # still JSON
 
 
+# ---------------------------------------------------------------------------
+# The totals-delta report is a property of `plan`, not of the CLI. It existed only in
+# cli.py, so a user who pressed Plan in the browser had summary.json overwritten with a
+# materially different total and was told nothing -- and the GUI is the surface this whole
+# feature was written for. Driven end to end through the API, because the defect this
+# guards is an ORDERING one (read before write) that reads as correct in the source.
+# ---------------------------------------------------------------------------
+
+def test_the_gui_plan_reports_the_totals_delta(sys021_tree):
+    """A prior summary claiming numbers this tree does not produce, then Plan over it."""
+    (sys021_tree / "summary.json").write_text(json.dumps(
+        {"totals": {"steps": 50000000.0, "time_ps": 100000.0, "queued_count": 3.0},
+         "stages": []}), encoding="utf-8")
+    c = _client(sys021_tree)
+    c.post("/api/document/discover", json={"recursive": True})
+    r = c.post("/api/plan", json={"summary_path": "summary.json"})
+    assert r.status_code == 200
+
+    delta, = [w for w in r.json()["warnings"] if w.startswith("totals changed since")]
+    assert "steps     50000000.000 -> 35500000.000" in delta
+    assert "time_ps   100000.000 -> 71000.000" in delta
+    assert "queued    3 -> 5 run(s) with an mdin and no mdout" in delta
+    # The same words the CLI prints -- one implementation, in ambermeta.protocol, not two.
+    from ambermeta.protocol import totals_delta
+    assert delta.endswith(totals_delta(
+        {"totals": {"steps": 50000000.0, "time_ps": 100000.0, "queued_count": 3.0}},
+        {"steps": 35500000.0, "time_ps": 71000.0, "queued_count": 5.0},
+        "x").split("\n", 1)[1])
+
+
+def test_the_gui_plan_reads_the_prior_summary_before_overwriting_it(sys021_tree):
+    """The ordering trap, isolated. The file being compared against is the file this call
+    is about to rewrite, so a read placed after the write sees this run's own output --
+    new totals compared against themselves, `None` every time. That does not fail loudly;
+    it silently disables the feature forever, which is why this is driven end to end and
+    not asserted against the helper.
+
+    Proven by running Plan TWICE at the same path with the totals changed in between: the
+    first run reports against the planted prior, and the second reports nothing at all
+    because run 1's own artifact is now what is on disk and it agrees.
+    """
+    (sys021_tree / "summary.json").write_text(json.dumps(
+        {"totals": {"steps": 1.0, "time_ps": 2.0}, "stages": []}), encoding="utf-8")
+    c = _client(sys021_tree)
+    c.post("/api/document/discover", json={"recursive": True})
+
+    first = c.post("/api/plan", json={"summary_path": "summary.json"}).json()
+    assert any(w.startswith("totals changed since") for w in first["warnings"])
+    # Grounds it: run 1 really did overwrite the planted file.
+    on_disk = json.loads((sys021_tree / "summary.json").read_text(encoding="utf-8"))
+    assert on_disk["totals"]["time_ps"] == 71000.0
+
+    second = c.post("/api/plan", json={"summary_path": "summary.json"}).json()
+    assert not any(w.startswith("totals changed since") for w in second["warnings"])
+
+
+def test_the_gui_plan_says_nothing_when_no_summary_was_requested(sys021_tree):
+    """Guarded on "summary" in targets, matching the CLI. A Plan that asks only for the
+    stats CSV has no summary path to read and nothing for the comparison to be about --
+    and there is no path to hand `read_prior_summary`, which would be a TypeError."""
+    (sys021_tree / "summary.json").write_text(json.dumps(
+        {"totals": {"steps": 1.0, "time_ps": 2.0}, "stages": []}), encoding="utf-8")
+    c = _client(sys021_tree)
+    c.post("/api/document/discover", json={"recursive": True})
+    r = c.post("/api/plan", json={"stats_csv_path": "stats.csv"})
+    assert r.status_code == 200
+    assert not any(w.startswith("totals changed since") for w in r.json()["warnings"])
+
+
+def test_the_gui_plan_honours_a_yaml_prior_summary(sys021_tree):
+    """`summary_format: yaml` writes YAML, so the prior claim must be READ as YAML.
+    Feeding it to `json.load` raises, the guard swallows that into "no prior claim", and
+    the feature is off for every future run against that path -- not just this one."""
+    (sys021_tree / "summary.yaml").write_text(
+        "totals:\n  steps: 50000000.0\n  time_ps: 100000.0\nstages: []\n",
+        encoding="utf-8")
+    c = _client(sys021_tree)
+    c.post("/api/document/discover", json={"recursive": True})
+    r = c.post("/api/plan", json={"summary_path": "summary.yaml",
+                                  "summary_format": "yaml"})
+    assert r.status_code == 200
+    assert any("time_ps   100000.000 -> 71000.000" in w for w in r.json()["warnings"])
+
+
 def test_plan_refuses_to_write_nothing(tmp_path):
     assert _client(tmp_path).post("/api/plan", json={}).status_code == 400
 

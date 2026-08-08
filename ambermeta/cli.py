@@ -1158,70 +1158,12 @@ steps:
 """
 
 
-def _totals_delta(previous: Any, current: Dict[str, float], path: str) -> Optional[str]:
-    """A line for each of `steps`/`time_ps` that moved since the summary at `path`, or
-    None if nothing did (including: there was no readable prior summary).
-
-    Reports the CHANGE and refuses to name its cause. Two `summary.json` artifacts carry
-    totals, not a per-stage ledger, so which runs moved and why is not in evidence here --
-    see the comment on the note lines below for what was claimed before and why it was
-    wrong in both directions.
-
-    Compared against a prior `summary.json`-shaped artifact rather than against the v2
-    manifest, because the manifest stores no totals to compare against —
-    `simulation_to_payload` emits version/simulation/phases/steps and nothing else — and
-    this change is not adding any; the manifest format stays exactly as it is.
-
-    `previous` is deliberately typed `Any`, not `Dict[str, Any]`: it is whatever
-    `json.load`/`yaml.safe_load` handed back from a file this function does not control
-    the contents of. A prior artifact that is missing, unreadable, or parses to something
-    that is not an object at all (a bare JSON string or list, emptied mid-write, a
-    document from a wholly different tool at the same path) carries no claim about totals
-    — `isinstance` below turns all of those into "no prior claim" rather than an
-    AttributeError from calling `.get` on a non-dict, which is exactly what the naive
-    `(previous or {}).get("totals")` does when `previous` is a truthy non-dict.
-
-    `path` names the file this call actually read, not a fixed "this directory" — it is
-    whatever the caller passed to `--summary-path`, which is free to be `s.json`,
-    `reports/summary.json`, or an absolute path outside the scanned tree altogether. A
-    message that assumes a fixed location would point the user at a file that both isn't
-    there and isn't the one that was actually compared against.
-    """
-    before = previous.get("totals") if isinstance(previous, dict) else None
-    before = before if isinstance(before, dict) else {}
-    lines = []
-    for key in ("steps", "time_ps"):
-        old, new = before.get(key), current.get(key)
-        if isinstance(old, (int, float)) and isinstance(new, (int, float)) and old != new:
-            lines.append(f"  {key:<9} {float(old):.3f} -> {float(new):.3f}")
-    if not lines:
-        return None
-    # NOT a causal claim, and it used to be one it had not established. The line read
-    # "{queued_count} queued run(s) no longer counted", built from the CURRENT ABSOLUTE
-    # queued count rather than from any decomposition of the delta -- so a single run that
-    # changed still got "5 queued run(s) no longer counted" attached to it (observed live),
-    # and a total that ROSE because new chunks finished got the same sentence, which is a
-    # non-sequitur. It is attached to the one sentence a researcher reads before quoting a
-    # number, which is exactly where a plausible-sounding wrong cause does the most damage.
-    #
-    # Nothing here CAN decompose the delta: two `summary.json` artifacts carry totals, not
-    # a per-stage ledger, so which runs moved and why is not in evidence. So the two things
-    # that are honestly available are said instead -- what the numbers MEAN (which is what
-    # makes "smaller than before" legible as something other than broken arithmetic), and
-    # the one component both artifacts really do carry, stated as a transition rather than
-    # as a cause.
-    lines.append("  note      totals count what each run's mdout shows it RAN, not what "
-                 "its mdin declared")
-    before_queued, current_queued = before.get("queued_count"), current.get("queued_count")
-    if isinstance(before_queued, (int, float)) or isinstance(current_queued, (int, float)):
-        # `queued_count` is emitted only when there is at least one, so an absent key on
-        # either side means zero rather than "unknown" -- but only once the OTHER side has
-        # stated one, which is what this guard is for. Two artifacts that both omit it say
-        # nothing about queued runs and get no line at all.
-        lines.append(f"  queued    {int(before_queued or 0)} -> "
-                     f"{int(current_queued or 0)} run(s) with an mdin and no mdout")
-    return (f"totals changed since the last summary.json ({path}):\n"
-            + "\n".join(lines))
+# `_totals_delta` used to be defined here. It now lives in `ambermeta.protocol` beside
+# `write_protocol_outputs`, because the GUI's Plan action goes through
+# `core_bridge.write_plan_outputs` and had NO equivalent -- a user who pressed Plan in the
+# browser had summary.json overwritten with a materially different total and was told
+# nothing. Imported rather than copied: two implementations of "what changed since the last
+# artifact" drifting apart is the exact class of defect this branch exists to remove.
 
 
 def _write_plan_artifacts(args: argparse.Namespace, protocol: SimulationProtocol) -> int:
@@ -1235,7 +1177,8 @@ def _write_plan_artifacts(args: argparse.Namespace, protocol: SimulationProtocol
     Returns 0 on success (or nothing requested), 2 if two artifacts target the same
     file, 1 if any artifact failed to write.
     """
-    from ambermeta.protocol import write_protocol_outputs
+    from ambermeta.protocol import (
+        read_prior_summary, totals_delta, write_protocol_outputs)
 
     targets = {}
     for artifact, raw in (("summary", args.summary_path),
@@ -1261,39 +1204,21 @@ def _write_plan_artifacts(args: argparse.Namespace, protocol: SimulationProtocol
 
     fmt = _resolve_sim_format(args.summary_path or "", args.summary_format)
 
-    # Read any prior summary BEFORE write_protocol_outputs (below) overwrites it. Reading
-    # afterwards would see the file this very call just wrote — new totals compared
-    # against themselves — so _totals_delta would return None forever, silently disabling
-    # the whole feature rather than reporting anything.
+    # Read any prior summary BEFORE write_protocol_outputs (below) overwrites it, and see
+    # `read_prior_summary`'s docstring for why reading afterwards would disable the whole
+    # feature permanently rather than merely miss this one report. Both the read and the
+    # comparison now live in `ambermeta.protocol` so the GUI's Plan action runs the
+    # identical pair.
     #
     # Guarded on "summary" in targets, not on `args.summary_path` being truthy:
     # `_write_plan_artifacts` also runs for `--stats-csv`/`--methods-summary-path` alone,
-    # where `args.summary_path` is None. `open(None)` raises TypeError, which is not in
-    # the (OSError, ValueError) list below and is not caught anywhere before main()'s
-    # broad top-level guard — it would turn a working `plan --stats-csv` into an
-    # "Unexpected error (TypeError: ...)" exit instead of the CSV it used to write.
+    # where `args.summary_path` is None, and `open(None)` raises TypeError — not caught
+    # anywhere before main()'s broad top-level guard, so it would turn a working
+    # `plan --stats-csv` into an "Unexpected error (TypeError: ...)" exit instead of the
+    # CSV it used to write.
     if "summary" in targets:
-        previous: Any = {}
-        try:
-            with open(targets["summary"], "r", encoding="utf-8") as fh:
-                # Read with the format `fmt` just resolved for *writing* this same path,
-                # not unconditionally as JSON: `plan` also writes YAML summaries when
-                # `--summary-path` ends `.yaml`/`.yml`, and `json.load` on a YAML document
-                # raises JSONDecodeError — a ValueError — which the `except` below would
-                # swallow into "no prior claim". Read blindly as JSON, that swallow would
-                # be permanent: every future `plan` against a YAML summary path would
-                # report nothing, forever, not just this once. Reading with the resolved
-                # format instead means a YAML prior claim is honoured exactly like a JSON
-                # one.
-                previous = (yaml.safe_load(fh) if fmt == "yaml" and yaml is not None
-                            else json.load(fh))
-        except Exception:
-            # Broad on purpose, not (OSError, ValueError): yaml.YAMLError is neither, and
-            # any genuinely unreadable or malformed prior artifact — missing file,
-            # truncated write, a document from an unrelated tool — is "no prior claim",
-            # not a reason to fail a `plan` that is otherwise about to succeed.
-            previous = {}
-        delta = _totals_delta(previous, protocol.totals(), targets["summary"])
+        previous = read_prior_summary(targets["summary"], fmt)
+        delta = totals_delta(previous, protocol.totals(), targets["summary"])
         if delta:
             # stdout via _out, deliberately not stderr like the WARNING lines a few lines
             # below: this reports on the artifact plan is about to write, so it belongs

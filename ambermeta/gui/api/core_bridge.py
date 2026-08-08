@@ -457,11 +457,45 @@ def write_plan_outputs(sim, settings, base_directory, targets: Dict[str, str],
     The writing half lives in ambermeta.protocol so the CLI shares it; keeping a
     second copy here is how the CLI ended up without mkdir and without per-artifact
     failure capture.
+
+    The totals-delta report shares the same way, and for the same reason. It existed only
+    in `cli.py`, so a user who pressed **Plan** in the browser had their `summary.json`
+    overwritten with a materially different total and was told nothing at all — and the
+    GUI is precisely the surface this whole feature was written for. The specification
+    stated the delta as a property of `plan` and never carved the GUI out; contrast P2.2,
+    where the CLI/GUI split is argued explicitly and at length.
     """
-    from ambermeta.protocol import write_protocol_outputs
+    from ambermeta.protocol import (
+        read_prior_summary, totals_delta, write_protocol_outputs)
 
     protocol = build_protocol(_flatten_simulation(sim), dict(settings), base_directory)
+
+    # BEFORE the write, never after. `write_protocol_outputs` below overwrites the very
+    # file being compared against, so a read placed after it sees this run's own output --
+    # new totals compared to themselves, `None` every time, the feature silently dead
+    # rather than merely quiet. It is the same ordering trap the CLI has, which is why its
+    # own review insisted on an end-to-end check rather than a reading of the code, and
+    # `test_the_gui_plan_reports_the_totals_delta` is that check for this path.
+    #
+    # Guarded on "summary" in targets, matching the CLI: a GUI Plan that asks only for the
+    # stats CSV or the methods summary has no summary path to read, and there is nothing
+    # for the comparison to be about.
+    prior_delta = None
+    if "summary" in targets:
+        prior = read_prior_summary(targets["summary"], summary_format)
+        prior_delta = totals_delta(prior, protocol.totals(), targets["summary"])
+
     result = write_protocol_outputs(protocol, targets, summary_format=summary_format)
+    if prior_delta:
+        # Into `warnings`, which `PlanResult` already declares and which the route already
+        # merges into its response -- so this needs no new wire field and no frontend
+        # change. `PlanModal` renders every warning inline, immediately under the list of
+        # files it just wrote ("it wrote a file" is exactly the moment a caveat about that
+        # file matters, in that component's own words), and `usePlan`'s `onSuccess` also
+        # raises each one as a toast. A NEW key would have been dropped in silence:
+        # pydantic's `extra='ignore'` has cost this repo two findings already, both
+        # recorded in schemas.py.
+        result["warnings"].append(prior_delta)
     result["totals"] = protocol.totals()
     result["lineages"] = protocol.lineage_totals() or None
     result["stage_count"] = len(protocol.stages)
