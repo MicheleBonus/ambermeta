@@ -1,5 +1,7 @@
 """FastAPI routes for the AmberMeta GUI API (Simulation model)."""
 import os
+import threading
+import time
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -25,12 +27,16 @@ _store: Optional[DocumentStore] = None
 
 
 def set_base_directory(directory: str) -> None:
-    global _store
+    global _store, _LAST_REPORT
     absolute = os.path.abspath(directory)
     if _store is None:
         _store = DocumentStore(absolute)
     else:
         _store.reset(absolute)
+    # The reusable report describes the document that was open a moment ago. The
+    # fingerprint covers `base_directory`, so a stale one could not be served anyway —
+    # dropping it is about not holding a whole report for a tree nobody is looking at.
+    _LAST_REPORT = None
 
 
 def get_store() -> DocumentStore:
@@ -346,11 +352,47 @@ def plan_document(req: PlanRequest) -> PlanResult:
                       document=store.to_response())
 
 
+# One Validate at a time, and duplicates of an in-flight one answered from it.
+#
+# Every route here is a synchronous `def`, so Starlette runs each in an anyio worker
+# thread and several genuinely overlap. Validate is the expensive one -- it re-reads every
+# run file the document names, tens of seconds on a large campaign -- and the GUI fires it
+# at itself: `App.tsx` re-validates whenever the document identity changes, and opening the
+# Validation panel fires another. Discovering a 1097-run tree and then clicking Validate
+# was two full passes at once; a few edits during either was more. Unbounded, that is the
+# thread pool exhausted and a browser waiting on `GET /document` behind a queue of
+# redundant full-tree parses.
+#
+# The lock alone fixes the pile-up. `_LAST_REPORT` is what stops the queued caller from
+# then repeating the work the caller ahead of it just did: same document, same settings,
+# finished a moment ago, same answer.
+#
+# `_REUSE_WINDOW_S` is short on purpose, and this is NOT a validation cache. The
+# fingerprint covers the document, not the files it points at, so a run that finished on
+# disk since the last pass must be able to change the report. Two seconds is long enough
+# to absorb a burst of duplicate requests and far too short to hide a file that changed
+# between two deliberate clicks. Parse-level reuse -- the part that is safe to keep,
+# because it re-stats every file -- lives in ambermeta/parse_cache.py.
+_REUSE_WINDOW_S = 2.0
+_validate_lock = threading.Lock()
+_LAST_REPORT: Optional[tuple] = None      # (fingerprint, monotonic_finished_at, report)
+
+
 @router.post("/validate", response_model=ValidationReport)
 def validate_protocol() -> ValidationReport:
+    global _LAST_REPORT
     store = get_store()
     sim, settings, manifest_path, base_directory = store.snapshot()
-    report = core_bridge.validate_simulation(sim, settings, base_directory)
+    fingerprint = core_bridge.document_fingerprint(sim, settings, base_directory)
+
+    with _validate_lock:
+        if _LAST_REPORT is not None:
+            last_fingerprint, finished_at, report = _LAST_REPORT
+            if (last_fingerprint == fingerprint
+                    and time.monotonic() - finished_at <= _REUSE_WINDOW_S):
+                return ValidationReport(**report)
+        report = core_bridge.validate_simulation(sim, settings, base_directory)
+        _LAST_REPORT = (fingerprint, time.monotonic(), report)
     return ValidationReport(**report)
 
 

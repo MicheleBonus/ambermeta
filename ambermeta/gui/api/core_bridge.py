@@ -436,6 +436,32 @@ def _continuity_gap_suggestions(flat, stage_issues, start_index=0):
     return out
 
 
+def document_fingerprint(sim, settings, base_directory) -> str:
+    """A stable digest of everything a validation report is derived FROM in memory.
+
+    Two calls with the same fingerprint would read the same files and ask the same
+    questions of them -- so `POST /validate` uses it to recognise the duplicate requests
+    the GUI fires at itself and answer them once (see `validate_protocol`).
+
+    Deliberately says nothing about the FILES: the document names them, it does not
+    describe their contents, and a run that finished on disk since the last report has to
+    change the answer. That is why the route pairs this with a short time bound rather
+    than treating it as a cache key.
+    """
+    import hashlib
+    import json
+
+    from ambermeta.simulation import simulation_to_payload
+
+    material = {
+        "base_directory": base_directory,
+        "settings": {k: settings[k] for k in sorted(settings)},
+        "simulation": simulation_to_payload(sim),
+    }
+    encoded = json.dumps(material, sort_keys=True, default=str).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
 def validate_simulation(sim, settings, base_directory, protocol=None):
     flat = _flatten_simulation(sim)
     report = build_validation_report(flat, dict(settings), base_directory, protocol=protocol)

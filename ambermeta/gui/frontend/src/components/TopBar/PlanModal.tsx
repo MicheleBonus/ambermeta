@@ -66,7 +66,8 @@ const OUTPUTS: Output[] = [
  */
 export function PlanModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   const { data: doc } = useDocument();
-  const { data: tree = [] } = useFiles({ recursive: true, include_all: true });
+  // Only while it is on screen: a closed picker was walking the whole tree anyway.
+  const { data: tree = [] } = useFiles({ recursive: true, include_all: true, enabled: open });
   const plan = usePlan();
   const base = doc?.base_directory ?? null;
   const [enabled, setEnabled] = useState<Record<string, boolean>>({

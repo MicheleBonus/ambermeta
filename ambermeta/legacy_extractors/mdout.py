@@ -289,6 +289,16 @@ def _parse_value(val_str: str) -> Any:
     except ValueError:
         return val_str
 
+# Compiled once. These ran through `re`'s internal cache on every call before, and
+# `_extract_key_values` is the hottest function in a Validate -- 56k calls for 200 runs.
+_SPACED_ENERGY_KEY = re.compile(r"(1-4\s+(?:NB|EEL))\s*=\s*([-\d\.\*eE\+]+)")
+_KEY_VALUE = re.compile(r"([A-Za-z0-9_\-\(\)\./]+)\s*=\s*([-\d\.\*eE\+]+)")
+_WHITESPACE = re.compile(r"\s+")
+
+# The union of the control-data keys the main loop looks for. One `search` decides
+# whether the line is worth a full key/value extraction at all; see `parse_mdout`.
+_CONTROL_HINT = re.compile(r"nstlim|barostat|temp0|imin|cut|ntt|ntp|ntc|dt")
+
 # How sander (and sander.MPI) says it finished. It writes no "Final Performance Info"
 # block at all -- that is pmemd's -- so a campaign's minimisations, which are routinely
 # run under sander, were every one of them reported as crashed. Both of these are printed
@@ -303,11 +313,10 @@ _SANDER_TOTAL_TIME = re.compile(r"\|\s*Total time\s+([\d.]+)\s*\(\s*[\d.]+%\s*of
 def _extract_key_values(line: str) -> Dict[str, Any]:
     result: Dict[str, Any] = {}
     # AMBER's spaced energy keys first so they win over the generic matcher.
-    for m in re.finditer(r"(1-4\s+(?:NB|EEL))\s*=\s*([-\d\.\*eE\+]+)", line):
-        key = re.sub(r"\s+", " ", m.group(1)).strip()
+    for m in _SPACED_ENERGY_KEY.finditer(line):
+        key = _WHITESPACE.sub(" ", m.group(1)).strip()
         result[key] = _parse_value(m.group(2))
-    pattern = re.compile(r"([A-Za-z0-9_\-\(\)\./]+)\s*=\s*([-\d\.\*eE\+]+)")
-    for k, v in pattern.findall(line):
+    for k, v in _KEY_VALUE.findall(line):
         result.setdefault(k.strip(), _parse_value(v))
     return result
 
@@ -367,48 +376,39 @@ def parse_mdout(filepath: str) -> MdoutMetadata:
 
         # --- 3. Control Data ---
         # Parse this section specifically to handle compressed lines like t=1000.0,dt=0.004
-        if "nstlim" in line and "=" in line:
+        #
+        # ONE extraction per line, shared by all nine keys. These were nine separate
+        # `if "<key>" in line and "=" in line: kvs = _extract_key_values(line)` blocks --
+        # up to nine regex passes over the same string, and `"dt" in line` / `"ntc" in
+        # line` are loose enough to fire often. `_extract_key_values` is pure, so one call
+        # is exactly equivalent; the gate below is the union of those nine substring tests,
+        # so the same lines are extracted and no others. That matters: an energy frame line
+        # carries `=` but none of these keys, and gating on `"=" in line` alone would drag
+        # every frame of every mdout through the extractor and make this slower, not faster.
+        #
+        # Each assignment keeps its own `in kvs` guard, which subsumes the old per-key
+        # substring test -- a key cannot be in the extracted mapping unless it was in the
+        # line.
+        if "=" in line and _CONTROL_HINT.search(line):
             kvs = _extract_key_values(line)
             if 'nstlim' in kvs: md.nstlim = kvs['nstlim']
             if 'dt' in kvs: md.dt = kvs['dt']
-            
-        if "dt" in line and "=" in line:
-            kvs = _extract_key_values(line)
-            if 'dt' in kvs: md.dt = kvs['dt']
-
-        if "cut" in line and "=" in line:
-            kvs = _extract_key_values(line)
             if 'cut' in kvs: md.cutoff = kvs['cut']
-            
-        if "ntt" in line and "=" in line:
-            kvs = _extract_key_values(line)
             if 'ntt' in kvs:
                 md.thermostat = THERMOSTATS.get(kvs['ntt'], str(kvs['ntt']))
-                
-        if "temp0" in line and "=" in line:
-            kvs = _extract_key_values(line)
             if 'temp0' in kvs: md.target_temp = kvs['temp0']
-            
-        if "ntp" in line and "=" in line:
-            kvs = _extract_key_values(line)
+
             ntp = kvs.get('ntp')
             if isinstance(ntp, (int, float)) and ntp > 0 and md.barostat == "None":
                 md.barostat = "Berendsen"   # Amber default when ntp>0 and barostat unset
 
-        if "barostat" in line and "=" in line:
-            kvs = _extract_key_values(line)
             if 'barostat' in kvs:
                 md.barostat = BAROSTATS.get(kvs['barostat'], str(kvs['barostat']))
 
-        if "ntc" in line and "=" in line:
-            kvs = _extract_key_values(line)
             if 'ntc' in kvs and isinstance(kvs['ntc'], (int, float)) and kvs['ntc'] > 1:
                 md.shake_active = True
 
-        if "imin" in line and "=" in line:
-            kvs = _extract_key_values(line)
-            imin = kvs.get('imin')
-            if imin == 1:
+            if kvs.get('imin') == 1:
                 md.run_type = "Minimization"
 
         # --- 4. Frame Processing ---

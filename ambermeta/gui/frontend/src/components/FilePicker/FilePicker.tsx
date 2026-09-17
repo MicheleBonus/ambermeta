@@ -25,7 +25,8 @@ function flatten(nodes: FileInfo[], q: string, type?: FileType): FileInfo[] {
 }
 
 export function FilePicker({ open, mode, title, filterType, onPick, onClose }: Props) {
-  const { data: tree = [] } = useFiles({ recursive: true, include_all: true });
+  // Only while it is on screen: a closed picker was walking the whole tree anyway.
+  const { data: tree = [] } = useFiles({ recursive: true, include_all: true, enabled: open });
   const [q, setQ] = useState("");
   const [path, setPath] = useState("");
   const [format, setFormat] = useState<ExportFormat>("yaml");
