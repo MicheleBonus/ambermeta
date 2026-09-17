@@ -707,17 +707,22 @@ def test_plan_recursive_stops_measuring_one_replica_against_another(timed_replic
     "Stage appears to overlap previous stage by 50 ps" — an assertion about two runs that
     never touched, promoted out of INFO and into the list the user is asked to act on.
 
-    The within-member edge must survive the partition, so the +50 ps on each member's
-    second chunk is asserted rather than merely allowed. That gap is itself an artifact of
-    stem grouping handing a run its *own* output restart as input coordinates; it is
-    pre-existing, it is identical on a single-directory tree (see the control below), and
-    it is not what this test is about — it is here because "the member boundary stopped
-    being compared" would be satisfied just as well by comparing nothing at all.
+    The within-member edge must survive the partition, so the measurement on each member's
+    second chunk is asserted rather than merely allowed — it is here because "the member
+    boundary stopped being compared" would be satisfied just as well by comparing nothing
+    at all.
+
+    That measurement is 0.0, and it used to be +50.0. The fixture's chunks run
+    100 -> 150 -> 200 ps and so meet exactly (see `_CHUNK_END_PS`); the +50 was the artifact
+    this docstring used to record as pre-existing and out of scope — stem grouping handed
+    each run its own output restart as input coordinates, so every chunk was measured as
+    beginning where it ended. `SimulationStage.inpcrd_is_own_restart` is what closed it, and
+    the number here is now the fixture's own arithmetic rather than one chunk's length.
     """
     protocol = auto_discover(str(timed_replica_tree), recursive=True)
     by_name = _by_name(protocol.stages)
 
-    assert [s.observed_gap_ps for s in protocol.stages] == [None, 50.0, None, 50.0, None, 50.0]
+    assert [s.observed_gap_ps for s in protocol.stages] == [None, 0.0, None, 0.0, None, 0.0]
     assert [(s.name, n) for s in protocol.stages
             for n in s.continuity if "overlap" in n] == []
 
@@ -727,9 +732,11 @@ def test_plan_recursive_stops_measuring_one_replica_against_another(timed_replic
         assert by_name[head].continuity == [
             f"INFO: Continuity for {head} was not measured (no producing stage resolved)."]
 
-    assert _problems(protocol.stages) == [
-        (f"{rep}/prod_0002", "Gap detected without stated expectation; verify continuity.")
-        for rep in ("rep1", "rep2", "rep3")]
+    # Nothing for the user to act on: the chunks meet, and the engine now says so. This
+    # list used to hold one "Gap detected without stated expectation" per replica —
+    # three findings raised against a perfectly continuous campaign, for the same
+    # own-restart reason as the +50 above.
+    assert _problems(protocol.stages) == []
 
 
 def test_a_single_directory_tree_is_untagged_and_measured_exactly_as_before(tmp_path):
@@ -744,7 +751,9 @@ def test_a_single_directory_tree_is_untagged_and_measured_exactly_as_before(tmp_
 
     protocol = auto_discover(str(tmp_path), recursive=True)
     assert [s.lineage for s in protocol.stages] == [None, None]
-    assert [s.observed_gap_ps for s in protocol.stages] == [None, 50.0]
+    # 0.0, matching the partitioned tree above: one directory or three, a chunk is measured
+    # from its mdout's stated begin time rather than from the restart it wrote itself.
+    assert [s.observed_gap_ps for s in protocol.stages] == [None, 0.0]
     assert protocol.stages[0].continuity == []
 
 

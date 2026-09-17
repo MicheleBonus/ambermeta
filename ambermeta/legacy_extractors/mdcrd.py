@@ -188,7 +188,33 @@ def _parse_netcdf_trajectory(filepath: str) -> TrajectoryMetadata:
                     if md.n_frames > 1:
                         deltas = np.diff(times)
                         md.avg_dt = float(np.mean(deltas))
-                        if _is_variable_dt(deltas, md.avg_dt):
+                        # A NetCDF-3 record that was never written back reads as fill --
+                        # 0.0 -- so a trajectory that is truncated, or that pmemd is still
+                        # writing, hands back the full declared frame count with its tail
+                        # zeroed. Measured on a real 260 MB trajectory cut to 4 KB: 250
+                        # frames, 5020.0 -> 0.0 ps, avg_dt -20.16, total_duration -5020 ps,
+                        # volume 0, box "Triclinic", and the only warning was the
+                        # misleading "Variable timestep detected within file."
+                        #
+                        # AMBER's clock does not run backwards, so a negative step is proof
+                        # the records are not all there. Reporting nothing about the times
+                        # is the honest answer AND the useful one: `_check_stage_pair`
+                        # reads `mdcrd.time_end` first and falls through to the mdout when
+                        # it is absent, so a partial copy now defers to the authoritative
+                        # source instead of feeding an end time of 0.0 into continuity and
+                        # manufacturing a discontinuity.
+                        if float(np.min(deltas)) < 0:
+                            # Frames up to the break really are on disk; the count is the
+                            # one fact here still worth stating.
+                            md.n_frames = int(np.argmax(deltas < 0)) + 1
+                            md.has_time = False
+                            md.time_start = md.time_end = md.avg_dt = None
+                            md.total_duration = 0.0
+                            md.warnings.append(
+                                "Trajectory is truncated or still being written: frame "
+                                "times stop increasing after frame "
+                                f"{md.n_frames}. Times not reported.")
+                        elif _is_variable_dt(deltas, md.avg_dt):
                             md.warnings.append("Variable timestep detected within file.")
             elif 'coordinates' in vars_keys:
                 # Fallback if no time variable: check coordinate shape
@@ -202,11 +228,31 @@ def _parse_netcdf_trajectory(filepath: str) -> TrajectoryMetadata:
             if 'cell_lengths' in vars_keys:
                 md.has_box = True
                 lengths = ds.variables['cell_lengths'][:] # (Frames, 3)
-                
+
                 angles = None
                 if 'cell_angles' in vars_keys:
                     angles = ds.variables['cell_angles'][:] # (Frames, 3)
-                    # Check first frame for triclinic
+
+                # Same fill-value trap as the times above, and it lies twice: unwritten
+                # records read back as zero, so a truncated trajectory reports a 0 A^3 box
+                # and -- because 0 is not 90 -- calls a plainly orthogonal cell
+                # "Triclinic". Keep only the frames that hold a real cell.
+                written = np.all(np.asarray(lengths) > 0.0, axis=1) if len(lengths) else None
+                if written is not None and not np.all(written):
+                    kept = int(np.count_nonzero(written))
+                    md.warnings.append(
+                        f"{len(lengths) - kept} of {len(lengths)} box records are empty "
+                        "(trajectory truncated or still being written); "
+                        "box read from the rest.")
+                    lengths = np.asarray(lengths)[written]
+                    if angles is not None:
+                        angles = np.asarray(angles)[written]
+
+                if len(lengths) == 0:
+                    md.has_box = False
+                    angles = None
+                elif angles is not None:
+                    # Check first surviving frame for triclinic
                     if np.any(np.abs(angles[0] - 90.0) > 0.01):
                         md.box_type = "Triclinic"
                     else:
@@ -215,12 +261,13 @@ def _parse_netcdf_trajectory(filepath: str) -> TrajectoryMetadata:
                     md.box_type = "Orthogonal"
 
                 # Calculate Volumes
-                try:
-                    vols = _calc_volume_array(lengths, angles)
-                    if len(vols) > 0:
-                        md.volume_stats = (float(np.min(vols)), float(np.max(vols)), float(np.mean(vols)))
-                except (ValueError, TypeError, IndexError) as e:
-                    md.warnings.append(f"Volume calculation failed: {e}")
+                if md.has_box:
+                    try:
+                        vols = _calc_volume_array(lengths, angles)
+                        if len(vols) > 0:
+                            md.volume_stats = (float(np.min(vols)), float(np.max(vols)), float(np.mean(vols)))
+                    except (ValueError, TypeError, IndexError) as e:
+                        md.warnings.append(f"Volume calculation failed: {e}")
 
             # --- 5. REMD Metadata ---
             # 'temp0' in AMBER NetCDF REMD is the thermostat temperature index

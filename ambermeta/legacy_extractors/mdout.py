@@ -289,6 +289,17 @@ def _parse_value(val_str: str) -> Any:
     except ValueError:
         return val_str
 
+# How sander (and sander.MPI) says it finished. It writes no "Final Performance Info"
+# block at all -- that is pmemd's -- so a campaign's minimisations, which are routinely
+# run under sander, were every one of them reported as crashed. Both of these are printed
+# only on normal termination, after the TIMINGS section.
+_SANDER_DONE = re.compile(r"\|\s*Run\s+done at\b")
+_SANDER_WALLCLOCK = "wallclock() was called"
+# `| Total time              5174.01 (100.0% of ALL  )` -- sander's wall clock. pmemd
+# prints `| Total wall time:` instead and never this line, so the two cannot collide.
+_SANDER_TOTAL_TIME = re.compile(r"\|\s*Total time\s+([\d.]+)\s*\(\s*[\d.]+%\s*of ALL")
+
+
 def _extract_key_values(line: str) -> Dict[str, Any]:
     result: Dict[str, Any] = {}
     # AMBER's spaced energy keys first so they win over the generic matcher.
@@ -318,7 +329,8 @@ def parse_mdout(filepath: str) -> MdoutMetadata:
     with open(filepath, 'r', errors='replace') as f:
         lines = f.readlines()
 
-    in_summary_section = False # To ignore "Averages" and "RMS" blocks
+    # How many upcoming printed blocks are summaries ("Averages"/"RMS") rather than frames.
+    summary_blocks_to_skip = 0
     
     for i, line in enumerate(lines):
         
@@ -400,11 +412,21 @@ def parse_mdout(filepath: str) -> MdoutMetadata:
                 md.run_type = "Minimization"
 
         # --- 4. Frame Processing ---
+        # A countdown, not a latch. Each banner is followed by exactly ONE printed block,
+        # so skipping one block per banner is the same thing at end of file -- where the
+        # AVERAGES/RMS pair is the last thing in the mdout -- and the right thing in the
+        # middle of one. `ntave > 0` makes AMBER print an interim averages pair every
+        # `ntave` steps and then carry on running; a latch treated the first of those as
+        # the end of the run and silently dropped every frame after it, under-reporting a
+        # 1.7 ns run as 0.2 ns with no warning and manufacturing a gap against whatever
+        # came next.
         if "A V E R A G E S" in line or "R M S  F L U C T U A T I O N S" in line:
-            in_summary_section = True
-            
+            summary_blocks_to_skip += 1
+
         if "NSTEP =" in line and "TIME(PS)" in line:
-            if not in_summary_section:
+            if summary_blocks_to_skip:
+                summary_blocks_to_skip -= 1
+            else:
                 # Combine this line and next ~9 lines to capture all properties
                 combined = line.strip()
                 for offset in range(1, 10):
@@ -417,14 +439,28 @@ def parse_mdout(filepath: str) -> MdoutMetadata:
                 md.stats.add_frame(data)
 
         # --- 5. Performance ---
+        # Backstop: nothing after the timings banner is a frame, so an unbalanced summary
+        # banner (a run killed between its "A V E R A G E S" line and the block it
+        # announces) cannot leave a skip owing against a frame that follows.
         if "Final Performance Info" in line or "TIMINGS" in line:
-            in_summary_section = False 
-            
+            summary_blocks_to_skip = 0
+
         if "Final Performance Info" in line:
             md.finished_properly = True
         if "Master Timer" in line or "Total wall time" in line:
             md.finished_properly = True
-            
+        # sander's own end-of-run stamps. Measured on a real campaign: all five
+        # minimisations were Amber 18 sander.MPI runs that ended with a complete TIMINGS
+        # breakdown and a `Run done at` line, and all five were reported
+        # `finished_properly=False, wall_time_seconds=0.0` -- the only five of 1091 mdouts
+        # flagged as not finished in the whole tree, every one a false positive.
+        if _SANDER_WALLCLOCK in line or _SANDER_DONE.search(line):
+            md.finished_properly = True
+        sander_total = _SANDER_TOTAL_TIME.search(line)
+        if sander_total:
+            md.wall_time_seconds = float(sander_total.group(1))
+
+
         if "ns/day =" in line:
             kvs = _extract_key_values(line)
             if 'ns/day' in kvs: md.ns_per_day = kvs['ns/day']
