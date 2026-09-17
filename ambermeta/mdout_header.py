@@ -34,6 +34,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Dict, Optional, Set
 
+from ambermeta.parse_cache import cached_parse
+
 __all__ = ["MdoutHeader", "read_mdout_header"]
 
 # ` begin time read from input coords =   920.000 ps`
@@ -130,7 +132,18 @@ class MdoutHeader:
 
 
 def read_mdout_header(path: str) -> MdoutHeader:
-    """Read the header of the mdout at `path`, stopping at the results banner."""
+    """Read the header of the mdout at `path`, stopping at the results banner.
+
+    Memoised on the file's identity+mtime+size (see ambermeta/parse_cache.py) under its
+    own cache kind: this is the second read of the same bytes -- `_parse_mdout` calls it
+    right after `MdoutParser` -- and the handoff proposal reads every mdout header a third
+    time. The returned object is shared, so treat it as read-only, which every caller
+    already does.
+    """
+    return cached_parse("mdout_header", path, lambda: _read_mdout_header(path))
+
+
+def _read_mdout_header(path: str) -> MdoutHeader:
     header = MdoutHeader()
     in_assignments = False
     in_control_data = False

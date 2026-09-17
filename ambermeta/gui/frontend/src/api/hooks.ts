@@ -94,8 +94,29 @@ export const usePlan = () =>
 export const useValidate = () => useMutation({ mutationFn: () => api.validate() });
 export const usePreview = () => useMutation({ mutationFn: (format: ExportFormat) => api.previewDocument(format) });
 
-export function useFiles(a: { path?: string; recursive?: boolean; include_all?: boolean }) {
-  return useQuery({ queryKey: ["files", a.path ?? null, a.recursive ?? null, a.include_all ?? null], queryFn: () => api.listFiles(a) });
+/**
+ * The file tree.
+ *
+ * `enabled` exists because two of the three callers are MODALS, and a closed modal still
+ * mounts its body: `FilePicker` and `PlanModal` were each fetching a full recursive walk
+ * of the tree before the user had clicked anything. On a real campaign that is 5345 files
+ * stat'ed over a network filesystem, per closed modal, holding a worker thread each --
+ * the server runs every route in a thread and Validate is competing for the same pool.
+ *
+ * `staleTime` is the other half: without it the same tree is re-walked every time a modal
+ * is opened, closed and opened again. Thirty seconds is long enough to make that free and
+ * short enough that a file written by a run in progress shows up while the user is still
+ * looking for it. Any explicit refresh path can still invalidate the key.
+ */
+export function useFiles(
+  a: { path?: string; recursive?: boolean; include_all?: boolean; enabled?: boolean },
+) {
+  return useQuery({
+    queryKey: ["files", a.path ?? null, a.recursive ?? null, a.include_all ?? null],
+    queryFn: () => api.listFiles(a),
+    enabled: a.enabled ?? true,
+    staleTime: 30_000,
+  });
 }
 export function useFileMetadata(path: string | null) {
   return useQuery({ queryKey: ["file-metadata", path], enabled: !!path,

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   DndContext, DragOverlay, PointerSensor, useSensor, useSensors,
   type DragEndEvent, type DragStartEvent,
@@ -75,13 +75,43 @@ export default function App() {
   const [drag, setDrag] = useState<ActiveDrag | null>(null);
   const modalOpen = useAnyModalOpen();
 
+  // Re-validate whenever the document identity changes: on load and after every mutation
+  // (setDocument writes a new object into the one ["document"] cache entry). This is the
+  // single shared source of truth for suggestions -- both the canvas and the tray read it
+  // via SuggestionsContext.
+  //
+  // ONE request at a time, with a trailing re-run. Validate re-reads every run file the
+  // document names -- tens of seconds on a large campaign, the first time -- and this
+  // effect fires on every mutation, so a handful of quick edits used to put several full
+  // passes in flight together, each holding one of the server's worker threads (every
+  // route there is a synchronous `def`, so they really do run in parallel). The trailing
+  // flag is what keeps that from costing correctness: an edit made while a pass is running
+  // is not dropped, it is re-run once the pass lands, so the suggestions on screen always
+  // describe the document as it is now rather than as it was three edits ago.
+  const validating = useRef(false);
+  const staleSinceValidate = useRef(false);
+  const runValidate = useCallback(() => {
+    validating.current = true;
+    staleSinceValidate.current = false;
+    validate.mutate(undefined, {
+      onSuccess: (report) => setSuggestions(report.suggestions),
+      onSettled: () => {
+        validating.current = false;
+        if (staleSinceValidate.current) runValidate();
+      },
+    });
+    // `validate.mutate` is stable across renders; depending on the mutation object itself
+    // would re-create this on every state change and defeat the guard.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   useEffect(() => {
     if (!doc) return;
-    validate.mutate(undefined, { onSuccess: (report) => setSuggestions(report.suggestions) });
-    // Re-validate whenever the document identity changes: on load and after every mutation
-    // (setDocument writes a new object into the one ["document"] cache entry). This is the
-    // single shared source of truth for suggestions -- both the canvas and the tray read it
-    // via SuggestionsContext.
+    if (validating.current) {
+      staleSinceValidate.current = true;
+      return;
+    }
+    runValidate();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [doc]);
 
