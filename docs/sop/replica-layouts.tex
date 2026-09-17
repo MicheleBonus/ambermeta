@@ -29,7 +29,7 @@ No code was changed. Everything below was measured against AmberMeta v1.1.0 as r
 
 Of 50 system directories, 19 hold simulation files. 30 are empty placeholders. One,
 \code{sys005}, is \emph{unreadable}: its permissions are \code{drw-rw-r-{}-}, so the
-execute bit is missing and no user --- including its owner --- can traverse it. That is a
+execute bit is missing and no user (including its owner) can traverse it. That is a
 one-line fix at the source (\code{chmod~u+rx}) and worth doing before any further
 deposits.
 
@@ -56,12 +56,15 @@ read-only; nothing was written into the corpus.
 All five were parsed without error. Two results stand out independently of replicas:
 
 \begin{itemize}
-  \item \textbf{\code{sys004} contains no output logs at all.} 5100 files --- 2496
-        restarts, 2496 trajectories, 104 inputs --- and not one \code{.mdout}. A manifest
-        can still be built, but nothing in it is confirmable: no achieved simulation
-        time, no temperature, no completion status, and every junction between runs
-        reported as an unexplained gap. This is the single most consequential gap found
-        in the corpus.
+  \item \textbf{\code{sys004} contains no output logs at all.} 5100 files (2496
+        restarts, 2496 trajectories, 104 inputs) and not one \code{.mdout}. Less is lost
+        than that sounds. The trajectories are NetCDF despite their \code{.mdcrd} names,
+        and AmberMeta types a file by its content, so each run still reports its atom
+        count, frame count, frame spacing, achieved simulation time, box type and volume
+        statistics: one production chunk here reads 5200 to 6000 ps from the trajectory
+        alone. What the missing logs cost is the temperature, the completion status, the
+        wall clock, and the authoritative record of where each run began. The last of
+        those has a consequence of its own, in \S\ref{sec:quirk}.
   \item \textbf{\code{sys011} has 260 logs but only 65 inputs.} The runs are recoverable
         from the logs, but the requested settings for most of them are not on record.
 \end{itemize}
@@ -73,8 +76,8 @@ All five were parsed without error. Two results stand out independently of repli
 \toprule
 \textbf{Convention} & \textbf{Shape} & \textbf{Auto} & \textbf{Manual}\\
 \midrule
-Replicas within stages   & \code{equilibration/run1..run6}, \code{production/run1..run8} & yes & ---\\
-Numbered within stages   & \code{equil/01..05}, \code{prod/01..05}                        & yes & ---\\
+Replicas within stages   & \code{equilibration/run1..run6}, \code{production/run1..run8} & yes & n/a\\
+Numbered within stages   & \code{equil/01..05}, \code{prod/01..05}                        & yes & n/a\\
 Replicas beside stages   & \code{run1..run4} next to \code{equilibration/equi1..equi4}    & no  & yes\\
 Id repeated in filenames & \code{L12Y/prod/01/GB1\_204\_01\_000}                          & no  & yes\\
 \bottomrule
@@ -84,7 +87,7 @@ Id repeated in filenames & \code{L12Y/prod/01/GB1\_204\_01\_000}                
 \medskip
 Two of the four are recognised with no intervention, and produce correctly tagged
 members (\code{run1..run8} for \code{sys004}; \code{01..05} for \code{sys021}). The other
-two are \emph{declined}, not mis-grouped --- and in both the runs are still discovered
+two are \emph{declined}, not mis-grouped; in both, the runs are still discovered
 and still correctly chained. Only the grouping into members is withheld.
 
 \subsection{Why the two declines happen}
@@ -96,7 +99,7 @@ than one reading, on the grounds that a wrong member claim is worse than none.
 \code{equilibration/equi1..equi4}, which varies at the second path segment, and
 \code{run1..run4}, which varies at the first. Disjoint families are refused because they
 are equally consistent with two separate experiments in one directory. Restricting the
-scan to the replica directories alone resolves it immediately --- \code{discover
+scan to the replica directories alone resolves it immediately: \code{discover
 -{}-pattern 'run[0-9]'} tags \code{run1..run4} correctly.
 
 \textbf{\code{sys024}} repeats the replica identifier inside the filenames:
@@ -119,6 +122,28 @@ The cost is judgement: the picker offers every directory at the chosen level, in
 preparation directories that are not replicas. A user who accepts all of them gets a
 manifest asserting that \code{leap} is a replica.
 
+\subsection{A parser quirk this corpus exposed}
+\label{sec:quirk}
+
+\code{sys004}'s production runs hold a trajectory and a restart and nothing else. Files
+are grouped by stem, so a run's own output restart lands in the slot continuity reads its
+\emph{start} time from. v1.1.0 guards against exactly that, but the guard asks whether the
+group also holds an \code{mdin} or an \code{mdout}, on the reasoning that a group with
+neither is not a run at all but a bare topology and coordinate pair. Here both are absent
+and the runs are real, so the guard never fires: each chunk's own restart is read as its
+start time, and every junction reports a gap of one full chunk (999.9999998 ps against a
+1000 ps chunk).
+
+The equilibration directories carry \code{mdin} files, so the guard fires there and
+continuity reports an honest ``cannot verify'' instead. Over the whole system that splits
+cleanly: 2498 junctions report the cautious note, and 2399 report the phantom gap. A
+further 7 report an overlap of 299000 ps, which is the same misread start time landing on
+the far side of a chain boundary rather than inside one.
+
+The condition is narrow, a deposit carrying neither inputs nor logs, but that is the shape
+a partial upload takes, and inside it the phantom gap the guard exists to prevent returns
+in full, on 2399 junctions of one system.
+
 \section{Recommendations}
 
 \begin{enumerate}
@@ -128,17 +153,25 @@ manifest asserting that \code{leap} is a replica.
         corpus already follow this; it costs nothing to standardise on it.
 
   \item \textbf{Treat missing output logs as a deposit blocker.} \code{sys004} is the
-        case to cite: a 5100-file deposit from which nothing can be confirmed. A one-line
-        check at deposit time (every run directory holding a \code{.mdout}) would have
-        caught it.
+        case to cite. The trajectories carry the timing, so the deposit is not worthless,
+        but no run in it can be shown to have finished, no temperature is on record, and
+        the continuity of every production chain is reported wrongly rather than
+        cautiously (\S\ref{sec:quirk}). A one-line check at deposit time, every run
+        directory holding a \code{.mdout}, would have caught it.
+
+  \item \textbf{Raise the self-restart guard's condition as an issue.} Requiring an
+        \code{mdin} or an \code{mdout} in the group is what makes it miss
+        \code{sys004}. Keying on whether the group's coordinate file is also the run's
+        declared output would cover the log-free case, and is worth a design pass rather
+        than a quick patch.
 
   \item \textbf{Fix \code{sys005}'s permissions} and re-run the survey over all 19
         populated systems once the SOP is in use.
 
   \item \textbf{Consider two contained improvements to the picker}, in order of value:
         \begin{itemize}
-          \item Mark which offered members \emph{look like} replicas --- directories whose
-                run-base sets match each other --- and which do not, so a user is steered
+          \item Mark which offered members \emph{look like} replicas (directories whose
+                run-base sets match each other) and which do not, so a user is steered
                 away from accepting \code{leap} as a member. This is presentational and
                 does not touch the inference rule.
           \item Consider whether a directory whose base sets differ only by an embedded
@@ -150,7 +183,8 @@ manifest asserting that \code{leap} is a replica.
 
   \item \textbf{Do not weaken the disjoint-families rule.} The \code{sys011} refusal is
         the rule working as intended. The procedural workaround is cheap and the failure
-        mode it prevents --- silently merging two experiments into one campaign --- is not.
+        mode it prevents, silently merging two experiments into one campaign, is
+        expensive.
 \end{enumerate}
 
 \end{document}

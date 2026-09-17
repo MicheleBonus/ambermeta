@@ -1,7 +1,7 @@
 \documentclass[11pt]{article}
 \input{preamble}
 
-\fancyhead[L]{\small\color{muted}AmberMeta --- Standard Operating Procedure}
+\fancyhead[L]{\small\color{muted}AmberMeta Standard Operating Procedure}
 \fancyhead[R]{\small\color{muted}v1.1.0}
 
 \begin{document}
@@ -19,8 +19,8 @@
 
 AmberMeta reads a directory of AMBER simulation files and reconstructs what was
 actually run: which topology belonged to which stage, which run continued which, how
-long each ran, and where the record is incomplete. The output is a \emph{manifest} --- a
-single YAML file that describes the campaign --- plus optional summary artifacts.
+long each ran, and where the record is incomplete. The output is a \emph{manifest}, a
+single YAML file describing the campaign, together with the summary artifacts of \S4.5.
 
 This procedure covers depositing one \emph{system} (one directory under the collection
 root). Work through it once per system. It uses the graphical interface throughout;
@@ -30,14 +30,14 @@ every step has a command-line equivalent if you need to script it across many sy
 \begin{note}{The one thing to understand first}
 AmberMeta reports only what your files support. It will not invent a temperature it
 cannot read or assert a continuation it cannot demonstrate. If a deposit is missing its
-output logs, AmberMeta will say so rather than guess --- which is the point, but it does
+output logs, AmberMeta will say so rather than guess. That is the point, but it does
 mean an incomplete deposit produces a thin manifest.
 \end{note}
 
 \section{Before you start: what a complete deposit contains}
 \label{sec:prereq}
 
-AmberMeta expects the file kinds below --- the topology once per system, the rest once
+AmberMeta expects the file kinds below, the topology once per system and the rest once
 per run. The middle column is what is lost if that kind is absent.
 
 \begin{center}\small
@@ -49,7 +49,7 @@ Topology    & Atom count, box, whether masses were repartitioned & \code{.prmtop
 Input       & Requested settings: steps, timestep, thermostat, barostat & \code{.mdin}, \code{.in}\\
 Output log  & What \emph{actually} ran: achieved time, temperature, completion, timings & \code{.mdout}, \code{.out}\\
 Trajectory  & Frame count, frame spacing, box volume over time & \code{.nc}, \code{.mdcrd}\\
-Restart     & The coordinates handed to the next run --- the link in the chain & \code{.restrt}, \code{.rst}\\
+Restart     & The coordinates handed to the next run, the link in the chain & \code{.restrt}, \code{.rst}\\
 \bottomrule
 \end{tabularx}
 \end{center}
@@ -64,8 +64,8 @@ every junction between runs is reported as an unexplained gap. Keep the logs.
 Confirm every directory is readable (\code{chmod~u+rx} on directories, not just files) and
 that no editor crash files, core dumps, or scratch copies are sitting among the run
 files. AmberMeta skips what it does not recognise, but a stray file that \emph{looks}
-like a run --- a lone \code{.in} in an analysis folder --- becomes a step you then have to
-remove by hand.
+like a run, such as a lone \code{.in} in an analysis folder, becomes a step you then
+have to remove by hand.
 \end{note}
 
 \section{Recommended layout for new work}
@@ -107,7 +107,7 @@ AmberMeta chains them by reading each run's restart, not by the numbering.
 \subsection{Launch}
 
 Run AmberMeta at the top of the system directory you are depositing. That directory
-becomes a hard boundary --- nothing outside it is read.
+becomes a hard boundary: nothing outside it is read.
 
 \begin{shell}
 ambermeta gui /path/to/sys023
@@ -122,7 +122,7 @@ here, it is a permissions or path problem, not an AmberMeta one.
   \centering
   \includegraphics[width=0.86\textwidth]{figures/gui-files.png}
   \caption{The file pane after launching against a system directory. Files are typed on
-  sight --- \emph{topology}, \emph{input script}, \emph{output log}, \emph{coordinates} ---
+  sight (\emph{topology}, \emph{input script}, \emph{output log}, \emph{coordinates}),
   and candidates for the starting structure are flagged.}
   \label{fig:files}
 \end{figure}
@@ -138,7 +138,7 @@ Read down the timeline and check three things:
 \begin{itemize}
   \item \textbf{Phase roles.} Minimization, heating, equilibration and production should
         be labelled as such. A phase labelled \emph{Unassigned} usually means a
-        preparation step (tLEaP, ParmEd) was picked up as a run --- set its role or
+        preparation step (tLEaP, ParmEd) was picked up as a run. Set its role or
         delete it.
   \item \textbf{The chain.} Between consecutive steps you should see
         \emph{restart of \ldots}. A step reading \emph{starting structure} part-way
@@ -164,7 +164,7 @@ independent trajectories; without this they are treated as one sequence and the
 junctions between them are reported as gaps.
 
 Press \textbf{Define replicas\ldots}. If the layout follows \S\ref{sec:layout}, the
-members are already proposed --- accept them. Otherwise pick the directory level that
+members are already proposed, so accept them. Otherwise pick the directory level that
 distinguishes the replicas and accept only the members that really are replicas
 (preparation directories at the same level are offered too, and should be left alone).
 
@@ -176,7 +176,7 @@ Once accepted, each phase carries a banner naming the member and its run count
   \includegraphics[width=0.86\textwidth]{figures/gui-replicas.png}
   \caption{A system with replicas accepted: the \code{run1} banner above the timeline
   marks the member and its twelve runs. The continuity notes on the right are this
-  deposit's missing output logs --- with no \code{.mdout}, no junction can be confirmed.}
+  deposit's missing output logs: with no \code{.mdout}, no junction can be confirmed.}
   \label{fig:replicas}
 \end{figure}
 
@@ -186,7 +186,7 @@ Press \textbf{Validate}. Findings arrive in the right-hand tray in two groups:
 
 \begin{description}[leftmargin=1.4em,style=nextline,font=\bfseries]
   \item[\textsc{applied}] Inferences AmberMeta already acted on, each with an
-        \textbf{Undo}. Skim these --- they are claims about your data. The starting
+        \textbf{Undo}. Skim these, because they are claims about your data. The starting
         structure and phase roles usually land here.
   \item[\textsc{needs you}] Questions it will not answer on its own. \textbf{Accept}
         agrees, \textbf{Adjust} lets you supply the right value, \textbf{Ignore} records
@@ -201,7 +201,7 @@ Press \textbf{Validate}. Findings arrive in the right-hand tray in two groups:
 \textbf{Finding} & \textbf{What to do}\\
 \midrule
 Confirm the HMR topology & Check the flagged topology really is the mass-repartitioned one, then accept.\\
-Gap detected without stated expectation & Two consecutive runs do not meet in time. Either a run is missing from the deposit, or the gap is real and deliberate --- say which.\\
+Gap detected without stated expectation & Two consecutive runs do not meet in time. Either a run is missing from the deposit, or the gap is real and deliberate. Say which.\\
 Atom count mismatch across files & A step is bound to the wrong topology. Rebind it in the timeline.\\
 Trajectory is truncated or still being written & The run is incomplete or was copied mid-write. Re-copy it, or accept that its times come from the log instead.\\
 \bottomrule
@@ -209,14 +209,28 @@ Trajectory is truncated or still being written & The run is incomplete or was co
 \end{center}
 
 Resolve findings until only ones you have deliberately accepted or ignored remain. A
-finding left unresolved is not an error --- it is an unanswered question travelling with
-your data.
+a finding left unresolved is an unanswered question travelling with your data.
 
-\subsection{Save}
+\subsection{Save, then Plan}
 
-Press \textbf{Save} to write \code{manifest.yaml} into the system directory. This is the
-deposit artifact. \textbf{Plan} additionally writes the summary files
-(\code{summary.json}, \code{methods\_summary.json}) used for reporting.
+Press \textbf{Save} to write \code{manifest.yaml} into the system directory. That is the
+deposit artifact.
+
+Then press \textbf{Plan}, and keep the files it writes. \textbf{This step is required,
+not optional.} Plan writes \code{summary.json} and \code{methods\_summary.json} beside
+the manifest: the manifest records what your files \emph{are}, and these record what
+AmberMeta \emph{made of them}, run by run, with every number it derived.
+
+That second record is what lets us audit the parser against real data. AmberMeta is being
+developed against this collection, and the failures worth finding are the ones that occur
+on layouts and AMBER versions nobody anticipated. Those are invisible in a manifest and
+obvious in a summary: a duration that disagrees with the trajectory, a run reported as
+unfinished that plainly finished, a continuity gap where the chain is sound. If a system's
+summary files are not deposited, its quirks stay undiscovered until someone hits them in
+an analysis.
+
+So: deposit \code{manifest.yaml}, \code{summary.json} and \code{methods\_summary.json}
+together, and report anything in them that contradicts what you know about the runs.
 
 Re-running this procedure later re-reads the files; unchanged files are not re-parsed,
 so a second pass over an unchanged system is quick.
@@ -288,6 +302,7 @@ files; the whole-campaign check the \textbf{Validate} button performs is what
   \item Replicas defined, if the system has them.
   \item Validate run; every finding accepted, adjusted or deliberately ignored.
   \item \code{manifest.yaml} saved into the system directory.
+  \item \textbf{Plan} run, and \code{summary.json} and \code{methods\_summary.json} deposited with it.
 \end{enumerate}
 \end{note}
 
