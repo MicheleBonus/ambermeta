@@ -16,20 +16,13 @@ from dataclasses import dataclass, field
 # -------------------------------
 # 1. Dependency Management
 # -------------------------------
-HAS_NETCDF = False
-NETCDF_BACKEND = "None"
-
-try:
-    import netCDF4 as nc
-    HAS_NETCDF = True
-    NETCDF_BACKEND = "netCDF4"
-except ImportError:
-    try:
-        from scipy.io import netcdf as nc
-        HAS_NETCDF = True
-        NETCDF_BACKEND = "scipy"
-    except ImportError:
-        pass
+# Backend detection and the lock that serialises it live in one module for the whole
+# package; see ambermeta/netcdf_backend.py for why opening these files from two threads
+# at once segfaults the process. The names are re-exported here because they were part of
+# this module's surface before that module existed.
+from ambermeta.netcdf_backend import (  # noqa: F401
+    HAS_NETCDF, NETCDF_BACKEND, nc, open_dataset,
+)
 
 # -------------------------------
 # 2. Metadata Dataclass
@@ -155,13 +148,9 @@ def _parse_netcdf_trajectory(filepath: str) -> TrajectoryMetadata:
         return md
 
     try:
-        # Open
-        if NETCDF_BACKEND == "netCDF4":
-            ds = nc.Dataset(filepath, 'r')
-        else:
-            ds = nc.netcdf_file(filepath, 'r', mmap=False)
-
-        try:
+        # Held for the whole session, not just the open: reading a variable below
+        # re-enters the same non-thread-safe C library.
+        with open_dataset(filepath) as ds:
             # --- 1. Attributes ---
             md.title = _get_nc_attr(ds, 'title', "N/A")
             md.program = _get_nc_attr(ds, 'program')
@@ -245,9 +234,6 @@ def _parse_netcdf_trajectory(filepath: str) -> TrajectoryMetadata:
             if 'remd_dimtype' in vars_keys:
                 md.is_remd = True
                 md.remd_types.append("Multi-D REMD")
-
-        finally:
-            ds.close()
 
     except (IOError, OSError, ValueError, TypeError, KeyError, IndexError, RuntimeError) as e:
         md.warnings.append(f"NetCDF Error: {e}")
