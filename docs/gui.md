@@ -241,6 +241,11 @@ The tray re-runs validation (and refills itself) after every document mutation, 
 
   Rebuild such a file with `ambermeta discover <dir> --write <path>` and open the result.
 - **Save** always writes the canonical **v2 manifest** — YAML or JSON only, chosen by the target's extension or by the Save dialog's format selector, which offers exactly those two.
+- **A save reports what it actually wrote.** Every route here is a synchronous `def`, so Starlette runs it in a worker thread and an edit can land while a manifest is still being written — seconds, on a large campaign over a network filesystem. What went to disk is the document as it stood when the write began, so an edit made during it is genuinely not in the file. The dirty dot therefore stays lit and the result carries a warning:
+
+  > Saved, but the document changed while it was being written — that change is not in the file. Save again.
+
+  `manifest_path` is updated either way: the file was written, and that is where it went. **Plan** reports the same condition in its own words, since its artifacts are built from the same snapshot as the manifest. A save that wrote the document the server still holds clears the dot as usual and warns about nothing.
 - **Export** renders a preview (YAML or JSON) in a modal without touching disk, with a **Copy** button; any writer warnings are listed underneath.
 
 The manifest the GUI writes (real output — `Save` after `Discover` on the sample glycoprotein sequence, path `manifest_test.yaml`):
