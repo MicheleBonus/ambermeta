@@ -135,6 +135,21 @@ class SimulationStage:
     mdout: Optional[MdoutData] = None
     mdcrd: Optional[MdcrdData] = None
     restart_path: Optional[str] = None
+    # Whether the file in `inpcrd` is one this run WROTE rather than one it read.
+    #
+    # The scan path groups by stem, so `prod_0002.restrt` -- AMBER's `-r` output, written
+    # at the END of the run -- lands in the same group as `prod_0002.mdin`/`.mdout` and
+    # fills the `inpcrd` slot. It is still loaded and still cross-checked (atom count, box:
+    # either restart answers those equally well), but its clock is the run's finish, not
+    # its start, and `_check_stage_pair` reads that slot for the run's START time. Left
+    # unmarked, every chunk in a chunked campaign was measured as beginning one whole chunk
+    # after the previous one ended -- 20000 ps of phantom gap on the repo's own fixture,
+    # about a thousand of them on the campaign this was found on, and a real
+    # discontinuity buried under the same constant offset.
+    #
+    # Not serialised: `to_dict` is what `summary.json` is built from, and this changes
+    # which clock continuity trusts, not what the artifact reports about the file.
+    inpcrd_is_own_restart: bool = False
     # Provenance. `lineage` names the run member this stage belongs to: read from the v2
     # document on the manifest path, inferred from the directory layout on the scan path —
     # both entries into this engine, because a stage the engine cannot place in a member is
@@ -832,7 +847,12 @@ class SimulationProtocol:
                 end_time = getattr(stats, "time_end", None)
 
         start_time = None
-        if current.inpcrd and current.inpcrd.details:
+        # `inpcrd_is_own_restart` is the scan path saying "that file is this run's output,
+        # not its input" -- reading its clock here would measure when the run FINISHED and
+        # call it when the run began. See the field's own comment; the fall-through below
+        # (the mdout header's stated begin time) is the reading that is actually about the
+        # start, and on the scan path it is always available where the mdout parsed.
+        if current.inpcrd and current.inpcrd.details and not current.inpcrd_is_own_restart:
             start_time = getattr(current.inpcrd.details, "time", None)
         start_time_source = None
         if start_time is None and current.mdout_header is not None:
@@ -2545,6 +2565,13 @@ def auto_discover(
             stage.inpcrd = _safe_parse(InpcrdParser, file_kinds["inpcrd"], "inpcrd", stage, strict=strict)
             if stage.inpcrd is not None:
                 stage.restart_path = file_kinds["inpcrd"]
+                # Same stem as this run's own mdin/mdout, so this is what the run WROTE
+                # (`-r prod_0002.restrt`), not what it read (`-c prod_0001.restrt`, a
+                # different stem and therefore a different group). A group with neither an
+                # mdin nor an mdout is not a run at all -- a bare `system.prmtop` /
+                # `system.inpcrd` pair -- and its coordinates really are an input.
+                stage.inpcrd_is_own_restart = (
+                    "mdin" in file_kinds or "mdout" in file_kinds)
 
         if _looks_queued(getattr(stage.mdin, "details", None), "mdin" in file_kinds, "mdout" in file_kinds):
             stage.status = "queued"
@@ -2579,6 +2606,10 @@ def auto_discover(
             stage.inpcrd = _safe_parse(InpcrdParser, restart_source, "inpcrd", stage, strict=strict)
             if stage.inpcrd is not None:
                 stage.restart_path = restart_source
+                # A caller-supplied restart names coordinates the run READ, so it replaces
+                # the same-stem output above in every sense -- including this flag, which
+                # would otherwise stay set from it and suppress a reading that is now real.
+                stage.inpcrd_is_own_restart = False
 
         stages.append(stage)
 
@@ -2591,6 +2622,8 @@ def auto_discover(
                 stage.inpcrd = _safe_parse(InpcrdParser, rst_path, "inpcrd", stage, strict=strict)
                 if stage.inpcrd is not None:
                     stage.restart_path = rst_path
+                    # The predecessor's restart: coordinates this run read.
+                    stage.inpcrd_is_own_restart = False
                     stage.validation.append(f"INFO: restart file auto-detected: {rst_path}")
 
     _apply_global_and_hmr_prmtop(stages, directory,
