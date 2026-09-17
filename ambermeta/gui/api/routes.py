@@ -8,7 +8,7 @@ from fastapi import APIRouter, HTTPException, Query
 from ambermeta.errors import AmberMetaError
 from ambermeta.simulation import InputCoords, crosses_lineage, iter_steps
 
-from . import core_bridge, files
+from . import core_bridge, document as document_module, files
 from .document import DocumentStore
 from .schemas import (
     DocumentResponse, RuntimeSettings, SettingsPatch, OpenRequest, SaveRequest, SaveResult,
@@ -70,7 +70,10 @@ def open_document(req: OpenRequest) -> DocumentResponse:
         sim = core_bridge.open_simulation(resolved, doc.base_directory)
     except (FileNotFoundError, ValueError, TypeError, ImportError, AmberMetaError) as exc:
         raise HTTPException(status_code=400, detail=f"Could not read manifest: {exc}")
-    store.replace(simulation=sim, settings=store.get().settings,
+    # `KEEP` for settings: opening a manifest replaces the document, not the user's runtime
+    # preferences, and re-supplying the ones read a moment ago is how a `PUT /settings` that
+    # landed in between got stamped over.
+    store.replace(simulation=sim, settings=document_module.KEEP,
                   manifest_path=resolved, dirty=False, reset_history=True)
     return store.to_response()
 
@@ -78,7 +81,7 @@ def open_document(req: OpenRequest) -> DocumentResponse:
 @router.post("/document/save", response_model=SaveResult)
 def save_document(req: SaveRequest) -> SaveResult:
     store = get_store()
-    sim, settings, manifest_path, base_directory = store.snapshot()
+    (sim, settings, manifest_path, base_directory), saved_revision = store.snapshot_at()
     target = _within_base(req.path, base_directory) if req.path else manifest_path
     if not target:
         raise HTTPException(status_code=400, detail="No path to save to (provide 'path').")
@@ -87,7 +90,15 @@ def save_document(req: SaveRequest) -> SaveResult:
         warnings = core_bridge.save_simulation(sim, base_directory, target, fmt)
     except (RuntimeError, ValueError, OSError) as exc:
         raise HTTPException(status_code=400, detail=f"Could not save manifest: {exc}")
-    store.mark_saved(target)
+    # What went into the file is the snapshot taken above, not whatever the store holds by
+    # the time the write finishes -- and writing a 1097-step manifest to a network
+    # filesystem is not instantaneous. An edit that landed in that window is genuinely not
+    # in the file, so `dirty` must survive it; otherwise the dot goes out, the
+    # unsaved-changes guard is disarmed, and closing the tab discards real work.
+    if not store.mark_saved(target, saved_revision):
+        warnings = list(warnings) + [
+            "Saved, but the document changed while it was being written — that change is "
+            "not in the file. Save again."]
     return SaveResult(document=store.to_response(), warnings=warnings)
 
 
@@ -245,8 +256,13 @@ def discover_document(req: DiscoverRequest) -> DiscoverResult:
             f"{', '.join(lost_edges[:5])}" + (" ..." if len(lost_edges) > 5 else ""))
     warnings.extend(severed)
 
-    store.replace(simulation=out["simulation"], settings=settings,
-                  manifest_path=manifest_path, dirty=True, reset_history=False)
+    # `KEEP` for both: Discover replaces the SIMULATION. Re-supplying the `settings` and
+    # `manifest_path` read before the scan -- minutes earlier on a large tree -- reverted a
+    # `PUT /settings` or a Save As that landed while it ran, and the reverted
+    # `manifest_path` was unrecoverable (`_state()` keeps it out of the undo stack), so the
+    # next Ctrl+S wrote to the file the user had deliberately moved away from.
+    store.replace(simulation=out["simulation"], settings=document_module.KEEP,
+                  manifest_path=document_module.KEEP, dirty=True, reset_history=False)
     return DiscoverResult(
         document=store.to_response(),
         suggestions=[Suggestion(**s) for s in out["suggestions"]],
@@ -265,7 +281,7 @@ def plan_document(req: PlanRequest) -> PlanResult:
     action in the GUI rather than a save followed by a trip to a terminal.
     """
     store = get_store()
-    sim, settings, manifest_path, base_directory = store.snapshot()
+    (sim, settings, manifest_path, base_directory), saved_revision = store.snapshot_at()
 
     # --- validate everything before writing anything --------------------------
     targets: dict = {}
@@ -310,7 +326,13 @@ def plan_document(req: PlanRequest) -> PlanResult:
             warnings.extend(core_bridge.save_simulation(sim, base_directory, resolved_manifest, fmt))
         except (RuntimeError, ValueError, OSError) as exc:
             raise HTTPException(status_code=400, detail=f"Could not save manifest: {exc}")
-        store.mark_saved(resolved_manifest)
+        # Same rule as `save_document`: the artifacts below are built from `sim`, the
+        # snapshot taken before any of this ran, so an edit that landed since is in neither
+        # the manifest nor the plan.
+        if not store.mark_saved(resolved_manifest, saved_revision):
+            warnings.append(
+                "Saved, but the document changed while the plan was being written — that "
+                "change is in neither the manifest nor the artifacts. Save again.")
         written.append({"artifact": "manifest", "path": resolved_manifest})
 
     out = core_bridge.write_plan_outputs(sim, settings, base_directory, targets,

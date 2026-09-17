@@ -23,6 +23,18 @@ _STEP_SLOTS = ("mdin", "mdout", "mdcrd", "rst")
 #: "not supplied", distinct from a supplied None (which clears a tag).
 _UNSET = object()
 
+#: "leave whatever the store holds now" -- for `replace`'s `settings`/`manifest_path`.
+#:
+#: Every route is a synchronous `def`, so Starlette runs each in an anyio worker thread and
+#: several genuinely overlap. `POST /document/discover` reads the document, spends the
+#: length of a tree scan away from the lock, and then writes back — re-supplying the
+#: `settings` and `manifest_path` it read at the start because the signature demanded them.
+#: A `PUT /settings` or a Save As that landed during the scan was silently stamped over,
+#: and `manifest_path` is the one that cannot be taken back: `_state()` deliberately
+#: excludes it from the undo stack, so the next Ctrl+S went to the file the user had moved
+#: away from. Neither route ever wanted to CHANGE those fields, so they now say so.
+KEEP = object()
+
 
 def _default_settings() -> Dict[str, Any]:
     return {
@@ -55,6 +67,11 @@ class DocumentStore:
     def reset(self, base_directory: str) -> None:
         with self.lock:
             self._doc = Document(base_directory=base_directory)
+            # Bumped whenever the document changes. A route that reads the document, works
+            # for seconds outside the lock and then reports back needs to know whether what
+            # it acted on is still what the store holds -- see `snapshot_at` and
+            # `mark_saved`.
+            self._revision = 0
             self._undo: List[Any] = []
             self._redo: List[Any] = []
             # What the last edit could not do without inventing something — a shared
@@ -85,7 +102,15 @@ class DocumentStore:
         if len(stack) > self._history_limit:
             stack.pop(0)
 
+    def _touch(self) -> None:
+        self._revision += 1
+
     def _snapshot(self) -> None:
+        # Every content mutation comes through here, so this is where the revision moves
+        # for all of them; the handful that change the document WITHOUT pushing an undo
+        # frame (`mark_saved`, `replace(reset_history=True)`, undo/redo) call `_touch`
+        # themselves.
+        self._touch()
         self._push(self._undo, self._state())
         self._redo.clear()
         # Every content mutation starts here, so this is the one place that guarantees a
@@ -166,6 +191,20 @@ class DocumentStore:
             d = self._doc
             return copy.deepcopy((d.simulation, d.settings, d.manifest_path, d.base_directory))
 
+    def revision(self) -> int:
+        with self.lock:
+            return self._revision
+
+    def snapshot_at(self):
+        """`snapshot()` and the revision it was taken at, read under ONE lock acquisition.
+
+        Two calls would race: the document can change between them, and the caller would
+        then hold a state and a revision that never coexisted -- which is exactly the
+        staleness the revision exists to detect.
+        """
+        with self.lock:
+            return self.snapshot(), self._revision
+
     def can_undo(self) -> bool:
         with self.lock:
             return bool(self._undo)
@@ -190,18 +229,22 @@ class DocumentStore:
             )
 
     # -- document-level mutations -------------------------------------------
-    def replace(self, *, simulation: Simulation, settings: Dict[str, Any],
-                manifest_path: Optional[str], dirty: bool, reset_history: bool) -> None:
+    def replace(self, *, simulation: Simulation, settings: Any,
+                manifest_path: Any, dirty: bool, reset_history: bool) -> None:
+        """Swap the document. `settings`/`manifest_path` may be `KEEP` (see its comment)."""
         with self.lock:
             self._warnings = []
             if reset_history:
+                self._touch()
                 self._undo.clear()
                 self._redo.clear()
             else:
                 self._snapshot()
             self._doc.simulation = copy.deepcopy(simulation)
-            self._doc.settings = copy.deepcopy(settings)
-            self._doc.manifest_path = manifest_path
+            if settings is not KEEP:
+                self._doc.settings = copy.deepcopy(settings)
+            if manifest_path is not KEEP:
+                self._doc.manifest_path = manifest_path
             self._doc.dirty = dirty
 
     def patch_settings(self, patch: Dict[str, Any]) -> None:
@@ -212,10 +255,29 @@ class DocumentStore:
                     self._doc.settings[k] = v
             self._doc.dirty = True
 
-    def mark_saved(self, manifest_path: str) -> None:
+    def mark_saved(self, manifest_path: str, saved_revision: Optional[int] = None) -> bool:
+        """Record where the document was written. Returns whether it is now clean.
+
+        `saved_revision` is the revision of the state that was actually written -- what
+        `snapshot_at()` returned before the file was opened. Writing a 1097-step manifest
+        to a network filesystem takes seconds, every route runs in its own worker thread,
+        and an edit that lands in that window is NOT in the file: clearing `dirty` for it
+        put the unsaved-changes dot out and disarmed the beforeunload guard over real
+        unsaved work, which is the very failure `_state()`'s docstring records as the
+        reason `dirty` is kept out of the undo stack.
+
+        `manifest_path` is set either way -- the file was written, and that is where it
+        went. Omitting `saved_revision` keeps the old unconditional behaviour, which is
+        what the direct-call tests want.
+        """
         with self.lock:
+            wrote_what_the_store_still_holds = (
+                saved_revision is None or saved_revision == self._revision)
+            self._touch()
             self._doc.manifest_path = manifest_path
-            self._doc.dirty = False
+            if wrote_what_the_store_still_holds:
+                self._doc.dirty = False
+            return not self._doc.dirty
 
     # -- topology mutations -------------------------------------------------
     def add_topology(self, path: str, kind: str) -> str:
@@ -708,6 +770,7 @@ class DocumentStore:
         with self.lock:
             if not self._undo:
                 return False
+            self._touch()
             self._push(self._redo, self._state())
             self._restore(self._undo.pop())
             self._warnings = []
@@ -720,6 +783,7 @@ class DocumentStore:
         with self.lock:
             if not self._redo:
                 return False
+            self._touch()
             self._push(self._undo, self._state())
             self._restore(self._redo.pop())
             self._warnings = []
