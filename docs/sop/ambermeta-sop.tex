@@ -228,14 +228,17 @@ Data already collected does not follow one convention. The four encountered so f
 what each needs:
 
 \begin{center}\small
-\begin{tabularx}{\textwidth}{@{}l>{\raggedright\arraybackslash}X l@{}}
+\begin{tabularx}{\textwidth}{@{}l>{\raggedright\arraybackslash}p{0.30\textwidth}>{\raggedright\arraybackslash}X@{}}
 \toprule
 \textbf{Layout} & \textbf{Example} & \textbf{Action}\\
 \midrule
-Replicas inside each stage & \code{equilibration/run1..run6} & Accept the proposal.\\
-Numbered replicas in a stage & \code{prod/01..05} & Accept the proposal.\\
-Replicas beside the stages & \code{run1..run4} next to \code{equilibration/} & Pick the top level in \textbf{Define replicas\ldots}; accept only \code{run1..run4}.\\
-Replica id also in filenames & \code{prod/01/GB1\_204\_01\_000} & Pick the replica level manually; accept only the numbered members.\\
+Replicas inside each stage & \bpath{equilibration/run1..run6} & Accept the proposal.\\
+\addlinespace[2pt]
+Numbered replicas in a stage & \bpath{prod/01..05} & Accept the proposal.\\
+\addlinespace[2pt]
+Replicas beside the stages & \bpath{run1..run4} beside \bpath{equilibration/} & Pick the top level in \textbf{Define replicas\ldots}, then accept only \bpath{run1..run4}.\\
+\addlinespace[2pt]
+Replica id also in filenames & \bpath{prod/01/GB1_204_01_000} & Pick the replica level manually, then accept only the numbered members.\\
 \bottomrule
 \end{tabularx}
 \end{center}

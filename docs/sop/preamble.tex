@@ -18,6 +18,7 @@
 \usepackage{xcolor}
 \usepackage{tcolorbox}
 \usepackage{caption}
+\usepackage{url}
 \usepackage[hidelinks]{hyperref}
 
 \definecolor{amber}{HTML}{B45309}
@@ -45,6 +46,10 @@
 % \code is for inline literals. Underscores are escaped at the call site; that is
 % verbose but predictable, and it keeps paths copy-pasteable out of the PDF.
 \newcommand{\code}[1]{\texttt{\small #1}}
+
+% Literal paths that may break across lines inside a narrow table column. Breaks after
+% `/` like \path does, and takes underscores unescaped.
+\DeclareUrlCommand\bpath{\urlstyle{tt}\small}
 
 \newtcolorbox{shell}{
   colback=panel, colframe=rule, boxrule=0.4pt, arc=2pt,
