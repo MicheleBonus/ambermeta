@@ -628,6 +628,16 @@ print(md.stats.temp_stats.stdev)       <span class="o"># 1.2504190252445306</spa
 </tbody>
 </table>
 
+<h3>Environment</h3>
+<table>
+<thead><tr><th>Variable</th><th>Effect</th></tr></thead>
+<tbody>
+<tr><td><code>AMBERMETA_PARSE_CACHE_SIZE</code></td><td>Maximum memoised parses held (default <code>8192</code>). <code>0</code> disables the cache; a non-integer value falls back to the default.</td></tr>
+<tr><td><code>AMBERMETA_PARSE_CACHE=0</code></td><td>Disables the cache. Consulted only when <code>AMBERMETA_PARSE_CACHE_SIZE</code> is unset — setting the size takes precedence.</td></tr>
+</tbody>
+</table>
+<p>Parses are keyed on a file's identity, mtime and size, and stored only when a second <code>stat</code> taken after the parse shows the file did not move underneath it — which is what keeps a half-written <code>mdout</code> out of the cache.</p>
+
 <h3>File types</h3>
 <table>
 <thead><tr><th>Kind</th><th>Extensions</th></tr></thead>
@@ -656,6 +666,8 @@ print(md.stats.temp_stats.stdev)       <span class="o"># 1.2504190252445306</spa
 <tr><td><a href="https://github.com/MicheleBonus/ambermeta/blob/main/docs/gui.md">gui.md</a></td><td>The rebuilt browser app, its HTTP API, its security model</td></tr>
 <tr><td><a href="https://github.com/MicheleBonus/ambermeta/blob/main/docs/tutorials.md">tutorials.md</a></td><td>Task-oriented walkthroughs</td></tr>
 <tr><td><a href="https://github.com/MicheleBonus/ambermeta/blob/main/docs/recipes.md">recipes.md</a></td><td>Copy-paste CLI one-liners</td></tr>
+<tr><td><a href="https://github.com/MicheleBonus/ambermeta/blob/main/docs/sop/ambermeta-sop.pdf">sop/ambermeta-sop.pdf</a></td><td>Depositor SOP: applying AmberMeta to a collected dataset, one system at a time</td></tr>
+<tr><td><a href="https://github.com/MicheleBonus/ambermeta/blob/main/docs/sop/replica-layouts.pdf">sop/replica-layouts.pdf</a></td><td>Which replica directory conventions the layout inference detects, and how to declare the rest by hand</td></tr>
 </tbody>
 </table>
 </section>

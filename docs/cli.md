@@ -975,6 +975,22 @@ brace opens a nested flow collection and the document fails to parse. Quoting wo
 
 Disable with `--no-expand-env` (`plan` only). Full rules in the [manifest reference §8](manifest.md#8-environment-variable-expansion).
 
+### Parse cache
+
+A Validate or a `plan` re-reads every run file the document names. Parses are memoised on
+the file's identity, mtime and size, so a second pass over an unchanged tree does not
+re-read it; a file that changed on disk, or a run AMBER is still writing, is re-read. Two
+variables control it:
+
+| Variable | Effect |
+|---|---|
+| `AMBERMETA_PARSE_CACHE_SIZE` | Maximum entries held (default `8192`). `0` disables the cache. A value that is not an integer falls back to the default. |
+| `AMBERMETA_PARSE_CACHE=0` | Disables the cache. Only consulted when `AMBERMETA_PARSE_CACHE_SIZE` is unset — setting the size takes precedence. |
+
+Turning the cache off is a debugging aid, not a correctness fix: a cached parse is only
+stored when the file is unchanged by a second `stat` taken *after* the parse, which is
+what keeps a half-written `mdout` from being memoised as the finished one.
+
 ---
 
 ## See also

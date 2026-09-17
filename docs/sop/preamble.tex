@@ -1,0 +1,71 @@
+% Shared preamble for the AmberMeta SOP and its companion note.
+%
+% Deliberately confined to what ships with a distro TeX Live (no tlmgr on the
+% workstation these are built on): every package below is in texlive-latex-recommended
+% or texlive-fonts-recommended.
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{newtxtext,newtxmath}
+\usepackage[scaled=0.85]{inconsolata}
+\usepackage{microtype}
+\usepackage[a4paper,margin=25mm,headheight=14pt]{geometry}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{enumitem}
+\usepackage{titlesec}
+\usepackage{fancyhdr}
+\usepackage{xcolor}
+\usepackage{tcolorbox}
+\usepackage{caption}
+\usepackage{url}
+\usepackage[hidelinks]{hyperref}
+
+\definecolor{amber}{HTML}{B45309}
+\definecolor{ink}{HTML}{1F2937}
+\definecolor{muted}{HTML}{6B7280}
+\definecolor{rule}{HTML}{D1D5DB}
+\definecolor{panel}{HTML}{F9FAFB}
+
+\color{ink}
+
+% -- headings ------------------------------------------------------------------
+\titleformat{\section}{\large\bfseries\color{amber}}{\thesection}{0.6em}{}
+\titleformat{\subsection}{\normalsize\bfseries\color{ink}}{\thesubsection}{0.6em}{}
+\titlespacing*{\section}{0pt}{1.4em}{0.5em}
+\titlespacing*{\subsection}{0pt}{1.0em}{0.35em}
+
+% -- lists ---------------------------------------------------------------------
+\setlist[itemize]{leftmargin=1.2em,itemsep=0.25em,topsep=0.35em}
+\setlist[enumerate]{leftmargin=1.5em,itemsep=0.45em,topsep=0.4em}
+
+% -- captions ------------------------------------------------------------------
+\captionsetup{font=small,labelfont={bf,color=amber},skip=6pt}
+
+% -- code ----------------------------------------------------------------------
+% \code is for inline literals. Underscores are escaped at the call site; that is
+% verbose but predictable, and it keeps paths copy-pasteable out of the PDF.
+\newcommand{\code}[1]{\texttt{\small #1}}
+
+% Literal paths that may break across lines inside a narrow table column. Breaks after
+% `/` like \path does, and takes underscores unescaped.
+\DeclareUrlCommand\bpath{\urlstyle{tt}\small}
+
+\newtcolorbox{shell}{
+  colback=panel, colframe=rule, boxrule=0.4pt, arc=2pt,
+  left=6pt, right=6pt, top=5pt, bottom=5pt, fontupper=\ttfamily\small,
+}
+
+\newtcolorbox{note}[1]{
+  colback=panel, colframe=amber, boxrule=0pt, leftrule=2pt, arc=0pt,
+  left=8pt, right=8pt, top=6pt, bottom=6pt,
+  title={\bfseries\color{amber}\small #1}, coltitle=amber,
+  fonttitle=\bfseries\small, attach title to upper={\par\smallskip},
+}
+
+% -- page furniture ------------------------------------------------------------
+\pagestyle{fancy}
+\fancyhf{}
+\renewcommand{\headrulewidth}{0.4pt}
+\renewcommand{\footrulewidth}{0pt}
+\fancyfoot[C]{\small\color{muted}\thepage}

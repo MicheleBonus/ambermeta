@@ -302,6 +302,8 @@ Global options (`--log-level`, `--log-file`, `-q/--quiet`) and every flag are do
 | [GUI guide](docs/gui.md) | The browser app, its API surface, and its security model |
 | [Tutorials](docs/tutorials.md) | Task-oriented, step-by-step walkthroughs |
 | [Recipes](docs/recipes.md) | Copy-paste CLI one-liners for common jobs |
+| [Depositor SOP](docs/sop/ambermeta-sop.pdf) | The procedure for applying AmberMeta to a collected dataset, one system at a time — prerequisites, the layout to use, the GUI walkthrough, and what to do with each finding ([source](docs/sop/ambermeta-sop.tex)) |
+| [Replica layouts](docs/sop/replica-layouts.pdf) | Which directory conventions the layout inference detects, which it declines and why, and how to declare the rest by hand ([source](docs/sop/replica-layouts.tex)) |
 
 A single-page, fully offline HTML version of these docs lives at [`docs/ambermeta.html`](docs/ambermeta.html) — open it in any browser (no server, no network).
 
@@ -310,8 +312,9 @@ A single-page, fully offline HTML version of these docs lives at [`docs/ambermet
 ## 9. Compatibility & limitations
 
 - **v1 manifests no longer open.** A bare `stages:` list or a `global_prmtop`/`hmr_prmtop`/`initial_coordinates` manifest is refused with a clean error by every entry point, and there is no migration path. Rebuild from the run directory — see [Coming from v1?](#coming-from-v1) above.
-- **AMBER engines:** parses output from both `pmemd`/`pmemd.cuda` and `sander`. Completion detection, GPU model, wall-time, and ns/day are read from the `mdout` footer where present.
+- **AMBER engines:** parses output from both `pmemd`/`pmemd.cuda` and `sander`. GPU model and ns/day come from the `mdout` footer where present. Completion and wall-time are read per engine: `pmemd` writes a `Final Performance Info` block and a `Total wall time:` line, `sander` writes neither — its completion is taken from its own end-of-run markers (`Run done at`, `wallclock() was called`) and its wall clock from the `Total time` line in `TIMINGS`.
 - **NetCDF:** `.nc` trajectories and `.ncrst` restarts require the `netcdf` extra. Without it, ASCII trajectories/restarts still parse; NetCDF files are reported as unreadable rather than crashing the run.
+- **Incomplete trajectories are not read as complete ones.** NetCDF-3 stores record variables interleaved at the end of the file, so records that were never written back read as fill. A trajectory that is truncated, still being written, or half-copied is detected by its frame times ceasing to increase: AmberMeta reports the frames that are really on disk, warns that the times are not reported, and lets continuity fall through to the `mdout` rather than taking a fill value as the run's end time. Box records that read as empty are dropped from the box and volume statistics with a warning of their own.
 - **Fault tolerance:** `ambermeta plan` is fault-tolerant by default — an unreadable or malformed file is skipped, the error is recorded against its stage/step, and the run still completes (exit `0`). Pass `--strict` to make the first bad file a hard error.
 - **Role inference is heuristic.** When a phase or stage omits its role, AmberMeta infers it from the `mdin`/`mdout` content first, then the file/path name (word-boundary matching, via the shared classifier in `ambermeta/roles.py`) — and records that it did so. Verify inferred roles before publishing.
 - **Manifest formats:** JSON or YAML, in both directions. TOML and CSV are not manifest formats — a `.toml`/`.csv` manifest path is refused with a message that says so. (`--stats-csv` still writes a per-stage statistics CSV; that is a report, not a manifest.)
