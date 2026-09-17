@@ -7,22 +7,11 @@ import statistics
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
-HAS_NETCDF = False
-NETCDF_BACKEND = "None"
-
-try:  # pragma: no cover - optional dependency
-    import netCDF4 as nc  # type: ignore
-
-    HAS_NETCDF = True
-    NETCDF_BACKEND = "netCDF4"
-except ImportError:  # pragma: no cover - optional dependency
-    try:
-        from scipy.io import netcdf as nc  # type: ignore
-
-        HAS_NETCDF = True
-        NETCDF_BACKEND = "scipy"
-    except ImportError:
-        nc = None  # type: ignore
+# One detection for the package, and one lock with it; see ambermeta/netcdf_backend.py.
+# Re-exported (they are in this module's ``__all__``) so importers keep working.
+from ambermeta.netcdf_backend import (  # noqa: F401
+    HAS_NETCDF, NETCDF_BACKEND, nc, open_dataset,
+)
 
 
 @dataclass
