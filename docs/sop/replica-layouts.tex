@@ -1,0 +1,156 @@
+\documentclass[11pt]{article}
+\input{preamble}
+
+\fancyhead[L]{\small\color{muted}Replica layouts in the deposited corpus}
+\fancyhead[R]{\small\color{muted}AmberMeta v1.1.0}
+
+\begin{document}
+
+\begin{center}
+  {\LARGE\bfseries\color{amber} How Replicas Are Organised, and What\\[0.2em]
+   AmberMeta Can Detect}\\[0.7em]
+  {\large Findings from the deposited simulation corpus}\\[1.1em]
+  {\small Michele Bonus \quad\textbullet\quad AmberMeta v1.1.0 \quad\textbullet\quad \today}
+\end{center}
+\vspace{0.6em}
+\hrule
+\vspace{1.3em}
+
+\section{Scope}
+
+This note accompanies the AmberMeta SOP and answers the standing question of how users
+organise replicas and whether AmberMeta can recognise them. It reports what was found in
+the deposited corpus at \code{/store7/gentile/data/simulations}, what AmberMeta does with
+each layout today, and what would have to change to cover the cases it declines.
+
+No code was changed. Everything below was measured against AmberMeta v1.1.0 as released.
+
+\section{The corpus}
+
+Of 50 system directories, 19 hold simulation files. 30 are empty placeholders. One,
+\code{sys005}, is \emph{unreadable}: its permissions are \code{drw-rw-r-{}-}, so the
+execute bit is missing and no user --- including its owner --- can traverse it. That is a
+one-line fix at the source (\code{chmod~u+rx}) and worth doing before any further
+deposits.
+
+\subsection{What was tested}
+
+Five systems were selected to cover every replica convention present. All were scanned
+read-only; nothing was written into the corpus.
+
+\begin{center}\small
+\begin{tabularx}{\textwidth}{@{}lrrrr>{\raggedright\arraybackslash}X@{}}
+\toprule
+\textbf{System} & \textbf{Files} & \textbf{Logs} & \textbf{Steps} & \textbf{Scan} & \textbf{Layout}\\
+\midrule
+\code{sys023} & 1044 & 205  & 213  & 6.4\,s  & Chunked, no replicas\\
+\code{sys011} & 1280 & 260  & 268  & 1.9\,s  & \code{run1..run4} beside the stages\\
+\code{sys004} & 5100 & \textbf{0} & 107  & 83.5\,s & \code{run1..run6} inside each stage\\
+\code{sys021} & 5348 & 1091 & 1105 & 27.8\,s & \code{01..05} inside each stage\\
+\code{sys024} & 167  & 30   & 50   & 1.3\,s  & \code{L12Y/prod/01..05}\\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\medskip
+All five were parsed without error. Two results stand out independently of replicas:
+
+\begin{itemize}
+  \item \textbf{\code{sys004} contains no output logs at all.} 5100 files --- 2496
+        restarts, 2496 trajectories, 104 inputs --- and not one \code{.mdout}. A manifest
+        can still be built, but nothing in it is confirmable: no achieved simulation
+        time, no temperature, no completion status, and every junction between runs
+        reported as an unexplained gap. This is the single most consequential gap found
+        in the corpus.
+  \item \textbf{\code{sys011} has 260 logs but only 65 inputs.} The runs are recoverable
+        from the logs, but the requested settings for most of them are not on record.
+\end{itemize}
+
+\section{The four conventions, and what AmberMeta does}
+
+\begin{center}\small
+\begin{tabularx}{\textwidth}{@{}l>{\raggedright\arraybackslash}Xcc@{}}
+\toprule
+\textbf{Convention} & \textbf{Shape} & \textbf{Auto} & \textbf{Manual}\\
+\midrule
+Replicas within stages   & \code{equilibration/run1..run6}, \code{production/run1..run8} & yes & ---\\
+Numbered within stages   & \code{equil/01..05}, \code{prod/01..05}                        & yes & ---\\
+Replicas beside stages   & \code{run1..run4} next to \code{equilibration/equi1..equi4}    & no  & yes\\
+Id repeated in filenames & \code{L12Y/prod/01/GB1\_204\_01\_000}                          & no  & yes\\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\medskip
+Two of the four are recognised with no intervention, and produce correctly tagged
+members (\code{run1..run8} for \code{sys004}; \code{01..05} for \code{sys021}). The other
+two are \emph{declined}, not mis-grouped --- and in both the runs are still discovered
+and still correctly chained. Only the grouping into members is withheld.
+
+\subsection{Why the two declines happen}
+
+Neither is a defect. AmberMeta's layout inference tags nothing when a tree admits more
+than one reading, on the grounds that a wrong member claim is worse than none.
+
+\textbf{\code{sys011}} presents two families whose tag sets are disjoint:
+\code{equilibration/equi1..equi4}, which varies at the second path segment, and
+\code{run1..run4}, which varies at the first. Disjoint families are refused because they
+are equally consistent with two separate experiments in one directory. Restricting the
+scan to the replica directories alone resolves it immediately --- \code{discover
+-{}-pattern 'run[0-9]'} tags \code{run1..run4} correctly.
+
+\textbf{\code{sys024}} repeats the replica identifier inside the filenames:
+\code{prod/01/GB1\_204\_01\_000}, \code{prod/02/GB1\_204\_02\_000}. Grouping keys on the
+set of run \emph{bases} a directory holds, so each replica directory ends up with a base
+set of its own, no two directories are ever seen as running the same thing, and no cohort
+with more than one member is ever formed. This one cannot be fixed by narrowing the
+scan; the identifier has to be picked manually.
+
+\subsection{The manual route works for both}
+
+\textbf{Define replicas\ldots} lets the user choose which path segment names the member.
+On \code{sys011} choosing the first segment offers
+\code{equilibration}, \code{leap}, \code{run1}, \code{run2}, \code{run3}, \code{run4}; on
+\code{sys024} choosing the third offers the preparation step names alongside
+\code{01..05}. In both cases the replicas are present and correct among the options, and
+accepting only those produces a manifest identical to one from a conforming layout.
+
+The cost is judgement: the picker offers every directory at the chosen level, including
+preparation directories that are not replicas. A user who accepts all of them gets a
+manifest asserting that \code{leap} is a replica.
+
+\section{Recommendations}
+
+\begin{enumerate}
+  \item \textbf{Adopt the layout in \S3 of the SOP for new work.} Replicas as sibling
+        directories directly inside their stage, identically named across stages, with
+        the identifier in the directory name only. Both auto-detected conventions in the
+        corpus already follow this; it costs nothing to standardise on it.
+
+  \item \textbf{Treat missing output logs as a deposit blocker.} \code{sys004} is the
+        case to cite: a 5100-file deposit from which nothing can be confirmed. A one-line
+        check at deposit time (every run directory holding a \code{.mdout}) would have
+        caught it.
+
+  \item \textbf{Fix \code{sys005}'s permissions} and re-run the survey over all 19
+        populated systems once the SOP is in use.
+
+  \item \textbf{Consider two contained improvements to the picker}, in order of value:
+        \begin{itemize}
+          \item Mark which offered members \emph{look like} replicas --- directories whose
+                run-base sets match each other --- and which do not, so a user is steered
+                away from accepting \code{leap} as a member. This is presentational and
+                does not touch the inference rule.
+          \item Consider whether a directory whose base sets differ only by an embedded
+                copy of its own directory name (the \code{sys024} shape) can be
+                recognised safely. This is a real change to the membership predicate and
+                would need its own design; the safe-failure property is worth more than
+                the convenience, so it should not be rushed.
+        \end{itemize}
+
+  \item \textbf{Do not weaken the disjoint-families rule.} The \code{sys011} refusal is
+        the rule working as intended. The procedural workaround is cheap and the failure
+        mode it prevents --- silently merging two experiments into one campaign --- is not.
+\end{enumerate}
+
+\end{document}
