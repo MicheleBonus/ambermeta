@@ -135,9 +135,14 @@ start time, and every junction reports a gap of one full chunk (999.9999998 ps a
 1000 ps chunk).
 
 The equilibration directories carry \code{mdin} files, so the guard fires there and
-continuity reports an honest ``cannot verify'' instead. The condition is narrow, a deposit
-carrying neither inputs nor logs, but that is the shape a partial upload takes, and inside
-it the phantom gap the guard exists to prevent returns in full.
+continuity reports an honest ``cannot verify'' instead. Over the whole system that splits
+cleanly: 2498 junctions report the cautious note, and 2399 report the phantom gap. A
+further 7 report an overlap of 299000 ps, which is the same misread start time landing on
+the far side of a chain boundary rather than inside one.
+
+The condition is narrow, a deposit carrying neither inputs nor logs, but that is the shape
+a partial upload takes, and inside it the phantom gap the guard exists to prevent returns
+in full, on 2399 junctions of one system.
 
 \section{Recommendations}
 
