@@ -35,6 +35,15 @@ async function renderPlan(doc: DocumentResponse = emptyDocument) {
     </QueryClientProvider>,
   );
   await screen.findByRole("dialog");
+  // The dialog renders before `useDocument` resolves, and while `doc` is undefined the
+  // manifest row still holds its default filename -- the effect that seeds it from
+  // `doc.manifest_path` has not run yet. A click landing in that window asserts against
+  // `manifest.yaml` instead of the open manifest, which is exactly how this file failed
+  // on CI while passing every time on a faster machine.
+  //
+  // The launch directory is rendered only once `doc` is defined, so waiting for it proves
+  // the render that carries the document has committed -- and with it the seeding effect.
+  await screen.findByText(`(${doc.base_directory})`);
 }
 
 afterEach(() => {
