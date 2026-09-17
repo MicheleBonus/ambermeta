@@ -14,8 +14,11 @@ Both share `preamble.tex`.
 ```bash
 latexmk -pdf ambermeta-sop.tex
 latexmk -pdf replica-layouts.tex
-latexmk -C                        # clean aux files
+latexmk -c                        # clean aux files, keep the PDFs
 ```
+
+Use `-c`, not `-C`: the uppercase form also deletes `ambermeta-sop.pdf` and
+`replica-layouts.pdf`, which are tracked in git.
 
 Only packages shipped with a distro TeX Live are used — no `tlmgr`, no manual package
 installation. Notably **not** `tcolorbox[most]`, whose `skins` library pulls in
