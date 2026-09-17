@@ -5,7 +5,7 @@ Two documents, built from this directory:
 | Source | Output | What it is |
 |---|---|---|
 | `ambermeta-sop.tex` | `ambermeta-sop.pdf` (6 pp) | The procedure depositors follow, one system at a time. GUI-first. |
-| `replica-layouts.tex` | `replica-layouts.pdf` (2 pp) | What the deposited corpus actually looks like, which replica layouts AmberMeta detects, and why the other two are declined. |
+| `replica-layouts.tex` | `replica-layouts.pdf` (3 pp) | What the deposited corpus actually looks like, which replica layouts AmberMeta detects, and why the other two are declined. |
 
 Both share `preamble.tex`.
 
