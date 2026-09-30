@@ -16,6 +16,7 @@ import re
 from dataclasses import dataclass
 from typing import Any, Dict, FrozenSet, Iterable, List, Optional, Protocol, Tuple, TypeVar
 
+from ambermeta.roles import phase_word
 from ambermeta.simulation import Simulation, Step, iter_steps
 
 # The repo's one spelling of "a numbered run's base name": `protocol.detect_sequence_gaps`
@@ -428,7 +429,14 @@ def infer_lineages_from_layout(run_names: Iterable[str]) -> Dict[str, str]:
       depth the reporting cohorts used (``scratch/01`` beside a ``rep/01``-shaped tree);
     * the tag must be **one** segment: a nested sweep (``300K/rep1``, ``310K/rep2``)
       varies in two places at once *within its cohort* and there is no way to tell which
-      one names the member.
+      one names the member;
+    * the candidate tags must agree about which **phase** they name, if any
+      (:func:`ambermeta.roles.phase_word`). ``equil/min``, ``equil/heat``, ``equil/npt``
+      each writing ``md.in``/``md.out`` share run bases and depth exactly as replicas do,
+      but their labels name three stages, so the cohort contributes nothing. ``rep1``
+      beside ``rep2``, ``prod_1`` beside ``prod_2`` and ``equil_300K`` beside
+      ``equil_310K`` agree, and still tag. Stage directories named without a phase word
+      (``step1``, ``step2``) cannot be told from replicas by name, and still tag.
 
     Ambiguity resolves to untagged, never to a guess — an inference reported as
     ``[applied]`` is a claim, and a wrong claim here is exactly what this feature exists
@@ -492,8 +500,15 @@ def infer_lineages_from_layout(run_names: Iterable[str]) -> Dict[str, str]:
                    if len({segments[d][i] for d in dirs}) > 1]
         if len(varying) != 1:
             continue
-        reports.append((bases, depth, varying[0],
-                         {d: segments[d][varying[0]] for d in dirs}))
+        labels = {d: segments[d][varying[0]] for d in dirs}
+        # Labels that disagree about which phase they name are the stages of one pipeline,
+        # not members of an experiment (#88). One directory per stage, every stage writing
+        # `md.in`/`md.out`, passes every rule above exactly as `rep1`/`rep2` does -- and
+        # tagged, `coherence` then called the pipeline a category error: "Members mix
+        # minimisation with dynamics (min ran no dynamics)".
+        if len({phase_word(label) for label in labels.values()}) > 1:
+            continue
+        reports.append((bases, depth, varying[0], labels))
 
     if not reports:
         return {}

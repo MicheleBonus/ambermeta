@@ -399,6 +399,13 @@ gives it a run-base set of its own, is tagged `01` this way, while `common/` is 
 not a tag — and neither is a directory whose tag-shaped segment sits at the *wrong depth* to be a genuine
 sibling.
 
+A cohort's candidate tags must also agree about which **phase** they name, if any. One directory per
+stage, every stage writing the same `md.in`/`md.out` — `equil/min/`, `equil/heat/`, `equil/npt/` — passes
+every rule above exactly as `rep1/`, `rep2/` does; its segment is simply the name of each stage. Tags that
+disagree on a phase word (`min`/`em`, `heat`, `eq`/`equil`/`nvt`/`npt`, `prod`, the same cues role
+inference reads) are stages of one pipeline, and that cohort contributes nothing. Stage directories named
+without a phase word (`step1/`, `step2/`) cannot be told apart from replicas by name, and are still tagged.
+
 Sharing a base is not *proof* of a sweep, though — it is a heuristic, and it can misfire toward the safe
 side. A genuine two-phase pipeline whose phases happen to reuse one run name — `equil/01..02/{min,heat}`
 beside `prod/01..02/{heat,nvt_prod}`, both cohorts running `heat` — is refused here too, even though each
@@ -441,6 +448,8 @@ is a claim, and a wrong claim here is exactly what lineages exist to stop:
 | `prod/01..03/prod_0001` also beside a `rerun/deep/here/prod_0001` (a stray rerun sharing the WHOLE cohort's base, at another depth) | `01..03` still tagged — the stray forms its own cohort at its own depth instead of dragging `prod/01..03`'s cohort down with it |
 | `apo/01..03/prod_apo_*` beside `holo/01..02/prod_holo_*` (deliberately parallel arms, disjoint run names of their own, cross-system) | tagged `01..03` / `01..02` and merged into one campaign — **known, accepted limitation**: disjoint bases cannot be told apart from a pipeline's phases by directory layout alone; deferred to a multi-axis design |
 | `300K/01..03/prodA` beside `310K/01..03/prodB` (same system, two conditions, condition-specific run names) | tagged and merged the same way — the harder-to-notice case of the same limitation: it looks like an ordinary sweep, but each arm's OWN run name makes the bases disjoint, so it reconciles instead of refusing |
+| `equil/{min,heat,npt}/md.*` (one directory per stage, the same file names in each) | untagged — the segment names three phases, not three members |
+| `prod_1/md.*` beside `prod_2/md.*`, or `equil_300K/` beside `equil_310K/` | tagged — every label names the same phase |
 | `rep1/prod_0001` beside `x/rep2/prod_0001` (mismatched depth) | untagged |
 | `rep1_prod_0001`, `rep2_prod_0001` — flat, replica in the **filename** | **untagged.** Only directory segments are read |
 | `01_min_rep1`, `01_min_rep2` — flat, replica as a filename *suffix* | **untagged**, same reason |

@@ -79,3 +79,105 @@ def test_a_coordinate_file_that_is_not_a_run_output_is_still_read_as_input(tmp_p
     stage = {s.name: s for s in protocol.stages}["system"]
     assert stage.inpcrd is not None
     assert not stage.inpcrd_is_own_restart
+
+
+# ---------------------------------------------------------------------------
+# Issue #87: a run that kept neither its mdin nor its mdout
+# ---------------------------------------------------------------------------
+#
+# An incomplete deposit -- trajectories and restarts only, every `.mdout` gone -- is still a
+# campaign of runs. `prod_0002.nc` beside `prod_0002.rst` is a run's `-x` and `-r` output,
+# and the restart is still written at the END of that run. Requiring an mdin or an mdout
+# before believing that brought #81's phantom gap back in full on exactly such a tree.
+
+def _ascii_trajectory(path: Path) -> None:
+    """Title, then coordinates straight away -- no `natom time` header, unlike a restart."""
+    path.write_text("trajectory\n"
+                    "   1.000   2.000   3.000   4.000   5.000   6.000   7.000   8.000\n")
+
+
+def _ascii_restart(path: Path, ps: float) -> None:
+    path.write_text("restart\n     1 %14.7f\n"
+                    "   1.0000000   2.0000000   3.0000000   4.0000000   5.0000000\n" % ps)
+
+
+def test_a_restart_beside_its_own_trajectory_is_the_run_s_output(tmp_path):
+    _ascii_trajectory(tmp_path / "prod_0002.mdcrd")
+    _ascii_restart(tmp_path / "prod_0002.rst", 2000.0)
+    protocol = auto_discover(str(tmp_path), recursive=False)
+    stage = _by_name(protocol)["prod_0002"]
+    assert stage.inpcrd is not None
+    assert stage.inpcrd_is_own_restart
+
+
+def test_a_single_frame_crd_is_not_a_trajectory(tmp_path):
+    """The bare-pair guarantee has to survive the new rule. tLEaP's `saveamberparm` is
+    routinely given a `.crd` name, which the extension map types as a trajectory; its
+    content says it is one frame of starting coordinates, and the content is what counts."""
+    (tmp_path / "system.prmtop").write_text("%FLAG POINTERS\n")
+    (tmp_path / "system.crd").write_text("start\n    1\n"
+                                         "  0.0  0.0  0.0  1.0  1.0  1.0\n")
+    _ascii_restart(tmp_path / "system.rst7", 0.0)
+    protocol = auto_discover(str(tmp_path), recursive=False)
+    stage = _by_name(protocol)["system"]
+    assert stage.inpcrd is not None
+    assert not stage.inpcrd_is_own_restart
+
+
+def _netcdf_trajectory(path: Path, times) -> None:
+    from ambermeta import netcdf_backend
+
+    nc = netcdf_backend.nc
+    ds = nc.Dataset(str(path), "w", format="NETCDF3_64BIT_OFFSET")
+    ds.Conventions = "AMBER"
+    ds.createDimension("frame", None)
+    ds.createDimension("atom", 1)
+    ds.createDimension("spatial", 3)
+    ds.createVariable("time", "f4", ("frame",))[:] = times
+    ds.createVariable("coordinates", "f4", ("frame", "atom", "spatial"))[:] = [
+        [[0.0, 0.0, 0.0]] for _ in times]
+    ds.close()
+
+
+def test_a_trajectory_only_chain_reports_no_phantom_gap(tmp_path):
+    """The reproduction from #87, cut to two chunks of 1000 ps.
+
+    `prod_0002.rst` holds 2000 ps, the moment chunk 2 FINISHED. Read as its start, it sat
+    one whole chunk after chunk 1's trajectory ended at 1000 ps -- "Gap detected without
+    stated expectation", 1000 ps, on a chain that is continuous. With no mdout there is no
+    stated begin time to fall back on either, so the honest answer is the cautious one.
+    """
+    from ambermeta import netcdf_backend
+
+    if not netcdf_backend.HAS_NETCDF or netcdf_backend.NETCDF_BACKEND != "netCDF4":
+        pytest.skip("needs the netCDF4 backend to build a time-bearing trajectory")
+    for chunk, end_ps in ((1, 1000.0), (2, 2000.0)):
+        _netcdf_trajectory(tmp_path / f"prod_{chunk:04d}.nc",
+                           [end_ps - 1000.0 + 100.0 * i for i in range(1, 11)])
+        _ascii_restart(tmp_path / f"prod_{chunk:04d}.rst", end_ps)
+
+    protocol = auto_discover(str(tmp_path), recursive=False)
+    second = _by_name(protocol)["prod_0002"]
+    assert second.inpcrd_is_own_restart
+    assert second.observed_gap_ps is None
+    assert [n for n in second.continuity if not n.startswith("INFO:")] == []
+    assert any("Cannot verify continuity" in n for n in second.continuity)
+
+
+def test_discover_does_not_take_a_run_s_restart_for_the_starting_structure(tmp_path):
+    """The same assumption, on the GUI's side. `discover_draft` looks for the starting
+    structure among the groups that are NOT runs, and it too decided that by the presence
+    of an mdin or an mdout -- so the first trajectory-only chunk's own output restart won
+    over the topology's real coordinates, because `md_npt_prod_0001` sorts first."""
+    from ambermeta.gui.api.core_bridge import discover_draft
+
+    (tmp_path / "topology").mkdir()
+    (tmp_path / "topology" / "system.prmtop").write_text("%FLAG POINTERS\n")
+    (tmp_path / "topology" / "system.inpcrd").write_text(
+        "start\n    1\n  0.0  0.0  0.0  1.0  1.0  1.0\n")
+    for chunk in (1, 2):
+        _ascii_trajectory(tmp_path / f"md_npt_prod_{chunk:04d}.mdcrd")
+        _ascii_restart(tmp_path / f"md_npt_prod_{chunk:04d}.rst", 1000.0 * chunk)
+
+    sim = discover_draft(str(tmp_path))["simulation"]
+    assert sim.starting_structure == "topology/system.inpcrd"

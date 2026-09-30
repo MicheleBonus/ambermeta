@@ -752,7 +752,8 @@ def discover_draft(base_directory, recursive=True, pattern=None, apply_tags=True
     from ambermeta.roles import classify_role
     from ambermeta.topology_pool import classify_topology_pool, implies_hmr
     from ambermeta.coords import sniff_coordinate_kind
-    from ambermeta.protocol import smart_group_files, _run_stems, _looks_queued
+    from ambermeta.protocol import (
+        smart_group_files, _coords_are_run_output, _run_stems, _looks_queued)
     from ambermeta.parsers import MdinParser
     from ambermeta.mdout_header import read_mdout_header
     import uuid
@@ -772,10 +773,12 @@ def discover_draft(base_directory, recursive=True, pattern=None, apply_tags=True
     default_topo = normals[0] if normals else (sim.topologies[0].id if sim.topologies else None)
     hmr_topo = hmrs[0] if hmrs else None
 
-    # starting structure: a single-frame coordinate file in a NON-run group
+    # starting structure: a single-frame coordinate file in a group whose coordinates no run
+    # wrote -- the engine's own predicate (#87). A chunk that kept only its trajectory and
+    # restart wrote that restart; it is not where the simulation began.
     starting = None
     for kinds in grouped.values():
-        if kinds.get("mdin") or kinds.get("mdout"):
+        if _coords_are_run_output(kinds):
             continue
         for k in ("inpcrd", "mdcrd"):
             cand = kinds.get(k)

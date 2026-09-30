@@ -415,6 +415,29 @@ def test_a_category_error_fails_the_scan_path_without_strict(tmp_path, capsys):
     assert "Members mix minimisation with dynamics" in capsys.readouterr().out
 
 
+def test_stage_directories_sharing_file_names_are_not_reported_as_members(tmp_path, capsys):
+    """Issue #88, from files on disk. The minimisation sits in its own directory INSIDE
+    the equilibration one, and every stage writes the same file names, so the layout alone
+    matched the replica shape the test above uses. Tagged, the pipeline's own stages were
+    compared as replicas and `plan` failed on "(min ran no dynamics)" -- which is exactly
+    what a minimisation is supposed to do."""
+    from ambermeta.gui.api.core_bridge import discover_draft
+
+    for stage, imin in (("min", 1), ("heat", 0), ("eq", 0)):
+        run = tmp_path / "equil" / stage
+        run.mkdir(parents=True)
+        (run / "md.in").write_text(
+            f"{stage}\n &cntrl\n  imin = {imin}, nstlim = 1000, dt = 0.002,\n /\n",
+            encoding="utf-8")
+        (run / "md.out").write_text(MDOUT_ONLY, encoding="utf-8")
+
+    assert main(["plan", "--recursive", str(tmp_path)]) == 0
+    assert "Members mix minimisation with dynamics" not in capsys.readouterr().out
+    # The GUI never applies an inferred grouping, but it does PROPOSE one, and the SOP
+    # tells a depositor to accept what is proposed.
+    assert discover_draft(str(tmp_path), apply_tags=False)["proposal"] is None
+
+
 def test_the_merged_apo_holo_tree_is_tagged_and_then_reported_on(tmp_path, capsys):
     """End to end, from files on disk: `plan --recursive` tags the tree AND says the tags
     are wrong.

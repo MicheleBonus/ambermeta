@@ -375,6 +375,35 @@ def test_deliberately_parallel_arms_with_disjoint_bases_still_merge_a_known_limi
     assert set(tags.values()) == {"01", "02", "03"}
 
 
+def test_stage_directories_named_for_different_phases_are_not_members():
+    """Issue #88. One directory per stage, every stage reusing the same file names
+    (`md.in`/`md.out`/`md.rst7`), matches the membership predicate exactly as `rep1/rep2`
+    does: same run bases, same depth, one varying segment. The segment is `min`, `heat`,
+    `eq` -- the names of the phases, not of replicas -- and tagging it made `coherence`
+    report "Members mix minimisation with dynamics (min ran no dynamics)" against a
+    perfectly ordinary pipeline."""
+    assert infer_lineages_from_layout(
+        ["equil/min/md", "equil/heat/md", "equil/eq/md", "prod/prod_0001"]) == {}
+    assert infer_lineages_from_layout(["min/md", "heat/md", "equil/md", "prod/md"]) == {}
+    # Two phases that share a role are still two phases: `nvt` then `npt` is how an
+    # equilibration is usually split, and both classify as "equilibration".
+    assert infer_lineages_from_layout(["equil/nvt/md", "equil/npt/md"]) == {}
+    # A phase word beside a label that names no phase is a disagreement too.
+    assert infer_lineages_from_layout(["em/run", "md/run"]) == {}
+
+
+def test_members_whose_labels_name_the_same_phase_are_still_members():
+    """The refusal above keys on the labels DISAGREEING about which phase they name, so
+    replicas of one phase, and arms of one phase under different conditions, still tag."""
+    assert infer_lineages_from_layout(["prod_1/md", "prod_2/md"]) == {
+        "prod_1/md": "prod_1", "prod_2/md": "prod_2"}
+    assert infer_lineages_from_layout(["equil_300K/md", "equil_310K/md"]) == {
+        "equil_300K/md": "equil_300K", "equil_310K/md": "equil_310K"}
+    # ...and a phase-named directory ABOVE the varying segment is no obstacle.
+    assert infer_lineages_from_layout(["min/rep1/md", "min/rep2/md"]) == {
+        "min/rep1/md": "rep1", "min/rep2/md": "rep2"}
+
+
 # --- the four in-scope topologies of design section 1.1 ----------------------
 
 def test_topology_1_n_equilibrations_each_feeding_one_production():
