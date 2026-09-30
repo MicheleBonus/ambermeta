@@ -8,6 +8,7 @@ from typing import Any, Callable, Dict, List, NamedTuple, Optional, Pattern, Tup
 
 import re
 
+from ambermeta.coords import sniff_coordinate_kind
 from ambermeta.parsers.inpcrd import InpcrdData, InpcrdParser
 from ambermeta.parsers.mdcrd import MdcrdData, MdcrdParser
 from ambermeta.parsers.mdin import MdinData, MdinParser
@@ -1822,6 +1823,26 @@ def _run_stems(grouped: Dict[str, Dict[str, str]]) -> List[str]:
             if grouped[stem].get("mdin") or grouped[stem].get("mdout")]
 
 
+def _coords_are_run_output(kinds: Dict[str, str]) -> bool:
+    """Whether a scanned group's coordinate file is what a run WROTE rather than read.
+
+    Stem grouping puts `prod_0002.restrt` -- AMBER's `-r` output, written at the END of the
+    run -- beside the rest of that run's files. An mdin or an mdout in the group says a run
+    is there. So does a trajectory (#87): `prod_0002.nc` is that run's `-x` output, and a
+    deposit that kept only trajectories and restarts is still a campaign of runs.
+
+    "Trajectory" is decided by content, never by the `.crd`/`.nc` extension alone. tLEaP's
+    `saveamberparm` is routinely given a `.crd` name, and a bare `system.prmtop` /
+    `system.crd` / `system.inpcrd` group names starting coordinates: its time is exactly
+    what continuity should measure against. A file the sniffer cannot read is not evidence
+    either way, and the group keeps the older reading.
+    """
+    if kinds.get("mdin") or kinds.get("mdout"):
+        return True
+    trajectory = kinds.get("mdcrd")
+    return bool(trajectory) and sniff_coordinate_kind(trajectory) == "mdcrd"
+
+
 class _TaggedRun(NamedTuple):
     """A run name with the member it belongs to, the shape `lineages.buckets` groups."""
 
@@ -2565,13 +2586,12 @@ def auto_discover(
             stage.inpcrd = _safe_parse(InpcrdParser, file_kinds["inpcrd"], "inpcrd", stage, strict=strict)
             if stage.inpcrd is not None:
                 stage.restart_path = file_kinds["inpcrd"]
-                # Same stem as this run's own mdin/mdout, so this is what the run WROTE
+                # Same stem as this run's own files, so this is what the run WROTE
                 # (`-r prod_0002.restrt`), not what it read (`-c prod_0001.restrt`, a
-                # different stem and therefore a different group). A group with neither an
-                # mdin nor an mdout is not a run at all -- a bare `system.prmtop` /
-                # `system.inpcrd` pair -- and its coordinates really are an input.
-                stage.inpcrd_is_own_restart = (
-                    "mdin" in file_kinds or "mdout" in file_kinds)
+                # different stem and therefore a different group). A bare
+                # `system.prmtop` / `system.inpcrd` pair is not a run at all, and its
+                # coordinates really are an input.
+                stage.inpcrd_is_own_restart = _coords_are_run_output(file_kinds)
 
         if _looks_queued(getattr(stage.mdin, "details", None), "mdin" in file_kinds, "mdout" in file_kinds):
             stage.status = "queued"
