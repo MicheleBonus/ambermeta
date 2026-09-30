@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import errno
 import re
 import os
 import glob
@@ -331,9 +332,11 @@ def _calc_stats(data_list: List[float]) -> Tuple[Optional[float], Optional[float
 
 def parse_mdout(filepath: str) -> MdoutMetadata:
     md = MdoutMetadata(filename=filepath)
+    # Raise, like every other parser, so the engine records a missing file as one. A
+    # default record here read as a run that never finished with a time step of 0.001 ps,
+    # which per-run validation then reported as two findings about a file that is not there.
     if not os.path.exists(filepath):
-        md.warnings.append("File not found.")
-        return md
+        raise FileNotFoundError(errno.ENOENT, "No such file or directory", filepath)
 
     with open(filepath, 'r', errors='replace') as f:
         lines = f.readlines()

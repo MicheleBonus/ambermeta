@@ -214,6 +214,23 @@ def test_finished_and_queued_runs_of_a_campaign_are_not_unfinished(sys021_tree):
     assert _findings(report, "unfinished_run") == []
 
 
+def test_a_missing_mdout_is_a_missing_file_not_an_unfinished_run(tmp_path):
+    """The mdout parser returned a default record for a file that does not exist (dt of
+    0.001 ps, not finished), so a manifest naming a deleted mdout reported a run that
+    stopped early and a time step that disagrees with its mdin. It is one missing file."""
+    directory = _hmr_copy(tmp_path)
+    sim = _draft(directory)
+    (directory / "ntp_prod_0003.mdout").unlink()
+    _, report = _validate(directory, sim)
+    step = _step_id(sim, "ntp_prod_0003")
+    per_run = [s for s in report["suggestions"]
+               if s.get("step_id") == step and s["kind"] in ("step_check", "unfinished_run")]
+    assert per_run == []
+    issue = next(s for s in report["stage_issues"] if s["name"] == "ntp_prod_0003")
+    assert any("mdout" in e for e in issue["errors"])
+    assert report["ok"] is False
+
+
 def test_an_mdin_that_disagrees_with_its_mdout_is_a_finding(tmp_path):
     directory = _hmr_copy(tmp_path)
     _replace_in(directory / "ntp_prod_0002.mdin", "nstlim = 5000000,", "nstlim = 4000000,")
