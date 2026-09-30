@@ -21,7 +21,7 @@ Simulation summary
 ==================
 Topologies (pool): 1
   - top_CH3L1_HUMAN_6NAG [normal]  CH3L1_HUMAN_6NAG.top
-Starting structure: CH3L1_HUMAN_6NAG.crd
+Starting structure: ntp_prod_0000.rst
 Phases: 1
 
 Phase: Production [production]
@@ -32,13 +32,13 @@ Phase: Production [production]
   - ntp_prod_0005  topology=CH3L1_HUMAN_6NAG.top  input=restart of ntp_prod_0004 (ntp_prod_0004.rst)  (mdin=ntp_prod_0005.mdin, mdout=ntp_prod_0005.mdout)
 
 Suggestions:
-  - [applied] CH3L1_HUMAN_6NAG.crd set as the starting structure
+  - [applied] ntp_prod_0000.rst set as the starting structure
   - [applied] Phase roles inferred from file content/names
 
 Wrote v2 draft manifest: sim.yaml (yaml)
 ```
 
-Builds a topology pool, infers phase roles, and chains each step's input coordinates off the previous step's restart (`input=restart of <step name>`) — the previous step **of the same lineage**, where the layout names members. In the file itself that chain is stored as a step id reference; the ids are freshly generated each run, so don't expect them to be stable across runs. Edit `sim.yaml` by hand, or refine it in the GUI, before committing to it.
+Builds a topology pool, takes the starting structure from the INPCRD the first run's mdout records (here `ntp_prod_0000.rst`), infers phase roles, and chains each step's input coordinates off the previous step's restart (`input=restart of <step name>`) — the previous step **of the same lineage**, where the layout names members. In the file itself that chain is stored as a step id reference; the ids are freshly generated each run, so don't expect them to be stable across runs. Edit `sim.yaml` by hand, or refine it in the GUI, before committing to it.
 
 ### Discover a replica tree
 
@@ -79,10 +79,17 @@ ambermeta validate --manifest sim.yaml
 ```
 Simulation validation
 
+Findings:
+  - Run check: ntp_prod_0001: Time step of 4 fs, but the topology has standard hydrogen masses (no hydrogen mass repartitioning); a time step above 2 fs needs repartitioned hydrogen masses.
+  - Run check: ntp_prod_0002: Time step of 4 fs, but the topology has standard hydrogen masses (no hydrogen mass repartitioning); a time step above 2 fs needs repartitioned hydrogen masses.
+  - Run check: ntp_prod_0003: Time step of 4 fs, but the topology has standard hydrogen masses (no hydrogen mass repartitioning); a time step above 2 fs needs repartitioned hydrogen masses.
+  - Run check: ntp_prod_0004: Time step of 4 fs, but the topology has standard hydrogen masses (no hydrogen mass repartitioning); a time step above 2 fs needs repartitioned hydrogen masses.
+  - Run check: ntp_prod_0005: Time step of 4 fs, but the topology has standard hydrogen masses (no hydrogen mass repartitioning); a time step above 2 fs needs repartitioned hydrogen masses.
+
 Validation: OK
 ```
 
-Checks the whole Simulation: restart-to-input-coordinate continuity between consecutive steps, gaps in a numbered run sequence, and missing files. Add `--strict` to fail on warnings too, or `--format json` for CI parsing.
+Checks the whole Simulation: restart-to-input-coordinate continuity between consecutive steps, gaps in a numbered run sequence, missing files, and each run against what AMBER recorded (atom counts, mdin against mdout, time step against the topology's hydrogen masses, completion, and the INPCRD the mdout names against the declared input). The `Run check` lines are real for the sample as bundled: its runs used a 4-fs time step, and the bundled topology's hydrogens have standard masses; a run on an HMR topology does not report it. Add `--strict` to fail on any finding (so it exits `1` on this sample), or `--format json` for CI parsing.
 
 On a manifest declaring lineages, "consecutive" means consecutive within a member, and a numbered-sequence hole is reported per member — so a replica that stopped early is named (`rep2/prod sequence is missing member(s) 2, 3`) instead of being averaged away, and replicas numbered on offset scales raise nothing. Do **not** reach for `--allow-gaps` to quieten a replica tree; see [tutorials §2](tutorials.md#2-validate-continuity-and-catch-a-sequence-hole).
 
@@ -170,7 +177,7 @@ ambermeta info --format json ntp_prod_0001.mdout | jq '.stats'
 ambermeta plan . --recursive --prmtop CH3L1_HUMAN_6NAG.top
 ```
 
-Avoids repeating a topology on each stage in the flat-discovery path. In a v2 manifest the equivalent is a single entry in the Simulation's `topologies:` pool, referenced by id from every step (see the [manifest schema](manifest.md)).
+Avoids repeating a topology on each stage in the flat-discovery path. With a topology bound, each run is also checked against it, so on the sample every run gains the 4-fs `Run check` finding shown above. In a v2 manifest the equivalent is a single entry in the Simulation's `topologies:` pool, referenced by id from every step (see the [manifest schema](manifest.md)).
 
 ### Filter discovery to production runs only
 
@@ -186,7 +193,7 @@ ambermeta plan . --recursive --pattern 'prod_.*' --stats-csv prod_stats.csv
 ambermeta plan . --recursive --strict
 ```
 
-Default behavior skips a bad file and continues (exit `0`); `--strict` makes the first one a clean hard error (exit `1`, no traceback).
+Default behavior skips a bad file and continues (exit `0`); `--strict` makes the first one a clean hard error (exit `1`, no traceback), and also exits `1` when any finding is printed.
 
 ### Quiet + file logging for unattended pipelines
 
