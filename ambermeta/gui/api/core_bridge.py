@@ -463,10 +463,18 @@ def document_fingerprint(sim, settings, base_directory) -> str:
 
 
 def validate_simulation(sim, settings, base_directory, protocol=None):
+    from ambermeta.protocol import stage_finding_cards
+
     flat = _flatten_simulation(sim)
+    if protocol is None:
+        protocol = build_protocol(flat, dict(settings), base_directory)
     report = build_validation_report(flat, dict(settings), base_directory, protocol=protocol)
     suggestions = build_suggestions(sim, base_directory)
     suggestions.extend(_continuity_gap_suggestions(flat, report.get("stage_issues", []), start_index=len(suggestions)))
+    # Each run's own problems: its files disagree, it did not finish, or it read other
+    # coordinates than the document declares. Cards rather than stage warnings, so the
+    # findings block prints them and `--strict` counts them.
+    suggestions.extend(stage_finding_cards(protocol.stages, start_index=len(suggestions) + 1))
     report["suggestions"] = suggestions
     return report
 
@@ -722,6 +730,64 @@ def build_lineage_proposal(sim, segment_index=None, base_directory=None):
     return proposal
 
 
+def _recorded_starting_structure(sim, grouped, base_directory):
+    """The file the draft's first runs recorded as INPCRD, when that is one file found here.
+
+    The path-order pick above takes the first single-frame coordinate file it meets, and
+    on the repo's own sample that is the tLEaP output, while the first run's mdout records
+    `ntp_prod_0000.rst`, a restart that sits in the same directory. The record wins where
+    it can be followed:
+
+    * only Steps that read the starting structure are asked (the first run of each
+      directory);
+    * a recorded path is read from the run's directory, and a path that does not resolve
+      there (the absolute path of another machine) is looked up by file name beside the
+      mdout;
+    * a restart that a run in the draft wrote is a continuation, not a start, and is not
+      counted;
+    * every Step that could be followed must agree on one file, or the pick is kept.
+    """
+    from ambermeta.mdout_header import read_mdout_header
+    from ambermeta.protocol import _coords_are_run_output
+    from ambermeta.simulation import iter_steps
+
+    run_written = {
+        os.path.normcase(os.path.abspath(kinds["inpcrd"]))
+        for kinds in grouped.values()
+        if kinds.get("inpcrd") and _coords_are_run_output(kinds)
+    }
+    # Keyed on the case-folded path (one file on a case-insensitive file system), valued with
+    # the file's own spelling, which is what the manifest must name.
+    candidates = {}
+    for _, step in iter_steps(sim):
+        if step.input_coords.source != "starting_structure":
+            continue
+        mdout = grouped.get(step.name, {}).get("mdout")
+        if not mdout:
+            continue
+        try:
+            recorded = read_mdout_header(mdout).assignment("INPCRD")
+        except (OSError, UnicodeDecodeError, ValueError):
+            continue
+        if not recorded:
+            continue
+        run_directory = os.path.dirname(mdout)
+        here = None
+        if not os.path.isabs(recorded):
+            here = os.path.normpath(os.path.join(run_directory, recorded))
+        if not here or not os.path.isfile(here):
+            here = os.path.join(run_directory,
+                                recorded.replace("\\", "/").rstrip("/").rpartition("/")[2])
+        if not os.path.isfile(here):
+            continue
+        key = os.path.normcase(os.path.abspath(here))
+        if key not in run_written:
+            candidates[key] = os.path.abspath(here)
+    if len(candidates) != 1:
+        return None
+    return _relativize(next(iter(candidates.values())), base_directory)
+
+
 def discover_draft(base_directory, recursive=True, pattern=None, apply_tags=True):
     """Scan `base_directory` into a Simulation draft, with a proposal beside it.
 
@@ -918,6 +984,10 @@ def discover_draft(base_directory, recursive=True, pattern=None, apply_tags=True
         # the second half of this condition is not optional.
         if step.rst or directory not in directories_with_restart_evidence:
             prev_by_directory[directory] = step.id
+
+    recorded_start = _recorded_starting_structure(sim, grouped, base_directory)
+    if recorded_start:
+        sim.starting_structure = recorded_start
 
     warnings = []
     if len(sim.topologies) > 1:

@@ -16,6 +16,7 @@ from ambermeta.mdout_header import MdoutHeader, read_mdout_header
 from ambermeta.parsers.mdout import MdoutData, MdoutParser
 from ambermeta.parsers.prmtop import PrmtopData, PrmtopParser
 from ambermeta.legacy_extractors.prmtop import ION_RESNAMES, WATER_RESNAMES
+from ambermeta.recorded_inputs import compare_recorded_input
 from ambermeta.topology_pool import implies_hmr
 from ambermeta.errors import AmberMetaError, FileLoadError, classify_exception
 from ambermeta.logging_config import get_logger
@@ -178,6 +179,12 @@ class SimulationStage:
     validation: List[str] = field(default_factory=list)
     continuity: List[str] = field(default_factory=list)
     load_errors: List[FileLoadError] = field(default_factory=list)
+    # This run's own problems, as (kind, message) with kind one of `FINDING_KINDS`. Every
+    # message is also in `validation`, which is what summary.json shows; this is the
+    # structured copy `stage_finding_cards` reads, so the findings block and `--strict`
+    # never pattern-match free text to tell a problem from a remark ("No atom counts
+    # available" is a remark). Not serialised.
+    findings: List[Tuple[str, str]] = field(default_factory=list)
 
     @property
     def degraded(self) -> bool:
@@ -186,60 +193,48 @@ class SimulationStage:
 
     def validate(self) -> None:
         existing = set(self.validation)
-        for msg in (
-            self._validate_atoms()
-            + self._validate_box()
-            + self._validate_timing()
-            + self._validate_sampling()
-            + self._validate_elapsed_time()
-        ):
+
+        def _add(msg: str, kind: Optional[str] = None) -> None:
             if msg not in existing:
                 self.validation.append(msg)
                 existing.add(msg)
+            if kind is not None and (kind, msg) not in self.findings:
+                self.findings.append((kind, msg))
+
+        if not self._atom_counts():
+            _add("No atom counts available for validation.")
+        for msg in (self._validate_atoms() + self._validate_timing()
+                    + self._validate_sampling() + self._validate_hmr_time_step()):
+            _add(msg, "step_check")
+        for msg in self._validate_completion():
+            _add(msg, "unfinished_run")
+        for msg in self._validate_recorded_input():
+            _add(msg, "input_mismatch")
+        for msg in self._validate_elapsed_time():
+            _add(msg)
+
+    def _atom_counts(self) -> List[Tuple[str, int]]:
+        """(label, count) for every file that states an atom count.
+
+        A count of 0 is not stated. The ASCII trajectory reader, and the NetCDF readers
+        when neither netCDF4 nor SciPy is installed, leave their atom count at its default
+        of 0 because the file (or the missing library) gave them none; comparing that 0
+        with the topology's count reported a mismatch that was never in the data. No AMBER
+        system has zero atoms.
+        """
+        counts = []
+        for label, data in (("prmtop", self.prmtop), ("inpcrd", self.inpcrd),
+                            ("mdout", self.mdout), ("mdcrd", self.mdcrd)):
+            n_atoms = getattr(data.details, "n_atoms", None) if data and data.details else None
+            if n_atoms:
+                counts.append((label, n_atoms))
+        return counts
 
     def _validate_atoms(self) -> List[str]:
-        counts = []
-        labels = []
-        # Use standardized n_atoms property across all metadata classes
-        n_atoms = getattr(self.prmtop.details, "n_atoms", None) if self.prmtop and self.prmtop.details else None
-        if n_atoms is not None:
-            counts.append(n_atoms)
-            labels.append("prmtop")
-        n_atoms = getattr(self.inpcrd.details, "n_atoms", None) if self.inpcrd and self.inpcrd.details else None
-        if n_atoms is not None:
-            counts.append(n_atoms)
-            labels.append("inpcrd")
-        n_atoms = getattr(self.mdout.details, "n_atoms", None) if self.mdout and self.mdout.details else None
-        if n_atoms is not None:
-            counts.append(n_atoms)
-            labels.append("mdout")
-        n_atoms = getattr(self.mdcrd.details, "n_atoms", None) if self.mdcrd and self.mdcrd.details else None
-        if n_atoms is not None:
-            counts.append(n_atoms)
-            labels.append("mdcrd")
-
-        if not counts:
-            return ["No atom counts available for validation."]
-        if len(set(counts)) > 1:
-            return [f"Atom count mismatch across {labels}: {counts}"]
-        return []
-
-    def _validate_box(self) -> List[str]:
-        boxes = []
-        if self.prmtop and self.prmtop.details and getattr(self.prmtop.details, "box_dimensions", None):
-            boxes.append("prmtop")
-        if self.inpcrd and self.inpcrd.details and getattr(self.inpcrd.details, "has_box", False):
-            boxes.append("inpcrd")
-        if self.mdcrd and self.mdcrd.details and getattr(self.mdcrd.details, "has_box", False):
-            boxes.append("mdcrd")
-        if self.mdout and self.mdout.details and getattr(self.mdout.details, "box_type", None):
-            boxes.append("mdout")
-
-        # Only validate box consistency if multiple sources report box info
-        # A single source having box info is not a validation issue
-        if len(boxes) >= 2:
-            # Could add box dimension comparison here if needed
-            pass
+        counts = self._atom_counts()
+        if len({n for _, n in counts}) > 1:
+            return [f"Atom count mismatch across {[label for label, _ in counts]}: "
+                    f"{[n for _, n in counts]}"]
         return []
 
     def _validate_timing(self) -> List[str]:
@@ -320,11 +315,13 @@ class SimulationStage:
         return notes
 
     def _validate_sampling(self) -> List[str]:
+        # The mdout side comes from its header's CONTROL DATA block. `MdoutMetadata` has
+        # no `ntwx`, so reading it there made this check unable to fire at all.
         freq = []
         if self.mdin and self.mdin.details:
             freq.append(("mdin", getattr(self.mdin.details, "coord_freq", None)))
-        if self.mdout and self.mdout.details:
-            freq.append(("mdout", getattr(self.mdout.details, "ntwx", None)))
+        if self.mdout_header is not None:
+            freq.append(("mdout", self.mdout_header.control_ntwx))
         notes: List[str] = []
         if len(freq) > 1:
             base = freq[0]
@@ -332,6 +329,63 @@ class SimulationStage:
                 if base[1] and val and base[1] != val:
                     notes.append(f"Coordinate write frequency differs between {base[0]} and {label} ({base[1]} vs {val}).")
         return notes
+
+    def _run_dt_ps(self) -> Optional[float]:
+        """The time step the run used: the mdout's resolved CONTROL DATA, else the mdin."""
+        if self.mdout_header is not None and self.mdout_header.control_dt_ps:
+            return self.mdout_header.control_dt_ps
+        if self.mdin and self.mdin.details:
+            return getattr(self.mdin.details, "dt", None)
+        return None
+
+    def _validate_hmr_time_step(self) -> List[str]:
+        """A time step above 2 fs on a topology whose hydrogen masses are standard.
+
+        Either the Step is bound to a different topology than the run used, or the run
+        integrated hydrogens at a time step they do not support. Both are worth a look, and
+        neither is resolved by relabelling the topology as HMR, which is what the methods
+        summary used to do. Only a topology whose masses were read and found standard
+        (`hmr_active is False`) counts; an unclassified one says nothing.
+        """
+        details = self.prmtop.details if self.prmtop else None
+        if details is None or getattr(details, "hmr_active", None) is not False:
+            return []
+        dt = self._run_dt_ps()
+        if not isinstance(dt, (int, float)) or not implies_hmr(dt):
+            return []
+        return [f"Time step of {dt * 1000:g} fs, but the topology has standard hydrogen "
+                "masses (no hydrogen mass repartitioning); a time step above 2 fs needs "
+                "repartitioned hydrogen masses."]
+
+    def _validate_completion(self) -> List[str]:
+        """An mdout without AMBER's completion marker: the run stopped early or still runs.
+
+        Queued runs have no mdout and are not this; their `status` says so. A run whose
+        mdout could not be parsed at all is a load error, already reported.
+        """
+        if self.mdout is None or self.mdout.details is None:
+            return []
+        if getattr(self.mdout.details, "finished_properly", False):
+            return []
+        return ["The mdout has no completion marker: the run stopped early or is still "
+                "running."]
+
+    def _validate_recorded_input(self) -> List[str]:
+        """The declared input coordinates against the INPCRD the mdout recorded.
+
+        Skipped where the scan put the run's OWN output restart in the input slot
+        (`inpcrd_is_own_restart`): that file is not a claim about what the run read.
+        """
+        if self.inpcrd is None or self.inpcrd_is_own_restart:
+            return []
+        if self.mdout is None or self.mdout_header is None:
+            return []
+        recorded = self.mdout_header.assignment("INPCRD")
+        if not recorded:
+            return []
+        mismatch = compare_recorded_input(
+            self.inpcrd.filename, recorded, os.path.dirname(self.mdout.filename))
+        return [f"This step {mismatch}."] if mismatch else []
 
     def _validate_elapsed_time(self) -> List[str]:
         """"Ran, mdout unusable -> contributes nothing, plus a note" — the one run state
@@ -1085,6 +1139,10 @@ class SimulationProtocol:
         return sequence_findings([s.name for s in self.stages],
                                  [s.lineage for s in self.stages])
 
+    def stage_findings(self, start_index: int = 1) -> List[Dict[str, Any]]:
+        """Every stage's own problems, as cards; see :func:`stage_finding_cards`."""
+        return stage_finding_cards(self.stages, start_index=start_index)
+
     def to_dict(self) -> Dict[str, Any]:
         out: Dict[str, Any] = {
             "totals": self.totals(),
@@ -1331,19 +1389,29 @@ class SimulationProtocol:
             if stage.mdcrd and stage.mdcrd.details:
                 box_type = getattr(stage.mdcrd.details, "box_type", None) or box_type
 
+            # The box of the coordinates the run read. The topology's box is the one tLEaP
+            # wrote before any equilibration, and preferring it reported the pre-NPT box
+            # for every run of a production chain; it is only the fallback, and says so.
             box_dimensions = None
             box_angles = None
+            box_source = None
             if stage.inpcrd and stage.inpcrd.details:
-                box_dimensions = getattr(stage.inpcrd.details, "box_dimensions", None) or box_dimensions
-                box_angles = getattr(stage.inpcrd.details, "box_angles", None) or box_angles
-            if stage.prmtop and stage.prmtop.details:
-                box_dimensions = getattr(stage.prmtop.details, "box_dimensions", None) or box_dimensions
+                box_dimensions = getattr(stage.inpcrd.details, "box_dimensions", None)
+                box_angles = getattr(stage.inpcrd.details, "box_angles", None)
+                if box_dimensions:
+                    box_source = ("restart written by this run" if stage.inpcrd_is_own_restart
+                                  else "input coordinates")
+            if not box_dimensions and stage.prmtop and stage.prmtop.details:
+                box_dimensions = getattr(stage.prmtop.details, "box_dimensions", None)
                 box_angles = getattr(stage.prmtop.details, "box_angles", None) or box_angles
+                if box_dimensions:
+                    box_source = "topology (as built)"
 
             box: Dict[str, Any] = {
                 "type": box_type,
                 "dimensions": box_dimensions,
                 "angles": box_angles,
+                "source": box_source,
             }
             composition: Dict[str, Any] = {}
             if stage.prmtop and stage.prmtop.details:
@@ -1365,19 +1433,19 @@ class SimulationProtocol:
                     }
                 )
 
-            # Infer HMR from timestep if not already detected from prmtop
-            # Timestep >= HMR_TIMESTEP_THRESHOLD_PS is a definitive indicator of HMR
+            # Infer HMR from the time step only where no topology masses were read. A
+            # topology whose masses are standard is not HMR whatever the time step; that
+            # disagreement is a finding (`_validate_hmr_time_step`), not something to
+            # overwrite here.
             dt = None
             if stage.mdin and stage.mdin.details:
                 dt = getattr(stage.mdin.details, "dt", None)
             if dt is None and stage.mdout and stage.mdout.details:
                 dt = getattr(stage.mdout.details, "dt", None)
             if dt is not None and isinstance(dt, (int, float)):
-                if implies_hmr(dt):
-                    # Large timestep indicates HMR is active
-                    if composition.get("hmr_active") is None or composition.get("hmr_active") is False:
-                        composition["hmr_active"] = True
-                        composition["hmr_inferred_from_timestep"] = True
+                if implies_hmr(dt) and composition.get("hmr_active") is None:
+                    composition["hmr_active"] = True
+                    composition["hmr_inferred_from_timestep"] = True
 
             # Add observed density from mdout if available (actual simulation values)
             if stage.mdout and stage.mdout.details:
@@ -2020,6 +2088,41 @@ def sequence_findings(
             "missing": missing,
             "lineage": tag,
         })
+    return out
+
+
+#: Per-run finding kinds, and the title each card carries. `step_check`: the run's own
+#: files disagree (atom counts, mdin against mdout, time step against topology masses).
+#: `unfinished_run`: the mdout has no completion marker. `input_mismatch`: the Step
+#: declares other input coordinates than the INPCRD its mdout recorded.
+FINDING_KINDS: Dict[str, str] = {
+    "step_check": "Run check",
+    "unfinished_run": "Run did not finish",
+    "input_mismatch": "Declared input differs from the recorded one",
+}
+
+
+def stage_finding_cards(stages: List[SimulationStage],
+                        start_index: int = 1) -> List[Dict[str, Any]]:
+    """Each stage's `findings` as suggestion cards, in stage order.
+
+    One producer for the three surfaces that report them, for the same reason as
+    :func:`sequence_findings`: `validate --manifest` and `plan --manifest` reach it through
+    ``validate_simulation``, and `plan --recursive` calls it on its own stages. The card is
+    scoped to its step (``step_id``) where the stage came from a document.
+    """
+    out: List[Dict[str, Any]] = []
+    for stage in stages:
+        for kind, message in stage.findings:
+            out.append({
+                "id": f"sug_r_{start_index + len(out)}",
+                "kind": kind,
+                "severity": "needs_you",
+                "title": FINDING_KINDS[kind],
+                "evidence": f"{stage.name}: {message}",
+                "actions": ["Investigate"],
+                "step_id": stage.step_id,
+            })
     return out
 
 

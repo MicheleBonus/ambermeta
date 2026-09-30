@@ -168,8 +168,9 @@ def test_discover_draft_on_real_fixtures(sample_md_data_dir):
     # ntp_prod_000X.mdin/.mdout runs became steps
     step_names = [s.name for p in sim.phases for s in p.steps]
     assert any(n.startswith("ntp_prod_000") for n in step_names)
-    # the single-frame .crd is picked as the starting structure, not a run
-    assert sim.starting_structure and sim.starting_structure.endswith(".crd")
+    # the starting structure is the restart the first run's mdout records as its INPCRD,
+    # not the path-order pick (the tLEaP .crd), and no run is mistaken for it
+    assert sim.starting_structure == "ntp_prod_0000.rst"
     assert not any(n.endswith("6NAG") for n in step_names)
     # first step reads the starting structure; a later one chains from a step
     flat = [s for p in sim.phases for s in p.steps]
