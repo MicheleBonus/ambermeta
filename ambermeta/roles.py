@@ -2,28 +2,44 @@
 from __future__ import annotations
 
 import re
-from typing import Any, Optional
+from typing import Any, Optional, Tuple
 
 CANONICAL_ROLES = ("minimization", "heating", "equilibration", "production")
 
 # Word-boundary cues per path component. First match wins. Separators: start/end
 # of a component and any of _ . - . Bare ambiguous tokens (md, run) are excluded
 # on purpose; content heuristics catch those when the parameters are available.
+# Group 1 is the cue word itself, which `phase_word` hands back.
 _NAME_CUES = [
-    (re.compile(r"(?:^|[_.\-])(?:minimi[sz]ation|minimi[sz]e|minim|min|em)(?:[_.\-]|$)"), "minimization"),
-    (re.compile(r"(?:^|[_.\-])(?:heat|warm|therm|anneal)(?:[_.\-]|$|ing\b)"), "heating"),
-    (re.compile(r"(?:^|[_.\-])(?:equilibration|equilibrate|equil|eq|nvt|npt)(?:[_.\-]|$)"), "equilibration"),
-    (re.compile(r"(?:^|[_.\-])(?:production|prod)(?:[_.\-]|$)"), "production"),
+    (re.compile(r"(?:^|[_.\-])(minimi[sz]ation|minimi[sz]e|minim|min|em)(?:[_.\-]|$)"), "minimization"),
+    (re.compile(r"(?:^|[_.\-])(heat|warm|therm|anneal)(?:[_.\-]|$|ing\b)"), "heating"),
+    (re.compile(r"(?:^|[_.\-])(equilibration|equilibrate|equil|eq|nvt|npt)(?:[_.\-]|$)"), "equilibration"),
+    (re.compile(r"(?:^|[_.\-])(production|prod)(?:[_.\-]|$)"), "production"),
 ]
 
 
-def _role_from_name(name: str) -> str:
+def _name_cue(name: str) -> Tuple[str, str]:
+    """The first cue in `name` as (word, role), or ('', '') when it carries none."""
     lowered = name.lower().replace("\\", "/")
     for part in lowered.split("/"):
         for pattern, role in _NAME_CUES:
-            if pattern.search(part):
-                return role
-    return ""
+            match = pattern.search(part)
+            if match:
+                return match.group(1), role
+    return "", ""
+
+
+def _role_from_name(name: str) -> str:
+    return _name_cue(name)[1]
+
+
+def phase_word(name: str) -> str:
+    """The phase word a name carries (`min`, `heat`, `npt`, `prod`), or '' if none.
+
+    Finer than the role on purpose: `nvt` and `npt` are both "equilibration", and they
+    still name two different stages.
+    """
+    return _name_cue(name)[0]
 
 
 def _role_from_content(mdin_details: Any, mdout_details: Any) -> str:
