@@ -218,7 +218,7 @@ sim = result["simulation"]
 # [('top_CH3L1_HUMAN_6NAG', 'CH3L1_HUMAN_6NAG.top', 'normal')]
 
 sim.starting_structure
-# 'CH3L1_HUMAN_6NAG.crd'
+# 'ntp_prod_0000.rst'   <- the INPCRD ntp_prod_0001's mdout records
 
 sim.phases[0].name, sim.phases[0].role, len(sim.phases[0].steps)
 # ('Production', 'production', 5)
@@ -262,7 +262,7 @@ def discover_draft(
 # {"simulation": Simulation, "proposal": Optional[dict], "suggestions": [...], "warnings": [...]}
 ```
 
-Scans a directory into a **Simulation draft**: builds the topology pool (HMR detected from timestep, `ambermeta.topology_pool.classify_topology_pool`), finds a starting structure (a single-frame coordinate file outside any run group), groups runs into phases by inferred role (`ambermeta.roles.classify_role` — the one classifier shared by CLI and GUI), and chains each step's `input_coords` off the previous step **of its own lineage**. Where the directory layout names members (`rep1/`, `rep2/`, … sibling directories whose run sets the inference can reconcile — `ambermeta.lineages.infer_lineages_from_layout`), each member gets its own chain starting from the starting structure and same-role steps share one phase across members; where it does not, the result is the single chain and contiguous phases it always was.
+Scans a directory into a **Simulation draft**: builds the topology pool (HMR detected from each prmtop's hydrogen masses, `ambermeta.topology_pool.classify_topology_pool`), finds a starting structure (the INPCRD the first runs' mdouts record in their `File Assignments` block, when that resolves to one file found here that no run wrote; otherwise the first single-frame coordinate file, in path order, that no run wrote), groups runs into phases by inferred role (`ambermeta.roles.classify_role` — the one classifier shared by CLI and GUI), and chains each step's `input_coords` off the previous step **of its own lineage**. Where the directory layout names members (`rep1/`, `rep2/`, … sibling directories whose run sets the inference can reconcile — `ambermeta.lineages.infer_lineages_from_layout`), each member gets its own chain starting from the starting structure and same-role steps share one phase across members; where it does not, the result is the single chain and contiguous phases it always was.
 
 `apply_tags` decides whether that grouping is *written* onto `Step.lineage` (`True`, the default) or only *proposed*, in the returned `"proposal"`, with every step left untagged (`False`). `ambermeta discover` calls this with the default — `--write`'s manifest is its own confirmation step, so the CLI has always tagged and still does. The GUI's `POST /document/discover` route is the one caller that passes `apply_tags=False`: a fresh scan is a claim about the user's own data the GUI has a real Accept step for (`PATCH /steps/lineage`), so nothing is written until the user takes it. `"proposal"` is `None` when the layout inference tags nothing, and otherwise `{"segment_index": int, "segments": List[List[str]], "members": [{"tag": str, "step_ids": [...], "sources": [{"directory": str, "run_count": int}, ...]}, ...], "handoffs": [{"consumer_id": str, "producer_id": str, "consumer": str, "producer": str, "evidence": str}, ...]}` — see `build_lineage_proposal()`, below, for what each of those means. `handoffs` are the cross-directory restart handoffs AMBER's own `File Assignments` block evidences, scoped to one proposed member: the record is a bare filename every replica repeats verbatim, so the grouping is what identifies the pair and AMBER's record only corroborates that a handoff happened. An ambiguous or clipped record proposes nothing rather than guessing. See [§1](#1-the-ambermetasimulation-model) for a full run.
 
@@ -290,7 +290,7 @@ def validate_simulation(
 ) -> Dict[str, Any]
 ```
 
-Flattens the `Simulation` back to the stage shape the retained engine validates (`_flatten_simulation` internally, then `auto_discover(..., manifest=flat_stages)`), and layers on continuity/sequence-hole suggestions. Returns a report with `ok`, `totals`, `protocol_issues`, `stage_issues`, and `suggestions`. This is what `ambermeta validate --manifest` calls.
+Flattens the `Simulation` back to the stage shape the retained engine validates (`_flatten_simulation` internally, then `auto_discover(..., manifest=flat_stages)`), and layers on continuity/sequence-hole suggestions and each run's own findings (`ambermeta.protocol.stage_finding_cards`). Returns a report with `ok`, `totals`, `protocol_issues`, `stage_issues`, and `suggestions`. This is what `ambermeta validate --manifest` calls.
 
 ```python
 report = validate_simulation(sim, {}, base)
@@ -300,14 +300,22 @@ report["totals"]
 # {'steps': 25000000.0, 'time_ps': 100000.0, 'stage_count': 5}
 report["suggestions"]
 # [{'id': 'sug_1', 'kind': 'starting_structure', 'severity': 'applied',
-#   'title': 'CH3L1_HUMAN_6NAG.crd set as the starting structure',
+#   'title': 'ntp_prod_0000.rst set as the starting structure',
 #   'evidence': 'single-frame coordinates; feeds the first run', 'actions': ['Undo']},
 #  {'id': 'sug_2', 'kind': 'role_guess', 'severity': 'applied',
 #   'title': 'Phase roles inferred from file content/names',
-#   'evidence': 'Production->production', 'actions': ['Undo']}]
+#   'evidence': 'Production->production', 'actions': ['Undo']},
+#  {'id': 'sug_r_3', 'kind': 'step_check', 'severity': 'needs_you', 'title': 'Run check',
+#   'evidence': 'ntp_prod_0001: Time step of 4 fs, but the topology has standard hydrogen '
+#               'masses (no hydrogen mass repartitioning); a time step above 2 fs needs '
+#               'repartitioned hydrogen masses.',
+#   'actions': ['Investigate'], 'step_id': '4a09deaa'},
+#  ... one such card for each of ntp_prod_0002..0005]
 ```
 
-Each suggestion carries a `kind` (`missing_run`, `topology_confirm`, `starting_structure`, `role_guess`, `continuity_gap`, `lineage_group`, `lineage_needs_you` — the tree the layout inference refused, when it plausibly had members to declare), a `severity` (`applied` — already assumed, reversible; `needs_you` — a real decision), and `evidence` explaining why it fired. `needs_you` is a `severity`, never a `kind`. This is the same list the GUI's suggestions tray renders.
+The five `step_check` cards are a property of the sample as bundled: its runs used a 4-fs time step, and the bundled topology's hydrogens all weigh 1.008 amu.
+
+Each suggestion carries a `kind` (`missing_run`, `topology_confirm`, `starting_structure`, `role_guess`, `continuity_gap`, `lineage_group`, `lineage_needs_you` — the tree the layout inference refused, when it plausibly had members to declare — and a run's own findings: `step_check`, titled "Run check", where the run's files disagree or its time step exceeds 2 fs on a topology with standard hydrogen masses; `unfinished_run`, "Run did not finish"; and `input_mismatch`, "Declared input differs from the recorded one", scoped to their step by `step_id`), a `severity` (`applied` — already assumed, reversible; `needs_you` — a real decision), and `evidence` explaining why it fired. `needs_you` is a `severity`, never a `kind`. This is the same list the GUI's suggestions tray renders.
 
 Other `core_bridge` entry points worth knowing about: `file_metadata(path)` (parse-and-serialize one file by extension), `read_file_head(path, max_bytes=4096)` (raw text preview), and `open_simulation`/`save_simulation`/`preview_simulation` (thin wrappers over `load_simulation`/`write_simulation` behind the GUI's document endpoints — see the [GUI guide](gui.md) for the HTTP API surface).
 
@@ -410,6 +418,7 @@ class SimulationProtocol:
 | `totals` | `() -> Dict[str, float]` | `{"steps": float, "time_ps": float}` summed across stages, plus `lineage_count` when the document holds more than one member |
 | `lineage_totals` | `() -> Dict[str, Dict[str, float]]` | Per declared member: its own `steps`, `time_ps` and `step_count`. Empty for a single-member document |
 | `sequence_findings` | `() -> List[Dict[str, Any]]` | The numbered-sequence holes, as `missing_run` cards |
+| `stage_findings` | `(start_index: int = 1) -> List[Dict[str, Any]]` | Every stage's own findings, as `step_check` / `unfinished_run` / `input_mismatch` cards (`ambermeta.protocol.stage_finding_cards`) — what `plan --recursive` prints |
 | `to_dict` | `() -> Dict[str, Any]` | `totals` + each stage's `to_dict()`, plus `findings` and `lineages` when there is something to report — the full protocol summary |
 | `to_methods_dict` | `() -> Dict[str, Any]` | Publication-oriented summary (see [§8](#8-export-structures)) |
 
@@ -451,6 +460,9 @@ class SimulationStage:
     validation: List[str] = field(default_factory=list)
     continuity: List[str] = field(default_factory=list)
     load_errors: List[FileLoadError] = field(default_factory=list)
+    # This run's own problems as (kind, message), kind one of `FINDING_KINDS`. Every
+    # message is also in `validation`. Not serialised.
+    findings: List[Tuple[str, str]] = field(default_factory=list)
 ```
 
 `stage_role` holds the canonical short token (`"minimization" | "heating" | "equilibration" | "production" | ""`, from `ambermeta.roles.classify_role` — the same classifier the Phase/Step model and the GUI use) once inferred, not the free-text `stage_role` string `MdinMetadata` derives from the AMBER namelist (e.g. `"Production [NPT (isotropic)]"`); `summary()`'s `intent` prefers the canonical token when set.
@@ -458,7 +470,7 @@ class SimulationStage:
 | Member | Signature | Notes |
 |---|---|---|
 | `degraded` | `property -> bool` | `True` when any file failed to parse (`load_errors` non-empty) |
-| `validate` | `() -> None` | Per-stage checks (atom counts, box, timing) → `validation` notes |
+| `validate` | `() -> None` | Per-stage checks → `validation` notes, and each problem also as a `(kind, message)` pair in `findings`: `step_check` (atom counts across the stage's files, a count of 0 counting as not stated; mdin against mdout on step count, time step, duration and `ntwx`; a time step above 2 fs on a topology with standard hydrogen masses), `unfinished_run` (no completion marker in the mdout), `input_mismatch` (declared input coordinates against the mdout's recorded INPCRD). No box check. |
 | `summary` | `() -> Dict[str, str]` | Keys: `intent`, `result`, `expected_gap_ps`, `observed_gap_ps`, `continuity`, `evidence` |
 | `to_dict` | `() -> Dict[str, Any]` | Serialized stage (summary + degradation + file metadata) |
 
@@ -645,7 +657,7 @@ r.has_box, r.box_dimensions
 
 ### `to_methods_dict()`
 
-A publication-oriented view: reproducibility-critical metadata, energies and bulk arrays dropped. The real top-level shape is `{"stage_sequence": [...], "stages": [...]}`. A production stage entry (real output, `ntp_prod_0001` from the sample data):
+A publication-oriented view: reproducibility-critical metadata, energies and bulk arrays dropped. The real top-level shape is `{"stage_sequence": [...], "stages": [...]}`. A production stage entry (real output, `ntp_prod_0001` from the sample data, via `auto_discover("tests/data/amber/md_test_files", recursive=True)`):
 
 ```json
 {
@@ -671,7 +683,8 @@ A publication-oriented view: reproducibility-critical metadata, energies and bul
   "restraints": {"active": false},
   "system": {
     "atom_counts": {"inpcrd": 64528, "mdout": 64528},
-    "box": {"type": "RECTILINEAR", "dimensions": [91.79, 70.98, 75.81], "angles": [90.0, 90.0, 90.0]},
+    "box": {"type": "RECTILINEAR", "dimensions": [91.79, 70.98, 75.81], "angles": [90.0, 90.0, 90.0],
+            "source": "restart written by this run"},
     "composition": {
       "hmr_active": true,
       "hmr_inferred_from_timestep": true,
@@ -685,6 +698,8 @@ A publication-oriented view: reproducibility-critical metadata, energies and bul
   "trajectory_output": {"coord_write_interval_steps": 25000, "traj_format": "NetCDF"}
 }
 ```
+
+`box` is the box of the coordinates the run read, and `box.source` says where it came from: `"input coordinates"`, `"restart written by this run"` (the scan path, where a stage's own output restart fills its input slot, as here), or `"topology (as built)"`, the fallback when the coordinates state no box. `hmr_active` follows the topology's hydrogen masses. `hmr_inferred_from_timestep` appears only when no topology masses were read, as here: this scan binds no prmtop to `ntp_prod_0001`, so the 4-fs time step is all there is to go on. Bind the sample's topology (a manifest, or `--prmtop`) and the same stage reports `"hmr_active": false` (its 32,188 hydrogens all weigh 1.008 amu), no `hmr_inferred_from_timestep`, and a `step_check` finding for the 4-fs time step.
 
 ### Statistics CSV
 

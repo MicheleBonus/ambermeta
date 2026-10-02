@@ -352,7 +352,8 @@ ambermeta gui runs/                         # build it in the browser, drag file
 
 `discover` and the GUI's **Discover** button run the same engine (`discover_draft` in
 `ambermeta/gui/api/core_bridge.py`): they classify every prmtop into the topology pool, find a starting
-structure, group runs into role-named phases, and chain each step's `input_coords` off the previous step of
+structure (the INPCRD the first runs' mdouts record, where that is one file found in the directory that no
+run wrote; otherwise the first single-frame coordinate file no run wrote), group runs into role-named phases, and chain each step's `input_coords` off the previous step of
 its own lineage — surfacing each inference as an explainable suggestion rather than silently guessing. When
 the layout names members (`rep1/`, `rep2/`, … sibling directories whose run sets the inference can
 reconcile), the **CLI** tags each one directly — chained separately from the head of the starting
@@ -644,6 +645,9 @@ Everything above exits `1`. The two surfaces are:
   filing rather than an error surface to script against.
 
 Validation (`ambermeta validate`, `plan`, `validate_simulation`) produces **warnings/findings**, not hard
-errors, for: missing files that block a check, atom-count mismatches, timing/box inconsistencies,
-unexpected inter-step gaps, and sequence holes in a numbered run sequence. See
+errors, for: missing files that block a check, atom-count mismatches, mdin/mdout disagreements (step
+count, time step, duration, write frequency), a time step above 2 fs on a topology with standard
+hydrogen masses, a run whose mdout has no completion marker, a step whose declared input coordinates
+are not the INPCRD its mdout records, unexpected inter-step gaps, and sequence holes in a numbered run
+sequence. `--strict` turns any of them into exit `1`. See
 [architecture §3](architecture.md#3-continuity-and-sequence-hole-detection) and [cli.md](cli.md#validate).

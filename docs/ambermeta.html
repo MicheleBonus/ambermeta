@@ -144,7 +144,7 @@ footer.foot a{color:var(--muted)}
 <tbody>
 <tr><td><strong>Metadata extraction</strong></td><td>Per-file parsers for topology, input, output, trajectory, and restart files: atom/residue counts, box geometry, density, solvent model, HMR status, ensemble, thermostat/barostat, cutoff, SHAKE, completion, and streaming thermodynamics (temperature/pressure/density/energy, mean&nbsp;±&nbsp;σ).</td></tr>
 <tr><td><strong>Simulation discovery</strong></td><td>Scans a directory into a <code>Simulation</code> draft: builds the topology pool, detects numbered sequences, infers each step's role (minimization/heating/equilibration/production) from content then path, and resolves the input-coordinate chain — all as explainable, undoable suggestions.</td></tr>
-<tr><td><strong>Continuity &amp; sequence validation</strong></td><td>Per-file checks (atom-count agreement, box sanity) and whole-simulation checks (timing gaps between chained steps against a frame-interval-based tolerance, missing members of a numbered run), with configurable per-step tolerances.</td></tr>
+<tr><td><strong>Continuity &amp; sequence validation</strong></td><td>Per-run checks against what AMBER recorded (atom-count agreement across a run's files, mdin against mdout, a time step above 2&nbsp;fs on a topology with standard hydrogen masses, a run that did not finish, and the input coordinates a step declares against the INPCRD its mdout records) and whole-simulation checks (timing gaps between chained steps against a frame-interval-based tolerance, missing members of a numbered run), with configurable per-step tolerances.</td></tr>
 <tr><td><strong>Manifest format v2</strong></td><td>The one durable document: a topology pool, a starting structure, phases, and steps — read and written as JSON or YAML. The GUI and CLI share the same file, byte for byte.</td></tr>
 <tr><td><strong>Reproducibility exports</strong></td><td>A full simulation/protocol summary (JSON/YAML), a Materials-&amp;-Methods-ready summary, and a per-stage statistics CSV.</td></tr>
 </tbody>
@@ -220,7 +220,7 @@ footer.foot a{color:var(--muted)}
 ==================
 Topologies (pool): 1
   - top_CH3L1_HUMAN_6NAG [normal]  CH3L1_HUMAN_6NAG.top
-Starting structure: CH3L1_HUMAN_6NAG.crd
+Starting structure: ntp_prod_0000.rst
 Phases: 1
 
 Phase: Production [production]
@@ -231,11 +231,11 @@ Phase: Production [production]
   - ntp_prod_0005  topology=CH3L1_HUMAN_6NAG.top  input=restart of ntp_prod_0004 (ntp_prod_0004.rst)  (mdin=ntp_prod_0005.mdin, mdout=ntp_prod_0005.mdout)
 
 Suggestions:
-  - [applied] CH3L1_HUMAN_6NAG.crd set as the starting structure
+  - [applied] ntp_prod_0000.rst set as the starting structure
   - [applied] Phase roles inferred from file content/names
 
 Wrote v2 draft manifest: sim.yaml (yaml)</span></code></pre>
-<p class="lead">Step ids are randomly generated each run — do not depend on them being stable across invocations.</p>
+<p class="lead">Step ids are randomly generated each run — do not depend on them being stable across invocations. The starting structure is <code>ntp_prod_0000.rst</code> because <code>ntp_prod_0001</code>'s mdout records it as the INPCRD that run read.</p>
 
 <h3>Inspect a single file</h3>
 <pre><code><span class="p">$</span> ambermeta info tests/data/amber/md_test_files/CH3L1_HUMAN_6NAG.top
@@ -260,12 +260,20 @@ Wrote v2 draft manifest: sim.yaml (yaml)</span></code></pre>
       box_volume, box_is_topology_time, residue_composition — run it yourself
       for the full field list)</span></code></pre>
 
-<h3>Validate the whole Simulation — continuity, sequence holes, suggestions</h3>
+<h3>Validate the whole Simulation — continuity, sequence holes, per-run checks, suggestions</h3>
 <pre><code><span class="p">$</span> ambermeta validate --manifest sim.yaml
 
 <span class="o">Simulation validation
 
+Findings:
+  - Run check: ntp_prod_0001: Time step of 4 fs, but the topology has standard hydrogen masses (no hydrogen mass repartitioning); a time step above 2 fs needs repartitioned hydrogen masses.
+  - Run check: ntp_prod_0002: Time step of 4 fs, but the topology has standard hydrogen masses (no hydrogen mass repartitioning); a time step above 2 fs needs repartitioned hydrogen masses.
+  - Run check: ntp_prod_0003: Time step of 4 fs, but the topology has standard hydrogen masses (no hydrogen mass repartitioning); a time step above 2 fs needs repartitioned hydrogen masses.
+  - Run check: ntp_prod_0004: Time step of 4 fs, but the topology has standard hydrogen masses (no hydrogen mass repartitioning); a time step above 2 fs needs repartitioned hydrogen masses.
+  - Run check: ntp_prod_0005: Time step of 4 fs, but the topology has standard hydrogen masses (no hydrogen mass repartitioning); a time step above 2 fs needs repartitioned hydrogen masses.
+
 Validation: OK</span></code></pre>
+<p>The chain is intact, so the verdict is <code>OK</code>. The <code>Run check</code> findings are real for the sample as bundled: its runs used a 4-fs time step (<code>dt = 0.004</code>), and the bundled topology's 32,188 hydrogens all weigh 1.008&nbsp;amu, so either the runs used a different (HMR) topology or they integrated hydrogens at a step those do not support. A run on an HMR topology does not report it. <code>--strict</code> fails on any finding, so it exits <code>1</code> on the untouched sample.</p>
 
 <h3>Re-emit the manifest — canonical v2, here converting YAML to JSON</h3>
 <pre><code><span class="p">$</span> ambermeta export sim.yaml -o sim.json
@@ -299,7 +307,7 @@ Validation: OK</span></code></pre>
 
 <h3 id="cli-plan"><code>plan</code> <span class="badge cli">build + export</span></h3>
 <p>Build a protocol from a manifest, recursive discovery, or interactive prompts — and export artifacts. <strong>Pick exactly one mode:</strong> <code>--manifest</code>, <code>--recursive</code>, or <code>--interactive</code>.</p>
-<p><code>plan -m</code> takes a <strong>v2 manifest</strong>: it loads as a <code>Simulation</code> and prints the <strong>Simulation → Phase → Step structure</strong> plus continuity/sequence-hole findings. <code>--recursive</code> and <code>--interactive</code> go through the retained flat engine and print the classic per-stage <strong>Protocol summary</strong> — use <code>discover</code> for the Simulation-draft view of a raw directory. <code>plan</code> builds its validation settings entirely from the CLI flags; a manifest carries no <code>settings</code> block, so <code>--skip-cross-stage-validation</code> overrides nothing in the file — it simply turns the cross-stage continuity checks off.</p>
+<p><code>plan -m</code> takes a <strong>v2 manifest</strong>: it loads as a <code>Simulation</code> and prints the <strong>Simulation → Phase → Step structure</strong> plus its findings: continuity gaps, sequence holes, and each run's own findings. <code>--recursive</code> and <code>--interactive</code> go through the retained flat engine and print the classic per-stage <strong>Protocol summary</strong> — use <code>discover</code> for the Simulation-draft view of a raw directory. <code>plan</code> builds its validation settings entirely from the CLI flags; a manifest carries no <code>settings</code> block, so <code>--skip-cross-stage-validation</code> overrides nothing in the file — it simply turns the cross-stage continuity checks off.</p>
 <table>
 <thead><tr><th>Export flag</th><th>Output</th></tr></thead>
 <tbody>
@@ -308,7 +316,7 @@ Validation: OK</span></code></pre>
 <tr><td><code>--stats-csv FILE</code></td><td>Per-stage statistics, one row per stage</td></tr>
 </tbody>
 </table>
-<aside class="warn"><strong>Fault-tolerant by default.</strong> A missing/malformed/unreadable file is skipped, the error is recorded against its stage, and the run exits <code>0</code>. <code>--strict</code> makes the first bad file a hard error (clean message, exit <code>1</code>, no traceback). A stage keeps every file that <em>did</em> parse.</aside>
+<aside class="warn"><strong>Fault-tolerant by default.</strong> A missing/malformed/unreadable file is skipped, the error is recorded against its stage, and the run exits <code>0</code>. <code>--strict</code> makes the first bad file a hard error (clean message, exit <code>1</code>, no traceback), and also exits <code>1</code> when any finding is reported. A stage keeps every file that <em>did</em> parse.</aside>
 
 <pre><code><span class="p">$</span> ambermeta plan tests/data/amber/md_test_files -m sim.yaml
 
@@ -316,12 +324,16 @@ Validation: OK</span></code></pre>
 ==================
 Topologies (pool): 1
   - top_CH3L1_HUMAN_6NAG [normal]  CH3L1_HUMAN_6NAG.top
-Starting structure: CH3L1_HUMAN_6NAG.crd
+Starting structure: ntp_prod_0000.rst
 Phases: 1
 
 Phase: Production [production]
   - ntp_prod_0001  topology=CH3L1_HUMAN_6NAG.top  input=starting structure  (mdin=ntp_prod_0001.mdin, mdout=ntp_prod_0001.mdout)
   - ntp_prod_0002  topology=CH3L1_HUMAN_6NAG.top  input=restart of ntp_prod_0001 (ntp_prod_0001.rst)  (mdin=ntp_prod_0002.mdin, mdout=ntp_prod_0002.mdout)
+  ...
+
+Findings:
+  - Run check: ntp_prod_0001: Time step of 4 fs, but the topology has standard hydrogen masses (no hydrogen mass repartitioning); a time step above 2 fs needs repartitioned hydrogen masses.
   ...
 
 Validation: OK</span></code></pre>
@@ -333,7 +345,7 @@ Validation: OK</span></code></pre>
 <p>Ids are carried through unchanged — <code>export</code> never renumbers anything. It does <em>canonicalize</em>: <code>phases[].order</code> and <code>steps[].order</code> are rewritten from document position, and keys come out in the canonical order <code>write_simulation</code> emits.</p>
 
 <h3 id="cli-validate"><code>validate</code> &amp; <code>info</code> <span class="badge cli">inspect</span></h3>
-<p><code>validate</code> reports <strong>OK</strong> / <strong>WARN</strong> / <strong>ERROR</strong> per file and exits <code>0</code>/<code>1</code> (<code>--strict</code> turns warnings into failures). With <strong><code>--manifest PATH</code></strong>, it instead loads the whole Simulation through <code>load_simulation</code> and runs continuity/sequence-hole/suggestion checks — the same engine <code>discover</code> and the GUI's Validate panel use. <code>--allow-gaps</code> relaxes unexpected-gap findings without touching sequence holes. <code>info</code> prints one file's parsed metadata as text, JSON, or YAML — the field names are the <a href="#fields">parser metadata fields</a>.</p>
+<p><code>validate</code> reports <strong>OK</strong> / <strong>WARN</strong> / <strong>ERROR</strong> per file and exits <code>0</code>/<code>1</code> (<code>--strict</code> turns warnings into failures). With <strong><code>--manifest PATH</code></strong>, it instead loads the whole Simulation through <code>load_simulation</code> and runs continuity/sequence-hole/suggestion checks — the same engine <code>discover</code> and the GUI's Validate panel use — plus each run's own checks, printed under <code>Findings:</code> by kind: <code>Run check</code> (<code>step_check</code>: atom counts across the run's files, a count of 0 counting as not stated; mdin against mdout on step count, time step, duration and <code>ntwx</code>; a time step above 2&nbsp;fs on a topology with standard hydrogen masses), <code>Run did not finish</code> (<code>unfinished_run</code>: no completion marker in the mdout), and <code>Declared input differs from the recorded one</code> (<code>input_mismatch</code>: the step's input coordinates are not the INPCRD its mdout's File Assignments block records — compared as files where the recorded path resolves here, by file name for a path from another machine, never when AMBER clipped the value). There is no box-consistency check. <code>--strict</code> exits <code>1</code> on any finding. <code>--allow-gaps</code> relaxes unexpected-gap findings without touching sequence holes. <code>info</code> prints one file's parsed metadata as text, JSON, or YAML — the field names are the <a href="#fields">parser metadata fields</a>.</p>
 
 <h3 id="cli-init"><code>init</code> <span class="badge cli">bootstrap</span></h3>
 <p><code>init</code> writes a static, commented <strong>v2 template</strong> manifest (topology pool, minimization + production phases, both <code>input_coords</code> sources shown) — it does not scan the directory; it's a starting point to hand-edit. Its only flags are <code>-o/--output</code> (default <code>manifest.yaml</code>) and <code>--force</code>, which overwrites an existing file without prompting. To build a manifest <em>from</em> a directory, use <a href="#cli-discover"><code>discover</code></a>.</p>
@@ -419,7 +431,7 @@ sim = load_simulation("sim.yaml")   # v2 manifest, YAML or JSON
 print(sim.topologies)
 # -> [Topology(id='top_CH3L1_HUMAN_6NAG', path='CH3L1_HUMAN_6NAG.top', kind='normal')]
 print(sim.starting_structure)
-# -> CH3L1_HUMAN_6NAG.crd
+# -> ntp_prod_0000.rst
 for phase in sim.phases:
     print(phase.name, phase.role, [s.name for s in phase.steps])
 # -> Production production ['ntp_prod_0001', 'ntp_prod_0002', 'ntp_prod_0003', 'ntp_prod_0004', 'ntp_prod_0005']</span></code></pre>
@@ -501,7 +513,7 @@ print(md.stats.temp_stats.stdev)       <span class="o"># 1.2504190252445306</spa
 
 <p><strong>Run lineages are proposed, never written.</strong> Where Discover reconciles the layout into members, a <strong>proposal strip</strong> opens over the result: one editable row per member with the directories it was built from, a segment picker for regrouping by a different part of the path, and — where AMBER's own mdout <code>File Assignments</code> record evidences one — the cross-directory restart handoffs (<code>equil/01/18_ntp_equi → prod/01/nvt_prod_0001</code>) you can wire in the same action. Nothing lands until <strong>Accept</strong>. The inference refuses more layouts than it accepts; <strong>Define replicas…</strong> in the top bar opens the same picker on demand and never refuses.</p>
 
-<p>Every inferred thing — roles, the HMR topology, the starting structure, sequence holes, continuity gaps — is surfaced in the <strong>Suggestions</strong> tray as an explainable, undoable suggestion rather than applied silently. This is the draft-first design.</p>
+<p>Every inferred thing — roles, the HMR topology, the starting structure, sequence holes, continuity gaps — is surfaced in the <strong>Suggestions</strong> tray as an explainable, undoable suggestion rather than applied silently. This is the draft-first design. After a <strong>Validate</strong>, each run's own findings (<code>step_check</code>, <code>unfinished_run</code>, <code>input_mismatch</code>) join the tray as <strong>Needs you</strong> cards.</p>
 
 <aside class="key"><strong>Built to be safe on a workstation.</strong> The server binds <code>127.0.0.1</code>, pins CORS to localhost, and confines every file path to the launch directory (resolved through symlinks; escapes get <code>403</code>). State is server-authoritative — a single document held server-side, every mutation returns the new document, undo/redo call the server. It is not a multi-user service.</aside>
 
@@ -540,7 +552,7 @@ print(md.stats.temp_stats.stdev)       <span class="o"># 1.2504190252445306</spa
   → export                 to_dict / to_methods_dict / stats CSV / v2 manifest</code></pre>
 
 <h3>The validation model — how v2 reuses the old engine</h3>
-<p>The v2 validator does not reimplement continuity or per-stage checks; it <strong>flattens a <code>Simulation</code> back into the flat stage-dict shape <code>ambermeta.protocol</code> already knows how to validate</strong>, then calls the same discovery/validation pipeline the CLI's <code>--recursive</code> path uses. Concretely, <code>core_bridge.validate_simulation(sim, settings, base_directory)</code> flattens, runs <code>auto_discover</code>, then layers on two v2-specific suggestion kinds — <code>missing_run</code> (sequence holes) and <code>continuity_gap</code> (genuine, non-<code>INFO</code> continuity notes).</p>
+<p>The v2 validator does not reimplement continuity or per-stage checks; it <strong>flattens a <code>Simulation</code> back into the flat stage-dict shape <code>ambermeta.protocol</code> already knows how to validate</strong>, then calls the same discovery/validation pipeline the CLI's <code>--recursive</code> path uses. Concretely, <code>core_bridge.validate_simulation(sim, settings, base_directory)</code> flattens, runs <code>auto_discover</code>, then layers on two v2-specific suggestion kinds — <code>missing_run</code> (sequence holes) and <code>continuity_gap</code> (genuine, non-<code>INFO</code> continuity notes) — and each run's own findings from <code>SimulationStage.validate()</code>: <code>step_check</code>, <code>unfinished_run</code> and <code>input_mismatch</code>, one card per problem, scoped to its step.</p>
 
 <h3>Manifest v2 and the single-format reader</h3>
 <pre><code>def load_simulation(path: str, expand_env: bool = True) -> Simulation:
@@ -622,8 +634,8 @@ print(md.stats.temp_stats.stdev)       <span class="o"># 1.2504190252445306</spa
 <table>
 <thead><tr><th>Code</th><th>Meaning</th></tr></thead>
 <tbody>
-<tr><td><code>0</code></td><td>Success (including a fault-tolerant <code>plan</code>/<code>discover</code> that skipped bad files, or a <code>validate</code> with no failing findings)</td></tr>
-<tr><td><code>1</code></td><td>Runtime failure — unreadable/missing input, parse/validation failure, nothing discovered, manifest not found/invalid, or a <code>--strict</code> hard stop</td></tr>
+<tr><td><code>0</code></td><td>Success (including a fault-tolerant <code>plan</code>/<code>discover</code> that skipped bad files, or a <code>plan</code>/<code>validate</code> that reported findings without <code>--strict</code>)</td></tr>
+<tr><td><code>1</code></td><td>Runtime failure — unreadable/missing input, parse/validation failure, nothing discovered, manifest not found/invalid, a <code>--strict</code> hard stop, or <code>--strict</code> with any finding (continuity, sequence hole, a run's own <code>step_check</code>/<code>unfinished_run</code>/<code>input_mismatch</code>, or a lineage-coherence warning)</td></tr>
 <tr><td><code>2</code></td><td>Bad invocation — <code>plan</code> with no mode selected (<code>--manifest</code>/<code>--recursive</code>/<code>--interactive</code>); <code>validate</code> with neither <code>files</code> nor <code>--manifest</code></td></tr>
 </tbody>
 </table>

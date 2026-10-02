@@ -21,7 +21,7 @@ A Step can also carry a **`lineage`** tag naming which member of a parallel set 
 |---|---|
 | **Metadata extraction** | Per-file parsers for topology, input, output, trajectory, and restart files. Atom/residue counts, box geometry, density, solvent model, HMR status, ensemble, thermostat/barostat, cutoff, SHAKE, completion status, and streaming thermodynamic statistics (temperature/pressure/density/energy, mean ± σ). |
 | **Simulation discovery** | Scans a directory into a `Simulation` draft: builds the topology pool, detects numbered sequences, infers each step's role (minimization / heating / equilibration / production) from content then path, and resolves the input-coordinate chain — all as explainable, one-click-undoable suggestions. Where the layout names members (`rep1/`, `rep2/`, … running the same runs) each is tagged and chained separately; an ambiguous layout is left untagged rather than guessed at. |
-| **Continuity & sequence validation** | Per-file checks (atom-count agreement, box sanity) and whole-simulation checks (timing gaps between chained steps against a tolerance, missing members of a numbered run), with configurable per-step tolerances. Both are scoped per lineage, so a replica that stopped early is named instead of pooled with its siblings, and one member's first run is never measured against another member's last. |
+| **Continuity & sequence validation** | Per-run checks (atom-count agreement across a run's files, mdin against mdout, a time step above 2 fs on a topology with standard hydrogen masses, a run that did not finish, and the input coordinates a step declares against the INPCRD its mdout records) and whole-simulation checks (timing gaps between chained steps against a tolerance, missing members of a numbered run), with configurable per-step tolerances. The whole-simulation checks are scoped per lineage, so a replica that stopped early is named instead of pooled with its siblings, and one member's first run is never measured against another member's last. |
 | **Manifest format v2** | One reader and one writer for the `Simulation → Phase → Step` document, in JSON or YAML. The GUI and CLI share the same document. |
 | **Reproducibility exports** | A full simulation/protocol summary (JSON/YAML), a Materials-&-Methods-ready summary that keeps the reproducibility-critical metadata and drops the noise, and a per-stage statistics CSV. |
 
@@ -77,7 +77,7 @@ Simulation summary
 ==================
 Topologies (pool): 1
   - top_CH3L1_HUMAN_6NAG [normal]  CH3L1_HUMAN_6NAG.top
-Starting structure: CH3L1_HUMAN_6NAG.crd
+Starting structure: ntp_prod_0000.rst
 Phases: 1
 
 Phase: Production [production]
@@ -88,7 +88,7 @@ Phase: Production [production]
   - ntp_prod_0005  topology=CH3L1_HUMAN_6NAG.top  input=restart of ntp_prod_0004 (ntp_prod_0004.rst)  (mdin=ntp_prod_0005.mdin, mdout=ntp_prod_0005.mdout)
 
 Suggestions:
-  - [applied] CH3L1_HUMAN_6NAG.crd set as the starting structure
+  - [applied] ntp_prod_0000.rst set as the starting structure
   - [applied] Phase roles inferred from file content/names
 
 Wrote v2 draft manifest: tests/data/amber/md_test_files/sim.yaml (yaml)
@@ -120,15 +120,24 @@ File Information: CH3L1_HUMAN_6NAG.top
       the full field list)
 ```
 
-**Validate the whole Simulation — continuity, sequence holes, and suggestions (exit code `0`/`1` for CI):**
+**Validate the whole Simulation — continuity, sequence holes, per-run checks, and suggestions (exit code `0`/`1` for CI):**
 
 ```text
 $ ambermeta validate --manifest sim.yaml
 
 Simulation validation
 
+Findings:
+  - Run check: ntp_prod_0001: Time step of 4 fs, but the topology has standard hydrogen masses (no hydrogen mass repartitioning); a time step above 2 fs needs repartitioned hydrogen masses.
+  - Run check: ntp_prod_0002: Time step of 4 fs, but the topology has standard hydrogen masses (no hydrogen mass repartitioning); a time step above 2 fs needs repartitioned hydrogen masses.
+  - Run check: ntp_prod_0003: Time step of 4 fs, but the topology has standard hydrogen masses (no hydrogen mass repartitioning); a time step above 2 fs needs repartitioned hydrogen masses.
+  - Run check: ntp_prod_0004: Time step of 4 fs, but the topology has standard hydrogen masses (no hydrogen mass repartitioning); a time step above 2 fs needs repartitioned hydrogen masses.
+  - Run check: ntp_prod_0005: Time step of 4 fs, but the topology has standard hydrogen masses (no hydrogen mass repartitioning); a time step above 2 fs needs repartitioned hydrogen masses.
+
 Validation: OK
 ```
+
+The chain is intact, so the verdict is `OK`, but each run is compared with what AMBER recorded, and the sample as bundled ran at `dt = 0.004` ps with a topology whose 32,188 hydrogens all weigh 1.008 amu. A 4-fs time step needs repartitioned hydrogen masses, so either the runs used a different (HMR) topology than the one bundled, or they were integrated at a step their hydrogens do not support. On your own data with an HMR topology this finding does not appear. Findings leave the exit code at `0` by default; `--strict` makes any finding exit `1`, so `--strict` on the untouched sample exits `1`.
 
 **Re-emit the manifest — here, converting it from YAML to JSON:**
 
@@ -225,7 +234,7 @@ sim = load_simulation("sim.yaml")   # a v2 manifest: JSON or YAML
 print(sim.topologies)
 # -> [Topology(id='top_CH3L1_HUMAN_6NAG', path='CH3L1_HUMAN_6NAG.top', kind='normal')]
 print(sim.starting_structure)
-# -> CH3L1_HUMAN_6NAG.crd
+# -> ntp_prod_0000.rst
 for phase in sim.phases:
     print(phase.name, phase.role, [s.name for s in phase.steps])
 # -> Production production ['ntp_prod_0001', 'ntp_prod_0002', 'ntp_prod_0003', 'ntp_prod_0004', 'ntp_prod_0005']

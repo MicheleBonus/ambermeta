@@ -232,14 +232,14 @@ def _input_source_label(sim, step) -> str:
 
 
 def _print_findings(findings) -> None:
-    """The 'Continuity / sequence findings' block, from a bare list of cards.
+    """The 'Findings' block, from a bare list of cards.
 
     Split out of :func:`_sim_findings` so `plan --recursive` — which never builds a
     ``Simulation`` and so has no report — prints the same block in the same words. Two
     printers is how the two plan modes end up describing one directory differently.
     """
     if findings:
-        _out("\nContinuity / sequence findings:")
+        _out("\nFindings:")
         for s in findings:
             _out(f"  - {s.get('title')}: {s.get('evidence')}")
 
@@ -286,10 +286,16 @@ def _coherence_errors(report):
     return [f for f in (report.get("coherence") or []) if f.get("severity") == "error"]
 
 
+#: The suggestion kinds that are problems, never the `[applied]` ones. The last three are
+#: a run's own findings (`ambermeta.protocol.FINDING_KINDS`).
+PROBLEM_KINDS = ("continuity_gap", "missing_run",
+                 "step_check", "unfinished_run", "input_mismatch")
+
+
 def _problem_suggestions(report):
-    """The two suggestion kinds that are problems, never the `[applied]` ones."""
+    """The suggestions that are problems, never the `[applied]` ones."""
     return [s for s in (report.get("suggestions") or [])
-            if s.get("kind") in ("continuity_gap", "missing_run")]
+            if s.get("kind") in PROBLEM_KINDS]
 
 
 def _report_findings(report):
@@ -1376,6 +1382,8 @@ def _plan_command(args: argparse.Namespace) -> int:
     # (topology_confirm, starting_structure, role_guess, lineage_group) need document
     # state `auto_discover` never produces and are not faked.
     findings = protocol.sequence_findings()
+    # Each run's own findings, from the same producer `validate --manifest` uses.
+    findings += protocol.stage_findings(start_index=len(findings) + 1)
     _print_findings(findings)
     # Coherence needs only the parsed stages, which this path has. Leaving it to the
     # manifest path alone meant one directory passed `plan --recursive` and failed

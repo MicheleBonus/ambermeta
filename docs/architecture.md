@@ -153,7 +153,7 @@ Simulation summary
 ==================
 Topologies (pool): 1
   - top_CH3L1_HUMAN_6NAG [normal]  CH3L1_HUMAN_6NAG.top
-Starting structure: CH3L1_HUMAN_6NAG.crd
+Starting structure: ntp_prod_0000.rst
 Phases: 1
 
 Phase: Production [production]
@@ -164,7 +164,7 @@ Phase: Production [production]
 
 Suggestions:
   - [needs_you] ntp_prod sequence is missing member(s) 3
-  - [applied] CH3L1_HUMAN_6NAG.crd set as the starting structure
+  - [applied] ntp_prod_0000.rst set as the starting structure
   - [applied] Phase roles inferred from file content/names
 ```
 
@@ -174,13 +174,18 @@ And the same hole surfacing through `validate --manifest` on the resulting v2 ma
 $ ambermeta validate --manifest sim.yaml
 Simulation validation
 
-Continuity / sequence findings:
+Findings:
   - ntp_prod sequence is missing member(s) 3: present members of 'ntp_prod' skip index(es) 3
+  - Run check: ntp_prod_0001: Time step of 4 fs, but the topology has standard hydrogen masses (no hydrogen mass repartitioning); a time step above 2 fs needs repartitioned hydrogen masses.
+  - Run check: ntp_prod_0002: Time step of 4 fs, but the topology has standard hydrogen masses (no hydrogen mass repartitioning); a time step above 2 fs needs repartitioned hydrogen masses.
+  - Run check: ntp_prod_0004: Time step of 4 fs, but the topology has standard hydrogen masses (no hydrogen mass repartitioning); a time step above 2 fs needs repartitioned hydrogen masses.
+  - Declared input differs from the recorded one: ntp_prod_0004: This step declares ntp_prod_0002.rst as its input coordinates, but its mdout records /l/home/bonus/work/Projects/YKL-40/CH3L1_HUMAN_6NAG/prod/ntp_prod_0003.rst.
+  - Run check: ntp_prod_0005: Time step of 4 fs, but the topology has standard hydrogen masses (no hydrogen mass repartitioning); a time step above 2 fs needs repartitioned hydrogen masses.
 
 Validation: OK
 ```
 
-(A sequence hole is a finding, not a hard failure by default — pass `--strict` to make findings a validation failure.)
+(A sequence hole is a finding, not a hard failure by default — pass `--strict` to make findings a validation failure.) The hole is also seen from the other side: `ntp_prod_0004`'s mdout records that it read `ntp_prod_0003.rst`, not the `ntp_prod_0002.rst` the draft chained it to, and that comparison with AMBER's own record is a per-run finding of its own (§6). The `Run check` lines are a property of the sample as bundled: its runs used a 4-fs time step, and the bundled topology's hydrogens carry standard masses.
 
 ---
 
@@ -196,7 +201,7 @@ Validation: OK
 
 **Streaming statistics.** `mdout` thermodynamic data (temperature, pressure, density, energy, volume) is accumulated with Welford's online algorithm (`StreamingStats` inside `ThermoStats`), so a multi-gigabyte log is summarized in one pass with O(1) memory.
 
-`ambermeta/coords.py:sniff_coordinate_kind()` sits next to the parsers as a lightweight content-based classifier used by discovery: it reads the file's own header (an ASCII restart/inpcrd has an `NATOM [TIME]` line as line 2; a trajectory doesn't) rather than trusting the extension, which is how `discover` picks the starting structure out of a directory that mixes `.crd`/`.rst`/`.mdcrd` files.
+`ambermeta/coords.py:sniff_coordinate_kind()` sits next to the parsers as a lightweight content-based classifier used by discovery: it reads the file's own header (an ASCII restart/inpcrd has an `NATOM [TIME]` line as line 2; a trajectory doesn't) rather than trusting the extension, which is how `discover` picks the starting structure out of a directory that mixes `.crd`/`.rst`/`.mdcrd` files. That pick is the fallback: where the first runs' mdouts record an INPCRD (their `File Assignments` block) that resolves to one file found in the directory and written by no run, that file is the starting structure instead. On the sample that is `ntp_prod_0000.rst`, which `ntp_prod_0001`'s mdout names, rather than the tLEaP `CH3L1_HUMAN_6NAG.crd`.
 
 ---
 
@@ -262,22 +267,23 @@ protocol.auto_discover(directory, manifest=flat_stages, ...)   # SimulationProto
         ▼
 per-stage validation + cross-stage continuity (§3)  →  stage_issues / protocol_issues
         │  core_bridge.build_suggestions() + _continuity_gap_suggestions()
+        │    + protocol.stage_finding_cards()
         ▼
 { ok, totals, lineages, coherence, stage_issues, protocol_issues, suggestions }
 ```
 
-Concretely, `core_bridge.validate_simulation(sim, settings, base_directory)` (called by `validate --manifest`, `plan -m <v2 manifest>`, and the GUI's Validate) does exactly this: flatten, run `auto_discover`, then layer on the v2-specific suggestion kinds — `missing_run` (from `detect_sequence_gaps`, §3), `continuity_gap` (one per genuine, non-`INFO` continuity note, keyed off the engine's own healthy/problem classification rather than text-matching warning strings), and `lineage_group` (an `[applied]` card naming each lineage the document declares, how many runs it holds, and how many runs carry no lineage at all).
+Concretely, `core_bridge.validate_simulation(sim, settings, base_directory)` (called by `validate --manifest`, `plan -m <v2 manifest>`, and the GUI's Validate) does exactly this: flatten, run `auto_discover`, then layer on the v2-specific suggestion kinds — `missing_run` (from `detect_sequence_gaps`, §3), `continuity_gap` (one per genuine, non-`INFO` continuity note, keyed off the engine's own healthy/problem classification rather than text-matching warning strings), and `lineage_group` (an `[applied]` card naming each lineage the document declares, how many runs it holds, and how many runs carry no lineage at all). Last come each run's own findings, one `needs_you` card per problem, scoped to its step (`step_id`): `step_check` ("Run check"), `unfinished_run` ("Run did not finish") and `input_mismatch` ("Declared input differs from the recorded one"). `plan --recursive`, which builds no `Simulation`, prints the same cards from `SimulationProtocol.stage_findings()`.
 
 Underneath, validation is still two-tiered exactly as before:
 
-- **Per-stage** (`SimulationStage.validate()`): atom-count agreement across the stage's files, box sanity, basic timing/sampling checks. A stage whose files partly failed to parse is flagged `degraded` (`True` when any `FileLoadError` is attached) but still validated on what *did* parse — a corrupt `mdout` never discards a good `prmtop`.
+- **Per-stage** (`SimulationStage.validate()`): each run against its own files and against what AMBER recorded. `step_check` covers an atom-count mismatch across the stage's files (a count of 0 counts as not stated: it is what the ASCII trajectory reader, and the NetCDF readers without netCDF4/SciPy, leave when the file gives them none), mdin against mdout (step count, time step, duration, and the coordinate write frequency `ntwx`, read from the mdout's CONTROL DATA block), and a time step above 2 fs on a topology whose hydrogen masses were read and are standard. `unfinished_run` is an mdout without AMBER's completion marker. `input_mismatch` compares the input coordinates the step declares with the INPCRD in its mdout's `File Assignments` block: a recorded path that resolves locally is compared as a file, a path from another machine by file name, and a value clipped at AMBER's field width is never compared. There is no box-consistency check. Each message also stays in the stage's `validation` list, which is what `summary.json` shows. A stage whose files partly failed to parse is flagged `degraded` (`True` when any `FileLoadError` is attached) but still validated on what *did* parse — a corrupt `mdout` never discards a good `prmtop`.
 - **Cross-stage** (`SimulationProtocol.validate(cross_stage=True, allow_unexpected_gaps=False)`): the continuity math from §3, run between every consecutive pair *within a member*, plus each member's head against its real producer. With nothing tagged that is every consecutive pair in the document, unchanged.
 
 | Knob | Effect |
 |---|---|
 | `--skip-cross-stage-validation` (`plan`) → `settings["strict_validation"]` | Whether cross-stage continuity runs at all |
 | `--allow-gaps` (`validate --manifest`) → `settings["allow_gaps"]` → `allow_unexpected_gaps` | Whether an unconfigured non-zero gap is `INFO` (allowed) or a real finding. It does **not** suppress `Stage appears to overlap previous stage by N ps.`, which is emitted before this knob is consulted — and it is not the way to handle replicas, which are a lineage boundary rather than a gap (§3) |
-| `--strict` (`validate --manifest`) | Promotes findings to a hard validation failure (exit 1) instead of "OK, with N notes" |
+| `--strict` (`validate --manifest`, `plan`) | Promotes findings (continuity gaps, sequence holes, each run's own findings, lineage-coherence warnings) to a hard validation failure (exit 1) instead of "OK, with N notes" |
 
 That `settings` dict is a **runtime** object, not part of the document: `plan` and `validate` build theirs from the CLI flags alone, the GUI from its Settings panel. A v2 manifest has no `settings` key — `payload_to_simulation` never looks for one — so nothing in the file can turn a check on or off, and `--skip-cross-stage-validation` overrides nothing; it simply switches the continuity checks off for that run.
 
@@ -296,7 +302,7 @@ The upshot: **one continuity engine, one sequence-hole detector, one role classi
 | Methods summary | `SimulationProtocol.to_methods_dict()` | Reproducibility-critical metadata only — software/version, MD engine settings (ensemble, thermostat, barostat, cutoff, constraints), system composition, restraints — with energies and bulk arrays dropped |
 | Statistics CSV | `plan --stats-csv` | One row per stage: time range, duration, and temperature/pressure/density/energy as mean ± σ |
 
-`to_methods_dict()` is where residue-name dictionaries (water / protein / nucleic / lipid / ion sets in `legacy_extractors`) classify system composition for the methods section.
+`to_methods_dict()` is where residue-name dictionaries (water / protein / nucleic / lipid / ion sets in `legacy_extractors`) classify system composition for the methods section. Two of its fields follow the run rather than the topology file. The box is the one in the coordinates the run read (`box.source: "input coordinates"`, or `"restart written by this run"` on the scan path, where a stage's own output restart fills its input slot); the topology's box is only a fallback (`"topology (as built)"`), because it is the box tLEaP wrote before any equilibration. `hmr_active` follows the topology's hydrogen masses; `hmr_inferred_from_timestep` appears only when no topology masses were read, and a time step above 2 fs on a topology with standard masses is a `step_check` finding (§6), not a relabelling.
 
 ---
 

@@ -39,7 +39,7 @@ def test_the_manifest_path_names_the_short_member_exactly_once(
     assert main(["plan", str(crashed_replica_tree), "-m", str(crashed_manifest)]) == 0
     out = capsys.readouterr().out
     assert out.count(FINDING) == 1
-    assert out.count("Continuity / sequence findings:") == 1
+    assert out.count("Findings:") == 1
 
 
 def test_the_scan_path_names_the_short_member_too(crashed_replica_tree, capsys):
@@ -52,7 +52,7 @@ def test_the_scan_path_names_the_short_member_too(crashed_replica_tree, capsys):
 
 def test_a_complete_ensemble_prints_no_findings_block(replica_tree, capsys):
     assert main(["plan", "--recursive", str(replica_tree)]) == 0
-    assert "Continuity / sequence findings:" not in capsys.readouterr().out
+    assert "Findings:" not in capsys.readouterr().out
 
 
 # ---------------------------------------------------------------------------

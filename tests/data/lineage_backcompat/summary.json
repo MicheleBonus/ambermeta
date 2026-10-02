@@ -10,16 +10,18 @@
       "expected_gap_ps": null,
       "gap_tolerance_ps": null,
       "observed_gap_ps": null,
-      "restart_path": "<RUNDIR>/CH3L1_HUMAN_6NAG.crd",
+      "restart_path": "<RUNDIR>/ntp_prod_0000.rst",
       "summary": {
         "intent": "production",
         "result": "Completed",
         "expected_gap_ps": "",
         "observed_gap_ps": "",
         "continuity": "",
-        "evidence": ""
+        "evidence": "Time step of 4 fs, but the topology has standard hydrogen masses (no hydrogen mass repartitioning); a time step above 2 fs needs repartitioned hydrogen masses."
       },
-      "validation": [],
+      "validation": [
+        "Time step of 4 fs, but the topology has standard hydrogen masses (no hydrogen mass repartitioning); a time step above 2 fs needs repartitioned hydrogen masses."
+      ],
       "continuity": [],
       "degraded": false,
       "load_errors": [],
@@ -105,33 +107,33 @@
           }
         },
         "inpcrd": {
-          "filename": "<RUNDIR>/CH3L1_HUMAN_6NAG.crd",
+          "filename": "<RUNDIR>/ntp_prod_0000.rst",
           "warnings": [],
           "details": {
-            "filename": "<RUNDIR>/CH3L1_HUMAN_6NAG.crd",
-            "file_format": "Formatted ASCII",
+            "filename": "<RUNDIR>/ntp_prod_0000.rst",
+            "file_format": "NetCDF",
             "title": "default_name",
-            "program": "Unknown",
-            "program_version": "Unknown",
-            "conventions": "Unknown",
+            "program": "pmemd",
+            "program_version": "Version 22",
+            "conventions": "AMBERRESTART",
             "natoms": 64528,
             "nres": null,
-            "time": null,
+            "time": 920.0000000030127,
             "has_coordinates": true,
-            "has_velocities": false,
+            "has_velocities": true,
             "has_forces": false,
             "has_box": true,
             "box_dimensions": [
-              98.3405545,
-              76.0526585,
-              81.2272985
+              91.81147888696792,
+              71.00333210110607,
+              75.83441479657631
             ],
             "box_angles": [
               90.0,
               90.0,
               90.0
             ],
-            "box_volume": 607503.888512848,
+            "box_volume": 494358.5535363333,
             "warnings": []
           }
         },
@@ -274,9 +276,11 @@
         "expected_gap_ps": "",
         "observed_gap_ps": "0 ps",
         "continuity": "",
-        "evidence": ""
+        "evidence": "Time step of 4 fs, but the topology has standard hydrogen masses (no hydrogen mass repartitioning); a time step above 2 fs needs repartitioned hydrogen masses."
       },
-      "validation": [],
+      "validation": [
+        "Time step of 4 fs, but the topology has standard hydrogen masses (no hydrogen mass repartitioning); a time step above 2 fs needs repartitioned hydrogen masses."
+      ],
       "continuity": [],
       "degraded": false,
       "load_errors": [],
@@ -531,9 +535,11 @@
         "expected_gap_ps": "",
         "observed_gap_ps": "0 ps",
         "continuity": "",
-        "evidence": ""
+        "evidence": "Time step of 4 fs, but the topology has standard hydrogen masses (no hydrogen mass repartitioning); a time step above 2 fs needs repartitioned hydrogen masses."
       },
-      "validation": [],
+      "validation": [
+        "Time step of 4 fs, but the topology has standard hydrogen masses (no hydrogen mass repartitioning); a time step above 2 fs needs repartitioned hydrogen masses."
+      ],
       "continuity": [],
       "degraded": false,
       "load_errors": [],
@@ -788,9 +794,11 @@
         "expected_gap_ps": "",
         "observed_gap_ps": "0 ps",
         "continuity": "",
-        "evidence": ""
+        "evidence": "Time step of 4 fs, but the topology has standard hydrogen masses (no hydrogen mass repartitioning); a time step above 2 fs needs repartitioned hydrogen masses."
       },
-      "validation": [],
+      "validation": [
+        "Time step of 4 fs, but the topology has standard hydrogen masses (no hydrogen mass repartitioning); a time step above 2 fs needs repartitioned hydrogen masses."
+      ],
       "continuity": [],
       "degraded": false,
       "load_errors": [],
@@ -1045,9 +1053,11 @@
         "expected_gap_ps": "",
         "observed_gap_ps": "0 ps",
         "continuity": "",
-        "evidence": ""
+        "evidence": "Time step of 4 fs, but the topology has standard hydrogen masses (no hydrogen mass repartitioning); a time step above 2 fs needs repartitioned hydrogen masses."
       },
-      "validation": [],
+      "validation": [
+        "Time step of 4 fs, but the topology has standard hydrogen masses (no hydrogen mass repartitioning); a time step above 2 fs needs repartitioned hydrogen masses."
+      ],
       "continuity": [],
       "degraded": false,
       "load_errors": [],

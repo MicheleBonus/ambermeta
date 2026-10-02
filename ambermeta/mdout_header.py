@@ -81,6 +81,7 @@ _IREST = re.compile(r"(?:^|,)\s*irest\s*=\s*(-?\d+)")
 # already degrades on, for the same reason.
 _CONTROL_T = re.compile(r"(?:^|,)\s*t\s*=\s*(-?[\d.]+)")
 _CONTROL_DT = re.compile(r"(?:^|,)\s*dt\s*=\s*(-?[\d.]+)")
+_CONTROL_NTWX = re.compile(r"(?:^|,)\s*ntwx\s*=\s*(\d+)")
 
 # The File Assignments prefix is columns 1-10: `|`, the tag right-aligned in 7, then `: `.
 _ASSIGNMENT_VALUE_COLUMN = 10
@@ -118,6 +119,10 @@ class MdoutHeader:
     #: doubling the published `steps` of a 0.002 run whose CONTROL DATA block did not
     #: parse. `None` here means "not stated", unambiguously.
     control_dt_ps: Optional[float] = None
+    #: `ntwx` as AMBER resolved it: the trajectory write interval in steps, 0 for none. The
+    #: mdin's own `ntwx` is what was asked for; this is what the run used, and the two
+    #: differ when an mdin is paired with an mdout it did not produce.
+    control_ntwx: Optional[int] = None
 
     def assignment(self, tag: str) -> Optional[str]:
         """The value for `tag`, or None when it is absent **or** was clipped.
@@ -208,7 +213,7 @@ def _read_mdout_header(path: str) -> MdoutHeader:
 
 
 def _read_control_data(line: str, header: MdoutHeader) -> None:
-    """Record `irest`/`t`/`dt` off one line of the CONTROL DATA block.
+    """Record `irest`/`t`/`dt`/`ntwx` off one line of the CONTROL DATA block.
 
     First value wins for each field, so a later section that happens to spell one of these
     names cannot overwrite what AMBER printed under `Molecular dynamics:`. Everything stays
@@ -224,6 +229,10 @@ def _read_control_data(line: str, header: MdoutHeader) -> None:
         header.control_t_ps = _matched_float(_CONTROL_T, line)
     if header.control_dt_ps is None:
         header.control_dt_ps = _matched_float(_CONTROL_DT, line)
+    if header.control_ntwx is None:
+        match = _CONTROL_NTWX.search(line)
+        if match:
+            header.control_ntwx = int(match.group(1))
 
 
 def _matched_float(pattern: "re.Pattern", line: str) -> Optional[float]:

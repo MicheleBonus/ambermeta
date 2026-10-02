@@ -30,6 +30,11 @@
           "source": "mdout",
           "program": "PMEMD",
           "version": "22"
+        },
+        {
+          "source": "inpcrd",
+          "program": "pmemd",
+          "version": "Version 22"
         }
       ],
       "md_engine": {
@@ -74,15 +79,16 @@
         "box": {
           "type": "RECTILINEAR",
           "dimensions": [
-            98.3405545,
-            76.0526585,
-            81.2272985
+            91.81147888696792,
+            71.00333210110607,
+            75.83441479657631
           ],
           "angles": [
             90.0,
             90.0,
             90.0
-          ]
+          ],
+          "source": "input coordinates"
         },
         "composition": {
           "residue_composition": {
@@ -125,13 +131,12 @@
           "initial_density": 0.8433970648221194,
           "solvent_type": "Explicit Solvent",
           "simulation_category": "Protein / Ligand in Explicit Water",
-          "hmr_active": true,
+          "hmr_active": false,
           "hmr_hydrogen_mass_range": [
             1.008,
             1.008
           ],
           "hmr_hydrogen_mass_summary": "1.008-1.008 amu across 32188 H",
-          "hmr_inferred_from_timestep": true,
           "average_density": 1.0369550000000003,
           "density_std": 0.0012439905798734621,
           "density": 1.0369550000000003,
@@ -210,15 +215,16 @@
         "box": {
           "type": "RECTILINEAR",
           "dimensions": [
-            98.3405545,
-            76.0526585,
-            81.2272985
+            91.78526594551442,
+            70.98306005877042,
+            75.81276343991902
           ],
           "angles": [
             90.0,
             90.0,
             90.0
-          ]
+          ],
+          "source": "input coordinates"
         },
         "composition": {
           "residue_composition": {
@@ -261,13 +267,12 @@
           "initial_density": 0.8433970648221194,
           "solvent_type": "Explicit Solvent",
           "simulation_category": "Protein / Ligand in Explicit Water",
-          "hmr_active": true,
+          "hmr_active": false,
           "hmr_hydrogen_mass_range": [
             1.008,
             1.008
           ],
           "hmr_hydrogen_mass_summary": "1.008-1.008 amu across 32188 H",
-          "hmr_inferred_from_timestep": true,
           "average_density": 1.0369945000000007,
           "density_std": 0.0012484441573696586,
           "density": 1.0369945000000007,
@@ -346,15 +351,16 @@
         "box": {
           "type": "RECTILINEAR",
           "dimensions": [
-            98.3405545,
-            76.0526585,
-            81.2272985
+            91.71262390731746,
+            70.9268816067465,
+            75.75276259337217
           ],
           "angles": [
             90.0,
             90.0,
             90.0
-          ]
+          ],
+          "source": "input coordinates"
         },
         "composition": {
           "residue_composition": {
@@ -397,13 +403,12 @@
           "initial_density": 0.8433970648221194,
           "solvent_type": "Explicit Solvent",
           "simulation_category": "Protein / Ligand in Explicit Water",
-          "hmr_active": true,
+          "hmr_active": false,
           "hmr_hydrogen_mass_range": [
             1.008,
             1.008
           ],
           "hmr_hydrogen_mass_summary": "1.008-1.008 amu across 32188 H",
-          "hmr_inferred_from_timestep": true,
           "average_density": 1.0369005,
           "density_std": 0.001265804509107255,
           "density": 1.0369005,
@@ -482,15 +487,16 @@
         "box": {
           "type": "RECTILINEAR",
           "dimensions": [
-            98.3405545,
-            76.0526585,
-            81.2272985
+            91.823837960086,
+            71.01289011479972,
+            75.844623139681
           ],
           "angles": [
             90.0,
             90.0,
             90.0
-          ]
+          ],
+          "source": "input coordinates"
         },
         "composition": {
           "residue_composition": {
@@ -533,13 +539,12 @@
           "initial_density": 0.8433970648221194,
           "solvent_type": "Explicit Solvent",
           "simulation_category": "Protein / Ligand in Explicit Water",
-          "hmr_active": true,
+          "hmr_active": false,
           "hmr_hydrogen_mass_range": [
             1.008,
             1.008
           ],
           "hmr_hydrogen_mass_summary": "1.008-1.008 amu across 32188 H",
-          "hmr_inferred_from_timestep": true,
           "average_density": 1.0370109999999997,
           "density_std": 0.0011605227551955363,
           "density": 1.0370109999999997,
@@ -618,15 +623,16 @@
         "box": {
           "type": "RECTILINEAR",
           "dimensions": [
-            98.3405545,
-            76.0526585,
-            81.2272985
+            91.80590247709232,
+            70.99901952834198,
+            75.82980879540497
           ],
           "angles": [
             90.0,
             90.0,
             90.0
-          ]
+          ],
+          "source": "input coordinates"
         },
         "composition": {
           "residue_composition": {
@@ -669,13 +675,12 @@
           "initial_density": 0.8433970648221194,
           "solvent_type": "Explicit Solvent",
           "simulation_category": "Protein / Ligand in Explicit Water",
-          "hmr_active": true,
+          "hmr_active": false,
           "hmr_hydrogen_mass_range": [
             1.008,
             1.008
           ],
           "hmr_hydrogen_mass_summary": "1.008-1.008 amu across 32188 H",
-          "hmr_inferred_from_timestep": true,
           "average_density": 1.037146,
           "density_std": 0.0012929200327380056,
           "density": 1.037146,

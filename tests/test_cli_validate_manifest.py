@@ -30,7 +30,7 @@ def test_validate_manifest_reports_sequence_gap(tmp_path, capsys):
     rc = main(["validate", "--manifest", str(m)])
     out = capsys.readouterr().out
     assert rc == 1                                  # missing referenced files -> not ok
-    assert "Continuity / sequence findings" in out
+    assert "Findings:" in out
     assert "prod" in out                            # the missing_run finding names the base "prod"
 
 

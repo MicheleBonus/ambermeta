@@ -37,7 +37,7 @@ Simulation summary
 ==================
 Topologies (pool): 1
   - top_CH3L1_HUMAN_6NAG [normal]  CH3L1_HUMAN_6NAG.top
-Starting structure: CH3L1_HUMAN_6NAG.crd
+Starting structure: ntp_prod_0000.rst
 Phases: 1
 
 Phase: Production [production]
@@ -48,11 +48,11 @@ Phase: Production [production]
   - ntp_prod_0005  topology=CH3L1_HUMAN_6NAG.top  input=restart of ntp_prod_0004 (ntp_prod_0004.rst)  (mdin=ntp_prod_0005.mdin, mdout=ntp_prod_0005.mdout)
 
 Suggestions:
-  - [applied] CH3L1_HUMAN_6NAG.crd set as the starting structure
+  - [applied] ntp_prod_0000.rst set as the starting structure
   - [applied] Phase roles inferred from file content/names
 ```
 
-`CH3L1_HUMAN_6NAG.top` was found once and put in the topology pool; `CH3L1_HUMAN_6NAG.crd` (a single-frame restart, no trajectory) was picked as the Simulation's starting structure and feeds `ntp_prod_0001`. Every later step's `input` is `restart of <step> (<file>)` — the previous step's own output restart, the continuity chain. Both suggestions are `[applied]` automatically; a `[needs_you]` suggestion (you'll see one in [§2](#2-validate-continuity-and-catch-a-sequence-hole)) is not.
+`CH3L1_HUMAN_6NAG.top` was found once and put in the topology pool; `ntp_prod_0000.rst` was picked as the Simulation's starting structure and feeds `ntp_prod_0001`, because `ntp_prod_0001`'s mdout records it as the INPCRD that run read. (Without that record, `discover` would take the first single-frame coordinate file no run wrote, here the tLEaP output `CH3L1_HUMAN_6NAG.crd`.) Every later step's `input` is `restart of <step> (<file>)` — the previous step's own output restart, the continuity chain. Both suggestions are `[applied]` automatically; a `[needs_you]` suggestion (you'll see one in [§2](#2-validate-continuity-and-catch-a-sequence-hole)) is not.
 
 Write the draft to a v2 manifest with `--write`:
 
@@ -106,8 +106,17 @@ ambermeta validate --manifest draft.yaml
 ```
 Simulation validation
 
+Findings:
+  - Run check: ntp_prod_0001: Time step of 4 fs, but the topology has standard hydrogen masses (no hydrogen mass repartitioning); a time step above 2 fs needs repartitioned hydrogen masses.
+  - Run check: ntp_prod_0002: Time step of 4 fs, but the topology has standard hydrogen masses (no hydrogen mass repartitioning); a time step above 2 fs needs repartitioned hydrogen masses.
+  - Run check: ntp_prod_0003: Time step of 4 fs, but the topology has standard hydrogen masses (no hydrogen mass repartitioning); a time step above 2 fs needs repartitioned hydrogen masses.
+  - Run check: ntp_prod_0004: Time step of 4 fs, but the topology has standard hydrogen masses (no hydrogen mass repartitioning); a time step above 2 fs needs repartitioned hydrogen masses.
+  - Run check: ntp_prod_0005: Time step of 4 fs, but the topology has standard hydrogen masses (no hydrogen mass repartitioning); a time step above 2 fs needs repartitioned hydrogen masses.
+
 Validation: OK
 ```
+
+The edit broke nothing: the verdict is `OK` and there is no continuity finding. The five `Run check` lines are about the sample itself, and you will see them in every run below. Its runs used a 4-fs time step (`dt = 0.004`), while the bundled topology's 32,188 hydrogens all weigh the standard 1.008 amu; a step above 2 fs needs repartitioned hydrogen masses, so either the runs used a different (HMR) topology or they were integrated at a step their hydrogens do not support. On your own data with an HMR topology this finding does not appear.
 
 ### Export
 
@@ -129,7 +138,7 @@ simulation:
   - id: top_CH3L1_HUMAN_6NAG
     path: CH3L1_HUMAN_6NAG.top
     kind: normal
-  starting_structure: CH3L1_HUMAN_6NAG.crd
+  starting_structure: ntp_prod_0000.rst
 phases:
 - id: 34e5b79a
   name: NPT Production
@@ -189,7 +198,7 @@ Prefer a browser? [§3](#3-round-trip-a-manifest-through-the-gui) does the same 
 
 **Goal:** confirm a simulation's steps actually connect, and understand the two distinct things AmberMeta checks for.
 
-`ambermeta validate --manifest` runs whole-Simulation validation: per-step file checks, plus two continuity-specific things —
+`ambermeta validate --manifest` runs whole-Simulation validation: per-run checks against what AMBER recorded (the `Run check` lines of §1; whether each run finished; whether it read the input coordinates the manifest declares, per the INPCRD its mdout records), plus two continuity-specific things —
 
 - **Continuity**: does each step's declared input-coordinate time match the end-time of the step it's chained from? A `default_tolerance` (0.1 ps, or half the previous step's frame interval if larger) absorbs floating-point noise; anything bigger is a real finding.
 - **Sequence holes**: does a numbered run (`ntp_prod_0001`, `0002`, …) skip an index? This is checked independently of continuity — a missing member is flagged even if every step that *is* present chains perfectly.
@@ -201,7 +210,7 @@ Copy the sample data but drop `ntp_prod_0003`:
 ```bash
 mkdir -p /tmp/ambermeta-hole && cd /tmp/ambermeta-hole
 cp /tmp/ambermeta-tutorial/CH3L1_HUMAN_6NAG.* .
-cp /tmp/ambermeta-tutorial/ntp_prod_000{1,2,4,5}.* .
+cp /tmp/ambermeta-tutorial/ntp_prod_000{0,1,2,4,5}.* .
 ambermeta discover . --write manifest.yaml
 ```
 
@@ -210,7 +219,7 @@ Simulation summary
 ==================
 Topologies (pool): 1
   - top_CH3L1_HUMAN_6NAG [normal]  CH3L1_HUMAN_6NAG.top
-Starting structure: CH3L1_HUMAN_6NAG.crd
+Starting structure: ntp_prod_0000.rst
 Phases: 1
 
 Phase: Production [production]
@@ -221,7 +230,7 @@ Phase: Production [production]
 
 Suggestions:
   - [needs_you] ntp_prod sequence is missing member(s) 3
-  - [applied] CH3L1_HUMAN_6NAG.crd set as the starting structure
+  - [applied] ntp_prod_0000.rst set as the starting structure
   - [applied] Phase roles inferred from file content/names
 
 Wrote v2 draft manifest: manifest.yaml (yaml)
@@ -236,13 +245,18 @@ ambermeta validate --manifest manifest.yaml
 ```
 Simulation validation
 
-Continuity / sequence findings:
+Findings:
   - ntp_prod sequence is missing member(s) 3: present members of 'ntp_prod' skip index(es) 3
+  - Run check: ntp_prod_0001: Time step of 4 fs, but the topology has standard hydrogen masses (no hydrogen mass repartitioning); a time step above 2 fs needs repartitioned hydrogen masses.
+  - Run check: ntp_prod_0002: Time step of 4 fs, but the topology has standard hydrogen masses (no hydrogen mass repartitioning); a time step above 2 fs needs repartitioned hydrogen masses.
+  - Run check: ntp_prod_0004: Time step of 4 fs, but the topology has standard hydrogen masses (no hydrogen mass repartitioning); a time step above 2 fs needs repartitioned hydrogen masses.
+  - Declared input differs from the recorded one: ntp_prod_0004: This step declares ntp_prod_0002.rst as its input coordinates, but its mdout records /l/home/bonus/work/Projects/YKL-40/CH3L1_HUMAN_6NAG/prod/ntp_prod_0003.rst.
+  - Run check: ntp_prod_0005: Time step of 4 fs, but the topology has standard hydrogen masses (no hydrogen mass repartitioning); a time step above 2 fs needs repartitioned hydrogen masses.
 
 Validation: OK
 ```
 
-Note the verdict is still `OK` — a sequence hole is a "needs you" finding, not a hard error, because a genuinely non-contiguous set of runs (independent replicas, say) is legitimate. `ntp_prod_0004`'s continuity is *not* separately flagged as broken: its bound input-coordinate source is honestly `ntp_prod_0002`'s own restart (that's the file that exists), so the continuity check — which only compares a step's declared input against its declared predecessor — has nothing to complain about. The hole is a distinct, first-class finding. To make holes count as failures in CI:
+Note the verdict is still `OK` — a sequence hole is a "needs you" finding, not a hard error, because a genuinely non-contiguous set of runs (independent replicas, say) is legitimate. The `Run check` lines are the sample's 4-fs time step from §1. `ntp_prod_0004`'s continuity is *not* flagged as broken: its bound input-coordinate source is `ntp_prod_0002`'s own restart (that's the file that exists), so the continuity check — which only compares a step's declared input against its declared predecessor — has nothing to complain about. What does flag it is AMBER's own record: `ntp_prod_0004`'s mdout says the run read `ntp_prod_0003.rst`. That path is from the cluster the runs came off, so only its file name can be compared here, and `ntp_prod_0003.rst` is not `ntp_prod_0002.rst`. The hole is a distinct, first-class finding, and the recorded input confirms it from the other side. To make findings count as failures in CI:
 
 ```bash
 ambermeta validate --manifest manifest.yaml --strict; echo "exit: $?"
@@ -251,12 +265,19 @@ ambermeta validate --manifest manifest.yaml --strict; echo "exit: $?"
 ```
 Simulation validation
 
-Continuity / sequence findings:
+Findings:
   - ntp_prod sequence is missing member(s) 3: present members of 'ntp_prod' skip index(es) 3
+  - Run check: ntp_prod_0001: Time step of 4 fs, but the topology has standard hydrogen masses (no hydrogen mass repartitioning); a time step above 2 fs needs repartitioned hydrogen masses.
+  - Run check: ntp_prod_0002: Time step of 4 fs, but the topology has standard hydrogen masses (no hydrogen mass repartitioning); a time step above 2 fs needs repartitioned hydrogen masses.
+  - Run check: ntp_prod_0004: Time step of 4 fs, but the topology has standard hydrogen masses (no hydrogen mass repartitioning); a time step above 2 fs needs repartitioned hydrogen masses.
+  - Declared input differs from the recorded one: ntp_prod_0004: This step declares ntp_prod_0002.rst as its input coordinates, but its mdout records /l/home/bonus/work/Projects/YKL-40/CH3L1_HUMAN_6NAG/prod/ntp_prod_0003.rst.
+  - Run check: ntp_prod_0005: Time step of 4 fs, but the topology has standard hydrogen masses (no hydrogen mass repartitioning); a time step above 2 fs needs repartitioned hydrogen masses.
 
-Validation: OK
+Validation: ISSUES FOUND
 exit: 1
 ```
+
+`--strict` counts every finding, the `Run check` lines included, so on the bundled sample it exits `1` even with no run missing.
 
 ### A continuity break
 
@@ -283,9 +304,15 @@ ambermeta validate --manifest broken.yaml
 ```
 Simulation validation
 
-Continuity / sequence findings:
+Findings:
   - Continuity note: Stage appears to overlap previous stage by 20000 ps.
   - Continuity note: Gap detected without stated expectation; verify continuity.
+  - Run check: ntp_prod_0001: Time step of 4 fs, but the topology has standard hydrogen masses (no hydrogen mass repartitioning); a time step above 2 fs needs repartitioned hydrogen masses.
+  - Run check: ntp_prod_0002: Time step of 4 fs, but the topology has standard hydrogen masses (no hydrogen mass repartitioning); a time step above 2 fs needs repartitioned hydrogen masses.
+  - Run check: ntp_prod_0003: Time step of 4 fs, but the topology has standard hydrogen masses (no hydrogen mass repartitioning); a time step above 2 fs needs repartitioned hydrogen masses.
+  - Declared input differs from the recorded one: ntp_prod_0003: This step declares ntp_prod_0001.rst as its input coordinates, but its mdout records /l/home/bonus/work/Projects/YKL-40/CH3L1_HUMAN_6NAG/prod/ntp_prod_0002.rst.
+  - Run check: ntp_prod_0004: Time step of 4 fs, but the topology has standard hydrogen masses (no hydrogen mass repartitioning); a time step above 2 fs needs repartitioned hydrogen masses.
+  - Run check: ntp_prod_0005: Time step of 4 fs, but the topology has standard hydrogen masses (no hydrogen mass repartitioning); a time step above 2 fs needs repartitioned hydrogen masses.
 
 Protocol notes:
   - Stage appears to overlap previous stage by 20000 ps.
@@ -294,7 +321,7 @@ Protocol notes:
 Validation: OK
 ```
 
-This time it's a genuine continuity problem: `ntp_prod_0002` really did finish 20000 ps later than the restart `ntp_prod_0003` now claims to start from. `--format json` gives the same finding machine-readably, including which step it's attached to:
+This time it's a genuine continuity problem: `ntp_prod_0002` really did finish 20000 ps later than the restart `ntp_prod_0003` now claims to start from. The mistake is caught twice, independently: the continuity notes measure the times, and the `Declared input differs from the recorded one` finding compares the edited `ref` with the INPCRD `ntp_prod_0003`'s mdout records, which is `ntp_prod_0002.rst`. `--format json` gives the same findings machine-readably, including which step each is attached to:
 
 ```bash
 ambermeta validate --manifest broken.yaml --format json
@@ -312,6 +339,8 @@ ambermeta validate --manifest broken.yaml --format json
       "degraded": false,
       "errors": [],
       "warnings": [
+        "Time step of 4 fs, but the topology has standard hydrogen masses (no hydrogen mass repartitioning); a time step above 2 fs needs repartitioned hydrogen masses.",
+        "This step declares ntp_prod_0001.rst as its input coordinates, but its mdout records /l/home/bonus/work/Projects/YKL-40/CH3L1_HUMAN_6NAG/prod/ntp_prod_0002.rst.",
         "Stage appears to overlap previous stage by 20000 ps.",
         "Gap detected without stated expectation; verify continuity."
       ],
@@ -336,13 +365,23 @@ ambermeta validate --manifest broken.yaml --format json
       "step_id": "6aa07bf3"
     },
     ...
+    {
+      "id": "sug_r_8",
+      "kind": "input_mismatch",
+      "severity": "needs_you",
+      "title": "Declared input differs from the recorded one",
+      "evidence": "ntp_prod_0003: This step declares ntp_prod_0001.rst as its input coordinates, but its mdout records /l/home/bonus/work/Projects/YKL-40/CH3L1_HUMAN_6NAG/prod/ntp_prod_0002.rst.",
+      "actions": ["Investigate"],
+      "step_id": "6aa07bf3"
+    },
+    ...
   ]
 }
 ```
 
 (A step's own `notes` ride along in the same `warnings`/`protocol_issues` channel as real findings — if you added a note in [§1](#1-discover-edit-and-export-a-v2-manifest), you'll see it listed there too. Reserve `notes` for things worth a reviewer's attention.)
 
-`--strict` turns this into exit code 1 the same way it did for the sequence hole. Restore the reference (`ref: de27bb87`, `ntp_prod_0002`'s id) and `validate` goes back to a bare `Validation: OK` — no findings section at all, which is itself the signal that continuity is clean.
+`--strict` turns this into exit code 1 the same way it did for the sequence hole. Restore the reference (`ref: de27bb87`, `ntp_prod_0002`'s id) and `validate` goes back to the output of §1: no continuity note and no recorded-input finding, only the sample's five `Run check` lines. On a simulation whose topology matches its time step, the findings section disappears entirely, which is itself the signal that the runs are clean.
 
 **Declaring an intentional gap.** If a step genuinely restarts from a checkpoint after a real time jump, say so — an unstated gap is what triggers "verify continuity"; a stated one that matches is silently confirmed (`INFO`, not surfaced as a problem):
 
@@ -385,7 +424,7 @@ Walk through the round trip:
 
 1. Click **Discover**. The Files pane's `CH3L1_HUMAN_6NAG.top`/`.crd` and the five `ntp_prod_*` groups populate the Canvas as one `Production` phase with five steps, exactly like `ambermeta discover .` printed in [§1](#1-discover-edit-and-export-a-v2-manifest). The **Suggestions tray** lists the same `[applied]`/`[needs_you]` items the CLI's `Suggestions:` block shows.
 2. Drag a file from **Files** onto a step's `mdin`/`mdout` slot, the topology pool, or the starting-structure slot to rebind it; drag a step card to reorder it within the phase or move it to another phase.
-3. Click **Validate**. The panel lists the same findings `ambermeta validate --manifest` would print for this draft, with jump-to-issue.
+3. Click **Validate**. The panel lists the same findings `ambermeta validate --manifest` would print for this draft, with jump-to-issue; each run's own findings (here the five `Run check` lines of §1) show as warnings on its step card and as **Needs you** cards in the Suggestions tray.
 4. Click **Save** and give it a filename (`gui_manifest.yaml`, say).
 
 **Save writes exactly what the CLI writes.** The GUI's save handler and `ambermeta export`/`ambermeta discover --write` both call the same `ambermeta.simulation.write_simulation` — there is no separate GUI serializer. You can verify this from the terminal without touching the browser at all, since every GUI action is just a call to the local HTTP API (documented in full in the [GUI guide](gui.md)) that the page's own JavaScript calls:
@@ -439,8 +478,17 @@ ambermeta validate --manifest gui_manifest.yaml
 ```
 Simulation validation
 
+Findings:
+  - Run check: ntp_prod_0001: Time step of 4 fs, but the topology has standard hydrogen masses (no hydrogen mass repartitioning); a time step above 2 fs needs repartitioned hydrogen masses.
+  - Run check: ntp_prod_0002: Time step of 4 fs, but the topology has standard hydrogen masses (no hydrogen mass repartitioning); a time step above 2 fs needs repartitioned hydrogen masses.
+  - Run check: ntp_prod_0003: Time step of 4 fs, but the topology has standard hydrogen masses (no hydrogen mass repartitioning); a time step above 2 fs needs repartitioned hydrogen masses.
+  - Run check: ntp_prod_0004: Time step of 4 fs, but the topology has standard hydrogen masses (no hydrogen mass repartitioning); a time step above 2 fs needs repartitioned hydrogen masses.
+  - Run check: ntp_prod_0005: Time step of 4 fs, but the topology has standard hydrogen masses (no hydrogen mass repartitioning); a time step above 2 fs needs repartitioned hydrogen masses.
+
 Validation: OK
 ```
+
+The same verdict and the same five sample-specific `Run check` findings as the CLI-built manifest in §1.
 
 ```yaml
 # gui_manifest.yaml (excerpt) — note the step notes made it through the save

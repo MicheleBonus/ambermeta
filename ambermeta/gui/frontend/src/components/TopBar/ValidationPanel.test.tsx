@@ -6,7 +6,7 @@ import { server, emptyValidationReport } from "@/test/server";
 import { queryClient } from "@/api/queryClient";
 import { SelectionProvider } from "@/state/selection";
 import { ValidationPanel } from "./ValidationPanel";
-import type { CoherenceFinding, ValidationReport } from "@/types";
+import type { CoherenceFinding, Suggestion, ValidationReport } from "@/types";
 
 /**
  * The panel had no test file at all, which is how it came to render a green
@@ -63,6 +63,34 @@ it("keeps a parameter difference a warning", async () => {
   }));
   await waitFor(() => expect(screen.getByText("Valid, with 1 note(s)")).toBeInTheDocument());
   expect(screen.getByText(/Members differ in temp0/).className).toMatch(/text-warning/);
+});
+
+const finding = (kind: string, evidence: string): Suggestion => ({
+  id: `sug_${kind}`, kind, severity: "needs_you", title: kind, evidence, actions: [],
+});
+
+it("counts a run's own finding as a note, not a pass", async () => {
+  // `validate --manifest --strict` exits 1 on it, so the badge must not be green.
+  await show(report({
+    suggestions: [finding("unfinished_run",
+      "prod_0005: The mdout has no completion marker: the run stopped early or is still running.")],
+  }));
+  await waitFor(() => expect(screen.getByText("Valid, with 1 note(s)")).toBeInTheDocument());
+  expect(screen.queryByText("All checks passed")).not.toBeInTheDocument();
+});
+
+it("counts a sequence hole as a note", async () => {
+  await show(report({
+    suggestions: [finding("missing_run", "present members of 'prod' skip index(es) 3")],
+  }));
+  await waitFor(() => expect(screen.getByText("Valid, with 1 note(s)")).toBeInTheDocument());
+});
+
+it("does not count what discovery applied", async () => {
+  await show(report({
+    suggestions: [{ ...finding("role_guess", "Production->production"), severity: "applied" }],
+  }));
+  await waitFor(() => expect(screen.getByText("All checks passed")).toBeInTheDocument());
 });
 
 it("states a fan-out as a plain fact", async () => {

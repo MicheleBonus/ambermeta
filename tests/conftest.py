@@ -231,7 +231,12 @@ def _mdout_text(spec: RunSpec) -> str:
         # `mdout.details.stats.count == 0`, the same signal a real minimisation's mdout
         # gives every consumer of `ThermoStats`.
         body = ""
-    return head + body + "\n      5.  TIMINGS\n"
+    # A finished pmemd run ends its TIMINGS section with the wall-time line, which is one of
+    # the completion markers `parse_mdout` looks for. Without it every fixture run read as
+    # stopped early -- and, since unfinished runs became findings, as a problem to report.
+    return (head + body + "\n      5.  TIMINGS\n"
+            "|  Final Performance Info:\n"
+            "|  Total wall time:          10    seconds     0.00 hours\n")
 
 
 _RESTART_NATOM = 2

@@ -215,7 +215,7 @@ options:
 
 ### `plan -m` requires a v2 manifest
 
-`-m/--manifest` always loads the file through `ambermeta.simulation.load_simulation` — the same reader `discover --write`, `export`, and `validate --manifest` use — and prints the **Simulation → Phase → Step structure**, plus continuity/sequence-hole findings. A manifest without a top-level `steps` key (e.g. an old flat `stages:` file) isn't v2-shaped and fails to load; use `--recursive` (below) or [`discover`](#discover) to build a fresh v2 manifest from a directory instead.
+`-m/--manifest` always loads the file through `ambermeta.simulation.load_simulation` — the same reader `discover --write`, `export`, and `validate --manifest` use — and prints the **Simulation → Phase → Step structure**, plus its findings: continuity gaps, sequence holes, and each run's own findings (see [`validate --manifest`](#--manifest-mode-whole-simulation)). A manifest without a top-level `steps` key (e.g. an old flat `stages:` file) isn't v2-shaped and fails to load; use `--recursive` (below) or [`discover`](#discover) to build a fresh v2 manifest from a directory instead.
 
 `--recursive` discovery under `plan` is a separate, still-supported flat engine (auto-discovery straight from files on disk, no manifest involved) and always prints the classic per-stage **Protocol summary**; use [`discover`](#discover) for the new Simulation-draft view of a directory.
 
@@ -249,8 +249,8 @@ stage_name,stage_role,time_start_ps,time_end_ps,duration_ns,frame_count,temp_avg
 ### Behavior
 
 - **Fault-tolerant by default.** A missing/malformed/unreadable file is skipped, the error is recorded against its stage, a skip summary is printed, and the run exits `0`. `--strict` makes the first bad file a hard error (clean message, exit `1`, no traceback). A stage keeps every file that *did* parse.
-- **Findings are reported on every mode.** A continuity or sequence finding — a gap, or a member that stopped early — is printed under "Continuity / sequence findings" by `--manifest`, `--recursive` and `--interactive` alike, and lands in `summary.json` under `findings` when there is one. The key is absent when there is nothing to report, so a summary for a document with no holes is the file it always was.
-- **`--strict` also fails on a finding.** It exits `1` when any `continuity_gap` or `missing_run` was reported, which is what `validate --manifest --strict` has always done. Before this the two commands disagreed about the same manifest: `validate --strict` exited `1` on a crashed replica and `plan --strict` exited `0`. The artifacts are still written either way — a pipeline that stops on a finding still wants the summary that names it.
+- **Findings are reported on every mode.** A continuity or sequence finding — a gap, or a member that stopped early — and each run's own findings (`Run check`, `Run did not finish`, `Declared input differs from the recorded one`; see [`validate --manifest`](#--manifest-mode-whole-simulation)) are printed under "Findings" by `--manifest`, `--recursive` and `--interactive` alike. A sequence hole lands in `summary.json` under `findings` when there is one; the key is absent when there is nothing to report, so a summary for a document with no holes is the file it always was. A run's own findings are in its stage's `validation` list there.
+- **`--strict` also fails on a finding.** It exits `1` when any `continuity_gap`, `missing_run`, `step_check`, `unfinished_run` or `input_mismatch` was reported, or a lineage-coherence warning, the same set `validate --manifest --strict` counts. Before this the two commands disagreed about the same manifest: `validate --strict` exited `1` on a crashed replica and `plan --strict` exited `0`. The artifacts are still written either way — a pipeline that stops on a finding still wants the summary that names it.
 - **Cross-stage validation** runs by default; `--skip-cross-stage-validation` turns it off. A manifest cannot switch it on or off — a v2 manifest has no `settings` block, so this is a CLI-flag decision only.
 
 #### `--recursive` (flat discovery, retained engine)
@@ -293,7 +293,7 @@ Simulation summary
 ==================
 Topologies (pool): 1
   - top_CH3L1_HUMAN_6NAG [normal]  CH3L1_HUMAN_6NAG.top
-Starting structure: CH3L1_HUMAN_6NAG.crd
+Starting structure: ntp_prod_0000.rst
 Phases: 1
 
 Phase: Production [production]
@@ -303,10 +303,17 @@ Phase: Production [production]
   - ntp_prod_0004  topology=CH3L1_HUMAN_6NAG.top  input=restart of ntp_prod_0003 (ntp_prod_0003.rst)  (mdin=ntp_prod_0004.mdin, mdout=ntp_prod_0004.mdout)
   - ntp_prod_0005  topology=CH3L1_HUMAN_6NAG.top  input=restart of ntp_prod_0004 (ntp_prod_0004.rst)  (mdin=ntp_prod_0005.mdin, mdout=ntp_prod_0005.mdout)
 
+Findings:
+  - Run check: ntp_prod_0001: Time step of 4 fs, but the topology has standard hydrogen masses (no hydrogen mass repartitioning); a time step above 2 fs needs repartitioned hydrogen masses.
+  - Run check: ntp_prod_0002: Time step of 4 fs, but the topology has standard hydrogen masses (no hydrogen mass repartitioning); a time step above 2 fs needs repartitioned hydrogen masses.
+  - Run check: ntp_prod_0003: Time step of 4 fs, but the topology has standard hydrogen masses (no hydrogen mass repartitioning); a time step above 2 fs needs repartitioned hydrogen masses.
+  - Run check: ntp_prod_0004: Time step of 4 fs, but the topology has standard hydrogen masses (no hydrogen mass repartitioning); a time step above 2 fs needs repartitioned hydrogen masses.
+  - Run check: ntp_prod_0005: Time step of 4 fs, but the topology has standard hydrogen masses (no hydrogen mass repartitioning); a time step above 2 fs needs repartitioned hydrogen masses.
+
 Validation: OK
 ```
 
-(`input=restart of <step> (<file>)` is the continuity chain, resolved to the producing step's name and its output restart. The healthy 20 ns inter-run gaps between the sample sequence's runs fall inside the expected window and are not flagged, so there are no continuity findings.)
+(`input=restart of <step> (<file>)` is the continuity chain, resolved to the producing step's name and its output restart. Each run of the sample starts where the previous one ended, so there are no continuity findings. The five `Run check` findings are a property of the sample as bundled — see [`validate --manifest`](#--manifest-mode-whole-simulation) — and make `plan -m sim.yaml --strict` exit `1`. The `--recursive` scan above prints none, because it binds no topology to the `ntp_prod_*` stages.)
 
 #### `-m` on a pre-v2 manifest
 
@@ -364,7 +371,7 @@ Simulation summary
 ==================
 Topologies (pool): 1
   - top_CH3L1_HUMAN_6NAG [normal]  CH3L1_HUMAN_6NAG.top
-Starting structure: CH3L1_HUMAN_6NAG.crd
+Starting structure: ntp_prod_0000.rst
 Phases: 1
 
 Phase: Production [production]
@@ -375,11 +382,11 @@ Phase: Production [production]
   - ntp_prod_0005  topology=CH3L1_HUMAN_6NAG.top  input=restart of ntp_prod_0004 (ntp_prod_0004.rst)  (mdin=ntp_prod_0005.mdin, mdout=ntp_prod_0005.mdout)
 
 Suggestions:
-  - [applied] CH3L1_HUMAN_6NAG.crd set as the starting structure
+  - [applied] ntp_prod_0000.rst set as the starting structure
   - [applied] Phase roles inferred from file content/names
 ```
 
-`ntp_prod_0000` (a bare restart with no `mdin`/`mdout`) isn't turned into a step at all — a step needs at least an `mdin`/`mdout` pair to be a "run"; it is simply excluded from the draft. `CH3L1_HUMAN_6NAG.crd` is picked as the starting structure because it is single-frame coordinates. The printed `input=restart of <step> (<file>)` names the *producing step* and the restart it resolves to, not the raw id: step ids (`10428ec4`, ... in the manifest below) are `uuid4` slices, regenerated on every run, so nothing user-facing prints them and nothing should depend on them being stable across invocations of `discover`.
+`ntp_prod_0000` (a bare restart with no `mdin`/`mdout`) isn't turned into a step at all — a step needs at least an `mdin`/`mdout` pair to be a "run"; it is simply excluded from the draft. It is the starting structure because `ntp_prod_0001`'s mdout records it as INPCRD in its `File Assignments` block: where the first runs' mdouts name one file that is found in the directory and that no run wrote, `discover` takes that file. Otherwise it falls back to the first single-frame coordinate file, in path order, that no run wrote, which here would be the tLEaP output `CH3L1_HUMAN_6NAG.crd`. The printed `input=restart of <step> (<file>)` names the *producing step* and the restart it resolves to, not the raw id: step ids (`10428ec4`, ... in the manifest below) are `uuid4` slices, regenerated on every run, so nothing user-facing prints them and nothing should depend on them being stable across invocations of `discover`.
 
 ### Replica trees
 
@@ -432,7 +439,7 @@ simulation:
   - id: top_CH3L1_HUMAN_6NAG
     path: CH3L1_HUMAN_6NAG.top
     kind: normal
-  starting_structure: CH3L1_HUMAN_6NAG.crd
+  starting_structure: ntp_prod_0000.rst
 phases:
 - id: 4ba21bbf
   name: Production
@@ -543,15 +550,34 @@ $ ambermeta validate --format json tests/data/amber/md_test_files/ntp_prod_0001.
 
 ### `--manifest` mode (whole Simulation)
 
-Loads the manifest through `load_simulation` — the manifest must be v2-shaped (a top-level `steps` key) — then runs the same continuity/sequence-hole/suggestion checks `discover` and the GUI's *Validate* panel use. File paths in the manifest resolve relative to the **manifest's own directory**, not the current working directory.
+Loads the manifest through `load_simulation` — the manifest must be v2-shaped (a top-level `steps` key) — then runs the same continuity/sequence-hole/suggestion checks `discover` and the GUI's *Validate* panel use, plus each run's own checks against what AMBER recorded. File paths in the manifest resolve relative to the **manifest's own directory**, not the current working directory.
+
+Each run's own findings print under the title of their kind:
+
+| Kind | Title | Fires when |
+|---|---|---|
+| `step_check` | Run check | The run's files disagree: atom counts across its files (a count of 0 is "not stated", so an ASCII trajectory or a NetCDF file read without netCDF4/SciPy raises nothing); mdin against mdout on step count, time step, duration, or coordinate write frequency (`ntwx`, as the mdout's CONTROL DATA block records it); or a time step above 2 fs on a topology whose hydrogen masses are standard. |
+| `unfinished_run` | Run did not finish | The mdout has no AMBER completion marker: the run stopped early or is still running. |
+| `input_mismatch` | Declared input differs from the recorded one | The input coordinates the step declares are not the INPCRD in its mdout's `File Assignments` block. A recorded path that resolves on this machine is compared as a file; an absolute path from another machine is compared by file name; a value AMBER clipped at its field width is never compared. |
+
+There is no box-consistency check.
 
 ```text
 $ ambermeta validate --manifest sim.yaml
 
 Simulation validation
 
+Findings:
+  - Run check: ntp_prod_0001: Time step of 4 fs, but the topology has standard hydrogen masses (no hydrogen mass repartitioning); a time step above 2 fs needs repartitioned hydrogen masses.
+  - Run check: ntp_prod_0002: Time step of 4 fs, but the topology has standard hydrogen masses (no hydrogen mass repartitioning); a time step above 2 fs needs repartitioned hydrogen masses.
+  - Run check: ntp_prod_0003: Time step of 4 fs, but the topology has standard hydrogen masses (no hydrogen mass repartitioning); a time step above 2 fs needs repartitioned hydrogen masses.
+  - Run check: ntp_prod_0004: Time step of 4 fs, but the topology has standard hydrogen masses (no hydrogen mass repartitioning); a time step above 2 fs needs repartitioned hydrogen masses.
+  - Run check: ntp_prod_0005: Time step of 4 fs, but the topology has standard hydrogen masses (no hydrogen mass repartitioning); a time step above 2 fs needs repartitioned hydrogen masses.
+
 Validation: OK
 ```
+
+The sample as bundled reports this on every run: its runs used `dt = 0.004` ps, and the bundled topology's 32,188 hydrogens all weigh 1.008 amu. Either the runs used a repartitioned topology that is not the one bundled, or they integrated standard-mass hydrogens at a time step those do not support; relabelling the topology as HMR would resolve neither. A run on an HMR topology does not raise it. The verdict stays `OK` because a finding is not an invalid document; with `--strict` the same run prints `Validation: ISSUES FOUND` and exits `1`.
 
 ```text
 $ ambermeta validate --manifest sim.yaml --format json
@@ -560,13 +586,15 @@ $ ambermeta validate --manifest sim.yaml --format json
   "totals": { "steps": 25000000.0, "time_ps": 100000.0, "stage_count": 5 },
   "protocol_issues": [],
   "stage_issues": [
-    { "name": "ntp_prod_0001", "ok": true, "degraded": false, "errors": [], "warnings": [], "info": [], "continuity": [], "missing_files": [] },
+    { "name": "ntp_prod_0001", "ok": true, "degraded": false, "errors": [],
+      "warnings": ["Time step of 4 fs, but the topology has standard hydrogen masses (no hydrogen mass repartitioning); a time step above 2 fs needs repartitioned hydrogen masses."],
+      "info": [], "continuity": [], "missing_files": [] },
     ...
   ],
   "suggestions": [
     {
       "id": "sug_1", "kind": "starting_structure", "severity": "applied",
-      "title": "CH3L1_HUMAN_6NAG.crd set as the starting structure",
+      "title": "ntp_prod_0000.rst set as the starting structure",
       "evidence": "single-frame coordinates; feeds the first run",
       "actions": ["Undo"]
     },
@@ -575,12 +603,20 @@ $ ambermeta validate --manifest sim.yaml --format json
       "title": "Phase roles inferred from file content/names",
       "evidence": "Production->production",
       "actions": ["Undo"]
-    }
+    },
+    {
+      "id": "sug_r_3", "kind": "step_check", "severity": "needs_you",
+      "title": "Run check",
+      "evidence": "ntp_prod_0001: Time step of 4 fs, but the topology has standard hydrogen masses (no hydrogen mass repartitioning); a time step above 2 fs needs repartitioned hydrogen masses.",
+      "actions": ["Investigate"],
+      "step_id": "10428ec4"
+    },
+    ...
   ]
 }
 ```
 
-`stage_issues[].errors` is where a missing file or bad continuity link surfaces (e.g. `missing prmtop: ...`); `suggestions[].kind` in `{"continuity_gap", "missing_run"}` is what drives the "Continuity / sequence findings" block in text mode, and what `--strict` promotes to a failing exit code. `--allow-gaps` relaxes unexpected-gap findings (`continuity_gap`) without touching sequence holes (`missing_run`).
+`stage_issues[].errors` is where a missing file or bad continuity link surfaces (e.g. `missing prmtop: ...`); a run's own findings are also in its `stage_issues[].warnings`. `suggestions[].kind` in `{"continuity_gap", "missing_run", "step_check", "unfinished_run", "input_mismatch"}` is what drives the "Findings" block in text mode, and what `--strict` promotes to a failing exit code, together with lineage-coherence warnings. `--allow-gaps` relaxes unexpected-gap findings (`continuity_gap`) without touching sequence holes (`missing_run`) or a run's own findings.
 
 **On a manifest that declares lineages**, both checks are scoped per member:
 
@@ -657,7 +693,7 @@ $ ambermeta validate --manifest old_manifest.yaml
 ERROR: Failed to load manifest: old_manifest.yaml is not a v2 manifest (no 'steps' key). Rebuild it with `ambermeta discover <dir> --write <path>`.
 ```
 
-Exit codes: `0` ok; `1` if the manifest can't be found/loaded, or the report isn't ok, or `--strict` and there are continuity/sequence findings; `2` if neither `files` nor `--manifest` is given.
+Exit codes: `0` ok; `1` if the manifest can't be found/loaded, or the report isn't ok, or `--strict` and there is any finding (continuity, sequence hole, a run's own finding, or a lineage-coherence warning); `2` if neither `files` nor `--manifest` is given.
 
 ---
 
@@ -706,7 +742,7 @@ Wrote v2 manifest: sim.json (json)
     "topologies": [
       { "id": "top_CH3L1_HUMAN_6NAG", "path": "CH3L1_HUMAN_6NAG.top", "kind": "normal" }
     ],
-    "starting_structure": "CH3L1_HUMAN_6NAG.crd"
+    "starting_structure": "ntp_prod_0000.rst"
   },
   "phases": [
     { "id": "ph_prod", "name": "Production", "role": "production", "order": 0 }
@@ -940,8 +976,8 @@ The generated scripts complete all eight subcommands, including `discover` and `
 
 | Code | Command(s) | Meaning |
 |---|---|---|
-| `0` | all | Success (including a fault-tolerant `plan` that skipped bad files, or a `plan`/`validate` run that reported continuity or sequence findings without `--strict`) |
-| `1` | `plan`, `discover`, `validate`, `export`, `init`, `info`, `gui` | Runtime failure: unreadable/missing input, parse failure, nothing discovered, manifest not found/invalid, validation findings, a `--strict` hard stop, `--strict` with any continuity/sequence finding (on `plan` as well as `validate`), or a missing extra/directory (`gui`) |
+| `0` | all | Success (including a fault-tolerant `plan` that skipped bad files, or a `plan`/`validate` run that reported findings without `--strict`) |
+| `1` | `plan`, `discover`, `validate`, `export`, `init`, `info`, `gui` | Runtime failure: unreadable/missing input, parse failure, nothing discovered, manifest not found/invalid, validation findings, a `--strict` hard stop, `--strict` with any finding — continuity, sequence hole, a run's own finding (`step_check`, `unfinished_run`, `input_mismatch`), or lineage-coherence warning — on `plan` as well as `validate`, or a missing extra/directory (`gui`) |
 | `2` | `plan`, `validate` | Bad invocation: `plan` with no mode selected (`--manifest`/`--recursive`/`--interactive`); `validate` with neither `files` nor `--manifest` |
 
 ---

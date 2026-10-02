@@ -47,10 +47,10 @@ The server (FastAPI + Uvicorn) binds the host/port, resolves `directory` to an a
 │  FILES        │  ┌ pool ───────────────────────┐   │  INSPECTOR              │
 │               │  │ CH3L1…top [normal ▾] ×      │   │                         │
 │  [search…]    │  └────────────────────────────┘   │  (file peek / details / │
-│  ⠿ system.top │  starting structure: …6NAG.crd ×  │   assign actions, or    │
+│  ⠿ system.top │  starting structure: …0000.rst ×  │   assign actions, or    │
 │  ⠿ prod_0001… │                                    │   the suggestions      │
 │  ...          │  ▎ Production  role ▾  topology ▾  + ⌧                     │
-│               │  ┃ ┌ ⠿ ntp_prod_0001  ▸ …top ×  ◂ starting structure · …crd │
+│               │  ┃ ┌ ⠿ ntp_prod_0001  ▸ …top ×  ◂ starting structure · …rst │
 │               │  ┃ │   mdin: …0001.mdin  mdout: …0001.mdout  mdcrd: —       │
 │               │  ┃ │   rst: ntp_prod_0001.rst ×                              │
 │               │  ┃ └───────────────────────────────┘                         │
@@ -83,7 +83,7 @@ Each pane is resizable (drag the divider); widths persist across sessions.
 2. **Declare the replicas.** If the scan found a grouping, the **proposal strip** (§5a) opens on top of the result: the members it inferred, the directories each was built from, and — where AMBER's own mdouts evidence it — the restart handoffs that cross a directory boundary. Nothing is written until you press **Accept**; **Not replicas** dismisses it and leaves every run untagged. If the scan refused to infer a grouping (it refuses more layouts than it accepts), press **Define replicas…** in the top bar and pick the path segment yourself.
 3. **Assign & adjust.** Drag a file from **Files** onto the topology pool, the starting-structure slot, a step's `mdin`/`mdout`/`mdcrd`/`rst` slot, or a phase's/step's topology target. Or select a file in **Files** and use the Inspector's **Assign** actions (§6) — the same mutations, without dragging.
 4. **Arrange.** In the **Canvas**, drag a step's grip handle to reorder it within a phase or drop it onto another phase to move it; drag a phase's grip handle to reorder phases.
-5. **Validate.** Click **Validate**. The panel lists per-step issues (missing files, continuity/sequence problems) and protocol-level notes, and lets you jump to a step. A simulation with continuity notes shows as *valid, with N protocol note(s)* — never a silent clean pass when something is worth a look.
+5. **Validate.** Click **Validate**. The panel lists per-step issues (missing files, continuity/sequence problems, and each run's own findings against what AMBER recorded) and protocol-level notes, and lets you jump to a step. A simulation with continuity notes, sequence holes, or findings on a run shows as *valid, with N note(s)* — never a silent clean pass when something is worth a look. A run's own findings (§9) also land in the suggestions tray as **Needs you** cards.
 6. **Save / Plan / Export.** **Save** writes the canonical **v2 manifest** to disk (YAML or JSON) and reports the path it wrote. **Plan** is the step after that: it writes the manifest *and* the artifacts [`ambermeta plan`](cli.md) produces — `summary.json`, `methods_summary.json`, and optionally a statistics CSV — so the whole pipeline is one action rather than a save followed by a trip to a terminal. If it is about to overwrite a `summary.json` whose totals differ from what it is writing, it says so — inline under the list of files it wrote, and as a toast — so a number you quoted from the old file is never replaced in silence. **Export** previews YAML or JSON for copying without writing anything.
 
 Undo/redo (**Ctrl+Z** / **Ctrl+Shift+Z**, **Ctrl+Y**) and a dirty-state dot live in the top bar; history is kept on the server (100 steps). **Open** resets it — a different manifest is a new editing session — while **Discover** does not, so a discovery run on the wrong directory is one undo away. Removing something (a step, a phase, a topology, the starting structure) reports itself with an **Undo** button; that offer disappears as soon as you make another change, because undo always reverses the most recent one.
@@ -191,9 +191,9 @@ The Inspector's content depends on what's selected:
 
 ## 7. Suggestions tray
 
-Every inferred thing is surfaced as an explainable suggestion rather than applied silently — this is the draft-first design: roles, the HMR topology, the starting structure, sequence holes, and continuity gaps all show up here. Suggestions are grouped:
+Every inferred thing is surfaced as an explainable suggestion rather than applied silently — this is the draft-first design: roles, the HMR topology, the starting structure, sequence holes, and continuity gaps all show up here, and after a **Validate** so do each run's own findings. Suggestions are grouped:
 
-- **Needs you** — something the tool can't resolve on its own (`missing_run`: a numbered-sequence hole; `continuity_gap`: a genuine start/end mismatch between consecutive steps; `topology_confirm`: more than one topology in the pool, confirm which is HMR; `lineage_needs_you`: the directory layout could not be reconciled into a grouping, on a tree that plausibly had one to declare). Each card offers **Accept** / **Adjust** / **Ignore**.
+- **Needs you** — something the tool can't resolve on its own (`missing_run`: a numbered-sequence hole; `continuity_gap`: a genuine start/end mismatch between consecutive steps; `topology_confirm`: more than one topology in the pool, confirm which is HMR; `lineage_needs_you`: the directory layout could not be reconciled into a grouping, on a tree that plausibly had one to declare; and, from Validate, `step_check` "Run check": the run's files disagree or its time step exceeds 2 fs on a topology with standard hydrogen masses; `unfinished_run` "Run did not finish": the mdout has no completion marker; `input_mismatch` "Declared input differs from the recorded one": the step's input coordinates are not the INPCRD its mdout records). Each card offers **Accept** / **Adjust** / **Ignore**.
 - **Applied** — something already reflected in the draft, shown for transparency (`starting_structure`, `role_guess`, `lineage_group`: the run lineages the document declares, how many runs each holds, and how many carry none). Each card offers **Dismiss**, plus **Undo** (calls the server's undo) when the suggestion says it can be undone.
 
 Every card shows a `title` and a monospace `evidence` string explaining the inference. Dismissing a card only hides it in this browser session — it does not mutate the document; **Undo** is the only action here that does.
@@ -257,7 +257,7 @@ simulation:
   - id: top_CH3L1_HUMAN_6NAG
     path: CH3L1_HUMAN_6NAG.top
     kind: normal
-  starting_structure: CH3L1_HUMAN_6NAG.crd
+  starting_structure: ntp_prod_0000.rst
 phases:
 - id: a2a37983
   name: Production
@@ -318,20 +318,30 @@ Real output (`POST /api/validate` after Discover, on the sample data):
   "protocol_issues": [],
   "stage_issues": [
     { "name": "ntp_prod_0001", "ok": true, "degraded": false,
-      "errors": [], "warnings": [], "info": [], "continuity": [], "missing_files": [] }
+      "errors": [],
+      "warnings": ["Time step of 4 fs, but the topology has standard hydrogen masses (no hydrogen mass repartitioning); a time step above 2 fs needs repartitioned hydrogen masses."],
+      "info": [], "continuity": [], "missing_files": [] },
+    ...
   ],
   "suggestions": [
     { "id": "sug_1", "kind": "starting_structure", "severity": "applied",
-      "title": "CH3L1_HUMAN_6NAG.crd set as the starting structure",
+      "title": "ntp_prod_0000.rst set as the starting structure",
       "evidence": "single-frame coordinates; feeds the first run", "actions": ["Undo"] },
     { "id": "sug_2", "kind": "role_guess", "severity": "applied",
       "title": "Phase roles inferred from file content/names",
-      "evidence": "Production->production", "actions": ["Undo"] }
+      "evidence": "Production->production", "actions": ["Undo"] },
+    { "id": "sug_r_3", "kind": "step_check", "severity": "needs_you",
+      "title": "Run check",
+      "evidence": "ntp_prod_0001: Time step of 4 fs, but the topology has standard hydrogen masses (no hydrogen mass repartitioning); a time step above 2 fs needs repartitioned hydrogen masses.",
+      "actions": ["Investigate"], "step_id": "b71986d7" },
+    ...
   ]
 }
 ```
 
-The panel shows a status badge — `N stage(s) with errors` if any step failed, else `Valid, with N protocol note(s)` if there are protocol-level notes, else `All checks passed` — then any protocol notes, then a per-step card (`ok`/`error` badge, errors/warnings/info) you can click to select that step (§6). A non-empty `protocol_issues` list means the simulation is *not* fully clean even when every step reports `ok` — the panel reflects that rather than reporting a false all-clear.
+Each run's own findings (`step_check`, `unfinished_run`, `input_mismatch`; see [cli.md](cli.md#--manifest-mode-whole-simulation)) come back twice: as warnings on that step's `stage_issues` entry, and as a `needs_you` suggestion scoped to the step by `step_id`, which the panel hands to the suggestions tray (§7). On the sample every run carries the `Run check` above, one card per run: the runs used a 4-fs time step, and the bundled topology's hydrogens all weigh 1.008 amu. A run on an HMR topology does not raise it.
+
+The panel shows a status badge — `N lineage error(s)` for a category error, else `N stage(s) with errors` if any step failed, else `Valid, with N note(s)` if there is anything to review, else `All checks passed` — then any protocol notes, then a per-step card (`ok`/`error` badge, errors/warnings/info) you can click to select that step (§6). The notes counted are the protocol-level notes, lineage warnings, sequence holes (`missing_run`), and each run's own findings: the same set `ambermeta validate --manifest --strict` fails on, so the badge is green only for a document that command passes. On the sample it reads `Valid, with 5 note(s)`, one per `Run check`.
 
 ---
 
@@ -501,7 +511,7 @@ $ curl -s -o /dev/null -w '%{http_code}\n' 'http://127.0.0.1:8799/api/nonexisten
   "simulation": {
     "version": 2,
     "topologies": [ { "id": "top_CH3L1_HUMAN_6NAG", "path": "CH3L1_HUMAN_6NAG.top", "kind": "normal" } ],
-    "starting_structure": "CH3L1_HUMAN_6NAG.crd",
+    "starting_structure": "ntp_prod_0000.rst",
     "phases": [
       { "id": "a2a37983", "name": "Production", "role": "production",
         "steps": [
@@ -510,7 +520,7 @@ $ curl -s -o /dev/null -w '%{http_code}\n' 'http://127.0.0.1:8799/api/nonexisten
             "mdin": "ntp_prod_0001.mdin", "mdout": "ntp_prod_0001.mdout", "mdcrd": null,
             "rst": "ntp_prod_0001.rst",
             "lineage": null,
-            "resolved_input_coords": "CH3L1_HUMAN_6NAG.crd",
+            "resolved_input_coords": "ntp_prod_0000.rst",
             "expected_gap_ps": null, "gap_tolerance_ps": null, "notes": [] }
         ] }
     ]

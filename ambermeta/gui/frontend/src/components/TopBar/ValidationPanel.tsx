@@ -4,6 +4,8 @@ import { useValidate, useDocument } from "@/api/hooks";
 import { useSelection } from "@/state/selection";
 import type { Suggestion } from "@/types";
 
+const FINDING_KINDS = new Set(["missing_run", "step_check", "unfinished_run", "input_mismatch"]);
+
 export function ValidationPanel(
   { open, onClose, onSuggestions }:
   { open: boolean; onClose: () => void; onSuggestions?: (suggestions: Suggestion[]) => void }
@@ -25,8 +27,16 @@ export function ValidationPanel(
   const coherence = report?.coherence ?? [];
   const coherenceErrors = coherence.filter((f) => f.severity === "error");
   const stageErrors = report?.stage_issues.filter((s) => !s.ok).length ?? 0;
+  // The findings `--strict` fails on that are not already a protocol note: a sequence hole
+  // and a run's own findings. `continuity_gap` is left out because each one is also in
+  // `protocol_issues`, which is counted above. Without these the badge stayed green for a
+  // document the CLI exits 1 on.
+  const findingCount = (report?.suggestions ?? []).filter(
+    (s) => s.severity === "needs_you" && FINDING_KINDS.has(s.kind),
+  ).length;
   const noteCount = (report?.protocol_issues.length ?? 0)
-    + coherence.filter((f) => f.severity === "warning").length;
+    + coherence.filter((f) => f.severity === "warning").length
+    + findingCount;
 
   // A category error -- members holding different atom counts, or minimisation mixed with
   // dynamics -- is not attached to any one stage, so the old ladder (which read only
