@@ -41,6 +41,16 @@ def _same_file(a: str, b: str) -> bool:
         return os.path.normcase(os.path.abspath(a)) == os.path.normcase(os.path.abspath(b))
 
 
+def _same_content(a: str, b: str) -> bool:
+    """A byte-for-byte copy: a replica directory's copy of the equilibration's restart is
+    the restart the Step declares, whatever its path."""
+    import filecmp
+    try:
+        return filecmp.cmp(a, b, shallow=False)
+    except OSError:
+        return False
+
+
 def _display(path: str, run_directory: str) -> str:
     """`path` as the run's directory would spell it: short, and unambiguous beside it."""
     try:
@@ -59,7 +69,7 @@ def compare_recorded_input(declared_path: str, recorded: str,
     """
     here = _resolve_here(recorded, run_directory)
     if here is not None and os.path.exists(declared_path):
-        if _same_file(here, declared_path):
+        if _same_file(here, declared_path) or _same_content(here, declared_path):
             return None
     else:
         parts = [part for part in recorded.replace("\\", "/").split("/") if part]

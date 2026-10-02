@@ -978,10 +978,12 @@ class SimulationProtocol:
         Measured against what it declares, a run that read an older restart than it
         should have is consistent in time: segment 4 read segment 2's restart, and
         segment 2 ended when that restart says. What shows it is the branch: segments 3
-        and 4 both continue segment 2. Two runs of one directory and one member that
-        continue the same restart are therefore reported on the later one. Replicas that
+        and 4 both continue segment 2. Runs of one directory and one member that continue
+        the same restart are therefore reported, each of them, since nothing says which
+        one went wrong. Only runs with an mdout count: a queued run, or an analysis
+        script typed as an mdin (`rep_1_cpptraj_input.in`), read nothing. Replicas that
         branch from a shared equilibration sit in directories (or members) of their own,
-        and are not.
+        and are not reported.
         """
         by_step_id = {s.step_id: s for s in self.stages}
         multi_member = any(stage.lineage for stage in self.stages)
@@ -998,17 +1000,23 @@ class SimulationProtocol:
                 f"INFO: Continuity for {stage.name} was not measured ({reason})."
             )
 
-        first_reader: Dict[Tuple[str, str, Optional[str]], SimulationStage] = {}
+        readers: Dict[Tuple[str, str, Optional[str]], List[SimulationStage]] = {}
         for stage in self.stages:
             producer = by_step_id.get(stage.parent_id) if stage.parent_id else None
-            if producer is None or producer is stage:
+            if producer is None or producer is stage or stage.mdout is None:
                 continue
             key = (producer.step_id, stage.name.rpartition("/")[0], stage.lineage or None)
-            earlier = first_reader.setdefault(key, stage)
-            if earlier is not stage:
+            readers.setdefault(key, []).append(stage)
+        for (producer_id, _, _), group in readers.items():
+            if len(group) < 2:
+                continue
+            producer = by_step_id[producer_id]
+            for stage in group:
+                others = [s.name for s in group if s is not stage]
                 stage._add_continuity_note(
-                    f"Continues from {producer.name}, as {earlier.name} does: two runs "
-                    "in one directory continue the same restart."
+                    f"Continues from {producer.name}, as {', '.join(others)} "
+                    f"{'does' if len(others) == 1 else 'do'}: {len(group)} runs in one "
+                    "directory continue the same restart."
                 )
 
     def _check_stage_pair(

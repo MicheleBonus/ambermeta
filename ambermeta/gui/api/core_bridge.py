@@ -742,7 +742,7 @@ def _recorded_starting_structure(sim, grouped, base_directory):
       directory);
     * a recorded path is read from the run's directory, and a path that does not resolve
       there (the absolute path of another machine) is looked up by file name beside the
-      mdout;
+      mdout, then anywhere in the tree, where one file that no run wrote has that name;
     * a restart that a run in the draft wrote is a continuation, not a start, and is not
       counted;
     * every Step that could be followed must agree on one file, or the pick is kept.
@@ -775,11 +775,20 @@ def _recorded_starting_structure(sim, grouped, base_directory):
         here = None
         if not os.path.isabs(recorded):
             here = os.path.normpath(os.path.join(run_directory, recorded))
+        name = recorded.replace("\\", "/").rstrip("/").rpartition("/")[2]
         if not here or not os.path.isfile(here):
-            here = os.path.join(run_directory,
-                                recorded.replace("\\", "/").rstrip("/").rpartition("/")[2])
+            here = os.path.join(run_directory, name)
         if not os.path.isfile(here):
-            continue
+            # A path from another machine, naming a file kept elsewhere in this tree
+            # (`.../prepi/../cryst/Cdr1_ECD.inpcrd`): the one coordinate file of that name
+            # that no run wrote.
+            found = {os.path.abspath(path) for kinds in grouped.values()
+                     for kind, path in kinds.items()
+                     if kind in ("inpcrd", "mdcrd") and path and os.path.basename(path) == name
+                     and os.path.normcase(os.path.abspath(path)) not in run_written}
+            if len(found) != 1:
+                continue
+            here = found.pop()
         key = os.path.normcase(os.path.abspath(here))
         if key not in run_written:
             candidates[key] = os.path.abspath(here)
@@ -803,6 +812,15 @@ def _same_file(a, b):
         return False
 
 
+def _same_content(a, b):
+    """Whether two files hold the same bytes: a copy, not merely a namesake."""
+    import filecmp
+    try:
+        return filecmp.cmp(a, b, shallow=False)
+    except OSError:
+        return False
+
+
 def _recorded_producers(run_stems, grouped, tags, headers):
     """Which run each run continued, by the INPCRD its mdout records.
 
@@ -814,8 +832,10 @@ def _recorded_producers(run_stems, grouped, tags, headers):
     The record is a path as typed where the run executed: relative to a working directory,
     or absolute on another machine. Resolved in order:
 
-    * as a path from the run's own directory; a hit that some run wrote is that run, and
-      a hit no run wrote (the system's coordinates) makes the run a start;
+    * as a path from the run's own directory; a hit that some run wrote is that run; a
+      hit that is a byte-for-byte copy of a restart some run wrote is that run (replica
+      directories often hold a copy of the equilibration's last restart, and the mdout
+      names the copy); any other hit (the system's coordinates) makes the run a start;
     * by file name among the restarts the runs wrote: one candidate is that run; among
       several, the one whose path shares the most trailing directories with the record
       (at least one beyond the name), then the one in the run's own directory, then the
@@ -867,6 +887,12 @@ def _recorded_producers(run_stems, grouped, tags, headers):
             if producer is None:
                 producer = next((s for s in rst_by_name.get(os.path.basename(candidate), [])
                                  if _same_file(grouped[s]["inpcrd"], candidate)), None)
+            if producer is None:
+                copied = [s for s in rst_by_name.get(os.path.basename(candidate), [])
+                          if s != stem and _same_content(grouped[s]["inpcrd"], candidate)]
+                if len(copied) > 1:
+                    copied = [s for s in copied if tags.get(stem) and tags.get(s) == tags.get(stem)]
+                producer = copied[0] if len(copied) == 1 else None
             if producer is None:
                 out[stem] = _RECORDED_START
                 continue
@@ -1012,6 +1038,12 @@ def discover_draft(base_directory, recursive=True, pattern=None, apply_tags=True
     # starting structure: a single-frame coordinate file in a group whose coordinates no run
     # wrote -- the engine's own predicate (#87). A chunk that kept only its trajectory and
     # restart wrote that restart; it is not where the simulation began.
+    # A byte-for-byte copy of a run's restart (replica directories often hold one) is a
+    # run's output too, wherever it was copied to.
+    run_restarts = {}
+    for kinds in grouped.values():
+        if kinds.get("inpcrd") and _coords_are_run_output(kinds):
+            run_restarts.setdefault(os.path.basename(kinds["inpcrd"]), []).append(kinds["inpcrd"])
     starting = None
     for kinds in grouped.values():
         if _coords_are_run_output(kinds):
@@ -1019,6 +1051,8 @@ def discover_draft(base_directory, recursive=True, pattern=None, apply_tags=True
         for k in ("inpcrd", "mdcrd"):
             cand = kinds.get(k)
             if cand and sniff_coordinate_kind(cand) == "inpcrd":
+                if any(_same_content(cand, r) for r in run_restarts.get(os.path.basename(cand), [])):
+                    continue
                 starting = _relativize(cand, base_directory)
                 break
         if starting:

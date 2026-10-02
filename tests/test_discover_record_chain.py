@@ -82,6 +82,44 @@ def test_a_record_that_points_into_another_replica_is_not_followed(tmp_path):
     assert len(found) == 1 and "rep1/prod_0002.restrt" in found[0]["evidence"]
 
 
+def test_a_copy_of_a_runs_restart_links_to_that_run(tmp_path):
+    """Replica directories often hold a copy of the equilibration's last restart, and the
+    mdout names the copy. The copy is that run's restart: the content decides, which also
+    tells the replicas' equilibrations apart."""
+    runs = []
+    for rep in ("run1", "run2"):
+        runs += [(f"equil/{rep}/07_eq", _run("06_eq.restrt", 0.0)),
+                 (f"prod/{rep}/prod_0001", _run("07_eq.restrt", 5.0))]
+    tree = write_run_tree(tmp_path, runs)
+    for rep in ("run1", "run2"):
+        (tree / "prod" / rep / "07_eq.restrt").write_bytes(
+            (tree / "equil" / rep / "07_eq.restrt").read_bytes())
+    sim, edges = _edges(tree)
+    assert edges["prod/run1/prod_0001"] == "equil/run1/07_eq"
+    assert edges["prod/run2/prod_0001"] == "equil/run2/07_eq"
+    assert sim.starting_structure is None       # the copies are not where it began
+    report = core_bridge.validate_simulation(sim, {"strict_validation": True}, str(tree))
+    names = {s.id: s.name for _, s in iter_steps(sim)}
+    mismatched = {names[s["step_id"]] for s in report["suggestions"]
+                  if s["kind"] == "input_mismatch"}
+    # the equilibrations declare no starting structure, so they have nothing to compare
+    assert mismatched == set()
+
+
+def test_a_script_that_never_ran_makes_no_branch(tmp_path):
+    """An analysis script typed as an mdin is drafted as a step and chained by file order,
+    but it read nothing: no branch is reported for it."""
+    tree = write_run_tree(tmp_path, [
+        ("prod/npt_prod_0050", _run("npt_prod_0049.restrt", 0.0)),
+        ("prod/npt_prod_0051", _run("npt_prod_0050.restrt", 5.0)),
+    ])
+    (tree / "prod" / "rep_1_cpptraj_input.in").write_text("trajin npt_prod_0050.nc\n")
+    sim, _ = _edges(tree)
+    report = core_bridge.validate_simulation(sim, {"strict_validation": True}, str(tree))
+    assert not any("continue the same restart" in s["evidence"]
+                   for s in report["suggestions"] if s["kind"] == "continuity_gap")
+
+
 def test_records_that_form_a_cycle_fall_back_to_file_order(tmp_path):
     tree = write_run_tree(tmp_path, [
         ("prod_0001", _run("prod_0002.restrt", 0.0)),
