@@ -292,7 +292,13 @@ class SimulationStage:
         _compare(expected_durations, "Simulation duration", "ps")
 
         if mdcrd_duration and expected_durations:
-            default_tolerance = 1e-6
+            # The trajectory's duration is first frame to last frame, and AMBER writes its
+            # first frame after `ntwx` steps, not at step 0, and its last at the largest
+            # multiple of `ntwx` within the run. So a run of `nstlim` steps spans
+            # (floor(nstlim/ntwx) - 1) * ntwx steps of trajectory, not `nstlim`: 22 ps for a
+            # 12,500-step, 2 fs run writing every 1,000 steps. Comparing with `nstlim * dt`
+            # reported 278 healthy runs of the deposited corpus as mismatched.
+            ntwx = self._coord_interval_steps()
             mdcrd_timestep = (
                 getattr(self.mdcrd.details, "avg_dt", None) if self.mdcrd and self.mdcrd.details else None
             )
@@ -300,19 +306,57 @@ class SimulationStage:
             for label, duration in expected_durations.items():
                 if not isinstance(duration, (int, float)):
                     continue
+                dt = timesteps.get(label)
+                expected = _written_span_ps(step_counts.get(label), dt, ntwx)
+                if expected is not None:
+                    tolerance = max(1e-3, float(dt), 1e-6 * abs(expected))
+                    if abs(expected - mdcrd_duration) > tolerance:
+                        notes.append(
+                            f"Trajectory duration from mdcrd ({mdcrd_duration:g} ps) differs from "
+                            f"expected duration from {label} ({expected:g} ps for frames written "
+                            f"every {ntwx} steps)."
+                        )
+                    continue
 
-                tolerance = default_tolerance
+                # The write interval is not known, so only bounds can be checked: the span
+                # can fall short of the run by up to two frame intervals (the first frame,
+                # and the remainder after the last), and cannot exceed it by more than one.
+                interval = 1e-6
                 if isinstance(mdcrd_timestep, (int, float)):
-                    tolerance = max(tolerance, float(mdcrd_timestep))
-                if isinstance(timesteps.get(label), (int, float)):
-                    tolerance = max(tolerance, float(timesteps[label]))
-
-                if abs(duration - mdcrd_duration) > tolerance:
+                    interval = max(interval, float(mdcrd_timestep))
+                if isinstance(dt, (int, float)):
+                    interval = max(interval, float(dt))
+                if not (duration - 2 * interval - 1e-6 <= mdcrd_duration <= duration + interval):
                     notes.append(
                         f"Trajectory duration from mdcrd ({mdcrd_duration:g} ps) differs from expected duration from {label} ({duration:g} ps)."
                     )
 
         return notes
+
+    def _coord_interval_steps(self) -> Optional[int]:
+        """`ntwx` as the run used it (the mdout header), else as its mdin asked for it."""
+        value = self.mdout_header.control_ntwx if self.mdout_header is not None else None
+        if not value and self.mdin and self.mdin.details:
+            value = getattr(self.mdin.details, "coord_freq", None)
+        return int(value) if isinstance(value, (int, float)) and value > 0 else None
+
+    def _print_interval_steps(self) -> Optional[int]:
+        """`ntpr` as the run used it (the mdout header), else as its mdin asked for it."""
+        value = self.mdout_header.control_ntpr if self.mdout_header is not None else None
+        if not value and self.mdin and self.mdin.details:
+            value = getattr(self.mdin.details, "energy_freq", None)
+        return int(value) if isinstance(value, (int, float)) and value > 0 else None
+
+    def _run_steps(self) -> Optional[int]:
+        """`nstlim` as the run used it: the mdout header, the mdout, then the mdin."""
+        for value in (
+            self.mdout_header.control_nstlim if self.mdout_header is not None else None,
+            getattr(self.mdout.details, "nstlim", None) if (self.mdout and self.mdout.details) else None,
+            getattr(self.mdin.details, "length_steps", None) if (self.mdin and self.mdin.details) else None,
+        ):
+            if isinstance(value, (int, float)) and value > 0:
+                return int(value)
+        return None
 
     def _validate_sampling(self) -> List[str]:
         # The mdout side comes from its header's CONTROL DATA block. `MdoutMetadata` has
@@ -505,6 +549,40 @@ class SimulationStage:
             },
         })
         return out
+
+
+def _written_span_ps(nsteps: Any, dt: Any, interval_steps: Optional[int]) -> Optional[float]:
+    """First-to-last span, in ps, of a record AMBER writes every `interval_steps` steps.
+
+    AMBER writes after `interval_steps` steps, then every `interval_steps`, and stops at the
+    largest multiple within `nsteps`; nothing is written at step 0. None when the inputs do
+    not determine it or fewer than two records are written.
+    """
+    if not interval_steps or not isinstance(nsteps, (int, float)) or not isinstance(dt, (int, float)):
+        return None
+    if interval_steps <= 0 or nsteps <= 0 or dt <= 0:
+        return None
+    count = int(nsteps) // int(interval_steps)
+    if count < 2:
+        return None
+    return (count - 1) * int(interval_steps) * float(dt)
+
+
+def _record_tail_ps(nsteps: Optional[int], dt: Optional[float], interval_steps: Optional[int],
+                    count: Any) -> float:
+    """How long the run went on after the last record (frame or printed energy), in ps.
+
+    `(nsteps mod interval) * dt` when the record is complete, that is when it holds the
+    `floor(nsteps / interval)` records AMBER writes (or one more, where step 0 was written
+    too); 0 otherwise. A record that stops short belongs to a run that stopped short, and
+    adding a tail there would hide exactly the gap continuity is looking for.
+    """
+    if not nsteps or not dt or not interval_steps or not isinstance(count, (int, float)):
+        return 0.0
+    expected = int(nsteps) // int(interval_steps)
+    if expected < 1 or int(count) not in (expected, expected + 1):
+        return 0.0
+    return (int(nsteps) - expected * int(interval_steps)) * float(dt)
 
 
 def _fenced_elapsed_ps(stats: Optional["ThermoStats"]) -> Optional[float]:
@@ -832,6 +910,9 @@ class SimulationProtocol:
             self._check_continuity(allow_unexpected_gaps=allow_unexpected_gaps)
 
     def _check_continuity(self, allow_unexpected_gaps: bool = False) -> None:
+        if self.stages and all(stage.step_id for stage in self.stages):
+            self._check_declared_edges(allow_unexpected_gaps=allow_unexpected_gaps)
+            return
         if not any(stage.lineage for stage in self.stages):
             # One member: the partition below reduces to exactly this zip, but the head
             # check would add a note to the document's first stage. `observed_gap_ps` and
@@ -880,6 +961,35 @@ class SimulationProtocol:
                 continue
             self._check_stage_pair(producer, head, allow_unexpected_gaps=allow_unexpected_gaps)
 
+    def _check_declared_edges(self, allow_unexpected_gaps: bool = False) -> None:
+        """Continuity for a document: every stage against the stage it declares it read.
+
+        A document states its edges, so neither document order nor member order is
+        consulted. Comparing a stage with its document-order neighbour measured runs that
+        never met: a minimisation that starts from the starting structure, filed after an
+        equilibration because `equilibration/` sorts before `minimization/`, "overlapped"
+        that equilibration by its whole length, on every replica of three deposited
+        projects. A stage that declares no producer -- it reads the starting structure or
+        an explicit file -- has nothing to be compared with, and says so.
+
+        The one exception keeps an untagged document's first stage without a note, as the
+        neighbour zip always left it: its summary.json would otherwise change for nothing.
+        """
+        by_step_id = {s.step_id: s for s in self.stages}
+        multi_member = any(stage.lineage for stage in self.stages)
+        for index, stage in enumerate(self.stages):
+            producer = by_step_id.get(stage.parent_id) if stage.parent_id else None
+            if producer is not None and producer is not stage:
+                self._check_stage_pair(producer, stage, allow_unexpected_gaps=allow_unexpected_gaps)
+                continue
+            if index == 0 and not multi_member and not stage.parent_id:
+                continue
+            reason = ("no producing stage resolved" if stage.parent_id
+                      else "it declares no producing stage")
+            stage._add_continuity_note(
+                f"INFO: Continuity for {stage.name} was not measured ({reason})."
+            )
+
     def _check_stage_pair(
         self,
         prev: SimulationStage,
@@ -893,13 +1003,25 @@ class SimulationProtocol:
         continues from. The body is unchanged; only the loop's `continue`s became
         `return`s.
         """
+        # The end is the producer's last trajectory frame, or its last printed energy, plus
+        # whatever the run did after that record: up to one write interval when `nstlim` is
+        # not a multiple of it. Without that tail, a 62,500-step run printing every 1,000
+        # steps "ended" 1 ps before it did, and every such pair reported a gap.
         end_time = None
+        run_steps = prev._run_steps()
+        run_dt = _timestep_ps(prev)
         if prev.mdcrd and prev.mdcrd.details:
             end_time = getattr(prev.mdcrd.details, "time_end", None)
+            if end_time is not None:
+                end_time += _record_tail_ps(run_steps, run_dt, prev._coord_interval_steps(),
+                                            getattr(prev.mdcrd.details, "n_frames", None))
         if end_time is None and prev.mdout and prev.mdout.details:
             stats = getattr(prev.mdout.details, "stats", None)
             if stats is not None and getattr(stats, "count", 0):
                 end_time = getattr(stats, "time_end", None)
+                if end_time is not None:
+                    end_time += _record_tail_ps(run_steps, run_dt, prev._print_interval_steps(),
+                                                getattr(stats, "count", None))
 
         start_time = None
         # `inpcrd_is_own_restart` is the scan path saying "that file is this run's output,
@@ -991,11 +1113,14 @@ class SimulationProtocol:
         default_tolerance = 0.1
         if isinstance(prior_dt, (int, float)) and prior_dt > 0:
             default_tolerance = max(default_tolerance, float(prior_dt) * 0.5)
+        # Frame times are single precision in AMBER's NetCDF files, so a gap of exactly the
+        # tolerance arrives as 1.000000000007; that is the tolerance, not more than it.
+        noise = 1e-6
 
         # When no explicit gap expectation is provided, treat small
         # differences as numerical noise instead of real gaps/overlaps.
         if current.expected_gap_ps is None:
-            if abs(gap) <= default_tolerance:
+            if abs(gap) <= default_tolerance + noise:
                 gap = 0.0
 
         # Sanity check: massive gaps (> 1e6 ps = 1 µs) are likely errors
@@ -1012,7 +1137,7 @@ class SimulationProtocol:
 
         if gap < 0:
             # Small negative gaps within tolerance are likely floating-point noise
-            if abs(gap) > default_tolerance:
+            if abs(gap) > default_tolerance + noise:
                 current._add_continuity_note(
                     f"Stage appears to overlap previous stage by {abs(gap):g} ps."
                 )
