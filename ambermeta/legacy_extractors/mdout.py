@@ -311,6 +311,30 @@ _SANDER_WALLCLOCK = "wallclock() was called"
 _SANDER_TOTAL_TIME = re.compile(r"\|\s*Total time\s+([\d.]+)\s*\(\s*[\d.]+%\s*of ALL")
 
 
+# The values `ThermoStats.add_frame` reads from a printed frame. A frame block holds
+# twenty-odd `KEY = value` pairs and only these are used, so `_extract_frame_values`
+# converts only these: the mdout parser was most of a Validate, and much of it was
+# converting values nothing read.
+_FRAME_KEYS = frozenset(("TIME(PS)", "TEMP(K)", "PRESS", "Etot", "Density", "VOLUME",
+                         "BOND", "ANGLE", "DIHED", "VDWAALS", "EELEC"))
+
+
+def _extract_frame_values(block: str) -> Dict[str, Any]:
+    """`_extract_key_values(block)` restricted to the keys a frame's statistics use.
+
+    The same tokeniser and the same rules -- the spaced 1-4 terms first, then the first
+    occurrence of each other key -- so those keys carry the same values.
+    """
+    result: Dict[str, Any] = {}
+    for m in _SPACED_ENERGY_KEY.finditer(block):
+        key = _WHITESPACE.sub(" ", m.group(1)).strip()
+        result[key] = _parse_value(m.group(2))
+    for k, v in _KEY_VALUE.findall(block):
+        if k in _FRAME_KEYS and k not in result:
+            result[k] = _parse_value(v)
+    return result
+
+
 def _extract_key_values(line: str) -> Dict[str, Any]:
     result: Dict[str, Any] = {}
     # AMBER's spaced energy keys first so they win over the generic matcher.
@@ -438,7 +462,7 @@ def parse_mdout(filepath: str) -> MdoutMetadata:
                     if "---" in nl or not nl: break
                     combined += " " + nl
                 
-                data = _extract_key_values(combined)
+                data = _extract_frame_values(combined)
                 md.stats.add_frame(data)
 
         # --- 5. Performance ---
@@ -457,11 +481,13 @@ def parse_mdout(filepath: str) -> MdoutMetadata:
         # breakdown and a `Run done at` line, and all five were reported
         # `finished_properly=False, wall_time_seconds=0.0` -- the only five of 1091 mdouts
         # flagged as not finished in the whole tree, every one a false positive.
-        if _SANDER_WALLCLOCK in line or _SANDER_DONE.search(line):
+        # Literal tests first: these two regexes ran on every line of every mdout.
+        if _SANDER_WALLCLOCK in line or ("done at" in line and _SANDER_DONE.search(line)):
             md.finished_properly = True
-        sander_total = _SANDER_TOTAL_TIME.search(line)
-        if sander_total:
-            md.wall_time_seconds = float(sander_total.group(1))
+        if "Total time" in line:
+            sander_total = _SANDER_TOTAL_TIME.search(line)
+            if sander_total:
+                md.wall_time_seconds = float(sander_total.group(1))
 
 
         if "ns/day =" in line:
