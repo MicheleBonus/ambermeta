@@ -388,10 +388,13 @@ Suggestions:
 
 `ntp_prod_0000` (a bare restart with no `mdin`/`mdout`) isn't turned into a step at all — a step needs at least an `mdin`/`mdout` pair to be a "run"; it is simply excluded from the draft. It is the starting structure because `ntp_prod_0001`'s mdout records it as INPCRD in its `File Assignments` block: where the first runs' mdouts name one file that is found in the directory and that no run wrote, `discover` takes that file. Otherwise it falls back to the first single-frame coordinate file, in path order, that no run wrote, which here would be the tLEaP output `CH3L1_HUMAN_6NAG.crd`. The printed `input=restart of <step> (<file>)` names the *producing step* and the restart it resolves to, not the raw id: step ids (`10428ec4`, ... in the manifest below) are `uuid4` slices, regenerated on every run, so nothing user-facing prints them and nothing should depend on them being stable across invocations of `discover`.
 
+Each step continues the run whose restart its mdout records as INPCRD in the `File Assignments` block. The record is resolved as a path from the run's directory or, for a path from another machine, by file name among the restarts the runs wrote; several with that name are told apart by the trailing directories the record shares with them, then the run's own directory, then its replica. A record that points into another replica is not followed. Where the mdout records nothing usable (no mdout, a clipped path, an unknown or ambiguous name), the step continues the previous run of its directory in file order, and the first run of a directory reads the starting structure. Runs are written so that each producer precedes the runs that read it, and directories in role order (minimization, heating, equilibration, production), whatever their names. Where the pool holds several topologies, each run is bound to the one whose atom count matches its mdout's `NATOM`. The draft is a proposal to check, not a result: review it in the editor or in the manifest before relying on it.
+
 ### Replica trees
 
 When the layout names members — sibling directories whose run sets the inference can reconcile — `discover` tags each
-step with a `lineage` and chains each member separately from the starting structure:
+step with a `lineage` and chains each member separately; a record that points into another member is not
+followed:
 
 ```text
 $ ambermeta discover runs/
@@ -558,7 +561,7 @@ Each run's own findings print under the title of their kind:
 |---|---|---|
 | `step_check` | Run check | The run's files disagree: atom counts across its files (a count of 0 is "not stated", so an ASCII trajectory or a NetCDF file read without netCDF4/SciPy raises nothing); mdin against mdout on step count, time step, duration, or coordinate write frequency (`ntwx`, as the mdout's CONTROL DATA block records it); or a time step above 2 fs on a topology whose hydrogen masses are standard. |
 | `unfinished_run` | Run did not finish | The mdout has no AMBER completion marker: the run stopped early or is still running. |
-| `input_mismatch` | Declared input differs from the recorded one | The input coordinates the step declares are not the INPCRD in its mdout's `File Assignments` block. A recorded path that resolves on this machine is compared as a file; an absolute path from another machine is compared by file name; a value AMBER clipped at its field width is never compared. |
+| `input_mismatch` | Declared input differs from the recorded one | The input coordinates the step declares are not the INPCRD in its mdout's `File Assignments` block. A recorded path that resolves on this machine is compared as a file; an absolute path from another machine is compared by file name, unless a directory of the recorded name sits beside the declared file's directory and holds that file (a replica that read another replica's restart); a value AMBER clipped at its field width is never compared. |
 
 There is no box-consistency check.
 
@@ -620,11 +623,13 @@ $ ambermeta validate --manifest sim.yaml --format json
 
 **On a manifest that declares lineages**, both checks are scoped per member:
 
-- Continuity compares consecutive steps **within** a member, and measures each member's first step against
-  the step it actually continues from. Where no producer resolves — which is every head of a `discover`ed
-  replica tree, since each reads the starting structure — it reports
-  `INFO: Continuity for <name> was not measured (no producing stage resolved).` rather than staying silent.
-  A member boundary is not a gap and is never a finding.
+- Continuity measures each step against the step it declares as its producer, whatever their order in
+  the document. A step that declares the starting structure or an explicit file reports
+  `INFO: Continuity for <name> was not measured (it declares no producing stage).` rather than staying
+  silent. A member boundary is not a gap and is never a finding. Two runs of one directory and one member
+  that continue the same restart are reported on the later one (`continuity_gap`:
+  `Continues from <run>, as <run> does: two runs in one directory continue the same restart.`), which is
+  how a run that read an older restart than it should have shows.
 - A sequence hole is reported per member, so a replica that stopped early is named
   (`rep2/prod sequence is missing member(s) 2, 3`, with `"lineage": "rep2"` on the suggestion) instead of
   being hidden by its siblings' indices, and members numbered on offset scales raise nothing.

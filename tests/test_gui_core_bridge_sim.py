@@ -359,11 +359,18 @@ def test_discover_reports_the_replica_that_stopped_early(crashed_replica_tree):
 # discover_draft never invents a cross-directory continuation (P1.3)
 # ---------------------------------------------------------------------------
 
-def test_discover_draft_never_chains_across_a_run_directory(sys021_tree):
+def test_discover_draft_never_chains_across_a_run_directory_without_a_record(sys021_tree):
     """The nine edges this removes were the whole reason a 1097-run campaign published as
     one serial 5.055 us trajectory. They self-validated, too: resolve_input_coords hands a
     source="step" consumer the PRODUCER'S OWN restart, so _check_stage_pair compared a
-    run's end time against its own output and saw observed_gap_ps = 0.0 every time."""
+    run's end time against its own output and saw observed_gap_ps = 0.0 every time.
+
+    File order alone never crosses a directory. Only a recorded input does (next test), so
+    here every mdout's INPCRD row is removed first."""
+    for mdout in sys021_tree.rglob("*.mdout"):
+        text = mdout.read_text(encoding="utf-8")
+        mdout.write_text("".join(line for line in text.splitlines(keepends=True)
+                                 if not line.startswith("| INPCRD:")), encoding="utf-8")
     sim = core_bridge.discover_draft(str(sys021_tree), recursive=True)["simulation"]
     by_id = {s.id: s for _, s in iter_steps(sim)}
     for _, step in iter_steps(sim):
@@ -371,6 +378,21 @@ def test_discover_draft_never_chains_across_a_run_directory(sys021_tree):
             producer = by_id[step.input_coords.ref]
             assert producer.name.rpartition("/")[0] == step.name.rpartition("/")[0], (
                 f"{step.name} reads a restart written by {producer.name}")
+
+
+def test_discover_draft_follows_the_recorded_input_within_its_replica(sys021_tree):
+    """Every prod head records the bare name `18_ntp_equi.restrt`, which all five equil
+    directories hold. The replica tells them apart: each head continues its own replica's
+    equilibration, and no edge leaves a replica."""
+    sim = core_bridge.discover_draft(str(sys021_tree), recursive=True)["simulation"]
+    by_id = {s.id: s for _, s in iter_steps(sim)}
+    edges = {s.name: by_id[s.input_coords.ref].name
+             for _, s in iter_steps(sim)
+             if s.input_coords and s.input_coords.source == "step"}
+    for n in ("01", "02", "03", "04", "05"):
+        assert edges[f"prod/{n}/nvt_prod_0001"] == f"equil/{n}/18_ntp_equi"
+    for consumer, producer in edges.items():
+        assert consumer.split("/")[1] == producer.split("/")[1], (consumer, producer)
 
 
 def test_discover_draft_still_chains_within_one_directory(sys021_tree):
@@ -390,8 +412,8 @@ def test_discover_draft_still_chains_within_one_directory(sys021_tree):
              if s.input_coords and s.input_coords.source == "step"}
     assert edges["prod/01/nvt_prod_0002"] == "prod/01/nvt_prod_0001"
     assert edges["prod/01/nvt_prod_0003"] == "prod/01/nvt_prod_0002"
-    # The head of a directory reads the starting structure, not the previous directory.
-    assert "prod/01/nvt_prod_0001" not in edges
+    # The head of a directory continues the run its mdout records, in its own replica.
+    assert edges["prod/01/nvt_prod_0001"] == "equil/01/18_ntp_equi"
 
 
 # ---------------------------------------------------------------------------

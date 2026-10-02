@@ -788,6 +788,176 @@ def _recorded_starting_structure(sim, grouped, base_directory):
     return _relativize(next(iter(candidates.values())), base_directory)
 
 
+#: A run whose mdout records a coordinate file no run in the tree wrote: it starts the
+#: simulation (or a branch of it) rather than continuing a run.
+_RECORDED_START = object()
+
+#: Role order, for ordering directories that no recorded input orders.
+_ROLE_RANK = {"minimization": 0, "heating": 1, "equilibration": 2, "production": 3}
+
+
+def _same_file(a, b):
+    try:
+        return os.path.samefile(a, b)
+    except OSError:
+        return False
+
+
+def _recorded_producers(run_stems, grouped, tags, headers):
+    """Which run each run continued, by the INPCRD its mdout records.
+
+    Returns {consumer stem: producer stem, or _RECORDED_START}. A run is absent when its
+    mdout says nothing usable (no mdout, a clipped path, a name no file in the tree has, a
+    name several runs wrote that nothing below tells apart, its own restart), and
+    `discover_draft` then chains it by file order as before.
+
+    The record is a path as typed where the run executed: relative to a working directory,
+    or absolute on another machine. Resolved in order:
+
+    * as a path from the run's own directory; a hit that some run wrote is that run, and
+      a hit no run wrote (the system's coordinates) makes the run a start;
+    * by file name among the restarts the runs wrote: one candidate is that run; among
+      several, the one whose path shares the most trailing directories with the record
+      (at least one beyond the name), then the one in the run's own directory, then the
+      one in the run's own replica. On the campaign the handoff proposal was written
+      against, all five replicas record the bare name `18_ntp_equi.restrt`; the replica
+      is what tells them apart, as it is in `_propose_handoffs`.
+
+    A record that points into another replica is not followed. No automatic link may
+    cross a declared boundary (`crosses_lineage`); the run is chained by file order and
+    `validate` then reports that the recorded input differs from the declared one.
+    """
+    from collections import defaultdict
+
+    rst_by_key = {}
+    rst_by_name = defaultdict(list)
+    for stem in run_stems:
+        rst = grouped[stem].get("inpcrd")
+        if rst:
+            rst_by_key[os.path.normcase(os.path.abspath(rst))] = stem
+            rst_by_name[os.path.basename(rst)].append(stem)
+
+    def trailing_match(record_parts, stem):
+        rst = grouped[stem]["inpcrd"]
+        parts = stem.split("/")[:-1] + [os.path.basename(rst)]
+        n = 0
+        for a, b in zip(reversed(record_parts), reversed(parts)):
+            if a != b:
+                break
+            n += 1
+        return n
+
+    out = {}
+    for stem in run_stems:
+        header = headers.get(stem)
+        if header is None:
+            continue
+        named = header.assignment("INPCRD")
+        if not named:
+            continue
+        mdout = grouped[stem]["mdout"]
+        record_parts = [part for part in named.replace("\\", "/").split("/") if part]
+        if not record_parts:
+            continue
+        candidate = named if os.path.isabs(named) else os.path.join(os.path.dirname(mdout), named)
+        candidate = os.path.normpath(candidate)
+        producer = None
+        if os.path.isfile(candidate):
+            producer = rst_by_key.get(os.path.normcase(os.path.abspath(candidate)))
+            if producer is None:
+                producer = next((s for s in rst_by_name.get(os.path.basename(candidate), [])
+                                 if _same_file(grouped[s]["inpcrd"], candidate)), None)
+            if producer is None:
+                out[stem] = _RECORDED_START
+                continue
+        else:
+            names = [s for s in rst_by_name.get(record_parts[-1], []) if s != stem]
+            if len(names) == 1:
+                producer = names[0]
+            elif names:
+                scores = {s: trailing_match(record_parts, s) for s in names}
+                best = max(scores.values())
+                top = [s for s in names if scores[s] == best]
+                directory = stem.rpartition("/")[0]
+                same_dir = [s for s in top if s.rpartition("/")[0] == directory]
+                same_tag = [s for s in top if tags.get(stem) and tags.get(s) == tags.get(stem)]
+                if len(top) == 1 and best >= 2:
+                    producer = top[0]
+                elif len(same_dir) == 1:
+                    producer = same_dir[0]
+                elif len(same_tag) == 1:
+                    producer = same_tag[0]
+        if producer is None or producer == stem:
+            continue
+        if tags.get(stem) and tags.get(producer) and tags[stem] != tags[producer]:
+            continue
+        out[stem] = producer
+    return out
+
+
+def _execution_order(run_stems, recorded, roles):
+    """The runs in an order where every recorded producer precedes its consumer.
+
+    Among runs free to go next, directories go by the earliest role they hold
+    (minimisation, heating, equilibration, production, then the rest), and runs keep their
+    scan order. `minimization/` therefore precedes `equilibration/` although it sorts after
+    it, and within one directory a run follows the run it read, whatever their names: on
+    one deposited project `min_ntr_h` ran first and sorts after `md_nvt_red_06`.
+
+    Records that form a cycle are dropped from `recorded` (the runs keep scan order and
+    are chained by file order), since no order satisfies them.
+    """
+    import heapq
+    from collections import defaultdict
+
+    index = {stem: i for i, stem in enumerate(run_stems)}
+    dir_rank = {}
+    for stem in run_stems:
+        directory = stem.rpartition("/")[0]
+        rank = _ROLE_RANK.get(roles.get(stem) or "", len(_ROLE_RANK))
+        dir_rank[directory] = min(dir_rank.get(directory, rank), rank)
+
+    def key(stem):
+        return (dir_rank[stem.rpartition("/")[0]], index[stem], stem)
+
+    consumers = defaultdict(list)
+    waiting = {stem: 0 for stem in run_stems}
+    for consumer, producer in recorded.items():
+        if producer is not _RECORDED_START and producer in index:
+            consumers[producer].append(consumer)
+            waiting[consumer] += 1
+    heap = [key(stem) for stem in run_stems if waiting[stem] == 0]
+    heapq.heapify(heap)
+    order = []
+    while heap:
+        stem = heapq.heappop(heap)[2]
+        order.append(stem)
+        for consumer in consumers[stem]:
+            waiting[consumer] -= 1
+            if waiting[consumer] == 0:
+                heapq.heappush(heap, key(consumer))
+    if len(order) < len(run_stems):
+        placed = set(order)
+        stuck = sorted((s for s in run_stems if s not in placed), key=key)
+        stuck_set = set(stuck)
+        for stem in stuck:
+            if recorded.get(stem) in stuck_set:
+                del recorded[stem]
+        order.extend(stuck)
+    return order
+
+
+def _topology_for_atoms(choice, natom, natom_by_topology, kind_by_topology):
+    """The pool topology with `natom` atoms, preferring `choice`'s kind; else `choice`."""
+    if not natom or natom_by_topology.get(choice) == natom:
+        return choice
+    matching = [t for t, n in natom_by_topology.items() if n == natom]
+    if not matching:
+        return choice
+    same_kind = [t for t in matching if kind_by_topology.get(t) == kind_by_topology.get(choice)]
+    return (same_kind or matching)[0]
+
+
 def discover_draft(base_directory, recursive=True, pattern=None, apply_tags=True):
     """Scan `base_directory` into a Simulation draft, with a proposal beside it.
 
@@ -872,10 +1042,10 @@ def discover_draft(base_directory, recursive=True, pattern=None, apply_tags=True
     # ok: true, and self-validating because resolve_input_coords hands the consumer the
     # producer's own restart so the gap is always 0.0.
     #
-    # A directory boundary is the only boundary discovery can justify. Within one, the
+    # A directory boundary is the only boundary FILE ORDER can justify. Within one, the
     # chunked chain prod_0001 -> prod_0002 is what the numbering means. Across one, the
-    # evidence lives in the mdout's File Assignments block, and that is PROPOSED rather
-    # than written -- see the handoff proposal.
+    # evidence lives in the mdout's File Assignments block: where it identifies one run,
+    # the record is followed (`_recorded_producers`), and this map is only the fallback.
     prev_by_directory: Dict[str, str] = {}
     # Directories where at least one run demonstrably wrote a restart (an inpcrd-kind file
     # sitting beside it: `.rst`/`.rst7`/`.ncrst`/`.restrt`/`.inpcrd`). This is the
@@ -899,6 +1069,12 @@ def discover_draft(base_directory, recursive=True, pattern=None, apply_tags=True
     # how `multi_lineage` is derived, not what this does). A phase lookup that may only
     # start here can never move a member backwards, which is what keeps its steps in order.
     phase_index_by_lineage = {}
+
+    # Each run's mdin and mdout header, read once and before anything is written: the
+    # role and time step come from the one, the recorded input and atom count from the
+    # other, and the order the runs are written in depends on both.
+    facts = {}
+    headers = {}
     for stem in run_stems:
         kinds = grouped[stem]
         dt = None
@@ -909,29 +1085,67 @@ def discover_draft(base_directory, recursive=True, pattern=None, apply_tags=True
                 dt = getattr(mdin_details, "dt", None)
             except (IOError, OSError, ValueError, LookupError):
                 pass
-        role = classify_role(stem, mdin_details=mdin_details) or ""
+        facts[stem] = (mdin_details, dt, classify_role(stem, mdin_details=mdin_details) or "")
+        if kinds.get("mdout"):
+            try:
+                headers[stem] = read_mdout_header(kinds["mdout"])
+            except (IOError, OSError, ValueError, LookupError):
+                pass
+    # What each run read, as its mdout records it, and an order that writes every
+    # producer before the runs that read it. See `_recorded_producers`.
+    recorded = _recorded_producers(run_stems, grouped, tags, headers)
+    order = _execution_order(run_stems, recorded, {stem: f[2] for stem, f in facts.items()})
+
+    # Several topologies: bind each run to the one of its own size (the mdout's NATOM)
+    # rather than to the pool's first. One deposited project held nine, and every run was
+    # bound to an 857-atom vacuum topology.
+    natom_by_topology = {}
+    if len(sim.topologies) > 1:
+        from ambermeta.parsers import PrmtopParser
+        for t in sim.topologies:
+            try:
+                details = PrmtopParser(os.path.join(base_directory, t.path)).parse().details
+            except (IOError, OSError, ValueError, LookupError, TypeError, RuntimeError):
+                continue
+            natom_by_topology[t.id] = getattr(details, "natom", None)
+    kind_by_topology = {t.id: t.kind for t in sim.topologies}
+    step_id_by_stem: Dict[str, str] = {}
+
+    for stem in order:
+        kinds = grouped[stem]
+        mdin_details, dt, role = facts[stem]
         topology = hmr_topo if (hmr_topo and implies_hmr(dt)) else default_topo
+        header = headers.get(stem)
+        if natom_by_topology and header is not None:
+            topology = _topology_for_atoms(topology, header.natom, natom_by_topology,
+                                           kind_by_topology)
         tag = tags.get(stem)
         member = tag or UNTAGGED
-        # The chain boundary is the run DIRECTORY, not the lineage member. Two directories
-        # sharing one member -- `equil/05` and `prod/01` on an untagged tree, or two
-        # replicas that both fell into UNTAGGED -- are not evidence that one continues the
-        # other; that evidence is the mdout's File Assignments block, which this scan does
-        # not read. So the first step written in EACH directory starts over here, however
-        # many members or lineages that directory's stems share.
         directory = stem.rpartition("/")[0]
-        prev_step_id = prev_by_directory.get(directory)
-        if prev_step_id is None:
-            # The first run of each directory reads what tLEaP wrote alongside the
-            # topology. Which DIRECTORY is the point: keying this on the lineage member
-            # instead is what let `equil/05` hand its restart to `prod/01`, and let an
-            # untagged tree's one shared UNTAGGED bucket hand rep1's tail to rep2's head.
+        producer = recorded.get(stem)
+        if producer is _RECORDED_START:
+            # Its mdout names a coordinate file that no run wrote: it starts here.
             ic = InputCoords(source="starting_structure")
+        elif producer is not None and producer in step_id_by_stem:
+            # Its mdout names the restart of `producer`: the record, followed. This is
+            # also how a run continues a run in another directory.
+            ic = InputCoords(source="step", ref=step_id_by_stem[producer])
         else:
-            # Chained: this run's input coords ARE the previous run's output restart.
-            # The path lives on that producing step's `rst`, so the link is the ref alone
-            # and the file is named once rather than copied onto every consumer.
-            ic = InputCoords(source="step", ref=prev_step_id)
+            # No usable record: chain by file order, within the run's DIRECTORY. Two
+            # directories sharing one member -- `equil/05` and `prod/01` on an untagged
+            # tree, or two replicas that both fell into UNTAGGED -- are not evidence that
+            # one continues the other, so the first run of each directory reads the
+            # starting structure here. Keying this on the lineage member instead is what
+            # once let `equil/05` hand its restart to `prod/01`, and an untagged tree's
+            # one shared bucket hand rep1's tail to rep2's head.
+            prev_step_id = prev_by_directory.get(directory)
+            if prev_step_id is None:
+                ic = InputCoords(source="starting_structure")
+            else:
+                # Chained: this run's input coords ARE the previous run's output restart.
+                # The path lives on that producing step's `rst`, so the link is the ref
+                # alone and the file is named once rather than copied onto every consumer.
+                ic = InputCoords(source="step", ref=prev_step_id)
         # Same rule the engine uses (`_looks_queued`), reused rather than reimplemented: an
         # mdin declared with no mdout beside it, EXCEPT a same-extension file that never
         # was a real AMBER input (`sys021_tree`'s stray `cpptraj.in`) -- `mdin_details`
@@ -948,6 +1162,7 @@ def discover_draft(base_directory, recursive=True, pattern=None, apply_tags=True
             rst=_relativize(kinds.get("inpcrd"), base_directory),
             lineage=(tag if apply_tags else None), status=status,
         )
+        step_id_by_stem[stem] = step.id
         if multi_lineage:
             # One phase per role, shared by every member. Left contiguous, the replica-major
             # ordering opens a phase per role PER member — nine phases for three replicas of

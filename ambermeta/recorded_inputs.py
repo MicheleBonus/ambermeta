@@ -62,8 +62,28 @@ def compare_recorded_input(declared_path: str, recorded: str,
         if _same_file(here, declared_path):
             return None
     else:
-        recorded_name = recorded.replace("\\", "/").rstrip("/").rpartition("/")[2]
-        if recorded_name == os.path.basename(declared_path):
+        parts = [part for part in recorded.replace("\\", "/").split("/") if part]
+        recorded_name = parts[-1] if parts else ""
+        if recorded_name == os.path.basename(declared_path) and not _in_sibling(parts, declared_path):
             return None
     return (f"declares {_display(declared_path, run_directory)} as its input "
             f"coordinates, but its mdout records {recorded}")
+
+
+def _in_sibling(parts, declared_path: str) -> bool:
+    """Whether the record names a file of the same name in a sibling directory here.
+
+    A path from another machine cannot be resolved, so only names are compared, and
+    replicas name their restarts alike: `rep2/prod_0003` reading `rep1/prod_0002.restrt`
+    looked like reading its own `prod_0002.restrt`. Where the recorded directory exists
+    beside the declared file's directory and holds that file, the run read the other one.
+    A deposit whose directories were renamed after the runs (`equi1` on the cluster,
+    `run1` here) has no such sibling, and keeps the name comparison.
+    """
+    if len(parts) < 2:
+        return False
+    declared_dir = os.path.dirname(os.path.abspath(declared_path))
+    if parts[-2] == os.path.basename(declared_dir):
+        return False
+    candidate = os.path.join(os.path.dirname(declared_dir), parts[-2], parts[-1])
+    return os.path.isfile(candidate) and not _same_file(candidate, declared_path)

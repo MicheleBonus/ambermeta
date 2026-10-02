@@ -974,6 +974,14 @@ class SimulationProtocol:
 
         The one exception keeps an untagged document's first stage without a note, as the
         neighbour zip always left it: its summary.json would otherwise change for nothing.
+
+        Measured against what it declares, a run that read an older restart than it
+        should have is consistent in time: segment 4 read segment 2's restart, and
+        segment 2 ended when that restart says. What shows it is the branch: segments 3
+        and 4 both continue segment 2. Two runs of one directory and one member that
+        continue the same restart are therefore reported on the later one. Replicas that
+        branch from a shared equilibration sit in directories (or members) of their own,
+        and are not.
         """
         by_step_id = {s.step_id: s for s in self.stages}
         multi_member = any(stage.lineage for stage in self.stages)
@@ -989,6 +997,19 @@ class SimulationProtocol:
             stage._add_continuity_note(
                 f"INFO: Continuity for {stage.name} was not measured ({reason})."
             )
+
+        first_reader: Dict[Tuple[str, str, Optional[str]], SimulationStage] = {}
+        for stage in self.stages:
+            producer = by_step_id.get(stage.parent_id) if stage.parent_id else None
+            if producer is None or producer is stage:
+                continue
+            key = (producer.step_id, stage.name.rpartition("/")[0], stage.lineage or None)
+            earlier = first_reader.setdefault(key, stage)
+            if earlier is not stage:
+                stage._add_continuity_note(
+                    f"Continues from {producer.name}, as {earlier.name} does: two runs "
+                    "in one directory continue the same restart."
+                )
 
     def _check_stage_pair(
         self,
