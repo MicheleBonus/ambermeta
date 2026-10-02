@@ -175,3 +175,52 @@ def test_scheduler_logs_and_foreign_out_files_are_not_runs(tmp_path):
     assert "mdout" in grouped["prod_0001"]
     assert detect_file_type(str(tmp_path / "nohup.out")) == FileType.OTHER
     assert detect_file_type(str(tmp_path / "prod_0001.out")) == FileType.MDOUT
+
+
+# --- reading a trajectory without touching every frame ----------------------------------
+
+class _CountingVar:
+    def __init__(self, data):
+        self.data = data
+        self.shape = data.shape
+        self.reads = 0
+
+    def __getitem__(self, key):
+        self.reads += 1
+        return self.data[key]
+
+
+def _fake_trajectory(n, *, dt=2.0, cut_at=None):
+    import numpy as np
+    times = 52.0 + dt * np.arange(n, dtype="f4")
+    lengths = np.full((n, 3), 30.0)
+    lengths[:, 0] += np.linspace(0.0, 1.0, n)      # the volume changes along the run
+    angles = np.full((n, 3), 90.0)
+    if cut_at is not None:
+        times[cut_at:] = 0.0
+        lengths[cut_at:] = 0.0
+    return NS(variables={"time": _CountingVar(times),
+                         "cell_lengths": _CountingVar(lengths),
+                         "cell_angles": _CountingVar(angles)})
+
+
+def test_an_intact_trajectory_is_read_from_five_frames():
+    from ambermeta.legacy_extractors.mdcrd import TrajectoryMetadata, _read_intact_sample
+    ds = _fake_trajectory(250000)
+    md = TrajectoryMetadata(filename="prod.nc", file_format="NetCDF")
+    assert _read_intact_sample(ds, md)
+    assert md.n_frames == 250000
+    assert md.time_start == pytest.approx(52.0)
+    assert md.time_end == pytest.approx(52.0 + 2.0 * 249999, rel=1e-6)
+    assert md.avg_dt == pytest.approx(2.0, rel=1e-6)
+    assert md.box_type == "Orthogonal"
+    assert md.volume_stats[0] == pytest.approx(27000.0)
+    assert md.volume_stats[1] == pytest.approx(31.0 * 900.0)
+    assert sum(v.reads for v in ds.variables.values()) == 15     # 5 frames x 3 variables
+
+
+def test_a_trajectory_the_sample_cannot_vouch_for_is_read_in_full():
+    from ambermeta.legacy_extractors.mdcrd import TrajectoryMetadata, _read_intact_sample
+    md = TrajectoryMetadata(filename="prod.nc", file_format="NetCDF")
+    assert not _read_intact_sample(_fake_trajectory(1000, cut_at=600), md)
+    assert md.n_frames == 0 and md.time_start is None      # nothing written on refusal
