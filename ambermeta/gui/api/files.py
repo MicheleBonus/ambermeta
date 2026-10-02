@@ -24,12 +24,15 @@ def detect_file_type(path: str) -> FileType:
     name = Path(path).name.lower()
     if ext in ("prmtop", "parm7", "top") or name.endswith(".prmtop"):
         return FileType.PRMTOP
-    # NOTE: .in/.out are claimed for Amber mdin/mdout by convention; a non-Amber
-    # .in/.out would be mis-typed. Accepted trade-off (content sniff is a follow-up).
+    # NOTE: .in is claimed for Amber mdin by convention. A .out file is an mdout only when
+    # its head says so (`looks_like_mdout`): scheduler logs share the extension.
     if ext in ("mdin", "in") or name.endswith(".mdin"):
         return FileType.MDIN
-    if ext in ("mdout", "out") or name.endswith(".mdout"):
+    if ext == "mdout" or name.endswith(".mdout"):
         return FileType.MDOUT
+    if ext == "out":
+        from ambermeta.mdout_header import looks_like_mdout
+        return FileType.MDOUT if looks_like_mdout(path) else FileType.OTHER
     if ext in ("mdcrd", "nc", "crd", "x", "trj") or name.endswith(".mdcrd"):
         return FileType.MDCRD
     if ext in ("inpcrd", "rst", "rst7", "restrt", "ncrst") or name.endswith(".inpcrd"):

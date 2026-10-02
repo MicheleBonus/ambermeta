@@ -123,6 +123,91 @@ def _is_variable_dt(deltas, avg_dt) -> bool:
         return False
     return float(np.std(deltas)) > max(1e-4, abs(avg_dt) * 0.05)
 
+#: Frames read from an intact trajectory: the first, the last and three evenly between.
+SAMPLE_FRAMES = 5
+
+
+def _sample_indices(n_frames: int, count: int = SAMPLE_FRAMES) -> List[int]:
+    if n_frames <= count:
+        return list(range(n_frames))
+    return sorted({round(i * (n_frames - 1) / (count - 1)) for i in range(count)})
+
+
+def _read_intact_sample(ds, md: "TrajectoryMetadata") -> bool:
+    """Fill `md`'s frame count, times and box from a sample of frames, when that is safe.
+
+    A trajectory's per-frame values are record variables, stored one record after the
+    other between the coordinates, so reading all of them costs one read per frame and
+    variable. On a network file system that was 6 to 13 ms per frame, over half an hour
+    for one project. The count of frames is in the file's header, and an intact
+    trajectory's first and last times say all that its times are used for.
+
+    Returns False, having written nothing, whenever the sample shows anything a full read
+    would treat specially: a time that does not increase (a truncated file, or one still
+    being written), a time step that varies, an empty box record, a missing variable. The
+    caller then reads every frame as before, so those files are judged exactly as they
+    always were.
+
+    The box volume statistics (min, max, mean) come from the sampled frames; the box type
+    from the first frame, as before.
+    """
+    if np is None:
+        return False
+    variables = ds.variables
+    t_var = variables['time']
+    if len(getattr(t_var, "shape", ())) != 1:
+        return False
+    n_frames = int(t_var.shape[0])
+    if n_frames < 2:
+        return False
+    indices = _sample_indices(n_frames)
+    try:
+        times = [float(t_var[i]) for i in indices]
+    except (TypeError, ValueError, IndexError):
+        return False
+    if any(b <= a for a, b in zip(times, times[1:])):
+        return False
+    t0, t_last = times[0], times[-1]
+    avg_dt = (t_last - t0) / (n_frames - 1)
+    # The full read's variable-time-step test is the spread of all intervals; here every
+    # sampled time must sit where a constant interval puts it.
+    if any(abs(t - (t0 + i * avg_dt)) > max(1e-4, abs(avg_dt) * 0.05)
+           for i, t in zip(indices, times)):
+        return False
+
+    box = None
+    if 'cell_lengths' in variables:
+        try:
+            lengths = np.array([np.asarray(variables['cell_lengths'][i], dtype=float)
+                                for i in indices])
+            angles = (np.array([np.asarray(variables['cell_angles'][i], dtype=float)
+                                for i in indices])
+                      if 'cell_angles' in variables else None)
+        except (TypeError, ValueError, IndexError):
+            return False
+        if lengths.ndim != 2 or not np.all(lengths > 0.0):
+            return False
+        box = (lengths, angles)
+
+    md.has_time = True
+    md.n_frames = n_frames
+    md.time_start, md.time_end = t0, t_last
+    md.total_duration = t_last - t0
+    md.avg_dt = float(avg_dt)
+    if box is not None:
+        lengths, angles = box
+        md.has_box = True
+        md.box_type = ("Triclinic" if angles is not None and np.any(np.abs(angles[0] - 90.0) > 0.01)
+                       else "Orthogonal")
+        try:
+            vols = _calc_volume_array(lengths, angles)
+            if len(vols) > 0:
+                md.volume_stats = (float(np.min(vols)), float(np.max(vols)), float(np.mean(vols)))
+        except (ValueError, TypeError, IndexError) as e:
+            md.warnings.append(f"Volume calculation failed: {e}")
+    return True
+
+
 def _detect_format(filepath: str) -> str:
     try:
         with open(filepath, 'rb') as f:
@@ -174,6 +259,10 @@ def _parse_netcdf_trajectory(filepath: str) -> TrajectoryMetadata:
                     tv = ds.variables['time']
                     scalar = float(tv[...]) if tv.shape == () else float(tv[:][-1])
                     md.time_start = md.time_end = scalar
+            elif 'time' in vars_keys and _read_intact_sample(ds, md):
+                # Intact: frame count from the record dimension, times and box from five
+                # frames. See `_read_intact_sample`.
+                pass
             elif 'time' in vars_keys:
                 md.has_time = True
                 t_var = ds.variables['time']
@@ -225,7 +314,9 @@ def _parse_netcdf_trajectory(filepath: str) -> TrajectoryMetadata:
             if 'forces' in vars_keys: md.has_forces = True
 
             # --- 4. Box & Volume ---
-            if 'cell_lengths' in vars_keys:
+            if md.has_box:
+                pass   # read with the sample above
+            elif 'cell_lengths' in vars_keys:
                 md.has_box = True
                 lengths = ds.variables['cell_lengths'][:] # (Frames, 3)
 

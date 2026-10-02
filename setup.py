@@ -5,12 +5,12 @@ README = Path(__file__).parent / "README.md"
 
 setup(
     name="ambermeta",
-    version="1.0.0",
+    version="1.2.0",
     description="Simulation provenance extraction utilities for AMBER molecular dynamics runs.",
     long_description=README.read_text(encoding="utf-8"),
     long_description_content_type="text/markdown",
     license="BUSL-1.1",
-    python_requires=">=3.8",
+    python_requires=">=3.9",
     packages=find_packages(include=["ambermeta", "ambermeta.*"]),
     package_data={"ambermeta.gui": ["static/**"]},
     extras_require={

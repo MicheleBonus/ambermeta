@@ -564,8 +564,8 @@ Nested `notes` inside the mapping form take a string or a list, same as the top-
 
 #### Validation behavior
 
-For each adjacent pair of stages the engine measures the gap between the previous stage's end time and this
-stage's start time, then:
+For each stage and the stage it declares as its producer (in a v1 manifest, which declares none, each adjacent
+pair) the engine measures the gap between the producer's end time and this stage's start time, then:
 
 - **No expectation set** and the gap is within the default tolerance → normalised to exactly `0.0`, i.e.
   treated as floating-point noise rather than a finding. The default tolerance is `0.1` ps, or half the

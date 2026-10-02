@@ -41,6 +41,16 @@ def _same_file(a: str, b: str) -> bool:
         return os.path.normcase(os.path.abspath(a)) == os.path.normcase(os.path.abspath(b))
 
 
+def _same_content(a: str, b: str) -> bool:
+    """A byte-for-byte copy: a replica directory's copy of the equilibration's restart is
+    the restart the Step declares, whatever its path."""
+    import filecmp
+    try:
+        return filecmp.cmp(a, b, shallow=False)
+    except OSError:
+        return False
+
+
 def _display(path: str, run_directory: str) -> str:
     """`path` as the run's directory would spell it: short, and unambiguous beside it."""
     try:
@@ -59,11 +69,31 @@ def compare_recorded_input(declared_path: str, recorded: str,
     """
     here = _resolve_here(recorded, run_directory)
     if here is not None and os.path.exists(declared_path):
-        if _same_file(here, declared_path):
+        if _same_file(here, declared_path) or _same_content(here, declared_path):
             return None
     else:
-        recorded_name = recorded.replace("\\", "/").rstrip("/").rpartition("/")[2]
-        if recorded_name == os.path.basename(declared_path):
+        parts = [part for part in recorded.replace("\\", "/").split("/") if part]
+        recorded_name = parts[-1] if parts else ""
+        if recorded_name == os.path.basename(declared_path) and not _in_sibling(parts, declared_path):
             return None
     return (f"declares {_display(declared_path, run_directory)} as its input "
             f"coordinates, but its mdout records {recorded}")
+
+
+def _in_sibling(parts, declared_path: str) -> bool:
+    """Whether the record names a file of the same name in a sibling directory here.
+
+    A path from another machine cannot be resolved, so only names are compared, and
+    replicas name their restarts alike: `rep2/prod_0003` reading `rep1/prod_0002.restrt`
+    looked like reading its own `prod_0002.restrt`. Where the recorded directory exists
+    beside the declared file's directory and holds that file, the run read the other one.
+    A deposit whose directories were renamed after the runs (`equi1` on the cluster,
+    `run1` here) has no such sibling, and keeps the name comparison.
+    """
+    if len(parts) < 2:
+        return False
+    declared_dir = os.path.dirname(os.path.abspath(declared_path))
+    if parts[-2] == os.path.basename(declared_dir):
+        return False
+    candidate = os.path.join(os.path.dirname(declared_dir), parts[-2], parts[-1])
+    return os.path.isfile(candidate) and not _same_file(candidate, declared_path)

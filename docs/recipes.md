@@ -38,7 +38,7 @@ Suggestions:
 Wrote v2 draft manifest: sim.yaml (yaml)
 ```
 
-Builds a topology pool, takes the starting structure from the INPCRD the first run's mdout records (here `ntp_prod_0000.rst`), infers phase roles, and chains each step's input coordinates off the previous step's restart (`input=restart of <step name>`) — the previous step **of the same lineage**, where the layout names members. In the file itself that chain is stored as a step id reference; the ids are freshly generated each run, so don't expect them to be stable across runs. Edit `sim.yaml` by hand, or refine it in the GUI, before committing to it.
+Builds a topology pool, takes the starting structure from the INPCRD the first run's mdout records (here `ntp_prod_0000.rst`), infers phase roles, and chains each step's input coordinates to the run whose restart its mdout records (`input=restart of <step name>`), or, where the mdout records nothing usable, to the previous run of its directory. A record that points into another lineage is not followed. In the file itself that chain is stored as a step id reference; the ids are freshly generated each run, so don't expect them to be stable across runs. Edit `sim.yaml` by hand, or refine it in the GUI, before committing to it.
 
 ### Discover a replica tree
 

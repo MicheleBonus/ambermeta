@@ -139,10 +139,30 @@ def test_discover_keeps_the_coordinate_file_when_the_recorded_input_is_absent(tm
 # ------------------------------------------------------------ recorded input (C3)
 
 
-def test_a_run_that_read_another_restart_than_declared_is_reported(tmp_path):
+def test_a_run_that_read_an_older_restart_is_reported_as_a_branch(tmp_path):
+    """`discover` follows the record, so the draft says what happened: segment 4 read
+    segment 2's restart. That is consistent in time; the branch is what shows it."""
     directory = _hmr_copy(tmp_path)
     _record_input(directory / "ntp_prod_0004.mdout", "ntp_prod_0002.rst")
     sim, report = _validate(directory)
+    assert _findings(report, "input_mismatch") == []
+    found = {f["step_id"]: f["evidence"] for f in _findings(report, "continuity_gap")}
+    assert found == {
+        _step_id(sim, "ntp_prod_0003"): ("Continues from ntp_prod_0002, as ntp_prod_0004 does: "
+                                         "2 runs in one directory continue the same restart."),
+        _step_id(sim, "ntp_prod_0004"): ("Continues from ntp_prod_0002, as ntp_prod_0003 does: "
+                                         "2 runs in one directory continue the same restart."),
+    }
+
+
+def test_a_declared_input_other_than_the_recorded_one_is_reported(tmp_path):
+    """The recorded-input check still guards the manifest: a hand edit that declares
+    another restart than the run read is reported, whatever `discover` drafted."""
+    directory = _hmr_copy(tmp_path)
+    sim = _draft(directory)
+    steps = {s.name: s for p in sim.phases for s in p.steps}
+    steps["ntp_prod_0004"].input_coords.ref = steps["ntp_prod_0002"].id
+    sim, report = _validate(directory, sim)
     found = _findings(report, "input_mismatch")
     assert [f["step_id"] for f in found] == [_step_id(sim, "ntp_prod_0004")]
     assert "ntp_prod_0002.rst" in found[0]["evidence"]
@@ -182,13 +202,17 @@ def test_a_clipped_recorded_path_is_never_compared(tmp_path):
     # A relative path that resolves here is compared as a file, not by name.
     ("prod_0002.rst", "prod/prod_0002.rst", None),
     ("../other/prod_0002.rst", "prod/prod_0002.rst", "other"),
+    # ...unless it holds the same bytes: a copy of the declared restart is that restart.
+    ("../copy/prod_0002.rst", "prod/prod_0002.rst", None),
 ])
 def test_recorded_inputs_are_compared_by_file_where_they_resolve(
         tmp_path, recorded, declared, expected):
     from ambermeta.recorded_inputs import compare_recorded_input
-    for rel in ("prod/prod_0001.rst", "prod/prod_0002.rst", "other/prod_0002.rst"):
+    for rel, text in (("prod/prod_0001.rst", "segment 1"), ("prod/prod_0002.rst", "segment 2"),
+                      ("other/prod_0002.rst", "another run's segment 2"),
+                      ("copy/prod_0002.rst", "segment 2")):
         (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
-        (tmp_path / rel).write_text("x", encoding="utf-8")
+        (tmp_path / rel).write_text(text, encoding="utf-8")
     run_directory = tmp_path / "prod"
     message = compare_recorded_input(str(tmp_path / declared), recorded, str(run_directory))
     if expected is None:

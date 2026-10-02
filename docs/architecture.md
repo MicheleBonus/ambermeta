@@ -106,6 +106,8 @@ Two related but distinct checks run over consecutive steps, both in `ambermeta/p
 gap = start_time(current) - end_time(previous)
 ```
 
+In a v2 document, `previous` is the step `current` declares as its producer, not its neighbour in the document; a step that declares the starting structure or an explicit file is not measured. The end time is the producer's last trajectory frame (or, without a trajectory, its last printed energy) plus the part of the run after that record, `(nstlim mod ntwx) * dt` (or `ntpr`), when the record holds all the frames AMBER writes; a record that stops short adds nothing. Runs of one directory and one member that continue the same restart are each reported, since nothing says which went wrong: measured against what it declares, a run that read an older restart is consistent in time, and the branch is what shows it. Only runs with an mdout count; a queued run or an analysis script typed as an mdin read nothing.
+
 The tolerance is **frame-interval based, not scaled to absolute elapsed time** — a small absolute floor plus half the previous run's average timestep:
 
 ```python

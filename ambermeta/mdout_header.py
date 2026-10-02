@@ -30,6 +30,7 @@ one.
 """
 from __future__ import annotations
 
+import os
 import re
 from dataclasses import dataclass, field
 from typing import Dict, Optional, Set
@@ -82,6 +83,10 @@ _IREST = re.compile(r"(?:^|,)\s*irest\s*=\s*(-?\d+)")
 _CONTROL_T = re.compile(r"(?:^|,)\s*t\s*=\s*(-?[\d.]+)")
 _CONTROL_DT = re.compile(r"(?:^|,)\s*dt\s*=\s*(-?[\d.]+)")
 _CONTROL_NTWX = re.compile(r"(?:^|,)\s*ntwx\s*=\s*(\d+)")
+_CONTROL_NTPR = re.compile(r"(?:^|,)\s*ntpr\s*=\s*(\d+)")
+_CONTROL_NSTLIM = re.compile(r"(?:^|,)\s*nstlim\s*=\s*(\d+)")
+# `RESOURCE USE`, above the CONTROL DATA block: ` NATOM  =   64528 NTYPES =      24 ...`.
+_NATOM = re.compile(r"^\s*NATOM\s*=\s*(\d+)")
 
 # The File Assignments prefix is columns 1-10: `|`, the tag right-aligned in 7, then `: `.
 _ASSIGNMENT_VALUE_COLUMN = 10
@@ -123,6 +128,14 @@ class MdoutHeader:
     #: mdin's own `ntwx` is what was asked for; this is what the run used, and the two
     #: differ when an mdin is paired with an mdout it did not produce.
     control_ntwx: Optional[int] = None
+    #: `ntpr` and `nstlim` as AMBER resolved them. Together with `ntwx` they say where the
+    #: run's last printed energy and last trajectory frame fall, which is one interval or
+    #: less before the run's end whenever `nstlim` is not a multiple of the interval.
+    control_ntpr: Optional[int] = None
+    control_nstlim: Optional[int] = None
+    #: The atom count from `RESOURCE USE`. `discover` binds a run to the topology of this
+    #: size when the pool holds several, rather than to the pool's first one.
+    natom: Optional[int] = None
 
     def assignment(self, tag: str) -> Optional[str]:
         """The value for `tag`, or None when it is absent **or** was clipped.
@@ -134,6 +147,35 @@ class MdoutHeader:
         if tag in self.truncated:
             return None
         return self.file_assignments.get(tag)
+
+
+# What only an AMBER output has near its top: the program banner, the File Assignments
+# block, the CONTROL DATA block, or energy records. A `.out` file with none of them is
+# some other program's log; the corpus case was 2,019 `slurm-<jobid>.out` files sitting
+# next to the runs of one project, each becoming a "run" that "did not finish".
+_MDOUT_MARKERS = re.compile(
+    r"Amber\s+\d+\s+(?:PMEMD|SANDER)|PMEMD implementation of SANDER|File Assignments:"
+    r"|CONTROL\s+DATA\s+FOR\s+THE\s+RUN|NSTEP\s*=|A V E R A G E S")
+_SCHEDULER_LOG = re.compile(r"^slurm-\d+(?:_\d+)?\.out$")
+
+
+def looks_like_mdout(path: str) -> bool:
+    """Whether a file with the ambiguous `.out` extension is an AMBER output.
+
+    Only `.out` needs asking (`.mdout` says what it is). An empty file, or one that will
+    not open, keeps the extension's answer: nothing in it says otherwise, and the parser
+    reports a file that will not open.
+    """
+    if _SCHEDULER_LOG.match(os.path.basename(path)):
+        return False
+    try:
+        with open(path, "rb") as handle:
+            head = handle.read(16384)
+    except OSError:
+        return True
+    if not head.strip():
+        return True
+    return bool(_MDOUT_MARKERS.search(head.decode("latin-1")))
 
 
 def read_mdout_header(path: str) -> MdoutHeader:
@@ -168,6 +210,12 @@ def _read_mdout_header(path: str) -> MdoutHeader:
                 if _read_assignment(line, header):
                     continue
                 in_assignments = False
+
+            if header.natom is None:
+                match = _NATOM.match(line)
+                if match:
+                    header.natom = int(match.group(1))
+                    continue
 
             if _CONTROL_DATA.search(line):
                 in_control_data = True
@@ -213,7 +261,7 @@ def _read_mdout_header(path: str) -> MdoutHeader:
 
 
 def _read_control_data(line: str, header: MdoutHeader) -> None:
-    """Record `irest`/`t`/`dt`/`ntwx` off one line of the CONTROL DATA block.
+    """Record `irest`/`t`/`dt`/`ntwx`/`ntpr`/`nstlim` off one line of the CONTROL DATA block.
 
     First value wins for each field, so a later section that happens to spell one of these
     names cannot overwrite what AMBER printed under `Molecular dynamics:`. Everything stays
@@ -233,6 +281,14 @@ def _read_control_data(line: str, header: MdoutHeader) -> None:
         match = _CONTROL_NTWX.search(line)
         if match:
             header.control_ntwx = int(match.group(1))
+    if header.control_ntpr is None:
+        match = _CONTROL_NTPR.search(line)
+        if match:
+            header.control_ntpr = int(match.group(1))
+    if header.control_nstlim is None:
+        match = _CONTROL_NSTLIM.search(line)
+        if match:
+            header.control_nstlim = int(match.group(1))
 
 
 def _matched_float(pattern: "re.Pattern", line: str) -> Optional[float]:
