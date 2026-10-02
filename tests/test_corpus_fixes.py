@@ -143,3 +143,35 @@ def test_a_stage_is_compared_with_its_declared_producer_not_its_neighbour():
     proto.validate(cross_stage=True)
     assert _gap_notes(c) == []
     assert c.observed_gap_ps == 0.0
+
+
+# --- B4: other programs' .out files ------------------------------------------------------
+
+_AMBER_HEAD = """
+          -------------------------------------------------------
+          Amber 22 PMEMD                              2022
+          -------------------------------------------------------
+"""
+
+
+def test_scheduler_logs_and_foreign_out_files_are_not_runs(tmp_path):
+    from ambermeta.gui.api.files import FileType, detect_file_type
+    from ambermeta.mdout_header import looks_like_mdout
+    from ambermeta.protocol import smart_group_files
+
+    (tmp_path / "prod_0001.mdin").write_text("&cntrl\n imin = 0, nstlim = 10,\n/\n")
+    (tmp_path / "prod_0001.out").write_text(_AMBER_HEAD + "File Assignments:\n")
+    (tmp_path / "slurm-2545610.out").write_text(_AMBER_HEAD)       # name alone decides
+    (tmp_path / "nohup.out").write_text("srun: job 2545611 queued and waiting\n")
+    (tmp_path / "crashed.out").write_text("")                      # empty: keeps the extension
+
+    assert looks_like_mdout(str(tmp_path / "prod_0001.out"))
+    assert not looks_like_mdout(str(tmp_path / "slurm-2545610.out"))
+    assert not looks_like_mdout(str(tmp_path / "nohup.out"))
+    assert looks_like_mdout(str(tmp_path / "crashed.out"))
+
+    grouped = smart_group_files(str(tmp_path))
+    assert set(grouped) == {"prod_0001", "crashed"}
+    assert "mdout" in grouped["prod_0001"]
+    assert detect_file_type(str(tmp_path / "nohup.out")) == FileType.OTHER
+    assert detect_file_type(str(tmp_path / "prod_0001.out")) == FileType.MDOUT

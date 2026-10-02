@@ -12,7 +12,7 @@ from ambermeta.coords import sniff_coordinate_kind
 from ambermeta.parsers.inpcrd import InpcrdData, InpcrdParser
 from ambermeta.parsers.mdcrd import MdcrdData, MdcrdParser
 from ambermeta.parsers.mdin import MdinData, MdinParser
-from ambermeta.mdout_header import MdoutHeader, read_mdout_header
+from ambermeta.mdout_header import MdoutHeader, looks_like_mdout, read_mdout_header
 from ambermeta.parsers.mdout import MdoutData, MdoutParser
 from ambermeta.parsers.prmtop import PrmtopData, PrmtopParser
 from ambermeta.legacy_extractors.prmtop import ION_RESNAMES, WATER_RESNAMES
@@ -2655,6 +2655,8 @@ def smart_group_files(
         stem = Path(rel_path).with_suffix("").as_posix()
         _, ext = os.path.splitext(rel_path)
         kind = ext_map.get(ext.lower())
+        if kind == "mdout" and ext.lower() == ".out" and not looks_like_mdout(full_path):
+            continue
         if not kind and not ext:
             # Extensionless canonical Amber default filenames.
             kind = _DEFAULT_BASENAME_KIND.get(os.path.basename(rel_path).lower())

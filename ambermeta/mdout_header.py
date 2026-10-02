@@ -30,6 +30,7 @@ one.
 """
 from __future__ import annotations
 
+import os
 import re
 from dataclasses import dataclass, field
 from typing import Dict, Optional, Set
@@ -146,6 +147,35 @@ class MdoutHeader:
         if tag in self.truncated:
             return None
         return self.file_assignments.get(tag)
+
+
+# What only an AMBER output has near its top: the program banner, the File Assignments
+# block, the CONTROL DATA block, or energy records. A `.out` file with none of them is
+# some other program's log; the corpus case was 2,019 `slurm-<jobid>.out` files sitting
+# next to the runs of one project, each becoming a "run" that "did not finish".
+_MDOUT_MARKERS = re.compile(
+    r"Amber\s+\d+\s+(?:PMEMD|SANDER)|PMEMD implementation of SANDER|File Assignments:"
+    r"|CONTROL\s+DATA\s+FOR\s+THE\s+RUN|NSTEP\s*=|A V E R A G E S")
+_SCHEDULER_LOG = re.compile(r"^slurm-\d+(?:_\d+)?\.out$")
+
+
+def looks_like_mdout(path: str) -> bool:
+    """Whether a file with the ambiguous `.out` extension is an AMBER output.
+
+    Only `.out` needs asking (`.mdout` says what it is). An empty file, or one that will
+    not open, keeps the extension's answer: nothing in it says otherwise, and the parser
+    reports a file that will not open.
+    """
+    if _SCHEDULER_LOG.match(os.path.basename(path)):
+        return False
+    try:
+        with open(path, "rb") as handle:
+            head = handle.read(16384)
+    except OSError:
+        return True
+    if not head.strip():
+        return True
+    return bool(_MDOUT_MARKERS.search(head.decode("latin-1")))
 
 
 def read_mdout_header(path: str) -> MdoutHeader:
