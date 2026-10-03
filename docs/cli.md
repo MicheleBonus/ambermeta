@@ -303,6 +303,19 @@ Total simulated time (ps): 100000.000
 
 (Output trimmed to one stage; `CH3L1_HUMAN_6NAG` and `ntp_prod_0000..0005` are the other six.)
 
+**How the scan orders and links runs.** Since 1.3.0 the scan uses the rule [`discover`](#discover) uses: each
+run is linked to the run whose restart its mdout records as INPCRD (a byte-for-byte copy of a run's restart
+counts as that restart), else to the run before it in its own directory, and the runs are listed in an order
+where every run comes after the run it read. Continuity is then measured along those links, as on the manifest
+path, and `summary.json` names each run's producer as `continues_from`. A protocol whose names do not sort in
+the order its runs ran — one short equilibration before every production segment, `eq_0001 -> prod_0001 ->
+eq_0002 -> ...`, where every `eq_*` sorts before every `prod_*` — is therefore measured run by run; up to 1.2
+the scan ordered stages by name and compared neighbours, and reported false gaps and overlaps on exactly that
+pattern. Groups that are not runs (a topology, a starting structure such as `ntp_prod_0000.rst`) are listed
+first and are not measured. A tree in which no mdout records a usable input keeps the name order and the
+neighbour comparison. For a directory you will keep working with, `discover --write` and `plan -m` remain the
+recommended path: the manifest states the links, and you can correct them.
+
 #### `-m` on a v2 manifest
 
 Given a v2 manifest built by [`discover --write`](#discover) (`sim.yaml`, sitting next to the sample data so its relative file paths resolve):

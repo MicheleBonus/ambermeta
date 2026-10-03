@@ -113,6 +113,10 @@ class SimulationStage:
     # Serialised only when true, as `inpcrd_written_by_this_run`, so a reader of
     # summary.json does not take that file's clock or box for the run's starting ones.
     inpcrd_is_own_restart: bool = False
+    # False for a scanned group that is not a run -- a topology, a starting structure --
+    # which the scan path keeps as a stage for what its files say. It continues nothing and
+    # is not measured. Not serialised; every stage a document declares is a run.
+    is_run: bool = True
     # Provenance. `lineage` names the run member this stage belongs to: read from the v2
     # document on the manifest path, inferred from the directory layout on the scan path —
     # both entries into this engine, because a stage the engine cannot place in a member is
@@ -1001,12 +1005,17 @@ class SimulationProtocol:
         """
         by_step_id = {s.step_id: s for s in self.stages}
         multi_member = any(stage.lineage for stage in self.stages)
-        for index, stage in enumerate(self.stages):
+        # The first RUN: on the scan path a topology or a starting structure may precede it
+        # as a stage of its own (`is_run`), and those are never measured.
+        first_run = next((s for s in self.stages if s.is_run), None)
+        for stage in self.stages:
+            if not stage.is_run:
+                continue
             producer = by_step_id.get(stage.parent_id) if stage.parent_id else None
             if producer is not None and producer is not stage:
                 self._check_stage_pair(producer, stage, allow_unexpected_gaps=allow_unexpected_gaps)
                 continue
-            if index == 0 and not multi_member and not stage.parent_id:
+            if stage is first_run and not multi_member and not stage.parent_id:
                 continue
             reason = ("no producing stage resolved" if stage.parent_id
                       else "it declares no producing stage")
@@ -2352,6 +2361,45 @@ def smart_group_files(
     return grouped
 
 
+def _order_by_recorded_inputs(stages: List[SimulationStage],
+                              grouped: Dict[str, Dict[str, str]],
+                              tags: Dict[str, str]) -> List[SimulationStage]:
+    """A scanned tree's stages in the order its runs ran, each run linked to the run it
+    continued, by the input coordinates the mdouts recorded.
+
+    The scan used to order stages by file name and compare each with its neighbour, so a
+    protocol whose names do not sort in run order was measured between runs that never
+    met: `eq_0001..0003` before `prod_0001..0003` reported +20,000 ps gaps and a
+    -42,000 ps overlap on a chain that was continuous, and a starting structure named
+    `start.rst`, sorted after them, "overlapped" everything. This is the rule ``discover``
+    uses (:mod:`ambermeta.run_order`): each run is linked to the run whose restart its mdout
+    records, else to the run before it in its directory, and every stage gets a
+    ``step_id`` (its name) so continuity measures the declared edges, as on the manifest
+    path. Groups that are not runs (a topology, a starting structure) come first and are
+    not measured.
+
+    A tree where no mdout records a usable input keeps the name order and the
+    neighbour comparison it always had.
+    """
+    from ambermeta.run_order import chain_runs, execution_order, recorded_producers
+
+    runs = [stage for stage in stages if stage.is_run]
+    names = [stage.name for stage in runs]
+    headers = {stage.name: stage.mdout_header for stage in runs
+               if stage.mdout_header is not None}
+    recorded = recorded_producers(names, grouped, tags, headers)
+    if not recorded:
+        return stages
+    order = execution_order(names, recorded, {stage.name: stage.stage_role for stage in runs})
+    chain = chain_runs(order, recorded, grouped)
+    by_name = {stage.name: stage for stage in runs}
+    for stage in stages:
+        stage.step_id = stage.name
+    for name in order:
+        by_name[name].parent_id = chain[name]
+    return [stage for stage in stages if not stage.is_run] + [by_name[n] for n in order]
+
+
 def auto_discover(
     directory: str,
     manifest: Optional[Dict[str, Dict[str, str]] | List[Dict[str, str]]] = None,
@@ -2449,7 +2497,8 @@ def auto_discover(
         # a fabricated one for the rest. `crosses_lineage` is the looser rule and does let
         # an untagged producer's restart reach any member.
         stage = SimulationStage(name=stem, stage_role=stage_role,
-                                lineage=lineage_by_stem.get(stem))
+                                lineage=lineage_by_stem.get(stem),
+                                is_run=_coords_are_run_output(file_kinds))
 
         # Add sequence info as validation notes if detected
         if "_sequence_base" in kinds:
@@ -2523,6 +2572,8 @@ def auto_discover(
                 stage.inpcrd_is_own_restart = False
 
         stages.append(stage)
+
+    stages = _order_by_recorded_inputs(stages, grouped, lineage_by_stem)
 
     # Apply auto restart detection if requested
     if auto_detect_restarts:

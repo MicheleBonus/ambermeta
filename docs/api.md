@@ -459,11 +459,15 @@ class SimulationStage:
     mdout:  Optional[MdoutData]  = None
     mdcrd:  Optional[MdcrdData]  = None
     restart_path: Optional[str] = None
-    # The run member this stage belongs to, and the document step ids of this stage and of
-    # the step it continues from. Continuity partitions on `lineage` and measures each
-    # member's head against `parent_id`. `lineage` is read from the v2 document on the
-    # manifest path and inferred from the directory layout on the scan path; the two ids
-    # exist only in a document, so a scanned stage carries neither.
+    # False for a scanned group that is not a run (a topology, a starting structure): it
+    # continues nothing and is not measured. Not serialised.
+    is_run: bool = True
+    # The run member this stage belongs to, and the step ids of this stage and of the step
+    # it continues from. Continuity partitions on `lineage` and measures each stage
+    # against `parent_id`. `lineage` is read from the v2 document on the manifest path and
+    # inferred from the directory layout on the scan path. On the scan path the ids are the
+    # stage names, set where the mdouts record the inputs their runs read (see
+    # `ambermeta.run_order`); a scanned tree without such records carries neither.
     lineage: Optional[str] = None
     step_id: Optional[str] = None
     parent_id: Optional[str] = None
@@ -503,12 +507,17 @@ A real `summary()` (from the sample data's `ntp_prod_0001`, via `auto_discover(.
   "result": "Completed",
   "expected_gap_ps": "",
   "observed_gap_ps": "",
-  "continuity": "INFO: Cannot verify continuity between ntp_prod_0000 and ntp_prod_0001 (missing end time from ntp_prod_0000 (no mdcrd/mdout))",
-  "evidence": "INFO: Part of sequence 'ntp_prod' (item 2 of 6); INFO: stage_role 'production' inferred from mdin file; INFO: Cannot verify continuity between ntp_prod_0000 and ntp_prod_0001 (missing end time from ntp_prod_0000 (no mdcrd/mdout))"
+  "continuity": "",
+  "evidence": "INFO: Part of sequence 'ntp_prod' (item 2 of 6); INFO: stage_role 'production' inferred from mdin file"
 }
 ```
 
-(`ntp_prod_0000` has only a `.rst` restart in the sample data — no `mdcrd`/`mdout` — so its end time can't be read; continuity resumes reporting normally from `ntp_prod_0002` onward, where the previous step's own `mdout` supplies an end time.)
+(`ntp_prod_0001` is the first run: its mdout records `ntp_prod_0000.rst`, a restart no run in the directory
+wrote, so it continues nothing and nothing is measured. From `ntp_prod_0002` on, each run is measured against
+the run whose restart its mdout records, and `observed_gap_ps` reads `0 ps`. The scan orders and links runs
+by those records, the rule `discover` uses; see [the CLI reference](cli.md#--recursive-flat-discovery-retained-engine).
+Up to 1.2 it ordered stages by name and compared neighbours, and `ntp_prod_0001` was compared with the
+`ntp_prod_0000` restart stage: "Cannot verify continuity ... (missing end time from ntp_prod_0000)".)
 
 ---
 
