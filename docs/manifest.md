@@ -306,10 +306,26 @@ Both the GUI and CLI classify roles through the **one** shared function, `amberm
 ```
 
 Precedence: (1) authoritative content — `imin=1` in the mdin/mdout ⇒ `minimization`; (2) filename/path
-cues, matched on word boundaries (`_`, `.`, `-`, or start/end of a path component), so `minor.in` does
-**not** match `minimization` the way a naive substring search would; (3) other content heuristics
+cues, directories before the file name, matched on word boundaries (a cue starts at the start of a path
+component or after `_`, `.`, `-`, and ends at the end of the component, at `_`, `.`, `-` or at a digit),
+so `minor.in` does **not** match `minimization` the way a naive substring search would while `prod1` and
+`eq0001` carry their cue; (3) other content heuristics
 (position restraints/`ibelly` ⇒ `equilibration`; a low→high temperature ramp ⇒ `heating`; a very long
 `nstlim` ⇒ `production`). An unrecognized name/content classifies as `""` (unknown), never a guess.
+
+The name cues, in the order they are tried within one path component (the first match wins):
+
+| Cue words | Role | Examples |
+|---|---|---|
+| `minimization`, `minimize`, `minim`, `min`, `em` | minimization | `min_1`, `01_min`, `em2` |
+| `heat`, `warm`, `therm`, `anneal` (optionally + `ing`) | heating | `heat1`, `heating_2`, `heat_eq_0002` |
+| `equilibration`, `equilibrate`, `equil`, `equi`, `eq` | equilibration | `eq_0001`, `eq0001`, `ntp_equi`, `prod_0002_eq`, `equil_nvt` |
+| `production`, `prod` | production | `prod_0001`, `prod1`, `nvt_prod_0001` |
+| `nvt`, `npt` | equilibration | `npt_02`, `md_nvt_red_06` |
+
+The ensemble words rank below production, so `nvt_prod_0001` is a production run; before 1.3.0 they ranked
+with `eq` and that run was classified as equilibration, and a digit directly after a cue (`prod1`, `eq0001`)
+hid the cue. A directory cue still wins over the file name: `prod/nvt_eq_0001` is production.
 
 A Phase's `role` is normally set once (from its Steps' classified roles, on discovery) rather than
 re-derived per Step; a Step itself has no `role` field — role lives on the Phase.
@@ -403,7 +419,7 @@ sibling.
 A cohort's candidate tags must also agree about which **phase** they name, if any. One directory per
 stage, every stage writing the same `md.in`/`md.out` — `equil/min/`, `equil/heat/`, `equil/npt/` — passes
 every rule above exactly as `rep1/`, `rep2/` does; its segment is simply the name of each stage. Tags that
-disagree on a phase word (`min`/`em`, `heat`, `eq`/`equil`/`nvt`/`npt`, `prod`, the same cues role
+disagree on a phase word (`min`/`em`, `heat`, `eq`/`equi`/`equil`/`nvt`/`npt`, `prod`, the same cues role
 inference reads) are stages of one pipeline, and that cohort contributes nothing. Stage directories named
 without a phase word (`step1/`, `step2/`) cannot be told apart from replicas by name, and are still tagged.
 

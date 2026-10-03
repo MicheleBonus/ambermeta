@@ -6,15 +6,24 @@ from typing import Any, Optional, Tuple
 
 CANONICAL_ROLES = ("minimization", "heating", "equilibration", "production")
 
-# Word-boundary cues per path component. First match wins. Separators: start/end
-# of a component and any of _ . - . Bare ambiguous tokens (md, run) are excluded
-# on purpose; content heuristics catch those when the parameters are available.
-# Group 1 is the cue word itself, which `phase_word` hands back.
+# Word-boundary cues per path component. Directory components are read before the file
+# name, and within a component the first pattern that matches wins. A cue starts at the
+# start of a component or after one of _ . - and ends at the end of the component, at one
+# of _ . -, or at a digit, so `prod1`, `eq0001` and `min_1` carry their cue. Bare
+# ambiguous tokens (md, run) are excluded on purpose; content heuristics catch those when
+# the parameters are available. Group 1 is the cue word itself, which `phase_word` hands
+# back.
+#
+# The ensemble words `nvt`/`npt` are a weaker cue than production and are checked after
+# it: `nvt_prod_0001` is a production run, while `equil_nvt` and `nvt_eq` stay
+# equilibration (their `eq` cue is found first) and a bare `npt_02` is still one.
+_END = r"(?:[_.\-\d]|$)"
 _NAME_CUES = [
-    (re.compile(r"(?:^|[_.\-])(minimi[sz]ation|minimi[sz]e|minim|min|em)(?:[_.\-]|$)"), "minimization"),
-    (re.compile(r"(?:^|[_.\-])(heat|warm|therm|anneal)(?:[_.\-]|$|ing\b)"), "heating"),
-    (re.compile(r"(?:^|[_.\-])(equilibration|equilibrate|equil|eq|nvt|npt)(?:[_.\-]|$)"), "equilibration"),
-    (re.compile(r"(?:^|[_.\-])(production|prod)(?:[_.\-]|$)"), "production"),
+    (re.compile(r"(?:^|[_.\-])(minimi[sz]ation|minimi[sz]e|minim|min|em)" + _END), "minimization"),
+    (re.compile(r"(?:^|[_.\-])(heat|warm|therm|anneal)(?:ing)?" + _END), "heating"),
+    (re.compile(r"(?:^|[_.\-])(equilibration|equilibrate|equil|equi|eq)" + _END), "equilibration"),
+    (re.compile(r"(?:^|[_.\-])(production|prod)" + _END), "production"),
+    (re.compile(r"(?:^|[_.\-])(nvt|npt)" + _END), "equilibration"),
 ]
 
 
