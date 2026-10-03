@@ -2,7 +2,7 @@
   "schema_version": "2.0",
   "generator": {
     "name": "AmberMeta",
-    "version": "1.2.0"
+    "version": "1.3.0"
   },
   "about": "Methods summary of an AMBER simulation project, written by AmberMeta from its summary.json, which AmberMeta reads from the run files (topology, mdin, mdout, coordinates). The protocol is given per phase, in execution order; each setting is stated once with the number of runs that share it when not all do, and the runs that differ are listed as other values. 'source' says where a value comes from (see 'sources'). Nothing here names a force field, a water model or a preparation step unless a run file states it; see 'not_in_run_files'.",
   "sources": {

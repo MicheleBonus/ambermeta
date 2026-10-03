@@ -264,14 +264,14 @@ def test_discover_draft_opens_a_new_phase_when_a_role_recurs(recurring_role_tree
     Keyed on the role alone, the second minimisation of a min -> heat -> min member was
     merged into that role's FIRST phase, so the member's steps came out of the document
     as min, min, heat, prod. A recurrence that is not contiguous is a different phase of
-    the protocol and opens one.
+    the protocol and opens one, numbered from the second phase of a role on.
     """
     sim = core_bridge.discover_draft(str(recurring_role_tree), recursive=True)["simulation"]
 
     assert [(p.name, p.role, [s.name for s in p.steps]) for p in sim.phases] == [
         ("Minimization", "minimization", ["rep1/01_min", "rep2/01_min"]),
         ("Heating", "heating", ["rep1/02_heat", "rep2/02_heat"]),
-        ("Minimization", "minimization", ["rep1/03_min", "rep2/03_min"]),
+        ("Minimization 2", "minimization", ["rep1/03_min", "rep2/03_min"]),
         ("Production", "production", ["rep1/04_prod", "rep2/04_prod"]),
     ]
 

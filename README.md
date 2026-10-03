@@ -4,7 +4,7 @@
 
 You point it at a directory (or a manifest), and it answers the questions that are tedious to answer by hand: *What was actually run? In what order? Do the restarts line up? Is any topology hydrogen-mass-repartitioned? What were the ensemble, thermostat, barostat, and cutoff? Did the run finish? Is a member of a numbered sequence missing?*
 
-- **Version:** 1.2.0 · **Python:** 3.9+ · **License:** BUSL-1.1
+- **Version:** 1.3.0 · **Python:** 3.9+ · **License:** BUSL-1.1
 - **Repository:** <https://github.com/MicheleBonus/ambermeta>
 
 ---
@@ -111,7 +111,8 @@ File Information: CH3L1_HUMAN_6NAG.top
   solvent_type: Explicit Solvent
   simulation_category: Protein / Ligand in Explicit Water
   num_solvent_molecules: 14659
-  num_solute_residues: 443
+  num_solute_residues: 371
+  iptres: 443
   hmr_active: False
   hmr_hydrogen_mass_summary: 1.008-1.008 amu across 32188 H
   hmr_detection_method: atomic_number
@@ -322,11 +323,19 @@ A single-page, fully offline HTML version of these docs lives at [`docs/ambermet
 
 - **v1 manifests no longer open.** A bare `stages:` list or a `global_prmtop`/`hmr_prmtop`/`initial_coordinates` manifest is refused with a clean error by every entry point, and there is no migration path. Rebuild from the run directory — see [Coming from v1?](#coming-from-v1) above.
 - **AMBER engines:** parses output from both `pmemd`/`pmemd.cuda` and `sander`. GPU model and ns/day come from the `mdout` footer where present. Completion and wall-time are read per engine: `pmemd` writes a `Final Performance Info` block and a `Total wall time:` line, `sander` writes neither — its completion is taken from its own end-of-run markers (`Run done at`, `wallclock() was called`) and its wall clock from the `Total time` line in `TIMINGS`.
-- **NetCDF:** `.nc` trajectories and `.ncrst` restarts require the `netcdf` extra. Without it, ASCII trajectories/restarts still parse; NetCDF files are reported as unreadable rather than crashing the run.
+- **NetCDF:** `.nc` trajectories and `.ncrst` restarts require the `netcdf` extra. Without it, ASCII trajectories/restarts still parse; NetCDF files are reported as unreadable rather than crashing the run, and continuity reads each run's start time from its `mdout` instead. A run that set its own clock (`irest = 0`, new velocities) is then not measured against the run before it: it gets an INFO note that continuity follows the recorded input coordinates.
 - **Incomplete trajectories are not read as complete ones.** NetCDF-3 stores record variables interleaved at the end of the file, so records that were never written back read as fill. A trajectory that is truncated, still being written, or half-copied is detected by its frame times ceasing to increase: AmberMeta reports the frames that are really on disk, warns that the times are not reported, and lets continuity fall through to the `mdout` rather than taking a fill value as the run's end time. Box records that read as empty are dropped from the box and volume statistics with a warning of their own.
 - **Fault tolerance:** `ambermeta plan` is fault-tolerant by default — an unreadable or malformed file is skipped, the error is recorded against its stage/step, and the run still completes (exit `0`). Pass `--strict` to make the first bad file a hard error.
-- **Role inference is heuristic.** When a phase or stage omits its role, AmberMeta infers it from the `mdin`/`mdout` content first, then the file/path name (word-boundary matching, via the shared classifier in `ambermeta/roles.py`) — and records that it did so. Verify inferred roles before publishing.
+- **Role inference is heuristic.** When a phase or stage omits its role, AmberMeta infers it from `imin` in the `mdin`/`mdout`, the file/path name, and other content (restraints, a temperature ramp, run length), via the shared classifier in `ambermeta/roles.py`, and records that it did so. Name cues are matched per path component, directories first: `min`/`em`, `heat`, `equil`/`equi`/`eq`, `prod`, then `nvt`/`npt` (so `nvt_prod_0001` is production), each followed by `_`, `.`, `-`, a digit or the end of the name (`prod1`, `eq0001`); the full table is in the [manifest schema](docs/manifest.md#7-canonical-role-tokens). Verify inferred roles before publishing.
 - **Manifest formats:** JSON or YAML, in both directions. TOML and CSV are not manifest formats — a `.toml`/`.csv` manifest path is refused with a message that says so. (`--stats-csv` still writes a per-stage statistics CSV; that is a report, not a manifest.)
+
+### Behavior changes in 1.3.0
+
+- **Replicas are compared per role.** Settings (`dt`, `temp0`, `cut`, `ntt`, `ntp`) are compared between replicas role by role for minimization, heating and equilibration runs, and on all other runs (production, custom roles, unclassified) together, so replicas whose production runs differ in `temp0` are reported even when each replica's equilibration runs use several temperatures (`Members differ in temp0 in their production runs (...)`). `temp0` is compared on those production runs (among the replicas that have them), and on the last equilibration (or heating) role only where no replica has such runs; per-segment or per-replica equilibration temperatures before production are not reported.
+- **`plan --recursive` follows the recorded inputs.** The directory scan orders and links runs by the input coordinates each `mdout` records, as `discover` does, so names that do not sort in run order (`eq_0001 -> prod_0001 -> eq_0002 -> ...`) no longer produce false gaps and overlaps. A run that no record links to a run here (a job script that copies every restart to one fixed name, restarts not deposited) is still measured against the run before it, so real gaps are reported, and continuity problems are now listed under Findings and count for `--strict`. Topology and starting-structure groups are listed but not measured.
+- **Simulated time per role.** Where the runs hold more than one role, `summary.json` totals and each lineage gain `time_ps_<role>` (`time_ps_equilibration`, `time_ps_production`, ...), and `plan`/`validate` print `Simulated time by role (ps): ...`.
+- **Repeated phases are numbered.** A protocol that alternates roles gets `Equilibration`, `Production`, `Equilibration 2`, `Production 2`, ... from `discover`; the methods summary still describes each phase once.
+- **Smaller fixes:** `stats.csv` has a `lineage` column when lineages exist; `discover --write` outside the scanned directory writes paths relative to the manifest (a manifest in a subdirectory keeps paths relative to the scanned directory, for the GUI); replica directories holding byte-identical copies of the starting restart give one starting structure; NetCDF attributes read through SciPy are decoded (`pmemd`, not `b'pmemd'`); `num_solute_residues` no longer counts ions (371, not 443, on the sample; LEaP's raw value is the new `iptres`); the methods summary of an older `summary.json` keeps the ensemble of NPT runs.
 
 ---
 

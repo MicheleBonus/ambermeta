@@ -267,6 +267,8 @@ The CSV header is exactly:
 stage_name,stage_role,time_start_ps,time_end_ps,duration_ns,frame_count,temp_avg,temp_std,pressure_avg,pressure_std,density_avg,density_std,etot_avg,etot_std
 ```
 
+When any stage carries a lineage (a replica), a `lineage` column follows `stage_role` (since 1.3.0); a document that declares no lineage keeps the header above.
+
 ### Behavior
 
 - **Fault-tolerant by default.** A missing/malformed/unreadable file is skipped, the error is recorded against its stage, a skip summary is printed, and the run exits `0`. `--strict` makes the first bad file a hard error (clean message, exit `1`, no traceback). A stage keeps every file that *did* parse.
@@ -302,6 +304,29 @@ Total simulated time (ps): 100000.000
 ```
 
 (Output trimmed to one stage; `CH3L1_HUMAN_6NAG` and `ntp_prod_0000..0005` are the other six.)
+
+**How the scan orders and links runs.** Since 1.3.0 the scan uses the rule [`discover`](#discover) uses: each
+run is linked to the run whose restart its mdout records as INPCRD (a byte-for-byte copy of a run's restart
+counts as that restart), else to the run before it in its own directory, and the runs are listed in an order
+where every run comes after the run it read. Continuity is then measured along those links, as on the manifest
+path, and `summary.json` names each run's producer as `continues_from`. A protocol whose names do not sort in
+the order its runs ran — one short equilibration before every production segment, `eq_0001 -> prod_0001 ->
+eq_0002 -> ...`, where every `eq_*` sorts before every `prod_*` — is therefore measured run by run; up to 1.2
+the scan ordered stages by name and compared neighbours, and reported false gaps and overlaps on exactly that
+pattern. A run that no record links to a run here — its mdout names a file no run wrote, as when a job
+script copies every restart to one fixed name (`-c restart.rst`), or a file that was not deposited — is
+measured against the run before it in its replica, in that order, as the 1.2 scan measured every
+neighbour, so a real gap is still reported (an INFO note says so; `continues_from` is not written for it).
+That run may sit in another directory only where the protocol moves on to a later role (`equil/` ->
+`prod/`) and that directory is the replica's one directory of its role: sibling directories of one role
+(replicas the layout inference could not tag, such as `300K/rep1` beside `310K/rep2`) are never chained by
+order.
+Runs that record the same file at the same start time are a fan-out from one structure and are not
+chained. Groups that are not runs (a topology, a starting structure such as `ntp_prod_0000.rst`) are listed
+first and are not measured. A tree in which no mdout records a usable input keeps the name order and the
+neighbour comparison. Continuity problems are listed under "Findings" as `Continuity note` cards and count
+for `--strict`, as on the manifest path (up to 1.2 the scan printed them per stage only). For a directory you will keep working with, `discover --write` and `plan -m` remain the
+recommended path: the manifest states the links, and you can correct them.
 
 #### `-m` on a v2 manifest
 
@@ -407,7 +432,7 @@ Suggestions:
   - [applied] Phase roles inferred from file content/names
 ```
 
-`ntp_prod_0000` (a bare restart with no `mdin`/`mdout`) isn't turned into a step at all — a step needs at least an `mdin`/`mdout` pair to be a "run"; it is simply excluded from the draft. It is the starting structure because `ntp_prod_0001`'s mdout records it as INPCRD in its `File Assignments` block: where the first runs' mdouts name one file that is found in the directory and that no run wrote, `discover` takes that file. Otherwise it falls back to the first single-frame coordinate file, in path order, that no run wrote, which here would be the tLEaP output `CH3L1_HUMAN_6NAG.crd`. The printed `input=restart of <step> (<file>)` names the *producing step* and the restart it resolves to, not the raw id: step ids (`10428ec4`, ... in the manifest below) are `uuid4` slices, regenerated on every run, so nothing user-facing prints them and nothing should depend on them being stable across invocations of `discover`.
+`ntp_prod_0000` (a bare restart with no `mdin`/`mdout`) isn't turned into a step at all — a step needs at least an `mdin`/`mdout` pair to be a "run"; it is simply excluded from the draft. It is the starting structure because `ntp_prod_0001`'s mdout records it as INPCRD in its `File Assignments` block: where the first runs' mdouts name one file that is found in the directory and that no run wrote, `discover` takes that file. Byte-identical copies count as one file (since 1.3.0): replica directories that each hold a copy of the starting restart give one starting structure, named by the copy nearest the top of the tree, and each replica's first run still reads what it declares. Otherwise it falls back to the first single-frame coordinate file, in path order, that no run wrote, which here would be the tLEaP output `CH3L1_HUMAN_6NAG.crd`. The printed `input=restart of <step> (<file>)` names the *producing step* and the restart it resolves to, not the raw id: step ids (`10428ec4`, ... in the manifest below) are `uuid4` slices, regenerated on every run, so nothing user-facing prints them and nothing should depend on them being stable across invocations of `discover`.
 
 Each step continues the run whose restart its mdout records as INPCRD in the `File Assignments` block. A byte-for-byte copy of a run's restart (replica directories often hold one) counts as that run's restart, and is never taken as the starting structure. The record is resolved as a path from the run's directory or, for a path from another machine, by file name among the restarts the runs wrote; several with that name are told apart by the trailing directories the record shares with them, then the run's own directory, then its replica. A record that points into another replica is not followed. Where the mdout records nothing usable (no mdout, a clipped path, an unknown or ambiguous name), the step continues the previous run of its directory in file order, and the first run of a directory reads the starting structure. Runs are written so that each producer precedes the runs that read it, and directories in role order (minimization, heating, equilibration, production), whatever their names. Where the pool holds several topologies, each run is bound to the one whose atom count matches its mdout's `NATOM`. The draft is a proposal to check, not a result: review it in the editor or in the manifest before relying on it.
 
@@ -498,7 +523,7 @@ steps:
 # ... ntp_prod_0003..0005 follow the same shape, each chained to the previous step
 ```
 
-Note the restart is written **once**, on the step that produced it (`rst:`), and a chained consumer carries only `ref` — the id of the step it continues from. Nothing repeats the path. To find the file a chained step actually starts from, follow `ref` to the producing step and read its `rst`; `ambermeta.simulation.resolve_input_coords` does exactly that, and it is what the `input=restart of ...` line above prints. Paths are written relative to `directory` when the draft's files live under it.
+Note the restart is written **once**, on the step that produced it (`rst:`), and a chained consumer carries only `ref` — the id of the step it continues from. Nothing repeats the path. To find the file a chained step actually starts from, follow `ref` to the producing step and read its `rst`; `ambermeta.simulation.resolve_input_coords` does exactly that, and it is what the `input=restart of ...` line above prints. Paths are written relative to `directory` when the draft's files live under it. When `--write` puts the manifest outside `directory`, they are written relative to the manifest's own directory instead, and `discover` prints a note saying so (since 1.3.0): `validate --manifest` reads a manifest's paths from there, and `plan -m` falls back to it when none of the run files is found in its `directory` argument. A manifest written into a subdirectory of `directory` keeps paths relative to `directory` (what the GUI serving `directory` and `plan -m directory` expect); `validate --manifest` reads paths from the manifest's own directory only and reports them missing there, so keep the manifest in `directory` or outside it.
 
 Exit `0` on success; `1` if `directory` doesn't exist, or if discovery finds no phases (nothing to draft) — e.g. an empty or unrecognized directory:
 
@@ -669,6 +694,22 @@ Per lineage:
   rep3  3 run(s), 15000000 steps, 60000.000 ps
 ```
 
+**Time per role.** The totals count every dynamics run, equilibration included. Where the runs that ran hold
+more than one role, `plan` and `validate --manifest` also print the simulated time per role, and each
+lineage line carries the same split (since 1.3.0):
+
+```
+Simulated time by role (ps): equilibration 3000.000; production 60000.000
+
+Per lineage:
+  rep1  6 run(s), 15750000 steps, 63000.000 ps (equilibration 3000.000; production 60000.000)
+```
+
+`summary.json` holds them as `totals.time_ps_<role>` (`time_ps_equilibration`, `time_ps_production`, ...;
+runs without a role are `time_ps_unclassified`) and under the same keys in each `lineages` entry, where a
+role the member did not run reads 0.0. The keys are absent when all runs share one role, so such a
+summary is the file it always was.
+
 The same numbers reach `summary.json` under a top-level `lineages` key, and `totals.lineage_count`
 counts the **declared** members — untagged runs form their own bucket but are not a lineage, so the
 canonical `common/{min,heat,equil}` + `rep1..3/prod_*` campaign reports 3, not 4. Both keys are
@@ -679,9 +720,22 @@ absent from an untagged document's summary.
 
 ```
 Lineage coherence:
-  WARN Members differ in temp0 (rep1: 300.0; rep2: 310.0).
+  WARN Members differ in temp0 in their production runs (rep1: 300.0; rep2: 310.0).
   INFO 3 steps read the restart written by common/equil and carry 3 distinct resolved seeds.
 ```
+
+Settings are compared **per role**: each member's minimization, heating and equilibration runs are
+compared role by role, and its other runs (production, custom roles and runs without a role) together;
+the roles are named in the message, and a document whose runs carry no role is compared as before with no
+role named. Replicas whose production runs differ in `temp0` are therefore reported even when each
+replica's equilibration runs step through several temperatures, and an NVT equilibration before NPT
+production no longer takes `ntp` out of the comparison. `temp0` is compared on the production (non-schedule)
+runs, among the replicas that have them (one replica alone compares nothing); only where no replica has
+such runs — every run classifies as equilibration, as for chunks named `npt_0001` — is it compared on the
+last schedule role. Equilibration temperatures that differ only before production (299.9/300.0/300.1 K per
+segment or per replica) are not reported, also when only one replica reached production. Roles in which
+the members differ in the same way share one line (`Members differ in dt in their equilibration and
+production runs (...)`).
 
 Only a **category error** is fatal — different atom counts *between* members, different atom counts
 *within* one member, or a member that ran no dynamics beside one that did. Those exit `1` with or

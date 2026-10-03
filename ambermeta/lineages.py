@@ -14,7 +14,8 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Any, Dict, FrozenSet, Iterable, List, Optional, Protocol, Tuple, TypeVar
+from typing import (Any, Dict, FrozenSet, Iterable, List, NamedTuple, Optional, Protocol,
+                    Tuple, TypeVar)
 
 from ambermeta.roles import phase_word
 from ambermeta.simulation import Simulation, Step, iter_steps
@@ -172,31 +173,138 @@ def _atom_count_of(stage: Any) -> Optional[int]:
     return int(count) if isinstance(count, int) and count > 0 else None
 
 
-def varying_axis(stages: Iterable[Any]) -> Dict[str, Dict[str, Any]]:
-    """Per compared parameter, the value each declared member holds — when they differ.
+#: The preparation roles: their runs are compared role by role, and their target
+#: temperature is a schedule detail rather than a property of the replica -- heating ramps
+#: it, staged equilibration steps it, and per-segment or per-replica equilibration
+#: temperatures (299.9 / 300.0 / 300.1 K) are a common way to decorrelate replicas.
+_SCHEDULE_ROLES = ("minimization", "heating", "equilibration")
 
-    A parameter every member states identically is not an axis and is left out, so the
-    result reads as "this is what distinguishes the members" rather than as a dump. A
-    parameter some member does not state is left out too: unstated is not a value, and an
-    axis built from an absence is an axis the user never varied.
+
+class Axis(NamedTuple):
+    """One compared parameter on which the members differ, within one bucket of runs.
+
+    ``roles`` are the ``stage_role`` values of the runs compared, in first-appearance
+    order; ``None`` stands for runs that carry no role. A schedule role is a bucket of its
+    own (one role); production, custom roles and role-less runs are one bucket together.
+    """
+
+    roles: Tuple[Optional[str], ...]
+    key: str
+    held: Dict[str, Any]
+
+
+def _role_of(stage: Any) -> Optional[str]:
+    return getattr(stage, "stage_role", None) or None
+
+
+def _held(key: str, ran: Dict[str, List[Any]]) -> Optional[Dict[str, Any]]:
+    """`{tag: value}` when every member in `ran` states one value for `key` and the
+    members do not all agree; None otherwise."""
+    if len(ran) < 2:
+        return None
+    held: Dict[str, Any] = {}
+    for tag, group in ran.items():
+        values = {_comparable(p[key]) for p in map(_parameters_of, group) if key in p}
+        # A member that disagrees with itself has no single value to compare, and
+        # saying so is a different finding from saying two members disagree.
+        if len(values) != 1:
+            return None
+        held[tag] = values.pop()
+    return held if len(set(held.values())) > 1 else None
+
+
+def varying_axes(stages: Iterable[Any]) -> List[Axis]:
+    """Per bucket of runs and compared parameter, the value each member holds — when they
+    differ.
+
+    Before 1.3.0 a member was one bucket, so a replica whose equilibration runs used
+    several temperatures had "no single value" and the whole parameter dropped out of the
+    comparison: replicas whose production runs ran at 300 and 310 K were not reported, and
+    an NVT equilibration before NPT production took ``ntp`` out the same way. Each
+    member's runs are now split into buckets and the members are compared bucket by
+    bucket:
+
+    * one bucket per schedule role (minimization, heating, equilibration);
+    * one bucket for everything else -- production, custom roles and runs without a role
+      together, so replicas are still compared where the same runs of two replicas carry
+      different roles (one classified as production, the other not classified). A document
+      whose runs carry no role is therefore compared exactly as before.
+
+    ``temp0`` is compared on the second bucket whenever any member has runs there, among
+    the members that do (one such member alone compares nothing). Only where no member has
+    any -- replicas whose runs all classify as equilibration (``npt_0001``, restrained
+    production), or that ran only heating -- is it compared on the last schedule role two
+    members hold. Equilibration temperatures that differ only in the runs before
+    production are therefore not reported, also when a replica stopped before its
+    production. The other parameters are compared in every bucket.
+
+    Within a bucket the old rules hold. A parameter every member states identically is
+    not an axis. A member whose runs disagree with each other has no single value, and the
+    parameter is left out for that bucket. A parameter some member does not state is left
+    out too: unstated is not a value. A bucket fewer than two members ran compares nothing.
 
     Takes stages rather than a ``Simulation`` because the values do not exist on a
     ``Step``. ``temp0``/``cut``/``ntt``/``ntp``/``dt`` live in the parsed mdin, which only
     exists after the analysis engine has read the files; the document holds paths.
     """
     members = {tag: group for tag, group in buckets(stages).items() if tag is not UNTAGGED}
-    axis: Dict[str, Dict[str, Any]] = {}
+    schedule: Dict[str, Dict[str, List[Any]]] = {}
+    sampling: Dict[str, List[Any]] = {}
+    sampling_roles: List[Optional[str]] = []
+    for tag, group in members.items():
+        for stage in group:
+            role = _role_of(stage)
+            if role in _SCHEDULE_ROLES:
+                schedule.setdefault(role, {}).setdefault(tag, []).append(stage)
+            else:
+                sampling.setdefault(tag, []).append(stage)
+                if role not in sampling_roles:
+                    sampling_roles.append(role)
+    bucketed: List[Tuple[Tuple[Optional[str], ...], Dict[str, List[Any]]]] = [
+        ((role,), schedule[role]) for role in _SCHEDULE_ROLES if role in schedule]
+    if sampling:
+        bucketed.append((tuple(sampling_roles), sampling))
+
+    # Where `temp0` is compared: the sampling runs whenever any member has them (a crashed
+    # replica that never reached production does not turn the equilibration temperatures
+    # into the comparison); the last schedule role two members hold only where none has.
+    shared = [(roles, ran) for roles, ran in bucketed if len(ran) >= 2]
+    temperature_bucket = None
+    if sampling:
+        temperature_bucket = tuple(sampling_roles)
+    elif shared:
+        temperature_bucket = shared[-1][0]
+
+    out: List[Axis] = []
     for key in COMPARED_PARAMETERS:
-        held: Dict[str, Any] = {}
-        for tag, group in members.items():
-            values = {_comparable(p[key]) for p in map(_parameters_of, group) if key in p}
-            # A member that disagrees with itself has no single value to compare, and
-            # saying so is a different finding from saying two members disagree.
-            if len(values) == 1:
-                held[tag] = values.pop()
-        if len(held) == len(members) and len(set(held.values())) > 1:
-            axis[key] = held
+        for roles, ran in bucketed:
+            if key == "temp0" and roles != temperature_bucket:
+                continue
+            held = _held(key, ran)
+            if held is not None:
+                out.append(Axis(roles, key, held))
+    return out
+
+
+def varying_axis(stages: Iterable[Any]) -> Dict[str, Dict[str, Any]]:
+    """Per compared parameter, the value each declared member holds — when they differ.
+
+    The one-row-per-parameter view of :func:`varying_axes`. Where a parameter differs in
+    more than one bucket, the production (non-schedule) runs' values are given, otherwise
+    those of the first schedule role that differs. For a document whose runs carry no role
+    this is the comparison it always was.
+    """
+    axis: Dict[str, Dict[str, Any]] = {}
+    for item in sorted(varying_axes(stages),
+                       key=lambda a: a.roles[0] in _SCHEDULE_ROLES if a.roles else True):
+        axis.setdefault(item.key, item.held)
     return axis
+
+
+def _roles_text(roles: List[str]) -> str:
+    if len(roles) == 1:
+        return roles[0]
+    return ", ".join(roles[:-1]) + " and " + roles[-1]
 
 
 def _comparable(value: Any) -> Any:
@@ -298,10 +406,21 @@ def coherence(stages: Iterable[Any]) -> List[Finding]:
             + ", ".join(minimisation_only) + " ran no dynamics)."))
 
     # --- differences the user may well have meant --------------------------------
-    for key, held in varying_axis(stages).items():
-        spelled = "; ".join(f"{tag}: {held[tag]}" for tag in sorted(held))
+    # Per role (see `varying_axes`). Roles in which the members differ in the same way are
+    # reported in one finding, so replicas run at 300 and 310 K throughout say so once.
+    grouped: Dict[Tuple[str, Tuple[Tuple[str, Any], ...]], List[Optional[str]]] = {}
+    for item in varying_axes(stages):
+        signature = (item.key, tuple(sorted(item.held.items())))
+        roles = grouped.setdefault(signature, [])
+        roles.extend(r for r in item.roles if r not in roles)
+    for (key, pairs), roles in grouped.items():
+        spelled = "; ".join(f"{tag}: {value}" for tag, value in pairs)
+        # Runs without a role are named only beside runs that have one, so a document that
+        # classifies nothing reads as it always did.
+        named = [r or "unclassified" for r in roles] if any(roles) else []
+        scope = f" in their {_roles_text(named)} runs" if named else ""
         out.append(Finding("warning", "parameter",
-                           f"Members differ in {key} ({spelled})."))
+                           f"Members differ in {key}{scope} ({spelled})."))
 
     # --- seeds, and the branch point they hang off -------------------------------
     out.extend(_seed_findings(stages, members))

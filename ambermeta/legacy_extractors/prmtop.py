@@ -260,7 +260,14 @@ class PrmtopMetadata:
     
     # Solvent Pointers
     num_solvent_molecules: int = 0
+    # Residues up to SOLVENT_POINTERS' IPTRES, without the ions and water among them.
+    # Every residue named as an ion (`ION_RESNAMES`) is left out, a structural metal ion
+    # (`ZN`, `MG`, ...) included: names alone do not tell it from a counter-ion. Up to
+    # AmberMeta 1.2 this was IPTRES itself, which counts the ions LEaP adds.
     num_solute_residues: int = 0
+    # SOLVENT_POINTERS' IPTRES as LEaP wrote it: the last residue before the solvent,
+    # ions included. None when the topology has no SOLVENT_POINTERS.
+    iptres: Optional[int] = None
 
     # Hydrogen mass repartitioning (HMR)
     hmr_active: Optional[bool] = None
@@ -373,6 +380,20 @@ def _residue_atom_counts(labels: Sequence[str], starts: Sequence[Any],
             continue
         sizes.setdefault(name, Counter())[size] += 1
     return {name: counter.most_common(1)[0][0] for name, counter in sizes.items()}
+
+
+def _solute_residues(labels: Optional[Sequence[Any]], iptres: Any) -> int:
+    """The residues up to IPTRES that are neither ions nor water.
+
+    Without residue labels the pointer is all there is, and it is returned as before.
+    """
+    if not isinstance(iptres, int) or iptres <= 0:
+        return 0
+    if not labels:
+        return iptres
+    head = [str(x).strip() if x else "" for x in labels[:iptres]]
+    return sum(1 for name in head
+               if name not in ION_RESNAMES and name not in WATER_RESNAMES)
 
 
 def extract_prmtop_metadata(filepath: str) -> PrmtopMetadata:
@@ -532,8 +553,12 @@ def extract_prmtop_metadata(filepath: str) -> PrmtopMetadata:
     # 6. Solvent Pointers
     solv_ptr = prmtop.get("SOLVENT_POINTERS")
     if solv_ptr and len(solv_ptr) >= 3:
-        # SOLVENT_POINTERS[0] = IPTRES (last residue that is part of solute)
-        md.num_solute_residues = solv_ptr[0]
+        # SOLVENT_POINTERS[0] = IPTRES, the last residue LEaP files before the solvent.
+        # LEaP places the ions it adds there too, so IPTRES itself counts them (443 on the
+        # sample topology, 72 of them K+/Cl-). The solute is those residues minus ions and
+        # any water among them.
+        md.num_solute_residues = _solute_residues(res_labels, solv_ptr[0])
+        md.iptres = solv_ptr[0] if isinstance(solv_ptr[0], int) else None
         # Note: SOLVENT_POINTERS[2] is NSPSOL (first solvent molecule index), NOT the count
         # We calculate actual solvent count from residue composition instead
         if md.residue_composition:

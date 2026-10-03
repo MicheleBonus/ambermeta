@@ -392,6 +392,82 @@ def test_stage_directories_named_for_different_phases_are_not_members():
     assert infer_lineages_from_layout(["em/run", "md/run"]) == {}
 
 
+def test_ensemble_named_stage_directories_are_not_members():
+    """PR #93 review, B1. 1.3.0 ranked the ensemble words after production for the ROLE,
+    and `phase_word` followed: `nvt_equil`/`npt_equil` both read `equil`, `nvt_eq`/`npt_eq`
+    both `eq`, and the stages were taken for replicas. The phase word is the leftmost cue
+    word, as in 1.2, whatever the role priority."""
+    from ambermeta.roles import classify_role, phase_word
+
+    assert [phase_word(n) for n in ("nvt_equil", "npt_equil", "nvt_eq", "npt_eq",
+                                    "nvt_prod", "npt_prod")] == [
+        "nvt", "npt", "nvt", "npt", "nvt", "npt"]
+    assert classify_role("nvt_prod_0001") == "production"     # the role priority stays
+    assert infer_lineages_from_layout(["nvt_equil/md", "npt_equil/md",
+                                       "prod/prod_0001", "prod/prod_0002"]) == {}
+    assert infer_lineages_from_layout(["nvt_prod/md", "npt_prod/md"]) == {}
+    tags = infer_lineages_from_layout(["equil/nvt_eq/md", "equil/npt_eq/md",
+                                       "prod/01/prod_0001", "prod/02/prod_0001"])
+    assert tags == {"prod/01/prod_0001": "01", "prod/02/prod_0001": "02"}
+    # a digit after the cue is a cue now, and still names the stage
+    assert infer_lineages_from_layout(["min1/md", "heat1/md", "eq1/md"]) == {}
+    assert set(infer_lineages_from_layout(["prod1/md", "prod2/md"]).values()) == {"prod1", "prod2"}
+
+
+def _stage_tree(root, layout):
+    """Every run writes `md.in`/`md.out` (or `prod_000k`) in its stage directory, each
+    reading the restart of the run before it."""
+    from tests.conftest import RunSpec, md_mdin, write_run_tree
+
+    runs, clock = [], 0.0
+    for stem, inpcrd, ps, ntp in layout:
+        runs.append((stem, RunSpec(mdin=md_mdin("md", int(ps / 0.002), temp0=300.0, ntp=ntp),
+                                   elapsed_ps=ps, begin_ps=clock, inpcrd=inpcrd)))
+        clock += ps
+    write_run_tree(root, runs)
+    (root / "start.rst").write_text(
+        "start\n     2       0.0000000\n   1.0   2.0   3.0   4.0   5.0   6.0\n")
+    return root
+
+
+def test_a_single_chain_through_ensemble_named_stages_passes_strict(tmp_path, capsys):
+    """Review probe T2: `nvt_equil/` then `npt_equil/` then `prod/`, one chain."""
+    from ambermeta.cli import main
+
+    tree = _stage_tree(tmp_path, [
+        ("nvt_equil/md", "../start.rst", 10.0, 0),
+        ("npt_equil/md", "../nvt_equil/md.restrt", 10.0, 1),
+        ("prod/prod_0001", "../npt_equil/md.restrt", 20.0, 1),
+        ("prod/prod_0002", "prod_0001.restrt", 20.0, 1)])
+    manifest = tree / "m.yaml"
+    assert main(["discover", str(tree), "--write", str(manifest)]) == 0
+    assert "declared lineage" not in capsys.readouterr().out
+    assert main(["validate", "--manifest", str(manifest), "--strict"]) == 0
+    assert main(["plan", "--recursive", str(tree), "--strict"]) == 0
+
+
+def test_replicas_after_ensemble_named_stages_are_tagged(tmp_path, capsys):
+    """Review probe T1: `equil/nvt_eq`, `equil/npt_eq`, then replicas `prod/01`, `prod/02`."""
+    from ambermeta.cli import main
+    from tests.conftest import RunSpec, md_mdin, write_run_tree
+
+    def spec(ps, begin, inpcrd, ntp=1):
+        return RunSpec(mdin=md_mdin("md", int(ps / 0.002), temp0=300.0, ntp=ntp),
+                       elapsed_ps=ps, begin_ps=begin, inpcrd=inpcrd)
+
+    runs = [("equil/nvt_eq/md", spec(10.0, 0.0, "../../start.rst", ntp=0)),
+            ("equil/npt_eq/md", spec(10.0, 10.0, "../nvt_eq/md.restrt"))]
+    for rep in ("01", "02"):
+        runs += [(f"prod/{rep}/prod_0001", spec(20.0, 20.0, "../../equil/npt_eq/md.restrt")),
+                 (f"prod/{rep}/prod_0002", spec(20.0, 40.0, "prod_0001.restrt"))]
+    tree = write_run_tree(tmp_path, runs)
+    manifest = tree / "m.yaml"
+    assert main(["discover", str(tree), "--write", str(manifest)]) == 0
+    out = capsys.readouterr().out
+    assert "Runs carry 2 declared lineage(s)" in out
+    assert "lineage=01" in out and "lineage=02" in out
+
+
 def test_members_whose_labels_name_the_same_phase_are_still_members():
     """The refusal above keys on the labels DISAGREEING about which phase they name, so
     replicas of one phase, and arms of one phase under different conditions, still tag."""

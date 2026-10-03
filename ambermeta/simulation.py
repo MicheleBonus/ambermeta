@@ -189,6 +189,45 @@ def _adopt_legacy_restart_paths(sim: Simulation) -> None:
             step.input_coords = InputCoords(source="step", ref=ic.ref)
 
 
+def rebase_paths(sim: Simulation, from_directory: str, to_directory: str) -> int:
+    """Rewrite every relative file path in `sim` from `from_directory` to `to_directory`.
+
+    `discover DIR --write OTHER/manifest.yaml` drafts paths relative to DIR, while
+    `validate --manifest` reads a manifest's paths from the manifest's own directory; a
+    manifest written elsewhere named files that were not there. Rebased, the paths resolve
+    from the manifest. A path that cannot be made relative (another drive on Windows)
+    becomes absolute. Absolute paths are left as they are. Returns the number of paths
+    rewritten.
+    """
+    import os
+
+    changed = 0
+
+    def rebase(path: Optional[str]) -> Optional[str]:
+        nonlocal changed
+        if not path or os.path.isabs(path):
+            return path
+        full = os.path.normpath(os.path.join(from_directory, path))
+        try:
+            new = os.path.relpath(full, to_directory).replace(os.sep, "/")
+        except ValueError:
+            new = full
+        if new != path:
+            changed += 1
+        return new
+
+    for topology in sim.topologies:
+        topology.path = rebase(topology.path) or topology.path
+    sim.starting_structure = rebase(sim.starting_structure)
+    for _, step in iter_steps(sim):
+        step.mdin = rebase(step.mdin)
+        step.mdout = rebase(step.mdout)
+        step.mdcrd = rebase(step.mdcrd)
+        step.rst = rebase(step.rst)
+        step.input_coords.path = rebase(step.input_coords.path)
+    return changed
+
+
 def write_simulation(sim: Simulation, path: str, fmt: str) -> None:
     """Write a Simulation as a v2 manifest. JSON and YAML are the only manifest
     formats AmberMeta writes, and both are lossless."""

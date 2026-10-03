@@ -482,3 +482,205 @@ def test_the_report_carries_the_findings_and_ok_reflects_them(differing_members)
     assert ("warning", "parameter") in kinds
     # A warning is not an error: `ok` still turns on whether anything is actually broken.
     assert body["ok"] is True
+
+
+# ---------------------------------------------------------------------------
+# 1.3.0: members are compared per role
+# ---------------------------------------------------------------------------
+
+def _roled(tag, role, index, **cntrl):
+    stage = _stage(f"{tag}/{role[:4]}_{index:04d}", tag, cntrl={**MD, **cntrl})
+    stage.stage_role = role
+    return stage
+
+
+def _alternating(eq_temps, prod_temps, **prod_cntrl):
+    """Per member: eq_k at `eq_temps[tag][k]` before every production segment."""
+    stages = []
+    for tag, temps in eq_temps.items():
+        for k, temperature in enumerate(temps, start=1):
+            stages.append(_roled(tag, "equilibration", k, temp0=temperature))
+            stages.append(_roled(tag, "production", k, temp0=prod_temps[tag],
+                                 **prod_cntrl.get(tag, {})))
+    return stages
+
+
+def test_production_temperatures_are_compared_although_equilibration_varies():
+    """Pattern C2: rep1 at 300 K and rep2 at 310 K, each with equilibration runs at
+    T - 0.1, T and T + 0.1. Compared as whole members, each replica held three
+    temperatures, had "no single value", and the replicas were never compared."""
+    stages = _alternating({"rep1": [299.9, 300.0, 300.1], "rep2": [309.9, 310.0, 310.1]},
+                          {"rep1": 300.0, "rep2": 310.0})
+    warning, = [f for f in coherence(stages) if f.kind == "parameter"]
+    assert warning.message == ("Members differ in temp0 in their production runs "
+                               "(rep1: 300.0; rep2: 310.0).")
+    assert varying_axis(stages) == {"temp0": {"rep1": 300.0, "rep2": 310.0}}
+
+
+def test_per_segment_equilibration_temperatures_are_not_a_difference():
+    """Pattern B: every replica's equilibration runs use 300.0/299.9/300.1 K, in a
+    different order per replica; production runs at 300 K everywhere."""
+    stages = _alternating({"rep1": [300.0, 299.9, 300.1], "rep2": [299.9, 300.1, 300.0],
+                           "rep3": [300.1, 300.0, 299.9]},
+                          {"rep1": 300.0, "rep2": 300.0, "rep3": 300.0})
+    assert coherence(stages) == []
+
+
+def test_per_replica_equilibration_temperatures_are_not_a_difference():
+    stages = _alternating({"rep1": [299.9, 299.9], "rep2": [300.0, 300.0],
+                           "rep3": [300.1, 300.1]},
+                          {"rep1": 300.0, "rep2": 300.0, "rep3": 300.0})
+    assert coherence(stages) == []
+    assert varying_axis(stages) == {}
+
+
+def test_replicas_at_one_temperature_throughout_are_reported_once():
+    stages = _alternating({"rep1": [300.0, 300.0], "rep2": [310.0, 310.0]},
+                          {"rep1": 300.0, "rep2": 310.0})
+    warnings = [f.message for f in coherence(stages) if f.kind == "parameter"]
+    assert warnings == ["Members differ in temp0 in their production runs "
+                        "(rep1: 300.0; rep2: 310.0)."]
+
+
+def test_a_setting_that_differs_in_two_roles_alike_is_one_finding():
+    stages = _alternating({"rep1": [300.0], "rep2": [300.0]},
+                          {"rep1": 300.0, "rep2": 300.0})
+    for stage in stages:
+        if stage.lineage == "rep2":
+            stage.mdin.details.cntrl_parameters["dt"] = 0.004
+    warnings = [f.message for f in coherence(stages) if f.kind == "parameter"]
+    assert warnings == ["Members differ in dt in their equilibration and production runs "
+                        "(rep1: 0.002; rep2: 0.004)."]
+
+
+def test_nvt_equilibration_before_npt_production_keeps_ntp_compared():
+    """Each replica holds ntp 0 (equilibration) and 1 (production). Per role they agree;
+    a replica whose production runs at constant volume is still reported."""
+    stages = []
+    for tag, prod_ntp in (("rep1", 1), ("rep2", 1), ("rep3", 0)):
+        stages.append(_roled(tag, "equilibration", 1, ntp=0))
+        stages.append(_roled(tag, "production", 1, ntp=prod_ntp))
+    warning, = [f for f in coherence(stages) if f.kind == "parameter"]
+    assert warning.message == ("Members differ in ntp in their production runs "
+                               "(rep1: 1.0; rep2: 1.0; rep3: 0.0).")
+
+
+def test_a_member_that_never_reached_a_role_is_left_out_of_that_comparison():
+    stages = _alternating({"rep1": [300.0], "rep2": [300.0]},
+                          {"rep1": 300.0, "rep2": 310.0})
+    stages.append(_roled("rep3", "equilibration", 1, temp0=300.0))
+    warning, = [f for f in coherence(stages) if f.kind == "parameter"]
+    assert "rep3" not in warning.message and "(rep1: 300.0; rep2: 310.0)" in warning.message
+
+
+def test_the_cli_reports_the_production_difference_from_a_real_tree(tmp_path, capsys):
+    """Pattern C2 written to disk: discover, then validate the manifest."""
+    from tests.conftest import alternating_runs, write_run_tree
+
+    runs = (alternating_runs("rep1/", [299.9, 300.0, 300.1], 300.0)
+            + alternating_runs("rep2/", [309.9, 310.0, 310.1], 310.0))
+    tree = write_run_tree(tmp_path, runs)
+    manifest = tree / "manifest.yaml"
+    assert main(["discover", str(tree), "--write", str(manifest)]) == 0
+    capsys.readouterr()
+    assert main(["validate", "--manifest", str(manifest), "--strict"]) == 1
+    out = capsys.readouterr().out
+    assert ("Members differ in temp0 in their production runs (rep1: 300.0; rep2: 310.0)."
+            in out)
+
+
+def test_the_cli_is_silent_on_per_segment_equilibration_temperatures(tmp_path, capsys):
+    from tests.conftest import alternating_runs, write_run_tree
+
+    runs = (alternating_runs("rep1/", [300.0, 299.9, 300.1])
+            + alternating_runs("rep2/", [299.9, 300.1, 300.0]))
+    tree = write_run_tree(tmp_path, runs)
+    manifest = tree / "manifest.yaml"
+    assert main(["discover", str(tree), "--write", str(manifest)]) == 0
+    capsys.readouterr()
+    assert main(["validate", "--manifest", str(manifest), "--strict"]) == 0
+    assert "Members differ" not in capsys.readouterr().out
+
+
+# --- PR #93 review: B2 (no production runs) and S4 (one run, two roles) --------------
+
+def test_replicas_whose_runs_all_classify_as_equilibration_are_compared():
+    """B2. Production chunks named `npt_0001` (the `npt` cue) or restrained ones classify
+    as equilibration. With no run outside the schedule roles, `temp0` is compared on the
+    last schedule role, so 300 vs 310 K is reported again."""
+    stages = [_roled(tag, "equilibration", k, temp0=temp)
+              for tag, temp in (("rep1", 300.0), ("rep2", 310.0)) for k in (1, 2)]
+    warning, = [f for f in coherence(stages) if f.kind == "parameter"]
+    assert warning.message == ("Members differ in temp0 in their equilibration runs "
+                               "(rep1: 300.0; rep2: 310.0).")
+
+
+def test_replicas_that_only_heated_are_compared_on_heating():
+    stages = [_roled(tag, "heating", 1, temp0=temp)
+              for tag, temp in (("rep1", 300.0), ("rep2", 310.0))]
+    assert [f.message for f in coherence(stages) if f.kind == "parameter"] == [
+        "Members differ in temp0 in their heating runs (rep1: 300.0; rep2: 310.0)."]
+
+
+def test_equilibration_before_production_is_still_not_compared_on_temp0():
+    """The schedule temperatures stay out once the replicas have runs outside them:
+    heating at 300 vs 310 K before production at 300 K says nothing about the replicas."""
+    stages = []
+    for tag, heat in (("rep1", 300.0), ("rep2", 310.0)):
+        stages.append(_roled(tag, "heating", 1, temp0=heat))
+        stages.append(_roled(tag, "production", 1, temp0=300.0))
+    assert [f for f in coherence(stages) if f.kind == "parameter"] == []
+
+
+@pytest.mark.parametrize("other_role", [None, "npt_sampling"])
+def test_matching_runs_with_different_roles_are_still_compared(other_role):
+    """S4. rep1's production runs are classified, rep2's equivalents carry no role (or a
+    custom one): they are one bucket, and 300 vs 310 K is reported."""
+    stages = [_roled("rep1", "production", k, temp0=300.0) for k in (1, 2)]
+    for k in (1, 2):
+        stage = _roled("rep2", "production", k, temp0=310.0)
+        stage.stage_role = other_role
+        stages.append(stage)
+    warning, = [f for f in coherence(stages) if f.kind == "parameter"]
+    assert "(rep1: 300.0; rep2: 310.0)" in warning.message
+    assert varying_axis(stages) == {"temp0": {"rep1": 300.0, "rep2": 310.0}}
+
+
+def test_the_cli_reports_npt_named_replicas_at_two_temperatures(tmp_path, capsys):
+    """Review probe `probe_npt_replicas.py`, on disk: discover, validate, scan."""
+    from tests.conftest import RunSpec, md_mdin, write_run_tree
+
+    runs = []
+    for rep, temp in (("rep1", 300.0), ("rep2", 310.0)):
+        previous = "../start.rst"
+        for i in (1, 2):
+            runs.append((f"{rep}/npt_{i:04d}",
+                         RunSpec(mdin=md_mdin("npt", 10000, temp0=temp), elapsed_ps=20.0,
+                                 begin_ps=20.0 * (i - 1), inpcrd=previous)))
+            previous = f"npt_{i:04d}.restrt"
+    tree = write_run_tree(tmp_path, runs)
+    (tree / "start.rst").write_text(
+        "start\n     2       0.0000000\n   1.0   2.0   3.0   4.0   5.0   6.0\n")
+    manifest = tree / "m.yaml"
+    assert main(["discover", str(tree), "--write", str(manifest)]) == 0
+    capsys.readouterr()
+    assert main(["validate", "--manifest", str(manifest), "--strict"]) == 1
+    assert "Members differ in temp0" in capsys.readouterr().out
+    assert main(["plan", "--recursive", str(tree), "--strict"]) == 1
+    assert "Members differ in temp0" in capsys.readouterr().out
+
+
+def test_a_crashed_replica_does_not_turn_equilibration_temperatures_into_a_difference():
+    """PR #93 verification, N3. Only rep1 reached production; every replica equilibrated at
+    its own temperature (299.9/300.0/300.1 K). With production runs present anywhere,
+    `temp0` is compared only among the replicas that have them -- one alone compares
+    nothing -- and never falls back to the equilibration temperatures."""
+    stages = []
+    for tag, temp in (("rep1", 299.9), ("rep2", 300.0), ("rep3", 300.1)):
+        stages += [_roled(tag, "equilibration", k, temp0=temp) for k in (1, 2)]
+    stages.append(_roled("rep1", "production", 1, temp0=300.0))
+    assert [f for f in coherence(stages) if f.kind == "parameter"] == []
+    # a second replica reaching production at another temperature is compared
+    stages.append(_roled("rep2", "production", 1, temp0=310.0))
+    assert [f.message for f in coherence(stages) if f.kind == "parameter"] == [
+        "Members differ in temp0 in their production runs (rep1: 300.0; rep2: 310.0)."]

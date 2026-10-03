@@ -252,7 +252,8 @@ Wrote v2 draft manifest: sim.yaml (yaml)</span></code></pre>
   solvent_type: Explicit Solvent
   simulation_category: Protein / Ligand in Explicit Water
   num_solvent_molecules: 14659
-  num_solute_residues: 443
+  num_solute_residues: 371
+  iptres: 443
   hmr_active: False
   hmr_hydrogen_mass_summary: 1.008-1.008 amu across 32188 H
   hmr_detection_method: atomic_number
@@ -626,7 +627,7 @@ print(md.stats.temp_stats.stdev)       <span class="o"># 1.2504190252445306</spa
 <p><code>TrajectoryMetadata</code>: <code>file_format</code>, <code>n_atoms</code>, <code>n_frames</code>, <code>time_start</code>/<code>time_end</code>/<code>avg_dt</code>, <code>has_box</code>/<code>box_type</code>, <code>volume_stats</code>, REMD fields. &nbsp;<code>InpcrdMetadata</code>: <code>natoms</code>, <code>time</code> (drives continuity), <code>has_velocities</code>/<code>has_box</code>, <code>box_dimensions</code>/<code>box_angles</code>/<code>box_volume</code>.</p>
 
 <h3>Canonical role tokens</h3>
-<p>Both the GUI and CLI classify roles through the one shared function, <code>ambermeta.roles.classify_role</code>: <code>"minimization" | "heating" | "equilibration" | "production" | ""</code>. Precedence: (1) authoritative content — <code>imin=1</code> ⇒ <code>minimization</code>; (2) filename/path cues on word boundaries (<code>min</code>/<code>minim</code>/<code>em</code>, <code>heat</code>/<code>warm</code>/<code>therm</code>/<code>anneal</code>, <code>equil</code>/<code>eq</code>/<code>nvt</code>/<code>npt</code>, <code>prod</code>) — so <code>minor.in</code> never matches; (3) other content heuristics (restraints ⇒ equilibration; a temperature ramp ⇒ heating; a long run ⇒ production).</p>
+<p>Both the GUI and CLI classify roles through the one shared function, <code>ambermeta.roles.classify_role</code>: <code>"minimization" | "heating" | "equilibration" | "production" | ""</code>. Precedence: (1) authoritative content — <code>imin=1</code> ⇒ <code>minimization</code>; (2) filename/path cues on word boundaries, directories first (<code>min</code>/<code>minim</code>/<code>em</code>, <code>heat</code>/<code>warm</code>/<code>therm</code>/<code>anneal</code>, <code>equil</code>/<code>equi</code>/<code>eq</code>, <code>prod</code>, then <code>nvt</code>/<code>npt</code>; a cue may be followed by <code>_</code>, <code>.</code>, <code>-</code>, a digit or the end of the name) — so <code>minor.in</code> never matches, <code>prod1</code> and <code>eq0001</code> do, and <code>nvt_prod_0001</code> is production; (3) other content heuristics (restraints ⇒ equilibration; a temperature ramp ⇒ heating; a long run ⇒ production).</p>
 </section>
 
 <section id="reference" class="wrap">

@@ -106,11 +106,28 @@ without the GUI extra.
 | `buckets` | `(steps) -> Dict[Any, List[T]]` | The same grouping over any iterable of tag-carrying objects (`Step`, or `SimulationStage` in the flat engine), so a *part* of a document can be asked the question too. |
 | `infer_lineages_from_layout` | `(run_names) -> Dict[str, str]` | `{run_name: tag}` for the runs a directory layout names — see [manifest §9.1](manifest.md#91-how-discover-infers-members). Holds only the runs it could tag, so `.get(name)` → `None` matches `Step.lineage`. |
 | `UNTAGGED` | sentinel object | The key of the shared untagged bucket. An object, not a string, so it cannot collide with a tag someone typed. |
-| `varying_axis` | `(stages) -> Dict[str, Dict[str, Any]]` | Per compared `&cntrl` key, the value each declared member holds — **only** where they differ and every member states one. |
+| `varying_axes` | `(stages) -> List[Axis]` | Per bucket of runs and compared `&cntrl` key, the value each declared member holds — **only** where they differ and every member with runs in that bucket states one value for it. `Axis` is `(roles, key, held)`; `roles` are the roles of the runs compared (`None` for runs without a role). |
+| `varying_axis` | `(stages) -> Dict[str, Dict[str, Any]]` | One row per compared key from `varying_axes`: the non-schedule runs' values where the key differs there, else the first schedule role that differs. For a document whose runs carry no role, the comparison it always was. |
 | `coherence` | `(stages) -> List[Finding]` | What the members do and do not agree about. Silent below two declared members. |
 | `Finding` | dataclass | `severity` (`error`/`warning`/`info`), `kind`, `message`. |
 
-`varying_axis` and `coherence` take **stages, not a `Simulation`**. A `Step` carries no parsed
+Members are compared **per bucket of runs** (since 1.3.0). Each member's runs are split into one bucket
+per schedule role (minimization, heating, equilibration) and one bucket for everything else (production,
+custom roles and runs without a role together, so the same runs of two replicas are compared even where one
+replica's are classified as production and the other's are not). A key is compared between the members
+with runs in a bucket; a member whose runs there disagree with each other has no single value and the key
+is left out for that bucket. A document whose runs carry no role is one bucket per member, as before.
+`temp0` is compared on the non-schedule bucket whenever any member has runs there, among the members that
+do (one alone compares nothing, so a replica that stopped before production does not turn the
+equilibration temperatures into a difference). Only where no member has any (all runs classify as
+equilibration, as for chunks named `npt_0001`, or the replicas only heated) is it compared on the last
+schedule role two members hold. Equilibration and heating temperatures that differ only in the runs before
+production (ramps, staged equilibration, per-segment or per-replica values such as 299.9/300.0/300.1 K)
+are therefore not reported. Before 1.3.0 a member was one bucket, so a replica whose equilibration runs
+used several temperatures had no single value and replicas whose production runs differed were not
+reported.
+
+`varying_axes`, `varying_axis` and `coherence` take **stages, not a `Simulation`**. A `Step` carries no parsed
 parameters at all: `temp0`, `cut`, `ntt`, `ntp` and `dt` exist only on
 `SimulationStage.mdin.details.cntrl_parameters` once the analysis engine has read the files, and the
 resolved seed only in the mdout header. They read the raw `cntrl_parameters` echo and never
@@ -131,7 +148,7 @@ from ambermeta.lineages import coherence, varying_axis
 protocol = auto_discover("campaign/", recursive=True)
 varying_axis(protocol.stages)     # {'temp0': {'rep1': 300.0, 'rep2': 310.0}}
 [(f.severity, f.message) for f in coherence(protocol.stages)]
-# [('warning', 'Members differ in temp0 (rep1: 300.0; rep2: 310.0).')]
+# [('warning', 'Members differ in temp0 in their production runs (rep1: 300.0; rep2: 310.0).')]
 ```
 
 `UNTAGGED`, `members`, `is_multi_lineage` and `infer_lineages_from_layout` are re-exported from the
@@ -262,7 +279,7 @@ def discover_draft(
 # {"simulation": Simulation, "proposal": Optional[dict], "suggestions": [...], "warnings": [...]}
 ```
 
-Scans a directory into a **Simulation draft**: builds the topology pool (HMR detected from each prmtop's hydrogen masses, `ambermeta.topology_pool.classify_topology_pool`), finds a starting structure (the INPCRD the first runs' mdouts record in their `File Assignments` block, when that resolves to one file found here that no run wrote; otherwise the first single-frame coordinate file, in path order, that no run wrote), groups runs into phases by inferred role (`ambermeta.roles.classify_role` — the one classifier shared by CLI and GUI), and chains each step's `input_coords` to the run whose restart its mdout records as INPCRD, or, where the record is unusable, off the previous step of its own directory (see the `discover` section of the CLI reference for the resolution rules). Runs are ordered so that producers precede the runs that read them and directories go in role order, and with several topologies each run is bound to the one whose atom count matches its mdout's `NATOM`. Where the directory layout names members (`rep1/`, `rep2/`, … sibling directories whose run sets the inference can reconcile — `ambermeta.lineages.infer_lineages_from_layout`), each member gets its own chain starting from the starting structure and same-role steps share one phase across members; where it does not, the result is the single chain and contiguous phases it always was.
+Scans a directory into a **Simulation draft**: builds the topology pool (HMR detected from each prmtop's hydrogen masses, `ambermeta.topology_pool.classify_topology_pool`), finds a starting structure (the INPCRD the first runs' mdouts record in their `File Assignments` block, when that resolves to one file found here that no run wrote — byte-identical copies, such as one per replica directory, count as one file; otherwise the first single-frame coordinate file, in path order, that no run wrote), groups runs into phases by inferred role (`ambermeta.roles.classify_role` — the one classifier shared by CLI and GUI), and chains each step's `input_coords` to the run whose restart its mdout records as INPCRD, or, where the record is unusable, off the previous step of its own directory (see the `discover` section of the CLI reference for the resolution rules). Runs are ordered so that producers precede the runs that read them and directories go in role order, and with several topologies each run is bound to the one whose atom count matches its mdout's `NATOM`. Where the directory layout names members (`rep1/`, `rep2/`, … sibling directories whose run sets the inference can reconcile — `ambermeta.lineages.infer_lineages_from_layout`), each member gets its own chain starting from the starting structure and same-role steps share one phase across members; where it does not, the result is the single chain and contiguous phases it always was. A role that recurs after another role opens a new phase, named with a number from the second phase of that role on (`Equilibration`, `Production`, `Equilibration 2`, `Production 2`, ...).
 
 `apply_tags` decides whether that grouping is *written* onto `Step.lineage` (`True`, the default) or only *proposed*, in the returned `"proposal"`, with every step left untagged (`False`). `ambermeta discover` calls this with the default — `--write`'s manifest is its own confirmation step, so the CLI has always tagged and still does. The GUI's `POST /document/discover` route is the one caller that passes `apply_tags=False`: a fresh scan is a claim about the user's own data the GUI has a real Accept step for (`PATCH /steps/lineage`), so nothing is written until the user takes it. `"proposal"` is `None` when the layout inference tags nothing, and otherwise `{"segment_index": int, "segments": List[List[str]], "members": [{"tag": str, "step_ids": [...], "sources": [{"directory": str, "run_count": int}, ...]}, ...], "handoffs": [{"consumer_id": str, "producer_id": str, "consumer": str, "producer": str, "evidence": str}, ...]}` — see `build_lineage_proposal()`, below, for what each of those means. `handoffs` are the cross-directory restart handoffs AMBER's own `File Assignments` block evidences, scoped to one proposed member: the record is a bare filename every replica repeats verbatim, so the grouping is what identifies the pair and AMBER's record only corroborates that a handoff happened. An ambiguous or clipped record proposes nothing rather than guessing. See [§1](#1-the-ambermetasimulation-model) for a full run.
 
@@ -415,8 +432,8 @@ class SimulationProtocol:
 | Member | Signature | Returns |
 |---|---|---|
 | `validate` | `(cross_stage: bool = True, allow_unexpected_gaps: bool = False) -> None` | Runs per-stage + (optionally) cross-stage checks, attaching notes to each stage |
-| `totals` | `() -> Dict[str, float]` | `{"steps": float, "time_ps": float}` summed across stages, plus `lineage_count` when the document holds more than one member |
-| `lineage_totals` | `() -> Dict[str, Dict[str, float]]` | Per declared member: its own `steps`, `time_ps` and `step_count`. Empty for a single-member document |
+| `totals` | `() -> Dict[str, float]` | `{"steps": float, "time_ps": float}` summed across stages, plus `time_ps_<role>` per role (for example `time_ps_equilibration`, `time_ps_production`; runs without a role count as `time_ps_unclassified`) when the runs that ran hold more than one role, `lineage_count` when the document holds more than one member, and `queued_count` when a run is queued |
+| `lineage_totals` | `() -> Dict[str, Dict[str, float]]` | Per declared member: its own `steps`, `time_ps` and `step_count`, plus the same `time_ps_<role>` keys as `totals` when `totals` has them (0.0 for a role the member did not run). Empty for a single-member document |
 | `sequence_findings` | `() -> List[Dict[str, Any]]` | The numbered-sequence holes, as `missing_run` cards |
 | `stage_findings` | `(start_index: int = 1) -> List[Dict[str, Any]]` | Every stage's own findings, as `step_check` / `unfinished_run` / `input_mismatch` cards (`ambermeta.protocol.stage_finding_cards`) — what `plan --recursive` prints |
 | `to_dict` | `() -> Dict[str, Any]` | `totals` + each stage's `to_dict()`, plus `findings` and `lineages` when there is something to report — the full protocol summary |
@@ -449,11 +466,15 @@ class SimulationStage:
     mdout:  Optional[MdoutData]  = None
     mdcrd:  Optional[MdcrdData]  = None
     restart_path: Optional[str] = None
-    # The run member this stage belongs to, and the document step ids of this stage and of
-    # the step it continues from. Continuity partitions on `lineage` and measures each
-    # member's head against `parent_id`. `lineage` is read from the v2 document on the
-    # manifest path and inferred from the directory layout on the scan path; the two ids
-    # exist only in a document, so a scanned stage carries neither.
+    # False for a scanned group that is not a run (a topology, a starting structure): it
+    # continues nothing and is not measured. Not serialised.
+    is_run: bool = True
+    # The run member this stage belongs to, and the step ids of this stage and of the step
+    # it continues from. Continuity partitions on `lineage` and measures each stage
+    # against `parent_id`. `lineage` is read from the v2 document on the manifest path and
+    # inferred from the directory layout on the scan path. On the scan path the ids are the
+    # stage names, set where the mdouts record the inputs their runs read (see
+    # `ambermeta.run_order`); a scanned tree without such records carries neither.
     lineage: Optional[str] = None
     step_id: Optional[str] = None
     parent_id: Optional[str] = None
@@ -493,12 +514,17 @@ A real `summary()` (from the sample data's `ntp_prod_0001`, via `auto_discover(.
   "result": "Completed",
   "expected_gap_ps": "",
   "observed_gap_ps": "",
-  "continuity": "INFO: Cannot verify continuity between ntp_prod_0000 and ntp_prod_0001 (missing end time from ntp_prod_0000 (no mdcrd/mdout))",
-  "evidence": "INFO: Part of sequence 'ntp_prod' (item 2 of 6); INFO: stage_role 'production' inferred from mdin file; INFO: Cannot verify continuity between ntp_prod_0000 and ntp_prod_0001 (missing end time from ntp_prod_0000 (no mdcrd/mdout))"
+  "continuity": "",
+  "evidence": "INFO: Part of sequence 'ntp_prod' (item 2 of 6); INFO: stage_role 'production' inferred from mdin file"
 }
 ```
 
-(`ntp_prod_0000` has only a `.rst` restart in the sample data — no `mdcrd`/`mdout` — so its end time can't be read; continuity resumes reporting normally from `ntp_prod_0002` onward, where the previous step's own `mdout` supplies an end time.)
+(`ntp_prod_0001` is the first run: its mdout records `ntp_prod_0000.rst`, a restart no run in the directory
+wrote, so it continues nothing and nothing is measured. From `ntp_prod_0002` on, each run is measured against
+the run whose restart its mdout records, and `observed_gap_ps` reads `0 ps`. The scan orders and links runs
+by those records, the rule `discover` uses; see [the CLI reference](cli.md#--recursive-flat-discovery-retained-engine).
+Up to 1.2 it ordered stages by name and compared neighbours, and `ntp_prod_0001` was compared with the
+`ntp_prod_0000` restart stage: "Cannot verify continuity ... (missing end time from ntp_prod_0000)".)
 
 ---
 
@@ -551,7 +577,8 @@ These are the fields on `.details` — what `ambermeta info` prints and what you
 | `residue_composition` | `Dict[str, int]` | Residue-name → count (includes ions, water) |
 | `residue_atom_counts` | `Dict[str, int]` | Atoms per residue for names outside the protein and nucleic-acid sets (water, ions, lipids, ligands), from `RESIDUE_POINTER`; `WAT: 4` is a four-site water model |
 | `num_solvent_molecules` | `int` | Solvent molecule count |
-| `num_solute_residues` | `int` | `SOLVENT_POINTERS` IPTRES: the last solute residue, which counts ions placed before the water |
+| `num_solute_residues` | `int` | Residues up to `SOLVENT_POINTERS` IPTRES (the last residue LEaP files before the solvent), without the ions and water among them; every residue named as an ion is left out, a structural metal ion (`ZN`, `MG`, ...) included. Up to 1.2 this was IPTRES itself, which counts the ions LEaP adds (443 instead of 371 on the sample) |
+| `iptres` | `Optional[int]` | `SOLVENT_POINTERS` IPTRES as LEaP wrote it (the last residue before the solvent, ions included; 443 on the sample); `None` without `SOLVENT_POINTERS`. Since 1.3.0 |
 | `hmr_active` | `Optional[bool]` | HMR detected from masses |
 | `hmr_hydrogen_mass_range` | `Optional[Tuple[float, float]]` | (min, max) H mass |
 | `hmr_hydrogen_mass_summary` | `Optional[str]` | e.g. `1.008-1.008 amu across 32188 H` |
@@ -732,6 +759,8 @@ A phase of the sample data (abridged):
 ```text
 stage_name,stage_role,time_start_ps,time_end_ps,duration_ns,frame_count,temp_avg,temp_std,pressure_avg,pressure_std,density_avg,density_std,etot_avg,etot_std
 ```
+
+When any stage carries a lineage (a replica), a `lineage` column follows `stage_role` (since 1.3.0); a document that declares no lineage keeps the header above.
 
 ```python
 import json

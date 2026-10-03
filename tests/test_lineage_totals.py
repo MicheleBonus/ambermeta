@@ -209,3 +209,113 @@ def test_lineage_count_is_a_float_on_the_wire_and_an_int_in_the_artifact(replica
     raw = out.read_text(encoding="utf-8")
     assert '"lineage_count": 3.0' in raw
     assert '"step_count": 4' in raw
+
+
+# ---------------------------------------------------------------------------
+# 1.3.0: simulated time per role
+# ---------------------------------------------------------------------------
+
+def _alternating_tree(root, reps=("",), eq_temps=(300.0, 299.9, 300.1)):
+    from tests.conftest import alternating_runs, write_run_tree
+
+    runs = []
+    for rep in reps:
+        runs += alternating_runs(f"{rep}/" if rep else "", list(eq_temps))
+    return write_run_tree(root, runs)
+
+
+def _plan_summary(tree, tmp_path, capsys):
+    manifest = tree / "manifest.yaml"
+    assert main(["discover", str(tree), "--write", str(manifest)]) == 0
+    capsys.readouterr()
+    summary = tmp_path / "summary.json"
+    assert main(["plan", str(tree), "-m", str(manifest), "--summary-path", str(summary)]) == 0
+    return json.loads(summary.read_text(encoding="utf-8")), capsys.readouterr().out
+
+
+def test_totals_say_how_much_was_equilibration_and_how_much_production(tmp_path, capsys):
+    """One 1-ps equilibration before each of three 20-ps production segments: 63 ps in
+    all, of which 60 are production."""
+    tree = _alternating_tree(tmp_path / "tree")
+    summary, out = _plan_summary(tree, tmp_path, capsys)
+    totals = summary["totals"]
+    assert totals["time_ps"] == pytest.approx(63.0)
+    assert totals["time_ps_equilibration"] == pytest.approx(3.0)
+    assert totals["time_ps_production"] == pytest.approx(60.0)
+    assert list(totals)[:4] == ["steps", "time_ps", "time_ps_equilibration",
+                                "time_ps_production"]
+    assert "Simulated time by role (ps): equilibration 3.000; production 60.000" in out
+
+
+def test_the_scan_path_prints_the_same_breakdown(tmp_path, capsys):
+    tree = _alternating_tree(tmp_path)
+    protocol = auto_discover(str(tree), recursive=True)
+    assert protocol.totals()["time_ps_production"] == pytest.approx(60.0)
+    assert main(["plan", "--recursive", str(tree)]) == 0
+    assert ("Simulated time by role (ps): equilibration 3.000; production 60.000"
+            in capsys.readouterr().out)
+
+
+def test_each_lineage_is_broken_down_by_role(tmp_path, capsys):
+    from tests.conftest import alternating_runs, write_run_tree
+
+    runs = alternating_runs("rep1/", [300.0, 300.0]) + alternating_runs("rep2/", [300.0, 300.0])
+    # rep3 equilibrated; its production run is queued and never ran
+    (eq_stem, eq_spec), (prod_stem, prod_spec) = alternating_runs("rep3/", [300.0])
+    runs += [(eq_stem, eq_spec), (prod_stem, prod_spec._replace(elapsed_ps=None))]
+    tree = write_run_tree(tmp_path / "tree", runs)
+    summary, _ = _plan_summary(tree, tmp_path, capsys)
+    lineages = summary["lineages"]
+    assert lineages["rep1"]["time_ps_equilibration"] == pytest.approx(2.0)
+    assert lineages["rep1"]["time_ps_production"] == pytest.approx(40.0)
+    assert lineages["rep3"]["time_ps_production"] == 0.0
+    assert main(["validate", "--manifest", str(tree / "manifest.yaml")]) in (0, 1)
+    out = capsys.readouterr().out
+    assert "rep1  4 run(s)" in out and "(equilibration 2.000; production 40.000)" in out
+    assert "(equilibration 1.000; production 0.000)" in out
+
+
+def test_a_single_role_document_gains_no_role_keys(crashed_replica_tree):
+    protocol = auto_discover(str(crashed_replica_tree), recursive=True)
+    assert not [k for k in protocol.totals() if k.startswith("time_ps_")]
+    assert not [k for entry in protocol.lineage_totals().values() for k in entry
+                if k.startswith("time_ps_")]
+
+
+def test_runs_without_a_role_are_counted_as_unclassified():
+    from ambermeta.protocol import SimulationProtocol, SimulationStage
+
+    protocol = SimulationProtocol(stages=[SimulationStage("a", stage_role="production"),
+                                          SimulationStage("b")])
+    import ambermeta.protocol as engine
+    times = {"a": 10.0, "b": 2.0}
+    original = engine._elapsed_ps
+    engine._elapsed_ps = lambda stage: times[stage.name]
+    try:
+        totals = protocol.totals()
+    finally:
+        engine._elapsed_ps = original
+    assert totals["time_ps_production"] == 10.0
+    assert totals["time_ps_unclassified"] == 2.0
+
+
+def test_the_stats_csv_has_a_lineage_column_when_lineages_exist(tmp_path, capsys):
+    import csv
+    from ambermeta.protocol import STATS_CSV_COLUMNS, write_stats_csv
+    from tests.conftest import alternating_runs, write_run_tree
+
+    tree = write_run_tree(tmp_path / "tree", alternating_runs("rep1/", [300.0])
+                          + alternating_runs("rep2/", [300.0]))
+    protocol = auto_discover(str(tree), recursive=True)
+    write_stats_csv(protocol, str(tmp_path / "stats.csv"))
+    rows = list(csv.DictReader((tmp_path / "stats.csv").open(encoding="utf-8")))
+    assert list(rows[0])[:3] == ["stage_name", "stage_role", "lineage"]
+    assert {(r["stage_name"], r["lineage"]) for r in rows} == {
+        ("rep1/eq_0001", "rep1"), ("rep1/prod_0001", "rep1"),
+        ("rep2/eq_0001", "rep2"), ("rep2/prod_0001", "rep2")}
+
+    # without lineages the header is the one it always was
+    single = auto_discover(str(tree / "rep1"), recursive=True)
+    write_stats_csv(single, str(tmp_path / "single.csv"))
+    header = (tmp_path / "single.csv").read_text(encoding="utf-8").splitlines()[0]
+    assert header.split(",") == STATS_CSV_COLUMNS

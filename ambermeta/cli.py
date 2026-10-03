@@ -12,6 +12,7 @@ from ambermeta.roles import classify_role
 from ambermeta.protocol import (
     SimulationProtocol,
     auto_discover,
+    role_times,
 )
 
 try:  # pragma: no cover - optional dependency
@@ -321,6 +322,7 @@ def _sim_findings(report, *, strict: bool = False) -> None:
     run printed `Validation: OK` and then exited 1. Saying OK and failing is worse than
     either alone.
     """
+    _print_role_totals(report.get("totals"))
     _print_lineage_totals(report.get("lineages"))
     _print_findings(_problem_suggestions(report))
     coherence = report.get("coherence") or []
@@ -343,6 +345,33 @@ def _resolve_sim_format(path: str, requested: Optional[str]) -> str:
         return requested
     ext = os.path.splitext(path)[1].lower().lstrip(".")
     return "yaml" if ext in ("yaml", "yml") else "json"
+
+
+def _is_within(path: str, directory: str) -> bool:
+    """Whether `path` is `directory` or lies below it (False across Windows drives)."""
+    path, directory = os.path.normcase(os.path.abspath(path)), os.path.normcase(
+        os.path.abspath(directory))
+    try:
+        return os.path.commonpath([path, directory]) == directory
+    except ValueError:
+        return False
+
+
+def _run_files(sim):
+    """The relative mdin/mdout paths a manifest names."""
+    from ambermeta.simulation import iter_steps
+    return [p for _, step in iter_steps(sim) for p in (step.mdin, step.mdout)
+            if p and not os.path.isabs(p)]
+
+
+def _named_files(sim):
+    """Every relative file path a manifest names: topologies, the starting structure, and
+    each step's mdin, mdout, trajectory, restart and explicit input coordinates."""
+    from ambermeta.simulation import iter_steps
+    paths = [t.path for t in sim.topologies] + [sim.starting_structure]
+    for _, step in iter_steps(sim):
+        paths += [step.mdin, step.mdout, step.mdcrd, step.rst, step.input_coords.path]
+    return [p for p in paths if p and not os.path.isabs(p)]
 
 
 def _discover_command(args: argparse.Namespace) -> int:
@@ -384,10 +413,25 @@ def _discover_command(args: argparse.Namespace) -> int:
             _out(line)
 
     if getattr(args, "write", None):
-        from ambermeta.simulation import write_simulation
+        from ambermeta.simulation import rebase_paths, write_simulation
         fmt = _resolve_sim_format(args.write, getattr(args, "format", None))
+        # The draft's paths are relative to the scanned directory, and a manifest's paths
+        # are read from the manifest's own directory (`validate --manifest`). Written
+        # elsewhere, the manifest named files that were not there, and every one was
+        # reported missing. Rebased, they resolve from where the manifest is.
+        # Only a manifest OUTSIDE the scanned directory is rebased. One in a subdirectory
+        # keeps paths relative to the scanned directory, which is what the GUI serving
+        # that directory and `plan -m DIR` resolve them against.
+        manifest_dir = os.path.dirname(os.path.abspath(args.write))
+        rebased = (not _is_within(manifest_dir, directory)
+                   and rebase_paths(sim, directory, manifest_dir))
         write_simulation(sim, args.write, fmt)
         _out(Colors.success(f"\nWrote v2 draft manifest: {args.write} ({fmt})"))
+        if rebased:
+            _out(Colors.warning(
+                f"NOTE: the manifest is not in {directory}, so its file paths are written "
+                f"relative to its own directory ({manifest_dir}), where "
+                f"`validate --manifest` and `plan -m` read them."))
     return 0
 
 
@@ -437,6 +481,21 @@ def _print_coherence(protocol):
     return findings
 
 
+def _role_breakdown(totals) -> str:
+    """`equilibration 3000.000; production 60000.000` from a totals dict, or ''."""
+    return "; ".join(f"{role} {ps:.3f}" for role, ps in role_times(totals or {}))
+
+
+def _print_role_totals(totals) -> None:
+    """Simulated time per role, when the runs hold more than one role.
+
+    The total counts equilibration as well as production; this line tells them apart.
+    """
+    breakdown = _role_breakdown(totals)
+    if breakdown:
+        _out(f"\nSimulated time by role (ps): {breakdown}")
+
+
 def _print_lineage_totals(lineages) -> None:
     """The per-member breakdown, when there is one.
 
@@ -450,8 +509,10 @@ def _print_lineage_totals(lineages) -> None:
     width = max(len(tag) for tag in lineages)
     for tag in lineages:
         entry = lineages[tag]
+        breakdown = _role_breakdown(entry)
         _out(f"  {tag:<{width}}  {entry['step_count']} run(s), "
-             f"{entry['steps']:.0f} steps, {entry['time_ps']:.3f} ps")
+             f"{entry['steps']:.0f} steps, {entry['time_ps']:.3f} ps"
+             + (f" ({breakdown})" if breakdown else ""))
 
 
 def _print_protocol(protocol: SimulationProtocol, verbose: bool = False) -> None:
@@ -461,6 +522,9 @@ def _print_protocol(protocol: SimulationProtocol, verbose: bool = False) -> None
     _out(f"Stages: {len(protocol.stages)}")
     _out(f"Total steps: {totals['steps']:.0f}")
     _out(f"Total simulated time (ps): {totals['time_ps']:.3f}")
+    breakdown = _role_breakdown(totals)
+    if breakdown:
+        _out(f"Simulated time by role (ps): {breakdown}")
     if "lineage_count" in totals:
         _out(f"Declared lineages: {totals['lineage_count']:.0f}")
     # Emit-when-nonzero, matching `totals()` itself: a directory with nothing queued prints
@@ -831,6 +895,9 @@ def _validate_manifest(args: argparse.Namespace, manifest: str) -> int:
         print(Colors.error(f"ERROR: Failed to load manifest: {e}"), file=sys.stderr)
         return 1
 
+    # The manifest's own directory, and nothing else: a search of its parent directories
+    # took the first one holding ANY file of a named path, and validated a manifest whose
+    # files were missing against unrelated files two levels up.
     base_dir = os.path.dirname(os.path.abspath(manifest)) or "."
     settings = {
         "strict_validation": True,
@@ -1243,6 +1310,29 @@ def _write_plan_artifacts(args: argparse.Namespace, protocol: SimulationProtocol
     return 1 if result["failed"] else 0
 
 
+def _manifest_base(sim, directory: str, manifest: str) -> str:
+    """The directory `plan -m` reads the manifest's relative paths from.
+
+    `directory` (the positional argument), unless none of the run files the manifest names
+    is found there and EVERY file it names is found beside the manifest. That is the shape
+    of a manifest `discover --write` put outside the scanned directory: its paths are
+    written relative to the manifest, and read from `directory` every file was missing.
+    Anything less is not that shape, and the files are reported missing from `directory`.
+    """
+    manifest_dir = os.path.dirname(os.path.abspath(manifest))
+    if os.path.normcase(manifest_dir) == os.path.normcase(directory):
+        return directory
+    paths = _run_files(sim)
+    if not paths or any(os.path.exists(os.path.join(directory, p)) for p in paths):
+        return directory
+    if not all(os.path.exists(os.path.join(manifest_dir, p)) for p in _named_files(sim)):
+        return directory
+    print(Colors.warning(
+        f"NOTE: no file the manifest names is in {directory}; reading its paths from the "
+        f"manifest's own directory ({manifest_dir})."), file=sys.stderr)
+    return manifest_dir
+
+
 def _plan_v2(args: argparse.Namespace, directory: str) -> int:
     """Summarize a v2 manifest and write any requested plan artifacts."""
     from ambermeta.simulation import load_simulation
@@ -1252,11 +1342,17 @@ def _plan_v2(args: argparse.Namespace, directory: str) -> int:
 
     expand_env = not getattr(args, "no_expand_env", False)
     sim = load_simulation(args.manifest, expand_env=expand_env)
+    # A relative `--prmtop` is named from the positional directory, whichever directory
+    # the manifest's own paths turn out to be read from.
+    global_prmtop = getattr(args, "prmtop", None)
+    if global_prmtop and not os.path.isabs(global_prmtop):
+        global_prmtop = os.path.join(directory, global_prmtop)
+    directory = _manifest_base(sim, directory, args.manifest)
     settings = {
         "strict_validation": not bool(getattr(args, "skip_cross_stage_validation", None)),
         "allow_gaps": False,
         "use_relative_paths": True,
-        "global_prmtop": getattr(args, "prmtop", None),
+        "global_prmtop": global_prmtop,
         "auto_detect_restarts": bool(getattr(args, "auto_detect_restarts", False)),
         "strict": bool(getattr(args, "strict", False)),
     }
@@ -1384,6 +1480,9 @@ def _plan_command(args: argparse.Namespace) -> int:
     findings = protocol.sequence_findings()
     # Each run's own findings, from the same producer `validate --manifest` uses.
     findings += protocol.stage_findings(start_index=len(findings) + 1)
+    # Continuity problems too, as on the manifest path: a gap was printed per stage only,
+    # and neither the Findings block nor `--strict` saw it.
+    findings += protocol.continuity_findings(start_index=len(findings) + 1)
     _print_findings(findings)
     # Coherence needs only the parsed stages, which this path has. Leaving it to the
     # manifest path alone meant one directory passed `plan --recursive` and failed

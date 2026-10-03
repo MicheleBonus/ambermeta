@@ -5,7 +5,7 @@ README = Path(__file__).parent / "README.md"
 
 setup(
     name="ambermeta",
-    version="1.2.0",
+    version="1.3.0",
     description="Simulation provenance extraction utilities for AMBER molecular dynamics runs.",
     long_description=README.read_text(encoding="utf-8"),
     long_description_content_type="text/markdown",

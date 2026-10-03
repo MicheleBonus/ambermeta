@@ -98,6 +98,17 @@ own directory for `ambermeta validate --manifest`, `plan`'s positional `director
 for `ambermeta plan -m`, and the served directory for the GUI. Keeping the manifest beside the files it
 describes makes all three agree.
 
+`discover DIR --write PATH` with `PATH` outside `DIR` writes the paths relative to the manifest's own
+directory (absolute where no relative path exists, such as another drive on Windows) and says so, so
+`validate --manifest` finds the files. A manifest written into `DIR` or a subdirectory of it keeps paths
+relative to `DIR`, which is what the GUI serving `DIR` and `plan -m DIR` read them against;
+`validate --manifest`, which reads a manifest's paths from the manifest's own directory only, reports
+them missing (keep the manifest in `DIR` or outside it). `plan -m` reads paths from its `directory`
+argument unless none of the run files is found there and every file the manifest names is found beside the
+manifest; it then reads them from the manifest's directory and prints a note (a relative `--prmtop` is
+still named from the `directory` argument). Otherwise the files are reported missing. Up to 1.2 a manifest written outside `DIR` kept paths
+relative to `DIR`, and `validate --manifest` reported every file missing.
+
 ---
 
 ## 3. `simulation`: the topology pool and starting structure
@@ -306,10 +317,30 @@ Both the GUI and CLI classify roles through the **one** shared function, `amberm
 ```
 
 Precedence: (1) authoritative content — `imin=1` in the mdin/mdout ⇒ `minimization`; (2) filename/path
-cues, matched on word boundaries (`_`, `.`, `-`, or start/end of a path component), so `minor.in` does
-**not** match `minimization` the way a naive substring search would; (3) other content heuristics
+cues, directories before the file name, matched on word boundaries (a cue starts at the start of a path
+component or after `_`, `.`, `-`, and ends at the end of the component, at `_`, `.`, `-` or at a digit),
+so `minor.in` does **not** match `minimization` the way a naive substring search would while `prod1` and
+`eq0001` carry their cue; (3) other content heuristics
 (position restraints/`ibelly` ⇒ `equilibration`; a low→high temperature ramp ⇒ `heating`; a very long
 `nstlim` ⇒ `production`). An unrecognized name/content classifies as `""` (unknown), never a guess.
+
+The name cues, in the order they are tried within one path component (the first match wins):
+
+| Cue words | Role | Examples |
+|---|---|---|
+| `minimization`, `minimize`, `minim`, `min`, `em` | minimization | `min_1`, `01_min`, `em2` |
+| `heat`, `warm`, `therm`, `anneal` (optionally + `ing`) | heating | `heat1`, `heating_2`, `heat_eq_0002` |
+| `equilibration`, `equilibrate`, `equil`, `equi`, `eq` | equilibration | `eq_0001`, `eq0001`, `ntp_equi`, `prod_0002_eq`, `equil_nvt` |
+| `production`, `prod` | production | `prod_0001`, `prod1`, `nvt_prod_0001` |
+| `nvt`, `npt` | equilibration | `npt_02`, `md_nvt_red_06` |
+
+The ensemble words rank below production, so `nvt_prod_0001` is a production run; before 1.3.0 they ranked
+with `eq` and that run was classified as equilibration, and a digit directly after a cue (`prod1`, `eq0001`)
+hid the cue. A directory cue still wins over the file name: `prod/nvt_eq_0001` is production.
+
+This priority decides the **role** only. The *phase word* the layout inference compares (§9.1) is the
+leftmost cue word of a directory label, as in 1.2: `nvt_equil/` and `npt_equil/` name the stages `nvt`
+and `npt` (two stages, not two replicas) although both are equilibration by role.
 
 A Phase's `role` is normally set once (from its Steps' classified roles, on discovery) rather than
 re-derived per Step; a Step itself has no `role` field — role lives on the Phase.
@@ -403,7 +434,7 @@ sibling.
 A cohort's candidate tags must also agree about which **phase** they name, if any. One directory per
 stage, every stage writing the same `md.in`/`md.out` — `equil/min/`, `equil/heat/`, `equil/npt/` — passes
 every rule above exactly as `rep1/`, `rep2/` does; its segment is simply the name of each stage. Tags that
-disagree on a phase word (`min`/`em`, `heat`, `eq`/`equil`/`nvt`/`npt`, `prod`, the same cues role
+disagree on a phase word (`min`/`em`, `heat`, `eq`/`equi`/`equil`/`nvt`/`npt`, `prod`, the same cues role
 inference reads) are stages of one pipeline, and that cohort contributes nothing. Stage directories named
 without a phase word (`step1/`, `step2/`) cannot be told apart from replicas by name, and are still tagged.
 
@@ -502,6 +533,15 @@ Within a phase a member's own steps stay in order, and its chain still runs thro
 
 A single-lineage document is untouched by all of this: one member, contiguous phases, document order *is*
 run order.
+
+**A role that recurs opens a new phase, and the repeats are numbered.** A protocol that alternates roles — one
+short equilibration before every production segment, or a minimization after heating — gets a new phase
+each time the role changes, in a single- or multi-lineage document alike (the role lives on the Phase, so one
+phase cannot hold both). Since 1.3.0 `discover` names the second phase of a role "Equilibration 2", the third
+"Equilibration 3", and so on; the first keeps the plain name, so a protocol that runs each role once is named
+as before. Up to 1.2 every one of them was called "Equilibration". The methods summary describes the
+numbered repeats of a phase together with it (one "Equilibration" entry with `document_phases: 3`), as it
+did when they shared one name.
 
 ---
 

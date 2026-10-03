@@ -113,6 +113,15 @@ class SimulationStage:
     # Serialised only when true, as `inpcrd_written_by_this_run`, so a reader of
     # summary.json does not take that file's clock or box for the run's starting ones.
     inpcrd_is_own_restart: bool = False
+    # False for a scanned group that is not a run -- a topology, a starting structure --
+    # which the scan path keeps as a stage for what its files say. It continues nothing and
+    # is not measured. Not serialised; every stage a document declares is a run.
+    is_run: bool = True
+    # Scan path only: the run before this one in its member, in execution order, for a run
+    # that no recorded input links to a producer. Continuity is then measured against it,
+    # as the 1.2 scan measured every neighbour, so a real gap is still reported. Not a
+    # claim about which restart was read: not serialised, and not `continues_from`.
+    order_predecessor_id: Optional[str] = None
     # Provenance. `lineage` names the run member this stage belongs to: read from the v2
     # document on the manifest path, inferred from the directory layout on the scan path —
     # both entries into this engine, because a stage the engine cannot place in a member is
@@ -913,6 +922,34 @@ def _elapsed_ps(stage: "SimulationStage") -> Optional[float]:
     return _elapsed_ps_and_source(stage)[0]
 
 
+#: The role under which `totals` counts the time of runs that carry none.
+UNCLASSIFIED_ROLE = "unclassified"
+#: Prefix of the per-role keys in `totals` and in each `lineage_totals` entry.
+ROLE_TIME_PREFIX = "time_ps_"
+_ROLE_ORDER = ("minimization", "heating", "equilibration", "production")
+
+
+def _role_sort_key(role: str) -> Tuple[int, str]:
+    if role in _ROLE_ORDER:
+        return (_ROLE_ORDER.index(role), role)
+    return (len(_ROLE_ORDER) + (1 if role == UNCLASSIFIED_ROLE else 0), role)
+
+
+def _role_keys(times: Dict[str, float], always: bool = False) -> Dict[str, float]:
+    """`{role: ps}` as `{"time_ps_<role>": ps}`, or nothing for fewer than two roles."""
+    if len(times) < 2 and not always:
+        return {}
+    return {f"{ROLE_TIME_PREFIX}{role}": ps for role, ps in times.items()}
+
+
+def role_times(totals: Dict[str, Any]) -> List[Tuple[str, float]]:
+    """The per-role simulated times a `totals` (or `lineage_totals` entry) carries, as
+    `[(role, ps)]` in protocol order; empty when it carries none."""
+    return [(key[len(ROLE_TIME_PREFIX):], float(value)) for key, value in totals.items()
+            if isinstance(key, str) and key.startswith(ROLE_TIME_PREFIX)
+            and isinstance(value, (int, float))]
+
+
 @dataclass
 class SimulationProtocol:
     stages: List[SimulationStage] = field(default_factory=list)
@@ -1001,12 +1038,25 @@ class SimulationProtocol:
         """
         by_step_id = {s.step_id: s for s in self.stages}
         multi_member = any(stage.lineage for stage in self.stages)
-        for index, stage in enumerate(self.stages):
+        # The first RUN: on the scan path a topology or a starting structure may precede it
+        # as a stage of its own (`is_run`), and those are never measured.
+        first_run = next((s for s in self.stages if s.is_run), None)
+        for stage in self.stages:
+            if not stage.is_run:
+                continue
             producer = by_step_id.get(stage.parent_id) if stage.parent_id else None
             if producer is not None and producer is not stage:
                 self._check_stage_pair(producer, stage, allow_unexpected_gaps=allow_unexpected_gaps)
                 continue
-            if index == 0 and not multi_member and not stage.parent_id:
+            previous = (by_step_id.get(stage.order_predecessor_id)
+                        if stage.order_predecessor_id else None)
+            if previous is not None and previous is not stage:
+                stage._add_continuity_note(
+                    f"INFO: No recorded input links {stage.name} to a run here; continuity "
+                    f"is measured against {previous.name}, the run before it.")
+                self._check_stage_pair(previous, stage, allow_unexpected_gaps=allow_unexpected_gaps)
+                continue
+            if stage is first_run and not multi_member and not stage.parent_id:
                 continue
             reason = ("no producing stage resolved" if stage.parent_id
                       else "it declares no producing stage")
@@ -1095,11 +1145,11 @@ class SimulationProtocol:
             # begin time of 0.000 for exactly the runs it had just corrected — a phantom
             # multi-nanosecond "overlap" reported on five healthy runs.
             #
-            # KNOWN LIMITATION, left as it is deliberately: `current.inpcrd`'s own time
-            # still wins above, and under `irest = 0` AMBER IGNORES that file's time. The
-            # two agree on the campaign this was written against (the restart handed over
-            # really was written at `t`), the goldens were generated from the inpcrd route,
-            # and changing the preference is a continuity change rather than a totals fix.
+            # `current.inpcrd`'s own time still wins above, also under `irest = 0`, where
+            # AMBER ignores it: there it is read as the time the coordinate file was
+            # written, which is what says whether the run read its producer's final
+            # restart. Where only the run's own clock is left (`t`, or its first frame),
+            # nothing is measured; see below.
             stats = None
             run_type = None
             if current.mdout and current.mdout.details:
@@ -1113,6 +1163,23 @@ class SimulationProtocol:
                 current.mdout_header, stats,
                 is_minimisation=(run_type == "Minimization"),
             )
+
+        if (start_time_source in (ORIGIN_CONTROL_T, ORIGIN_FIRST_FRAME)
+                and current.expected_gap_ps is None):
+            # The run set its own clock (`irest = 0`, new velocities): AMBER started it at
+            # the mdin's `t`, whatever the coordinates it read say, so its start time says
+            # nothing about the run before it. A production restarted with new velocities
+            # and `t = 0` after 5000 ps of equilibration was reported as a 5000-ps overlap
+            # wherever the restart's own time could not be read (a NetCDF restart on an
+            # install without a NetCDF backend). Which coordinates it read is what links the
+            # two, and the recorded-input check compares exactly that. A step that DECLARES
+            # the gap it expects (`gaps: {expected: ...}`) has stated what its `t` should
+            # be, and is still measured against that below.
+            current._add_continuity_note(
+                f"INFO: {current.name} set its own clock (irest = 0); continuity with "
+                f"{prev.name} follows the recorded input coordinates, not the clock."
+            )
+            return
 
         if end_time is None or start_time is None:
             # Add informational note when continuity check is skipped
@@ -1138,12 +1205,6 @@ class SimulationProtocol:
                 f"INFO: Start time for {current.name} was derived from frame spacing, "
                 "not read from the header (its stated begin time overflowed AMBER's "
                 "fixed-width field)."
-            )
-        elif start_time_source == ORIGIN_FIRST_FRAME:
-            current._add_continuity_note(
-                f"INFO: Start time for {current.name} was read from its first printed "
-                "frame: the run set its own clock (irest = 0) and the CONTROL DATA `t` it "
-                "started from could not be read."
             )
 
         # Tolerance is a small absolute floor plus half a frame interval —
@@ -1242,6 +1303,21 @@ class SimulationProtocol:
                 total_steps += elapsed / dt
         return {"steps": total_steps, "time_ps": total_time}
 
+    @staticmethod
+    def _role_times(stages: List[SimulationStage]) -> Dict[str, float]:
+        """Simulated time per role, over the stages that ran (the `time_ps` of
+        `_sum_stages`, split by `stage_role`), in protocol order: minimization, heating,
+        equilibration, production, then any other role by name, then runs without a role
+        as `unclassified`."""
+        times: Dict[str, float] = {}
+        for stage in stages:
+            elapsed = _elapsed_ps(stage)
+            if elapsed is None:
+                continue
+            role = stage.stage_role or UNCLASSIFIED_ROLE
+            times[role] = times.get(role, 0.0) + elapsed
+        return {role: times[role] for role in sorted(times, key=_role_sort_key)}
+
     def _members(self) -> Dict[Any, List[SimulationStage]]:
         """This protocol's membership buckets, sentinel included.
 
@@ -1252,6 +1328,12 @@ class SimulationProtocol:
 
     def totals(self) -> Dict[str, float]:
         out = self._sum_stages(self.stages)
+        # Simulated time per role, as flat `time_ps_<role>` keys (`totals` is a flat
+        # `Dict[str, float]` on the GUI's models), emitted only when the runs that ran hold
+        # more than one role -- so a single-role document's summary.json is the file it
+        # always was, and `time_ps` alone says it. `time_ps` counts equilibration as well
+        # as production; this is what tells them apart.
+        out.update(_role_keys(self._role_times(self.stages)))
         members = self._members()
         # `lineage_count` counts what the user *declared*: the untagged bucket is a member
         # (it is why a half-tagged document is multi-lineage at all) but it is not a
@@ -1289,12 +1371,20 @@ class SimulationProtocol:
         members = self._members()
         if len(members) < 2:
             return {}
+        # Per role too, under the same keys and the same condition as `totals`: every
+        # member lists every role the document ran, 0.0 where it ran none of it, so a
+        # replica that never reached production says so.
+        roles = list(_role_keys(self._role_times(self.stages)))
         out: Dict[str, Dict[str, float]] = {}
         for tag, stages in members.items():
             if tag is UNTAGGED:
                 continue
             entry: Dict[str, float] = dict(self._sum_stages(stages))
             entry["step_count"] = len(stages)
+            if roles:
+                own = _role_keys(self._role_times(stages), always=True)
+                for key in roles:
+                    entry[key] = own.get(key, 0.0)
             out[tag] = entry
         return out
 
@@ -1310,6 +1400,28 @@ class SimulationProtocol:
     def stage_findings(self, start_index: int = 1) -> List[Dict[str, Any]]:
         """Every stage's own problems, as cards; see :func:`stage_finding_cards`."""
         return stage_finding_cards(self.stages, start_index=start_index)
+
+    def continuity_findings(self, start_index: int = 1) -> List[Dict[str, Any]]:
+        """Every stage's continuity problems (its non-INFO continuity notes) as
+        ``continuity_gap`` cards, in the shape `validate --manifest` gives them.
+
+        `plan --recursive` printed these notes per stage only, so its Findings block and
+        `--strict` never saw a gap; the manifest path has always reported them as cards.
+        """
+        out: List[Dict[str, Any]] = []
+        for stage in self.stages:
+            seen = set()
+            for note in stage.continuity:
+                if str(note).startswith("INFO") or note in seen:
+                    continue
+                seen.add(note)
+                out.append({
+                    "id": f"sug_c_{start_index + len(out)}", "kind": "continuity_gap",
+                    "severity": "needs_you", "title": "Continuity note",
+                    "evidence": f"{stage.name}: {note}",
+                    "actions": ["Set as expected", "Investigate"], "step_id": stage.step_id,
+                })
+        return out
 
     def to_dict(self) -> Dict[str, Any]:
         stages = []
@@ -2344,6 +2456,118 @@ def smart_group_files(
     return grouped
 
 
+def _order_by_recorded_inputs(stages: List[SimulationStage],
+                              grouped: Dict[str, Dict[str, str]],
+                              tags: Dict[str, str]) -> List[SimulationStage]:
+    """A scanned tree's stages in the order its runs ran, each run linked to the run it
+    continued, by the input coordinates the mdouts recorded.
+
+    The scan used to order stages by file name and compare each with its neighbour, so a
+    protocol whose names do not sort in run order was measured between runs that never
+    met: `eq_0001..0003` before `prod_0001..0003` reported +20,000 ps gaps and a
+    -42,000 ps overlap on a chain that was continuous, and a starting structure named
+    `start.rst`, sorted after them, "overlapped" everything. This is the rule ``discover``
+    uses (:mod:`ambermeta.run_order`): each run is linked to the run whose restart its mdout
+    records, else to the run before it in its directory, and every stage gets a
+    ``step_id`` (its name) so continuity measures the declared edges, as on the manifest
+    path. Groups that are not runs (a topology, a starting structure) come first and are
+    not measured.
+
+    A tree where no mdout records a usable input keeps the name order and the
+    neighbour comparison it always had.
+    """
+    from ambermeta.run_order import chain_runs, execution_order, recorded_producers
+
+    runs = [stage for stage in stages if stage.is_run]
+    names = [stage.name for stage in runs]
+    headers = {stage.name: stage.mdout_header for stage in runs
+               if stage.mdout_header is not None}
+    recorded = recorded_producers(names, grouped, tags, headers)
+    if not recorded:
+        return stages
+    order = execution_order(names, recorded, {stage.name: stage.stage_role for stage in runs})
+    chain = chain_runs(order, recorded, grouped)
+    by_name = {stage.name: stage for stage in runs}
+    for stage in stages:
+        stage.step_id = stage.name
+    for name in order:
+        by_name[name].parent_id = chain[name]
+    _link_unrecorded_runs_by_order(order, by_name, recorded)
+    return [stage for stage in stages if not stage.is_run] + [by_name[n] for n in order]
+
+
+def _link_unrecorded_runs_by_order(order: List[str], by_name: Dict[str, SimulationStage],
+                                   recorded: Dict[str, Any]) -> None:
+    """Give each scanned run that no record links to a producer the run before it in its
+    member, in execution order, to be measured against (`order_predecessor_id`).
+
+    The 1.2 scan compared every run with its neighbour and so caught real gaps that the
+    recorded inputs cannot: a job script that copies each restart to one fixed name
+    (`-c restart.rst`, then `cp prod_$i.restrt restart.rst`) has every mdout record a file
+    no run wrote, and a deposit without its restarts has records that name nothing here.
+    Linked by the records alone, such runs were each a fresh start and were not measured.
+
+    A run that records a file no run wrote, at the same start time as another run that
+    records the same file, is a fan-out from one structure (several replicas started from
+    it) and keeps no predecessor.
+
+    The predecessor may sit in another directory only where the protocol moves on to a
+    later role (`equil/` -> `prod/`), and only when that earlier directory is the member's
+    one directory of its role. Sibling directories of one role are replicas or arms of an
+    experiment whatever the layout inference made of them: an untagged nested sweep
+    (`300K/rep1`, `310K/rep2`) is one member, and measuring one replica's first run against
+    the other's last reported an overlap that never happened. Several earlier directories
+    of one role (`equil/rep1`, `equil/rep2`) leave the handoff ambiguous, and it is not
+    guessed.
+    """
+    from ambermeta.run_order import RECORDED_START, ROLE_RANK
+
+    def directory_of(name: str) -> str:
+        return name.rpartition("/")[0]
+
+    rank: Dict[str, int] = {}
+    for name in order:
+        role_rank = ROLE_RANK.get(by_name[name].stage_role or "", len(ROLE_RANK))
+        directory = directory_of(name)
+        rank[directory] = min(rank.get(directory, role_rank), role_rank)
+    directories: Dict[Tuple[Any, int], set] = {}
+    for name in order:
+        member = by_name[name].lineage or UNTAGGED
+        directory = directory_of(name)
+        directories.setdefault((member, rank[directory]), set()).add(directory)
+
+    def origin(stage: SimulationStage) -> Optional[float]:
+        stats = getattr(getattr(stage.mdout, "details", None), "stats", None)
+        return _origin_time_ps(stage.mdout_header, stats)[0]
+
+    starts: Dict[Tuple[str, Optional[float]], int] = {}
+    for name in order:
+        stage = by_name[name]
+        if recorded.get(name) is RECORDED_START and stage.mdout_header is not None:
+            key = (stage.mdout_header.assignment("INPCRD") or "", origin(stage))
+            starts[key] = starts.get(key, 0) + 1
+
+    last_in_member: Dict[Any, str] = {}
+    for name in order:
+        stage = by_name[name]
+        member = stage.lineage or UNTAGGED
+        previous = last_in_member.get(member)
+        if stage.mdout is not None:
+            # Only a run that ran ends anywhere: a queued run is skipped over.
+            last_in_member[member] = name
+        if stage.parent_id or previous is None or stage.mdout is None:
+            continue
+        before, here = directory_of(previous), directory_of(name)
+        if before != here and (rank[before] >= rank[here]
+                               or len(directories[(member, rank[before])]) > 1):
+            continue
+        if recorded.get(name) is RECORDED_START and stage.mdout_header is not None:
+            key = (stage.mdout_header.assignment("INPCRD") or "", origin(stage))
+            if starts.get(key, 0) > 1:
+                continue
+        stage.order_predecessor_id = previous
+
+
 def auto_discover(
     directory: str,
     manifest: Optional[Dict[str, Dict[str, str]] | List[Dict[str, str]]] = None,
@@ -2441,7 +2665,8 @@ def auto_discover(
         # a fabricated one for the rest. `crosses_lineage` is the looser rule and does let
         # an untagged producer's restart reach any member.
         stage = SimulationStage(name=stem, stage_role=stage_role,
-                                lineage=lineage_by_stem.get(stem))
+                                lineage=lineage_by_stem.get(stem),
+                                is_run=_coords_are_run_output(file_kinds))
 
         # Add sequence info as validation notes if detected
         if "_sequence_base" in kinds:
@@ -2515,6 +2740,8 @@ def auto_discover(
                 stage.inpcrd_is_own_restart = False
 
         stages.append(stage)
+
+    stages = _order_by_recorded_inputs(stages, grouped, lineage_by_stem)
 
     # Apply auto restart detection if requested
     if auto_detect_restarts:
@@ -2815,9 +3042,17 @@ def write_stats_csv(protocol: "SimulationProtocol", filepath: str) -> None:
     """
     import csv
 
+    # A `lineage` column after `stage_role`, only when some stage carries a lineage: the
+    # replica of a row was otherwise readable only from its run name, and a CSV for a
+    # document that declares none keeps the columns it always had.
+    columns = list(STATS_CSV_COLUMNS)
+    if any(stage.lineage for stage in protocol.stages):
+        columns.insert(columns.index("stage_role") + 1, "lineage")
+
     rows: List[Dict[str, Any]] = []
     for stage in protocol.stages:
-        row: Dict[str, Any] = {"stage_name": stage.name, "stage_role": stage.stage_role or ""}
+        row: Dict[str, Any] = {"stage_name": stage.name, "stage_role": stage.stage_role or "",
+                               "lineage": stage.lineage or ""}
         stats = getattr(stage.mdout.details, "stats", None) if (
             stage.mdout and stage.mdout.details) else None
         if stats:
@@ -2854,10 +3089,10 @@ def write_stats_csv(protocol: "SimulationProtocol", filepath: str) -> None:
         rows.append(row)
 
     with open(filepath, "w", newline="", encoding="utf-8") as fh:
-        writer = csv.DictWriter(fh, fieldnames=STATS_CSV_COLUMNS)
+        writer = csv.DictWriter(fh, fieldnames=columns)
         writer.writeheader()
         for row in rows:
-            writer.writerow({k: row.get(k, "") for k in STATS_CSV_COLUMNS})
+            writer.writerow({k: row.get(k, "") for k in columns})
 
 
 PLAN_ARTIFACTS = ("summary", "methods_summary", "stats_csv")
