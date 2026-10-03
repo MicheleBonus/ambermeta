@@ -1095,11 +1095,11 @@ class SimulationProtocol:
             # begin time of 0.000 for exactly the runs it had just corrected — a phantom
             # multi-nanosecond "overlap" reported on five healthy runs.
             #
-            # KNOWN LIMITATION, left as it is deliberately: `current.inpcrd`'s own time
-            # still wins above, and under `irest = 0` AMBER IGNORES that file's time. The
-            # two agree on the campaign this was written against (the restart handed over
-            # really was written at `t`), the goldens were generated from the inpcrd route,
-            # and changing the preference is a continuity change rather than a totals fix.
+            # `current.inpcrd`'s own time still wins above, also under `irest = 0`, where
+            # AMBER ignores it: there it is read as the time the coordinate file was
+            # written, which is what says whether the run read its producer's final
+            # restart. Where only the run's own clock is left (`t`, or its first frame),
+            # nothing is measured; see below.
             stats = None
             run_type = None
             if current.mdout and current.mdout.details:
@@ -1113,6 +1113,20 @@ class SimulationProtocol:
                 current.mdout_header, stats,
                 is_minimisation=(run_type == "Minimization"),
             )
+
+        if start_time_source in (ORIGIN_CONTROL_T, ORIGIN_FIRST_FRAME):
+            # The run set its own clock (`irest = 0`, new velocities): AMBER started it at
+            # the mdin's `t`, whatever the coordinates it read say, so its start time says
+            # nothing about the run before it. A production restarted with new velocities
+            # and `t = 0` after 5000 ps of equilibration was reported as a 5000-ps overlap
+            # wherever the restart's own time could not be read (a NetCDF restart on an
+            # install without a NetCDF backend). Which coordinates it read is what links the
+            # two, and the recorded-input check compares exactly that.
+            current._add_continuity_note(
+                f"INFO: {current.name} set its own clock (irest = 0); continuity with "
+                f"{prev.name} follows the recorded input coordinates, not the clock."
+            )
+            return
 
         if end_time is None or start_time is None:
             # Add informational note when continuity check is skipped
@@ -1138,12 +1152,6 @@ class SimulationProtocol:
                 f"INFO: Start time for {current.name} was derived from frame spacing, "
                 "not read from the header (its stated begin time overflowed AMBER's "
                 "fixed-width field)."
-            )
-        elif start_time_source == ORIGIN_FIRST_FRAME:
-            current._add_continuity_note(
-                f"INFO: Start time for {current.name} was read from its first printed "
-                "frame: the run set its own clock (irest = 0) and the CONTROL DATA `t` it "
-                "started from could not be read."
             )
 
         # Tolerance is a small absolute floor plus half a frame interval —
