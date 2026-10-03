@@ -364,24 +364,14 @@ def _run_files(sim):
             if p and not os.path.isabs(p)]
 
 
-def _manifest_files_base(sim, manifest: str) -> str:
-    """The directory `validate --manifest` reads the manifest's relative paths from: its
-    own directory, unless none of the run files the manifest names is found there and they
-    are found from one of its parent directories -- a manifest `discover` wrote into a
-    subdirectory of the scanned directory names its files relative to that directory."""
-    base = os.path.dirname(os.path.abspath(manifest)) or "."
-    paths = _run_files(sim)
-    if not paths or any(os.path.exists(os.path.join(base, p)) for p in paths):
-        return base
-    parent = os.path.dirname(base)
-    while parent and parent != base:
-        if any(os.path.exists(os.path.join(parent, p)) for p in paths):
-            print(Colors.warning(
-                f"NOTE: no file the manifest names is beside it; reading its paths from "
-                f"{parent}."), file=sys.stderr)
-            return parent
-        base, parent = parent, os.path.dirname(parent)
-    return os.path.dirname(os.path.abspath(manifest)) or "."
+def _named_files(sim):
+    """Every relative file path a manifest names: topologies, the starting structure, and
+    each step's mdin, mdout, trajectory, restart and explicit input coordinates."""
+    from ambermeta.simulation import iter_steps
+    paths = [t.path for t in sim.topologies] + [sim.starting_structure]
+    for _, step in iter_steps(sim):
+        paths += [step.mdin, step.mdout, step.mdcrd, step.rst, step.input_coords.path]
+    return [p for p in paths if p and not os.path.isabs(p)]
 
 
 def _discover_command(args: argparse.Namespace) -> int:
@@ -431,8 +421,7 @@ def _discover_command(args: argparse.Namespace) -> int:
         # reported missing. Rebased, they resolve from where the manifest is.
         # Only a manifest OUTSIDE the scanned directory is rebased. One in a subdirectory
         # keeps paths relative to the scanned directory, which is what the GUI serving
-        # that directory resolves them against (`validate --manifest` finds them from the
-        # manifest's parent directories, `_manifest_files_base`).
+        # that directory and `plan -m DIR` resolve them against.
         manifest_dir = os.path.dirname(os.path.abspath(args.write))
         rebased = (not _is_within(manifest_dir, directory)
                    and rebase_paths(sim, directory, manifest_dir))
@@ -906,7 +895,10 @@ def _validate_manifest(args: argparse.Namespace, manifest: str) -> int:
         print(Colors.error(f"ERROR: Failed to load manifest: {e}"), file=sys.stderr)
         return 1
 
-    base_dir = _manifest_files_base(sim, manifest)
+    # The manifest's own directory, and nothing else: a search of its parent directories
+    # took the first one holding ANY file of a named path, and validated a manifest whose
+    # files were missing against unrelated files two levels up.
+    base_dir = os.path.dirname(os.path.abspath(manifest)) or "."
     settings = {
         "strict_validation": True,
         "allow_gaps": bool(getattr(args, "allow_gaps", False)),
@@ -1322,9 +1314,10 @@ def _manifest_base(sim, directory: str, manifest: str) -> str:
     """The directory `plan -m` reads the manifest's relative paths from.
 
     `directory` (the positional argument), unless none of the run files the manifest names
-    is found there and they are found beside the manifest. That is the shape of a manifest
-    `discover --write` put outside the scanned directory: its paths are written relative to
-    the manifest, and read from `directory` every file was missing.
+    is found there and EVERY file it names is found beside the manifest. That is the shape
+    of a manifest `discover --write` put outside the scanned directory: its paths are
+    written relative to the manifest, and read from `directory` every file was missing.
+    Anything less is not that shape, and the files are reported missing from `directory`.
     """
     manifest_dir = os.path.dirname(os.path.abspath(manifest))
     if os.path.normcase(manifest_dir) == os.path.normcase(directory):
@@ -1332,7 +1325,7 @@ def _manifest_base(sim, directory: str, manifest: str) -> str:
     paths = _run_files(sim)
     if not paths or any(os.path.exists(os.path.join(directory, p)) for p in paths):
         return directory
-    if not any(os.path.exists(os.path.join(manifest_dir, p)) for p in paths):
+    if not all(os.path.exists(os.path.join(manifest_dir, p)) for p in _named_files(sim)):
         return directory
     print(Colors.warning(
         f"NOTE: no file the manifest names is in {directory}; reading its paths from the "
