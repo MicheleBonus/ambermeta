@@ -668,3 +668,19 @@ def test_the_cli_reports_npt_named_replicas_at_two_temperatures(tmp_path, capsys
     assert "Members differ in temp0" in capsys.readouterr().out
     assert main(["plan", "--recursive", str(tree), "--strict"]) == 1
     assert "Members differ in temp0" in capsys.readouterr().out
+
+
+def test_a_crashed_replica_does_not_turn_equilibration_temperatures_into_a_difference():
+    """PR #93 verification, N3. Only rep1 reached production; every replica equilibrated at
+    its own temperature (299.9/300.0/300.1 K). With production runs present anywhere,
+    `temp0` is compared only among the replicas that have them -- one alone compares
+    nothing -- and never falls back to the equilibration temperatures."""
+    stages = []
+    for tag, temp in (("rep1", 299.9), ("rep2", 300.0), ("rep3", 300.1)):
+        stages += [_roled(tag, "equilibration", k, temp0=temp) for k in (1, 2)]
+    stages.append(_roled("rep1", "production", 1, temp0=300.0))
+    assert [f for f in coherence(stages) if f.kind == "parameter"] == []
+    # a second replica reaching production at another temperature is compared
+    stages.append(_roled("rep2", "production", 1, temp0=310.0))
+    assert [f.message for f in coherence(stages) if f.kind == "parameter"] == [
+        "Members differ in temp0 in their production runs (rep1: 300.0; rep2: 310.0)."]

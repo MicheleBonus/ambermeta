@@ -230,12 +230,13 @@ def varying_axes(stages: Iterable[Any]) -> List[Axis]:
       different roles (one classified as production, the other not classified). A document
       whose runs carry no role is therefore compared exactly as before.
 
-    ``temp0`` is compared on the second bucket when at least two members hold runs there.
-    Otherwise -- replicas whose runs all classify as equilibration (``npt_0001``, restrained
-    production), or that ran only heating -- it is compared on the last schedule role two
+    ``temp0`` is compared on the second bucket whenever any member has runs there, among
+    the members that do (one such member alone compares nothing). Only where no member has
+    any -- replicas whose runs all classify as equilibration (``npt_0001``, restrained
+    production), or that ran only heating -- is it compared on the last schedule role two
     members hold. Equilibration temperatures that differ only in the runs before
-    production are therefore not reported. The other parameters are compared in every
-    bucket.
+    production are therefore not reported, also when a replica stopped before its
+    production. The other parameters are compared in every bucket.
 
     Within a bucket the old rules hold. A parameter every member states identically is
     not an axis. A member whose runs disagree with each other has no single value, and the
@@ -264,11 +265,12 @@ def varying_axes(stages: Iterable[Any]) -> List[Axis]:
     if sampling:
         bucketed.append((tuple(sampling_roles), sampling))
 
-    # Where `temp0` is compared: the sampling runs, else the last schedule role held by two
-    # members or more.
+    # Where `temp0` is compared: the sampling runs whenever any member has them (a crashed
+    # replica that never reached production does not turn the equilibration temperatures
+    # into the comparison); the last schedule role two members hold only where none has.
     shared = [(roles, ran) for roles, ran in bucketed if len(ran) >= 2]
     temperature_bucket = None
-    if len(sampling) >= 2:
+    if sampling:
         temperature_bucket = tuple(sampling_roles)
     elif shared:
         temperature_bucket = shared[-1][0]
