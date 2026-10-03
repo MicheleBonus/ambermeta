@@ -149,3 +149,41 @@ def test_each_run_is_bound_to_the_topology_of_its_own_size(tmp_path):
     sim = core_bridge.discover_draft(str(tree), recursive=True)["simulation"]
     path_of = {t.id: t.path for t in sim.topologies}
     assert {path_of[s.topology] for _, s in iter_steps(sim)} == {"b_solvated.prmtop"}
+
+
+_LEAP_CRD = "complex\n     2\n   1.0000000   2.0000000   3.0000000   4.0000000   5.0000000   6.0000000\n"
+_START_RST = ("start\n     2  0.0000000\n"
+              "   1.0000000   2.0000000   3.0000000   4.0000000   5.0000000   6.0000000\n")
+
+
+def _replicas_with_copied_start(root, *, crd_at_root=True):
+    """Facts round 2, scenario S5: the tLEaP coordinates at the root, and in every replica
+    directory a byte-identical copy of the restart its first run read."""
+    runs = []
+    for rep in ("rep1", "rep2"):
+        runs += [(f"{rep}/prod_0001", _run("start.rst", 0.0)),
+                 (f"{rep}/prod_0002", _run("prod_0001.restrt", 5.0))]
+    tree = write_run_tree(root, runs)
+    for rep in ("rep1", "rep2"):
+        (tree / rep / "start.rst").write_text(_START_RST)
+    if crd_at_root:
+        (tree / "complex.crd").write_text(_LEAP_CRD)
+    return tree
+
+
+def test_byte_identical_copies_of_the_recorded_start_are_one_starting_structure(tmp_path):
+    tree = _replicas_with_copied_start(tmp_path)
+    sim, edges = _edges(tree)
+    assert sim.starting_structure == "rep1/start.rst"
+    assert edges["rep1/prod_0001"] == edges["rep2/prod_0001"] == "starting_structure"
+    report = core_bridge.validate_simulation(sim, {"strict_validation": True}, str(tree))
+    assert [s for s in report["suggestions"] if s["kind"] == "input_mismatch"] == []
+
+
+def test_copies_that_differ_are_still_two_candidates(tmp_path):
+    """Two replicas that started from different coordinates have no one starting
+    structure; the recorded start is not used, as before."""
+    tree = _replicas_with_copied_start(tmp_path)
+    (tree / "rep2" / "start.rst").write_text(_START_RST.replace("6.0000000", "7.0000000"))
+    sim, _ = _edges(tree)
+    assert sim.starting_structure == "complex.crd"

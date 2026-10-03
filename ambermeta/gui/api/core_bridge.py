@@ -804,6 +804,21 @@ def _recorded_starting_structure(sim, grouped, base_directory):
         key = os.path.normcase(os.path.abspath(here))
         if key not in run_written:
             candidates[key] = os.path.abspath(here)
+    if len(candidates) > 1:
+        # Replica directories that each hold a copy of the starting restart: every first
+        # run read the same coordinates, in its own directory. Byte-identical files are one
+        # recorded starting structure, named by the copy nearest the top of the tree. Taking
+        # them for rivals let the tLEaP coordinates win the path-order pick, and every
+        # replica head was then reported as reading other coordinates than it declares.
+        def depth(path):
+            try:
+                return len(os.path.relpath(path, base_directory).split(os.sep))
+            except ValueError:      # another drive on Windows
+                return len(path.split(os.sep))
+
+        paths = sorted(candidates.values(), key=lambda p: (depth(p), os.path.normcase(p)))
+        if all(_same_content(paths[0], other) for other in paths[1:]):
+            candidates = {os.path.normcase(paths[0]): paths[0]}
     if len(candidates) != 1:
         return None
     return _relativize(next(iter(candidates.values())), base_directory)
