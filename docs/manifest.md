@@ -100,10 +100,14 @@ describes makes all three agree.
 
 `discover DIR --write PATH` with `PATH` outside `DIR` writes the paths relative to the manifest's own
 directory (absolute where no relative path exists, such as another drive on Windows) and says so, so
-`validate --manifest` finds the files. `plan -m` reads a manifest's paths from its `directory` argument
-unless none of the run files is found there and they are found beside the manifest; it then reads them from
-the manifest's directory and prints a note. Up to 1.2 such a manifest kept paths relative to `DIR`, and
-`validate --manifest` reported every file missing.
+`validate --manifest` finds the files. A manifest written into `DIR` or a subdirectory of it keeps paths
+relative to `DIR`, which is what the GUI serving `DIR` reads them against. `validate --manifest` reads a
+manifest's paths from its own directory unless none of the run files is found there and they are found from
+one of its parent directories; it then reads them from that directory and prints a note. `plan -m` reads
+them from its `directory` argument unless none of the run files is found there and they are found beside
+the manifest; it then reads them from the manifest's directory and prints a note (a relative `--prmtop`
+is still named from the `directory` argument). Up to 1.2 a manifest written outside `DIR` kept paths
+relative to `DIR`, and `validate --manifest` reported every file missing.
 
 ---
 

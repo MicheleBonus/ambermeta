@@ -347,6 +347,43 @@ def _resolve_sim_format(path: str, requested: Optional[str]) -> str:
     return "yaml" if ext in ("yaml", "yml") else "json"
 
 
+def _is_within(path: str, directory: str) -> bool:
+    """Whether `path` is `directory` or lies below it (False across Windows drives)."""
+    path, directory = os.path.normcase(os.path.abspath(path)), os.path.normcase(
+        os.path.abspath(directory))
+    try:
+        return os.path.commonpath([path, directory]) == directory
+    except ValueError:
+        return False
+
+
+def _run_files(sim):
+    """The relative mdin/mdout paths a manifest names."""
+    from ambermeta.simulation import iter_steps
+    return [p for _, step in iter_steps(sim) for p in (step.mdin, step.mdout)
+            if p and not os.path.isabs(p)]
+
+
+def _manifest_files_base(sim, manifest: str) -> str:
+    """The directory `validate --manifest` reads the manifest's relative paths from: its
+    own directory, unless none of the run files the manifest names is found there and they
+    are found from one of its parent directories -- a manifest `discover` wrote into a
+    subdirectory of the scanned directory names its files relative to that directory."""
+    base = os.path.dirname(os.path.abspath(manifest)) or "."
+    paths = _run_files(sim)
+    if not paths or any(os.path.exists(os.path.join(base, p)) for p in paths):
+        return base
+    parent = os.path.dirname(base)
+    while parent and parent != base:
+        if any(os.path.exists(os.path.join(parent, p)) for p in paths):
+            print(Colors.warning(
+                f"NOTE: no file the manifest names is beside it; reading its paths from "
+                f"{parent}."), file=sys.stderr)
+            return parent
+        base, parent = parent, os.path.dirname(parent)
+    return os.path.dirname(os.path.abspath(manifest)) or "."
+
+
 def _discover_command(args: argparse.Namespace) -> int:
     """Discover-as-draft: scan a directory into a Simulation draft; optionally write v2."""
     from ambermeta.gui.api.core_bridge import discover_draft
@@ -392,8 +429,12 @@ def _discover_command(args: argparse.Namespace) -> int:
         # are read from the manifest's own directory (`validate --manifest`). Written
         # elsewhere, the manifest named files that were not there, and every one was
         # reported missing. Rebased, they resolve from where the manifest is.
+        # Only a manifest OUTSIDE the scanned directory is rebased. One in a subdirectory
+        # keeps paths relative to the scanned directory, which is what the GUI serving
+        # that directory resolves them against (`validate --manifest` finds them from the
+        # manifest's parent directories, `_manifest_files_base`).
         manifest_dir = os.path.dirname(os.path.abspath(args.write))
-        rebased = (os.path.normcase(manifest_dir) != os.path.normcase(directory)
+        rebased = (not _is_within(manifest_dir, directory)
                    and rebase_paths(sim, directory, manifest_dir))
         write_simulation(sim, args.write, fmt)
         _out(Colors.success(f"\nWrote v2 draft manifest: {args.write} ({fmt})"))
@@ -865,7 +906,7 @@ def _validate_manifest(args: argparse.Namespace, manifest: str) -> int:
         print(Colors.error(f"ERROR: Failed to load manifest: {e}"), file=sys.stderr)
         return 1
 
-    base_dir = os.path.dirname(os.path.abspath(manifest)) or "."
+    base_dir = _manifest_files_base(sim, manifest)
     settings = {
         "strict_validation": True,
         "allow_gaps": bool(getattr(args, "allow_gaps", False)),
@@ -1285,13 +1326,10 @@ def _manifest_base(sim, directory: str, manifest: str) -> str:
     `discover --write` put outside the scanned directory: its paths are written relative to
     the manifest, and read from `directory` every file was missing.
     """
-    from ambermeta.simulation import iter_steps
-
     manifest_dir = os.path.dirname(os.path.abspath(manifest))
     if os.path.normcase(manifest_dir) == os.path.normcase(directory):
         return directory
-    paths = [p for _, step in iter_steps(sim) for p in (step.mdin, step.mdout)
-             if p and not os.path.isabs(p)]
+    paths = _run_files(sim)
     if not paths or any(os.path.exists(os.path.join(directory, p)) for p in paths):
         return directory
     if not any(os.path.exists(os.path.join(manifest_dir, p)) for p in paths):
@@ -1311,12 +1349,17 @@ def _plan_v2(args: argparse.Namespace, directory: str) -> int:
 
     expand_env = not getattr(args, "no_expand_env", False)
     sim = load_simulation(args.manifest, expand_env=expand_env)
+    # A relative `--prmtop` is named from the positional directory, whichever directory
+    # the manifest's own paths turn out to be read from.
+    global_prmtop = getattr(args, "prmtop", None)
+    if global_prmtop and not os.path.isabs(global_prmtop):
+        global_prmtop = os.path.join(directory, global_prmtop)
     directory = _manifest_base(sim, directory, args.manifest)
     settings = {
         "strict_validation": not bool(getattr(args, "skip_cross_stage_validation", None)),
         "allow_gaps": False,
         "use_relative_paths": True,
-        "global_prmtop": getattr(args, "prmtop", None),
+        "global_prmtop": global_prmtop,
         "auto_detect_restarts": bool(getattr(args, "auto_detect_restarts", False)),
         "strict": bool(getattr(args, "strict", False)),
     }

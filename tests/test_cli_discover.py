@@ -115,3 +115,55 @@ def test_a_manifest_in_the_scanned_directory_keeps_its_paths(tmp_path, capsys):
     assert "relative to its own directory" not in capsys.readouterr().out
     sim = load_simulation(str(tree / "sim.yaml"))
     assert [s.mdout for _, s in iter_steps(sim)][0] == "eq_0001.mdout"
+
+
+# --- PR #93 review: S2 (a manifest in a subdirectory) and M3 (--prmtop) ---------------
+
+def test_a_manifest_in_a_subdirectory_keeps_paths_the_gui_resolves(tmp_path, capsys):
+    """S2. Only a manifest OUTSIDE the scanned directory is rebased. Written into a
+    subdirectory, its paths stay relative to the scanned directory, which is what the GUI
+    serving that directory reads them against; `validate --manifest` finds them from the
+    manifest's parent directories."""
+    from ambermeta.gui.api import core_bridge
+    from ambermeta.simulation import iter_steps, load_simulation
+
+    tree = _alternating(tmp_path)
+    manifest = tree / "sub" / "m.yaml"
+    manifest.parent.mkdir()
+    assert main(["discover", str(tree), "--write", str(manifest)]) == 0
+    assert "relative to its own directory" not in capsys.readouterr().out
+    sim = load_simulation(str(manifest))
+    assert [s.mdout for _, s in iter_steps(sim)][0] == "eq_0001.mdout"
+
+    gui_sim = core_bridge.open_simulation(str(manifest), str(tree))
+    report = core_bridge.validate_simulation(gui_sim, {"strict_validation": True}, str(tree))
+    assert report["ok"] and report["totals"]["time_ps"] > 0
+
+    assert main(["validate", "--manifest", str(manifest)]) == 0
+    captured = capsys.readouterr()
+    assert "missing" not in captured.out
+    assert "reading its paths from" in captured.err
+
+
+def test_a_relative_prmtop_is_named_from_the_positional_directory(tmp_path, capsys):
+    """M3. When `plan -m` reads the manifest's paths from beside the manifest, a relative
+    `--prmtop` is still looked up in the directory the user named."""
+    import json
+    from tests.test_discover_record_chain import _prmtop
+
+    tree = _alternating(tmp_path)
+    manifest = tmp_path / "manifests" / "sim.yaml"
+    manifest.parent.mkdir()
+    assert main(["discover", str(tree), "--write", str(manifest)]) == 0
+    positional = tmp_path / "a" / "b"
+    positional.mkdir(parents=True)
+    _prmtop(positional / "sys.prmtop", 2)
+    summary = tmp_path / "s.json"
+    capsys.readouterr()
+    assert main(["plan", str(positional), "-m", str(manifest), "--prmtop", "sys.prmtop",
+                 "--summary-path", str(summary)]) == 0
+    err = capsys.readouterr().err
+    assert "reading its paths from the manifest's own directory" in err
+    assert "prmtop not found" not in err
+    stages = json.loads(summary.read_text(encoding="utf-8"))["stages"]
+    assert all(s["files"]["prmtop"] for s in stages)
