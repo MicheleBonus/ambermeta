@@ -318,12 +318,18 @@ class _Run:
         """The simulation clock at the start of this run, where the files say it."""
         if self.minimization:
             return None
+        stated = _num(self.stage.get("start_time_ps"))
+        if stated is not None:
+            return stated
+        if self.stage.get("inpcrd_written_by_this_run"):
+            return None             # that file's clock is the run's end
         irest = self.value("irest")
         if irest == 1:
-            time = _num(self.inpcrd.get("time"))
-            return time
-        t = _num(self.cntrl.get("t"))
-        return t if t is not None else 0.0
+            return _num(self.inpcrd.get("time"))
+        if irest == 0:
+            t = _num(self.cntrl.get("t"))
+            return t if t is not None else 0.0
+        return None
 
     def end_ps(self) -> Optional[float]:
         stats = _dict(self.mdout.get("stats"))
@@ -934,11 +940,21 @@ def _topology(fname: Any, natom: Any, runs: List["_Run"], several: bool) -> Dict
     charge = _num(p.get("total_charge"))
     if charge is not None:
         out["net_charge_e"] = round(charge, 3)
-    first = runs[0]
-    box = _box(first.inpcrd.get("box_dimensions"), first.inpcrd.get("box_angles"))
-    if box:
-        box["source"] = f"input coordinates of {first.name}"
-    else:
+    # The box of the first coordinates a run read; a restart the run itself wrote (the
+    # scan path files it in the input slot) only when no run states what it read.
+    box = None
+    for own in (False, True):
+        for run in runs:
+            if bool(run.stage.get("inpcrd_written_by_this_run")) != own:
+                continue
+            box = _box(run.inpcrd.get("box_dimensions"), run.inpcrd.get("box_angles"))
+            if box:
+                box["source"] = (f"restart written by {run.name} (the end of that run)" if own
+                                 else f"input coordinates of {run.name}")
+                break
+        if box:
+            break
+    if not box:
         box = _box(p.get("box_dimensions"), p.get("box_angles"))
         if box:
             box["source"] = "topology (as built by tLEaP, before equilibration)"

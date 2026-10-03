@@ -431,3 +431,17 @@ def test_summary_json_carries_phase_elapsed_time_and_findings(sample_plan):
     assert all(s["findings"][0]["kind"] == "step_check" for s in stages)
     assert [s.get("continues_from") for s in stages] == [
         None, "ntp_prod_0001", "ntp_prod_0002", "ntp_prod_0003", "ntp_prod_0004"]
+
+
+def test_the_scan_path_marks_a_runs_own_restart_and_states_when_the_run_started(
+        sample_md_data_dir):
+    """`plan --recursive` files `ntp_prod_0002.rst`, which that run WROTE, in its input
+    slot. Its clock is the run's end, so the start comes from the measured origin."""
+    from ambermeta.protocol import auto_discover
+    protocol = auto_discover(str(sample_md_data_dir), recursive=True)
+    stages = {s["name"]: s for s in protocol.to_dict()["stages"]}
+    assert stages["ntp_prod_0002"]["inpcrd_written_by_this_run"] is True
+    assert stages["ntp_prod_0002"]["start_time_ps"] == 20920.0
+    (production,) = [p for p in protocol.to_methods_dict()["protocol"]
+                     if p["name"] == "production"]
+    assert production["clock_ps"]["first_run_starts_at"] == 920.0

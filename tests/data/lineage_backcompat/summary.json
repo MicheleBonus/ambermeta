@@ -13,6 +13,7 @@
       "restart_path": "<RUNDIR>/ntp_prod_0000.rst",
       "phase": "Production",
       "elapsed_ps": 20000.0,
+      "start_time_ps": 920.0,
       "mdout_control": {
         "imin": 0,
         "nmropt": 0,
@@ -324,6 +325,7 @@
       "restart_path": "<RUNDIR>/ntp_prod_0001.rst",
       "phase": "Production",
       "elapsed_ps": 20000.0,
+      "start_time_ps": 20920.0,
       "mdout_control": {
         "imin": 0,
         "nmropt": 0,
@@ -636,6 +638,7 @@
       "restart_path": "<RUNDIR>/ntp_prod_0002.rst",
       "phase": "Production",
       "elapsed_ps": 20000.0,
+      "start_time_ps": 40920.0,
       "mdout_control": {
         "imin": 0,
         "nmropt": 0,
@@ -948,6 +951,7 @@
       "restart_path": "<RUNDIR>/ntp_prod_0003.rst",
       "phase": "Production",
       "elapsed_ps": 20000.0,
+      "start_time_ps": 60920.0,
       "mdout_control": {
         "imin": 0,
         "nmropt": 0,
@@ -1260,6 +1264,7 @@
       "restart_path": "<RUNDIR>/ntp_prod_0004.rst",
       "phase": "Production",
       "elapsed_ps": 20000.0,
+      "start_time_ps": 80920.0,
       "mdout_control": {
         "imin": 0,
         "nmropt": 0,

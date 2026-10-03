@@ -110,8 +110,8 @@ class SimulationStage:
     # about a thousand of them on the campaign this was found on, and a real
     # discontinuity buried under the same constant offset.
     #
-    # Not serialised: `to_dict` is what `summary.json` is built from, and this changes
-    # which clock continuity trusts, not what the artifact reports about the file.
+    # Serialised only when true, as `inpcrd_written_by_this_run`, so a reader of
+    # summary.json does not take that file's clock or box for the run's starting ones.
     inpcrd_is_own_restart: bool = False
     # Provenance. `lineage` names the run member this stage belongs to: read from the v2
     # document on the manifest path, inferred from the directory layout on the scan path —
@@ -507,10 +507,17 @@ class SimulationStage:
         if self.phase:
             out["phase"] = self.phase
         elapsed = _elapsed_ps(self)
+        if self.inpcrd_is_own_restart:
+            out["inpcrd_written_by_this_run"] = True
         if elapsed is not None:
             # The same number `totals()` adds up, so a per-phase or per-replica sum built
-            # from summary.json agrees with the totals beside it.
+            # from summary.json agrees with the totals beside it; and the clock origin it
+            # was measured from, which is when the run started.
             out["elapsed_ps"] = elapsed
+            stats = getattr(getattr(self.mdout, "details", None), "stats", None)
+            end = getattr(stats, "time_end", None)
+            if isinstance(end, (int, float)) and not isinstance(end, bool):
+                out["start_time_ps"] = round(float(end) - elapsed, 6)
         control = _mdout_control(self.mdout_header)
         if control:
             out["mdout_control"] = control
