@@ -2510,8 +2510,31 @@ def _link_unrecorded_runs_by_order(order: List[str], by_name: Dict[str, Simulati
     A run that records a file no run wrote, at the same start time as another run that
     records the same file, is a fan-out from one structure (several replicas started from
     it) and keeps no predecessor.
+
+    The predecessor may sit in another directory only where the protocol moves on to a
+    later role (`equil/` -> `prod/`), and only when that earlier directory is the member's
+    one directory of its role. Sibling directories of one role are replicas or arms of an
+    experiment whatever the layout inference made of them: an untagged nested sweep
+    (`300K/rep1`, `310K/rep2`) is one member, and measuring one replica's first run against
+    the other's last reported an overlap that never happened. Several earlier directories
+    of one role (`equil/rep1`, `equil/rep2`) leave the handoff ambiguous, and it is not
+    guessed.
     """
-    from ambermeta.run_order import RECORDED_START
+    from ambermeta.run_order import RECORDED_START, ROLE_RANK
+
+    def directory_of(name: str) -> str:
+        return name.rpartition("/")[0]
+
+    rank: Dict[str, int] = {}
+    for name in order:
+        role_rank = ROLE_RANK.get(by_name[name].stage_role or "", len(ROLE_RANK))
+        directory = directory_of(name)
+        rank[directory] = min(rank.get(directory, role_rank), role_rank)
+    directories: Dict[Tuple[Any, int], set] = {}
+    for name in order:
+        member = by_name[name].lineage or UNTAGGED
+        directory = directory_of(name)
+        directories.setdefault((member, rank[directory]), set()).add(directory)
 
     def origin(stage: SimulationStage) -> Optional[float]:
         stats = getattr(getattr(stage.mdout, "details", None), "stats", None)
@@ -2533,6 +2556,10 @@ def _link_unrecorded_runs_by_order(order: List[str], by_name: Dict[str, Simulati
             # Only a run that ran ends anywhere: a queued run is skipped over.
             last_in_member[member] = name
         if stage.parent_id or previous is None or stage.mdout is None:
+            continue
+        before, here = directory_of(previous), directory_of(name)
+        if before != here and (rank[before] >= rank[here]
+                               or len(directories[(member, rank[before])]) > 1):
             continue
         if recorded.get(name) is RECORDED_START and stage.mdout_header is not None:
             key = (stage.mdout_header.assignment("INPCRD") or "", origin(stage))

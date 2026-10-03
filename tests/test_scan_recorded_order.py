@@ -179,3 +179,27 @@ def test_runs_that_start_together_from_one_file_are_not_chained_by_order(tmp_pat
     protocol = auto_discover(str(tree), recursive=True)
     assert _problems(protocol) == {}
     assert [s.observed_gap_ps for s in protocol.stages if s.is_run] == [None, None]
+
+
+def test_the_order_fallback_does_not_cross_between_sibling_replica_directories(tmp_path, capsys):
+    """PR #93 verification, N1. A nested sweep (`300K/rep1`, `310K/rep2`) cannot be tagged,
+    so its runs are one member; the heads record cluster paths that resolve to nothing
+    here. Measuring rep2's first run against rep1's last reported a 40-ps overlap and failed
+    `--strict`. Sibling directories of one role are not chained by order."""
+    runs = []
+    for directory in ("300K/rep1", "310K/rep2"):
+        runs.append((f"{directory}/prod_0001",
+                     RunSpec(mdin=md_mdin("prod", 10000), elapsed_ps=20.0, begin_ps=0.0,
+                             inpcrd=f"/cluster/{directory}/start.rst")))
+        runs.append((f"{directory}/prod_0002",
+                     RunSpec(mdin=md_mdin("prod", 10000), elapsed_ps=20.0, begin_ps=20.0,
+                             inpcrd="prod_0001.restrt")))
+    tree = write_run_tree(tmp_path, runs)
+    protocol = auto_discover(str(tree), recursive=True)
+    assert {s.lineage for s in protocol.stages} == {None}
+    assert _problems(protocol) == {}
+    assert {s.name: s.observed_gap_ps for s in protocol.stages} == {
+        "300K/rep1/prod_0001": None, "300K/rep1/prod_0002": 0.0,
+        "310K/rep2/prod_0001": None, "310K/rep2/prod_0002": 0.0}
+    assert main(["plan", "--recursive", str(tree), "--strict"]) == 0
+    assert "overlap" not in capsys.readouterr().out
