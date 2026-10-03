@@ -4,7 +4,7 @@
 
 You point it at a directory (or a manifest), and it answers the questions that are tedious to answer by hand: *What was actually run? In what order? Do the restarts line up? Is any topology hydrogen-mass-repartitioned? What were the ensemble, thermostat, barostat, and cutoff? Did the run finish? Is a member of a numbered sequence missing?*
 
-- **Version:** 1.2.0 · **Python:** 3.9+ · **License:** BUSL-1.1
+- **Version:** 1.3.0 · **Python:** 3.9+ · **License:** BUSL-1.1
 - **Repository:** <https://github.com/MicheleBonus/ambermeta>
 
 ---
