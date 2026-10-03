@@ -106,11 +106,21 @@ without the GUI extra.
 | `buckets` | `(steps) -> Dict[Any, List[T]]` | The same grouping over any iterable of tag-carrying objects (`Step`, or `SimulationStage` in the flat engine), so a *part* of a document can be asked the question too. |
 | `infer_lineages_from_layout` | `(run_names) -> Dict[str, str]` | `{run_name: tag}` for the runs a directory layout names — see [manifest §9.1](manifest.md#91-how-discover-infers-members). Holds only the runs it could tag, so `.get(name)` → `None` matches `Step.lineage`. |
 | `UNTAGGED` | sentinel object | The key of the shared untagged bucket. An object, not a string, so it cannot collide with a tag someone typed. |
-| `varying_axis` | `(stages) -> Dict[str, Dict[str, Any]]` | Per compared `&cntrl` key, the value each declared member holds — **only** where they differ and every member states one. |
+| `varying_axes` | `(stages) -> List[Axis]` | Per role and compared `&cntrl` key, the value each declared member holds — **only** where they differ and every member that ran that role states one value for it. `Axis` is `(role, key, held)`; `role` is `None` for runs without a role. |
+| `varying_axis` | `(stages) -> Dict[str, Dict[str, Any]]` | One row per compared key from `varying_axes`: the production runs' values where the key differs there, else the first role that differs. For a document whose runs carry no role, the comparison it always was. |
 | `coherence` | `(stages) -> List[Finding]` | What the members do and do not agree about. Silent below two declared members. |
 | `Finding` | dataclass | `severity` (`error`/`warning`/`info`), `kind`, `message`. |
 
-`varying_axis` and `coherence` take **stages, not a `Simulation`**. A `Step` carries no parsed
+Members are compared **per role** (since 1.3.0): each member's runs are bucketed by `stage_role`, and a
+key is compared between the members that ran that role. A member whose runs of one role disagree with
+each other has no single value for that role and the key is left out there; runs without a role form
+one bucket and are compared as whole members, as before. `temp0` is not compared on minimization,
+heating or equilibration runs, whose temperatures are schedule details (ramps, staged equilibration,
+per-segment or per-replica values such as 299.9/300.0/300.1 K). Before 1.3.0 a member was one bucket,
+so a replica whose equilibration runs used several temperatures had no single value and replicas whose
+production runs differed were not reported.
+
+`varying_axes`, `varying_axis` and `coherence` take **stages, not a `Simulation`**. A `Step` carries no parsed
 parameters at all: `temp0`, `cut`, `ntt`, `ntp` and `dt` exist only on
 `SimulationStage.mdin.details.cntrl_parameters` once the analysis engine has read the files, and the
 resolved seed only in the mdout header. They read the raw `cntrl_parameters` echo and never
@@ -131,7 +141,7 @@ from ambermeta.lineages import coherence, varying_axis
 protocol = auto_discover("campaign/", recursive=True)
 varying_axis(protocol.stages)     # {'temp0': {'rep1': 300.0, 'rep2': 310.0}}
 [(f.severity, f.message) for f in coherence(protocol.stages)]
-# [('warning', 'Members differ in temp0 (rep1: 300.0; rep2: 310.0).')]
+# [('warning', 'Members differ in temp0 in their production runs (rep1: 300.0; rep2: 310.0).')]
 ```
 
 `UNTAGGED`, `members`, `is_multi_lineage` and `infer_lineages_from_layout` are re-exported from the

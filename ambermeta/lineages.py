@@ -14,7 +14,8 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Any, Dict, FrozenSet, Iterable, List, Optional, Protocol, Tuple, TypeVar
+from typing import (Any, Dict, FrozenSet, Iterable, List, NamedTuple, Optional, Protocol,
+                    Tuple, TypeVar)
 
 from ambermeta.roles import phase_word
 from ambermeta.simulation import Simulation, Step, iter_steps
@@ -172,31 +173,99 @@ def _atom_count_of(stage: Any) -> Optional[int]:
     return int(count) if isinstance(count, int) and count > 0 else None
 
 
-def varying_axis(stages: Iterable[Any]) -> Dict[str, Dict[str, Any]]:
-    """Per compared parameter, the value each declared member holds — when they differ.
+#: Roles whose target temperature is a schedule detail rather than a property of the
+#: replica: heating ramps it, staged equilibration often steps it, and per-segment or
+#: per-replica equilibration temperatures (299.9 / 300.0 / 300.1 K) are a common way to
+#: decorrelate replicas. `temp0` is therefore compared between members on the runs of any
+#: other role (production, a custom role, or no role) and not on these.
+_SCHEDULE_ROLES = frozenset({"minimization", "heating", "equilibration"})
 
-    A parameter every member states identically is not an axis and is left out, so the
-    result reads as "this is what distinguishes the members" rather than as a dump. A
-    parameter some member does not state is left out too: unstated is not a value, and an
-    axis built from an absence is an axis the user never varied.
+
+class Axis(NamedTuple):
+    """One compared parameter on which the members differ, within one role.
+
+    ``role`` is the runs' ``stage_role``; ``None`` for runs that carry none, which are
+    compared as whole members exactly as before roles took part.
+    """
+
+    role: Optional[str]
+    key: str
+    held: Dict[str, Any]
+
+
+def _role_of(stage: Any) -> Optional[str]:
+    return getattr(stage, "stage_role", None) or None
+
+
+def varying_axes(stages: Iterable[Any]) -> List[Axis]:
+    """Per role and compared parameter, the value each member holds — when they differ.
+
+    Members are compared **per role**: each member's runs are bucketed by ``stage_role``
+    and a parameter is compared between the members that have runs of that role. Before
+    1.3.0 a member was one bucket, so a replica whose equilibration runs used several
+    temperatures had "no single value" and the whole parameter dropped out of the
+    comparison — replicas whose production runs ran at 300 and 310 K were then not
+    reported, and an NVT equilibration before NPT production took ``ntp`` out the same way.
+
+    Within a bucket the old rules hold. A parameter every member states identically is
+    not an axis. A member whose runs of that role disagree with each other has no single
+    value, and the parameter is left out for that role: saying so is a different finding
+    from saying two members disagree. A parameter some member does not state is left out
+    too: unstated is not a value. A role that fewer than two members ran compares nothing.
+    ``temp0`` is not compared on the schedule roles (see ``_SCHEDULE_ROLES``).
+
+    Runs without a role form one bucket of their own, so a document that classifies
+    nothing is compared exactly as before.
 
     Takes stages rather than a ``Simulation`` because the values do not exist on a
     ``Step``. ``temp0``/``cut``/``ntt``/``ntp``/``dt`` live in the parsed mdin, which only
     exists after the analysis engine has read the files; the document holds paths.
     """
     members = {tag: group for tag, group in buckets(stages).items() if tag is not UNTAGGED}
-    axis: Dict[str, Dict[str, Any]] = {}
+    roles: List[Optional[str]] = []
+    for group in members.values():
+        for stage in group:
+            role = _role_of(stage)
+            if role not in roles:
+                roles.append(role)
+    out: List[Axis] = []
     for key in COMPARED_PARAMETERS:
-        held: Dict[str, Any] = {}
-        for tag, group in members.items():
-            values = {_comparable(p[key]) for p in map(_parameters_of, group) if key in p}
-            # A member that disagrees with itself has no single value to compare, and
-            # saying so is a different finding from saying two members disagree.
-            if len(values) == 1:
-                held[tag] = values.pop()
-        if len(held) == len(members) and len(set(held.values())) > 1:
-            axis[key] = held
+        for role in roles:
+            if key == "temp0" and role in _SCHEDULE_ROLES:
+                continue
+            ran = {tag: [s for s in group if _role_of(s) == role]
+                   for tag, group in members.items()}
+            ran = {tag: group for tag, group in ran.items() if group}
+            if len(ran) < 2:
+                continue
+            held: Dict[str, Any] = {}
+            for tag, group in ran.items():
+                values = {_comparable(p[key]) for p in map(_parameters_of, group) if key in p}
+                if len(values) == 1:
+                    held[tag] = values.pop()
+            if len(held) == len(ran) and len(set(held.values())) > 1:
+                out.append(Axis(role, key, held))
+    return out
+
+
+def varying_axis(stages: Iterable[Any]) -> Dict[str, Dict[str, Any]]:
+    """Per compared parameter, the value each declared member holds — when they differ.
+
+    The one-row-per-parameter view of :func:`varying_axes`, which compares per role. Where
+    a parameter differs in more than one role, the production runs' values are given,
+    otherwise those of the first role (in document order) that differs. For a document
+    whose runs carry no role this is the comparison it always was.
+    """
+    axis: Dict[str, Dict[str, Any]] = {}
+    for item in sorted(varying_axes(stages), key=lambda a: a.role != "production"):
+        axis.setdefault(item.key, item.held)
     return axis
+
+
+def _roles_text(roles: List[str]) -> str:
+    if len(roles) == 1:
+        return roles[0]
+    return ", ".join(roles[:-1]) + " and " + roles[-1]
 
 
 def _comparable(value: Any) -> Any:
@@ -298,10 +367,18 @@ def coherence(stages: Iterable[Any]) -> List[Finding]:
             + ", ".join(minimisation_only) + " ran no dynamics)."))
 
     # --- differences the user may well have meant --------------------------------
-    for key, held in varying_axis(stages).items():
-        spelled = "; ".join(f"{tag}: {held[tag]}" for tag in sorted(held))
+    # Per role (see `varying_axes`). Roles in which the members differ in the same way are
+    # reported in one finding, so replicas run at 300 and 310 K throughout say so once.
+    grouped: Dict[Tuple[str, Tuple[Tuple[str, Any], ...]], List[Optional[str]]] = {}
+    for item in varying_axes(stages):
+        signature = (item.key, tuple(sorted(item.held.items())))
+        grouped.setdefault(signature, []).append(item.role)
+    for (key, pairs), roles in grouped.items():
+        spelled = "; ".join(f"{tag}: {value}" for tag, value in pairs)
+        named = [r or "unclassified" for r in roles] if any(roles) else []
+        scope = f" in their {_roles_text(named)} runs" if named else ""
         out.append(Finding("warning", "parameter",
-                           f"Members differ in {key} ({spelled})."))
+                           f"Members differ in {key}{scope} ({spelled})."))
 
     # --- seeds, and the branch point they hang off -------------------------------
     out.extend(_seed_findings(stages, members))

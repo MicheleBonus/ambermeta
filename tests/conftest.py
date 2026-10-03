@@ -298,6 +298,45 @@ def write_run_tree(root: Path, runs) -> Path:
     return root
 
 
+def md_mdin(title: str, nstlim: int, *, dt: float = 0.002, temp0: Optional[float] = None,
+            irest: int = 1, ntp: int = 1, t: Optional[float] = None) -> str:
+    """A dynamics mdin stating what the coherence check and role inference read."""
+    fields = [f"imin = 0, ntx = {5 if irest else 1}, irest = {irest}",
+              f"nstlim = {nstlim}, dt = {dt}", "ntt = 3",
+              f"ntb = {2 if ntp else 1}, ntp = {ntp}, cut = 9.0"]
+    if temp0 is not None:
+        fields.append(f"temp0 = {temp0}")
+    if t is not None:
+        fields.append(f"t = {t}")
+    return f"{title}\n &cntrl\n  " + ",\n  ".join(fields) + ",\n /\n"
+
+
+def alternating_runs(prefix: str, eq_temps, prod_temp: float = 300.0, *,
+                     eq_ps: float = 1.0, prod_ps: float = 20.0, dt: float = 0.002,
+                     start: str = "start.rst", eq_ntp: int = 1):
+    """`eq_0001 -> prod_0001 -> eq_0002 -> prod_0002 -> ...`, one short equilibration
+    before every production segment, at the temperatures in `eq_temps`.
+
+    Each run's mdout records the restart of the run before it as INPCRD (the first one
+    records `start`), and its clock continues from there, so continuity is clean when the
+    runs are read in the order they ran. Names interleave the other way round: every
+    `eq_*` sorts before every `prod_*`. `prefix` is the directory (`"rep1/"`) or `""`.
+    """
+    runs = []
+    clock = 0.0
+    previous = start
+    for k, temperature in enumerate(eq_temps, start=1):
+        for kind, ps, temp, ntp in (("eq", eq_ps, temperature, eq_ntp),
+                                    ("prod", prod_ps, prod_temp, 1)):
+            stem = f"{prefix}{kind}_{k:04d}"
+            mdin = md_mdin(kind, int(round(ps / dt)), dt=dt, temp0=temp, ntp=ntp)
+            runs.append((stem, RunSpec(mdin=mdin, elapsed_ps=ps, begin_ps=clock, dt=dt,
+                                       inpcrd=previous)))
+            clock += ps
+            previous = f"{kind}_{k:04d}.restrt"
+    return runs
+
+
 @pytest.fixture
 def replica_tree(tmp_path) -> Path:
     """Three replicas x three roles, one role chunked into two runs.
