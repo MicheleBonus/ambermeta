@@ -532,3 +532,13 @@ def test_an_older_mdout_without_its_mdin_still_says_npt():
     assert phase["settings"]["ensemble"] == {"value": "NPT", "source": "derived"}
     # how the pressure was scaled is not in the older record
     assert "pressure_scaling" not in phase["settings"]
+
+
+def test_an_older_mdout_without_a_barostat_is_not_called_periodic():
+    """PR #93 review, S3. With no mdin and no barostat in the older record, the run may be
+    a GB or vacuum run: neither an NVT ensemble nor a constant-volume box is stated."""
+    stage = _legacy_stage("gb", None, "None")
+    stage["files"]["mdout"]["details"]["cutoff"] = 999.0
+    (phase,) = build_methods_summary({"totals": {}, "stages": [stage]})["protocol"]
+    assert "ensemble" not in phase["settings"]
+    assert phase["settings"]["barostat"]["value"] == "none"

@@ -379,8 +379,10 @@ class _Run:
         # it was scaled (`_echo`). That is unknown only where the mdin did not state `ntp`:
         # an NPT run's mdin always does, since AMBER requires it for a constant-pressure box.
         ntp_unknown = bool(self.echo.get("_ntp_unknown")) and ntp_src != "mdin"
-        if ntb_src == "default" or (ntb is None and ntp is not None):
-            # AMBER's own rule: ntb follows ntp and igb when the mdin does not set it.
+        if ntb_src == "default" or (ntb is None and (ntp or 0) > 0):
+            # AMBER's own rule: ntb follows ntp and igb when the mdin does not set it. With
+            # no mdin, only regulated pressure says the box was periodic; an older record
+            # with no barostat may be a GB or vacuum run, so `ntb` stays unknown there.
             ntb = 0 if (igb or 0) > 0 else (2 if (ntp or 0) > 0 else 1)
         if igb is not None and igb > 0:
             put("electrostatics", f"generalized Born implicit solvent (igb = {igb})", igb_src)
