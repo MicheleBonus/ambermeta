@@ -420,7 +420,7 @@ class SimulationProtocol:
 | `sequence_findings` | `() -> List[Dict[str, Any]]` | The numbered-sequence holes, as `missing_run` cards |
 | `stage_findings` | `(start_index: int = 1) -> List[Dict[str, Any]]` | Every stage's own findings, as `step_check` / `unfinished_run` / `input_mismatch` cards (`ambermeta.protocol.stage_finding_cards`) — what `plan --recursive` prints |
 | `to_dict` | `() -> Dict[str, Any]` | `totals` + each stage's `to_dict()`, plus `findings` and `lineages` when there is something to report — the full protocol summary |
-| `to_methods_dict` | `() -> Dict[str, Any]` | Publication-oriented summary (see [§8](#8-export-structures)) |
+| `to_methods_dict` | `() -> Dict[str, Any]` | The methods summary: `build_methods_summary(self.to_dict())` (see [§8](#8-export-structures)) |
 
 ```python
 protocol = auto_discover("tests/data/amber/md_test_files", recursive=True)
@@ -457,6 +457,8 @@ class SimulationStage:
     lineage: Optional[str] = None
     step_id: Optional[str] = None
     parent_id: Optional[str] = None
+    # The name of the document Phase this stage came from (manifest path only).
+    phase: Optional[str] = None
     validation: List[str] = field(default_factory=list)
     continuity: List[str] = field(default_factory=list)
     load_errors: List[FileLoadError] = field(default_factory=list)
@@ -472,7 +474,7 @@ class SimulationStage:
 | `degraded` | `property -> bool` | `True` when any file failed to parse (`load_errors` non-empty) |
 | `validate` | `() -> None` | Per-stage checks → `validation` notes, and each problem also as a `(kind, message)` pair in `findings`: `step_check` (atom counts across the stage's files, a count of 0 counting as not stated; mdin against mdout on step count, time step, duration and `ntwx`; a time step above 2 fs on a topology with standard hydrogen masses), `unfinished_run` (no completion marker in the mdout), `input_mismatch` (declared input coordinates against the mdout's recorded INPCRD). No box check. |
 | `summary` | `() -> Dict[str, str]` | Keys: `intent`, `result`, `expected_gap_ps`, `observed_gap_ps`, `continuity`, `evidence` |
-| `to_dict` | `() -> Dict[str, Any]` | Serialized stage (summary + degradation + file metadata) |
+| `to_dict` | `() -> Dict[str, Any]` | Serialized stage (summary + degradation + file metadata). Also, each only when set: `status`, `lineage`, `phase`, `elapsed_ps` (the time the run ran, as `totals()` counts it), `mdout_control` (the mdout's CONTROL DATA settings as AMBER resolved them, with the resolved seed as `ig`) and `findings` (`[{kind, message}]`). `SimulationProtocol.to_dict()` adds `continues_from`, the name of the run a stage continues from |
 
 Reach a parsed field through the file wrapper's `.details`:
 
@@ -547,8 +549,9 @@ These are the fields on `.details` — what `ambermeta info` prints and what you
 | `solvent_type` | `str` | e.g. `Explicit Solvent`, `Vacuum` |
 | `simulation_category` | `str` | e.g. `Protein in Explicit Water` |
 | `residue_composition` | `Dict[str, int]` | Residue-name → count (includes ions, water) |
+| `residue_atom_counts` | `Dict[str, int]` | Atoms per residue for names outside the protein and nucleic-acid sets (water, ions, lipids, ligands), from `RESIDUE_POINTER`; `WAT: 4` is a four-site water model |
 | `num_solvent_molecules` | `int` | Solvent molecule count |
-| `num_solute_residues` | `int` | Solute residue count |
+| `num_solute_residues` | `int` | `SOLVENT_POINTERS` IPTRES: the last solute residue, which counts ions placed before the water |
 | `hmr_active` | `Optional[bool]` | HMR detected from masses |
 | `hmr_hydrogen_mass_range` | `Optional[Tuple[float, float]]` | (min, max) H mass |
 | `hmr_hydrogen_mass_summary` | `Optional[str]` | e.g. `1.008-1.008 amu across 32188 H` |
@@ -653,53 +656,74 @@ r.has_box, r.box_dimensions
 
 ### `to_dict()`
 
-`SimulationProtocol.to_dict()` → `{"totals": {...}, "stages": [stage.to_dict(), ...]}` — the complete record, suitable for `json.dump`. This is what `plan --summary-path` writes.
+`SimulationProtocol.to_dict()` → `{"totals": {...}, "stages": [stage.to_dict(), ...]}` — the complete record, suitable for `json.dump`. This is what `plan --summary-path` writes. Present only when there is something to report: `findings` (missing members of a numbered sequence), `lineages` (per-member totals) and `lineage_findings` (what the declared members agree and disagree about: atom counts, settings, seeds at a branch point).
 
-### `to_methods_dict()`
+### `to_methods_dict()` and `ambermeta.methods_summary`
 
-A publication-oriented view: reproducibility-critical metadata, energies and bulk arrays dropped. The real top-level shape is `{"stage_sequence": [...], "stages": [...]}`. A production stage entry (real output, `ntp_prod_0001` from the sample data, via `auto_discover("tests/data/amber/md_test_files", recursive=True)`):
+The methods summary is a digest of `to_dict()` for writing a Methods section, by hand or
+with a language model. `to_methods_dict()` is `build_methods_summary(self.to_dict())`;
+`plan --methods-summary-path` writes the same thing with `dumps_methods_summary` (indented,
+short objects on one line).
+
+```python
+import json
+from ambermeta.methods_summary import build_methods_summary, dumps_methods_summary
+
+with open("summary.json", encoding="utf-8") as fh:
+    digest = build_methods_summary(json.load(fh))     # pure: reads no file
+print(dumps_methods_summary(digest))
+```
+
+or `python -m ambermeta.methods_summary summary.json -o methods_summary.json`. A summary
+written by an older AmberMeta works too, with less detail; the `basis` fields say what was
+inferred.
+
+| Key | Contents |
+|---|---|
+| `schema_version`, `generator`, `about`, `sources` | Layout version (`"2.0"`), the AmberMeta version, a note on provenance, the meaning of each `source` value |
+| `project` | Runs, runs with output, finished runs, queued runs, simulated time (measured), number of phases |
+| `software` | MD engine program and version with run counts, GPU models with run counts, first and last run date, total wall time |
+| `system.topologies[]` | Per topology: file name, atoms, residues; `residues_by_class` (protein residues with caps and histidine/cysteine/protonation variants, nucleic acid, lipids, water molecules with atoms per molecule as a model hint, ions by name, other residues with their atom counts); net charge; `box_at_start`; `hydrogen_masses`; `force_field_hints` |
+| `replicas` | Count, names, how they were identified, shared runs, the run each replica branches from, the phases each replica runs, resolved seeds |
+| `protocol[]` | Phases in execution order: name, role, run counts, replicas, runs per replica, first and last run, simulated time (per replica when several), the simulation clock, `settings`, `resolved_seeds`, `observed` (mean temperature, pressure and density with the range of run means), `performance_ns_per_day` |
+| `continuity` | Links measured between consecutive runs, contiguous links, gaps and overlaps |
+| `findings` | Findings grouped by kind and message pattern, with counts and one example each (at most 15 groups) |
+| `not_in_run_files` | What a Methods section needs that no AMBER run file records |
+
+Each entry of a phase's `settings` is `{"value": ..., "source": ...}`, plus, when not every
+run shares the value, `runs` (how many do), `other_values` (each with its run count and the
+replicas or an example run holding it) and, for a value that changes along the runs,
+`sequence_in_run_order`. The settings: electrostatics, nonbonded cutoff, run type, ensemble,
+thermostat with its collision frequency or coupling time, target and initial temperature,
+`&wt` temperature schedules, start (restart or new velocities), barostat, pressure scaling,
+target pressure, relaxation time, compressibility, time step, steps per run, stated run
+length, frame, energy and restart intervals, trajectory format, coordinate wrapping,
+constraints, random-seed setting, positional restraints (force constant and mask), `&wt`
+restraint schedules, `nmropt`, special methods (REMD, GaMD, TI/FEP, constant pH, constant
+redox, QM/MM), and for minimizations the method and cycle counts. A setting's `source` is
+`mdin`, `mdout` (not in the mdin; the value the mdout echoes), `default` (in neither file;
+the documented AMBER default) or `derived`.
+
+A phase of the sample data (abridged):
 
 ```json
 {
-  "name": "ntp_prod_0001",
-  "role": "production",
-  "software": [
-    {"source": "mdout", "program": "PMEMD", "version": "22"},
-    {"source": "inpcrd", "program": "pmemd", "version": "Version 22"}
-  ],
-  "md_engine": {
-    "ensemble": "NPT (isotropic)",
-    "thermostat": "Langevin Dynamics",
-    "barostat": "Berendsen (Isotropic)",
-    "cutoff": 9.0,
-    "constraints": "H-bonds",
-    "pbc": "PBC / Constant Pressure",
-    "timestep_ps": 0.004,
-    "run_length_steps": 5000000,
-    "cntrl_parameters": { "ntx": 5, "irest": 1, "nstlim": 5000000, "dt": 0.004, "ntt": 3, "ntp": 1, "ntc": 2, "ntb": 2, "cut": 9.0, "_namelist": "cntrl" },
-    "shake_active": true,
-    "run_length_ps": 20000.0
-  },
-  "restraints": {"active": false},
-  "system": {
-    "atom_counts": {"inpcrd": 64528, "mdout": 64528},
-    "box": {"type": "RECTILINEAR", "dimensions": [91.79, 70.98, 75.81], "angles": [90.0, 90.0, 90.0],
-            "source": "restart written by this run"},
-    "composition": {
-      "hmr_active": true,
-      "hmr_inferred_from_timestep": true,
-      "average_density": 1.037,
-      "density_std": 0.00124,
-      "density": 1.037,
-      "first_density": 1.0348,
-      "final_density": 1.0374
-    }
-  },
-  "trajectory_output": {"coord_write_interval_steps": 25000, "traj_format": "NetCDF"}
+ "name": "Production", "role": "production", "runs": 5, "runs_with_output": 5,
+ "finished_runs": 5, "first_run": "ntp_prod_0001", "last_run": "ntp_prod_0005",
+ "simulated_time_ns": 100.0,
+ "clock_ps": {"first_run_starts_at": 920.0, "last_frame_printed_at": 100920.0},
+ "settings": {
+  "thermostat": {"value": "Langevin", "source": "mdin"},
+  "target_temperature_K": {"value": 300.0, "source": "mdout"},
+  "collision_frequency_per_ps": {"value": 1.0, "source": "mdin"},
+  "barostat": {"value": "Berendsen", "source": "mdout"},
+  "target_pressure_bar": {"value": 1.0, "source": "mdout"},
+  "time_step_fs": {"value": 4.0, "source": "mdin"},
+  "random_seed": {"value": "chosen by AMBER at run time (ig = -1)", "source": "default"}
+ },
+ "resolved_seeds": {"runs_with_a_seed_in_the_mdout": 5, "distinct": 5}
 }
 ```
-
-`box` is the box of the coordinates the run read, and `box.source` says where it came from: `"input coordinates"`, `"restart written by this run"` (the scan path, where a stage's own output restart fills its input slot, as here), or `"topology (as built)"`, the fallback when the coordinates state no box. `hmr_active` follows the topology's hydrogen masses. `hmr_inferred_from_timestep` appears only when no topology masses were read, as here: this scan binds no prmtop to `ntp_prod_0001`, so the 4-fs time step is all there is to go on. Bind the sample's topology (a manifest, or `--prmtop`) and the same stage reports `"hmr_active": false` (its 32,188 hydrogens all weigh 1.008 amu), no `hmr_inferred_from_timestep`, and a `step_check` finding for the 4-fs time step.
 
 ### Statistics CSV
 

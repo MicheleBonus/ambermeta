@@ -121,7 +121,7 @@ Wrote methods_summary: /abs/path/methods.json
 Wrote stats_csv: /abs/path/stats.csv
 ```
 
-`methods.json` is the Materials-&-Methods summary; `stats.csv` is one row per step (temperature/pressure/density/energy as mean ± σ); `protocol.json` is the full record. The command first prints the same `Simulation summary` block as `discover`, then writes the three artifacts. Each one needs its own path — aiming two at the same file is a hard error (exit `2`).
+`methods.json` is the methods summary, a compact digest of `protocol.json` for writing a Methods section (rebuild it from any `protocol.json` with `python -m ambermeta.methods_summary protocol.json -o methods.json`); `stats.csv` is one row per step (temperature/pressure/density/energy as mean ± σ); `protocol.json` is the full record. The command first prints the same `Simulation summary` block as `discover`, then writes the three artifacts. Each one needs its own path — aiming two at the same file is a hard error (exit `2`).
 
 ### Reconstruct and summarize a directory — no manifest needed
 
