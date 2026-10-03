@@ -117,6 +117,11 @@ class SimulationStage:
     # which the scan path keeps as a stage for what its files say. It continues nothing and
     # is not measured. Not serialised; every stage a document declares is a run.
     is_run: bool = True
+    # Scan path only: the run before this one in its member, in execution order, for a run
+    # that no recorded input links to a producer. Continuity is then measured against it,
+    # as the 1.2 scan measured every neighbour, so a real gap is still reported. Not a
+    # claim about which restart was read: not serialised, and not `continues_from`.
+    order_predecessor_id: Optional[str] = None
     # Provenance. `lineage` names the run member this stage belongs to: read from the v2
     # document on the manifest path, inferred from the directory layout on the scan path —
     # both entries into this engine, because a stage the engine cannot place in a member is
@@ -1043,6 +1048,14 @@ class SimulationProtocol:
             if producer is not None and producer is not stage:
                 self._check_stage_pair(producer, stage, allow_unexpected_gaps=allow_unexpected_gaps)
                 continue
+            previous = (by_step_id.get(stage.order_predecessor_id)
+                        if stage.order_predecessor_id else None)
+            if previous is not None and previous is not stage:
+                stage._add_continuity_note(
+                    f"INFO: No recorded input links {stage.name} to a run here; continuity "
+                    f"is measured against {previous.name}, the run before it.")
+                self._check_stage_pair(previous, stage, allow_unexpected_gaps=allow_unexpected_gaps)
+                continue
             if stage is first_run and not multi_member and not stage.parent_id:
                 continue
             reason = ("no producing stage resolved" if stage.parent_id
@@ -1384,6 +1397,28 @@ class SimulationProtocol:
     def stage_findings(self, start_index: int = 1) -> List[Dict[str, Any]]:
         """Every stage's own problems, as cards; see :func:`stage_finding_cards`."""
         return stage_finding_cards(self.stages, start_index=start_index)
+
+    def continuity_findings(self, start_index: int = 1) -> List[Dict[str, Any]]:
+        """Every stage's continuity problems (its non-INFO continuity notes) as
+        ``continuity_gap`` cards, in the shape `validate --manifest` gives them.
+
+        `plan --recursive` printed these notes per stage only, so its Findings block and
+        `--strict` never saw a gap; the manifest path has always reported them as cards.
+        """
+        out: List[Dict[str, Any]] = []
+        for stage in self.stages:
+            seen = set()
+            for note in stage.continuity:
+                if str(note).startswith("INFO") or note in seen:
+                    continue
+                seen.add(note)
+                out.append({
+                    "id": f"sug_c_{start_index + len(out)}", "kind": "continuity_gap",
+                    "severity": "needs_you", "title": "Continuity note",
+                    "evidence": f"{stage.name}: {note}",
+                    "actions": ["Set as expected", "Investigate"], "step_id": stage.step_id,
+                })
+        return out
 
     def to_dict(self) -> Dict[str, Any]:
         stages = []
@@ -2454,7 +2489,53 @@ def _order_by_recorded_inputs(stages: List[SimulationStage],
         stage.step_id = stage.name
     for name in order:
         by_name[name].parent_id = chain[name]
+    _link_unrecorded_runs_by_order(order, by_name, recorded)
     return [stage for stage in stages if not stage.is_run] + [by_name[n] for n in order]
+
+
+def _link_unrecorded_runs_by_order(order: List[str], by_name: Dict[str, SimulationStage],
+                                   recorded: Dict[str, Any]) -> None:
+    """Give each scanned run that no record links to a producer the run before it in its
+    member, in execution order, to be measured against (`order_predecessor_id`).
+
+    The 1.2 scan compared every run with its neighbour and so caught real gaps that the
+    recorded inputs cannot: a job script that copies each restart to one fixed name
+    (`-c restart.rst`, then `cp prod_$i.restrt restart.rst`) has every mdout record a file
+    no run wrote, and a deposit without its restarts has records that name nothing here.
+    Linked by the records alone, such runs were each a fresh start and were not measured.
+
+    A run that records a file no run wrote, at the same start time as another run that
+    records the same file, is a fan-out from one structure (several replicas started from
+    it) and keeps no predecessor.
+    """
+    from ambermeta.run_order import RECORDED_START
+
+    def origin(stage: SimulationStage) -> Optional[float]:
+        stats = getattr(getattr(stage.mdout, "details", None), "stats", None)
+        return _origin_time_ps(stage.mdout_header, stats)[0]
+
+    starts: Dict[Tuple[str, Optional[float]], int] = {}
+    for name in order:
+        stage = by_name[name]
+        if recorded.get(name) is RECORDED_START and stage.mdout_header is not None:
+            key = (stage.mdout_header.assignment("INPCRD") or "", origin(stage))
+            starts[key] = starts.get(key, 0) + 1
+
+    last_in_member: Dict[Any, str] = {}
+    for name in order:
+        stage = by_name[name]
+        member = stage.lineage or UNTAGGED
+        previous = last_in_member.get(member)
+        if stage.mdout is not None:
+            # Only a run that ran ends anywhere: a queued run is skipped over.
+            last_in_member[member] = name
+        if stage.parent_id or previous is None or stage.mdout is None:
+            continue
+        if recorded.get(name) is RECORDED_START and stage.mdout_header is not None:
+            key = (stage.mdout_header.assignment("INPCRD") or "", origin(stage))
+            if starts.get(key, 0) > 1:
+                continue
+        stage.order_predecessor_id = previous
 
 
 def auto_discover(

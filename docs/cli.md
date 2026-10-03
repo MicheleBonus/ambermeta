@@ -313,9 +313,15 @@ path, and `summary.json` names each run's producer as `continues_from`. A protoc
 the order its runs ran — one short equilibration before every production segment, `eq_0001 -> prod_0001 ->
 eq_0002 -> ...`, where every `eq_*` sorts before every `prod_*` — is therefore measured run by run; up to 1.2
 the scan ordered stages by name and compared neighbours, and reported false gaps and overlaps on exactly that
-pattern. Groups that are not runs (a topology, a starting structure such as `ntp_prod_0000.rst`) are listed
+pattern. A run that no record links to a run here — its mdout names a file no run wrote, as when a job
+script copies every restart to one fixed name (`-c restart.rst`), or a file that was not deposited — is
+measured against the run before it in its replica, in that order, as the 1.2 scan measured every
+neighbour, so a real gap is still reported (an INFO note says so; `continues_from` is not written for it).
+Runs that record the same file at the same start time are a fan-out from one structure and are not
+chained. Groups that are not runs (a topology, a starting structure such as `ntp_prod_0000.rst`) are listed
 first and are not measured. A tree in which no mdout records a usable input keeps the name order and the
-neighbour comparison. For a directory you will keep working with, `discover --write` and `plan -m` remain the
+neighbour comparison. Continuity problems are listed under "Findings" as `Continuity note` cards and count
+for `--strict`, as on the manifest path (up to 1.2 the scan printed them per stage only). For a directory you will keep working with, `discover --write` and `plan -m` remain the
 recommended path: the manifest states the links, and you can correct them.
 
 #### `-m` on a v2 manifest

@@ -1444,6 +1444,9 @@ def _plan_command(args: argparse.Namespace) -> int:
     findings = protocol.sequence_findings()
     # Each run's own findings, from the same producer `validate --manifest` uses.
     findings += protocol.stage_findings(start_index=len(findings) + 1)
+    # Continuity problems too, as on the manifest path: a gap was printed per stage only,
+    # and neither the Findings block nor `--strict` saw it.
+    findings += protocol.continuity_findings(start_index=len(findings) + 1)
     _print_findings(findings)
     # Coherence needs only the parsed stages, which this path has. Leaving it to the
     # manifest path alone meant one directory passed `plan --recursive` and failed
