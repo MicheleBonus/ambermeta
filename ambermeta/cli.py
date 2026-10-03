@@ -12,6 +12,7 @@ from ambermeta.roles import classify_role
 from ambermeta.protocol import (
     SimulationProtocol,
     auto_discover,
+    role_times,
 )
 
 try:  # pragma: no cover - optional dependency
@@ -321,6 +322,7 @@ def _sim_findings(report, *, strict: bool = False) -> None:
     run printed `Validation: OK` and then exited 1. Saying OK and failing is worse than
     either alone.
     """
+    _print_role_totals(report.get("totals"))
     _print_lineage_totals(report.get("lineages"))
     _print_findings(_problem_suggestions(report))
     coherence = report.get("coherence") or []
@@ -437,6 +439,21 @@ def _print_coherence(protocol):
     return findings
 
 
+def _role_breakdown(totals) -> str:
+    """`equilibration 3000.000; production 60000.000` from a totals dict, or ''."""
+    return "; ".join(f"{role} {ps:.3f}" for role, ps in role_times(totals or {}))
+
+
+def _print_role_totals(totals) -> None:
+    """Simulated time per role, when the runs hold more than one role.
+
+    The total counts equilibration as well as production; this line tells them apart.
+    """
+    breakdown = _role_breakdown(totals)
+    if breakdown:
+        _out(f"\nSimulated time by role (ps): {breakdown}")
+
+
 def _print_lineage_totals(lineages) -> None:
     """The per-member breakdown, when there is one.
 
@@ -450,8 +467,10 @@ def _print_lineage_totals(lineages) -> None:
     width = max(len(tag) for tag in lineages)
     for tag in lineages:
         entry = lineages[tag]
+        breakdown = _role_breakdown(entry)
         _out(f"  {tag:<{width}}  {entry['step_count']} run(s), "
-             f"{entry['steps']:.0f} steps, {entry['time_ps']:.3f} ps")
+             f"{entry['steps']:.0f} steps, {entry['time_ps']:.3f} ps"
+             + (f" ({breakdown})" if breakdown else ""))
 
 
 def _print_protocol(protocol: SimulationProtocol, verbose: bool = False) -> None:
@@ -461,6 +480,9 @@ def _print_protocol(protocol: SimulationProtocol, verbose: bool = False) -> None
     _out(f"Stages: {len(protocol.stages)}")
     _out(f"Total steps: {totals['steps']:.0f}")
     _out(f"Total simulated time (ps): {totals['time_ps']:.3f}")
+    breakdown = _role_breakdown(totals)
+    if breakdown:
+        _out(f"Simulated time by role (ps): {breakdown}")
     if "lineage_count" in totals:
         _out(f"Declared lineages: {totals['lineage_count']:.0f}")
     # Emit-when-nonzero, matching `totals()` itself: a directory with nothing queued prints

@@ -917,6 +917,34 @@ def _elapsed_ps(stage: "SimulationStage") -> Optional[float]:
     return _elapsed_ps_and_source(stage)[0]
 
 
+#: The role under which `totals` counts the time of runs that carry none.
+UNCLASSIFIED_ROLE = "unclassified"
+#: Prefix of the per-role keys in `totals` and in each `lineage_totals` entry.
+ROLE_TIME_PREFIX = "time_ps_"
+_ROLE_ORDER = ("minimization", "heating", "equilibration", "production")
+
+
+def _role_sort_key(role: str) -> Tuple[int, str]:
+    if role in _ROLE_ORDER:
+        return (_ROLE_ORDER.index(role), role)
+    return (len(_ROLE_ORDER) + (1 if role == UNCLASSIFIED_ROLE else 0), role)
+
+
+def _role_keys(times: Dict[str, float], always: bool = False) -> Dict[str, float]:
+    """`{role: ps}` as `{"time_ps_<role>": ps}`, or nothing for fewer than two roles."""
+    if len(times) < 2 and not always:
+        return {}
+    return {f"{ROLE_TIME_PREFIX}{role}": ps for role, ps in times.items()}
+
+
+def role_times(totals: Dict[str, Any]) -> List[Tuple[str, float]]:
+    """The per-role simulated times a `totals` (or `lineage_totals` entry) carries, as
+    `[(role, ps)]` in protocol order; empty when it carries none."""
+    return [(key[len(ROLE_TIME_PREFIX):], float(value)) for key, value in totals.items()
+            if isinstance(key, str) and key.startswith(ROLE_TIME_PREFIX)
+            and isinstance(value, (int, float))]
+
+
 @dataclass
 class SimulationProtocol:
     stages: List[SimulationStage] = field(default_factory=list)
@@ -1259,6 +1287,21 @@ class SimulationProtocol:
                 total_steps += elapsed / dt
         return {"steps": total_steps, "time_ps": total_time}
 
+    @staticmethod
+    def _role_times(stages: List[SimulationStage]) -> Dict[str, float]:
+        """Simulated time per role, over the stages that ran (the `time_ps` of
+        `_sum_stages`, split by `stage_role`), in protocol order: minimization, heating,
+        equilibration, production, then any other role by name, then runs without a role
+        as `unclassified`."""
+        times: Dict[str, float] = {}
+        for stage in stages:
+            elapsed = _elapsed_ps(stage)
+            if elapsed is None:
+                continue
+            role = stage.stage_role or UNCLASSIFIED_ROLE
+            times[role] = times.get(role, 0.0) + elapsed
+        return {role: times[role] for role in sorted(times, key=_role_sort_key)}
+
     def _members(self) -> Dict[Any, List[SimulationStage]]:
         """This protocol's membership buckets, sentinel included.
 
@@ -1269,6 +1312,12 @@ class SimulationProtocol:
 
     def totals(self) -> Dict[str, float]:
         out = self._sum_stages(self.stages)
+        # Simulated time per role, as flat `time_ps_<role>` keys (`totals` is a flat
+        # `Dict[str, float]` on the GUI's models), emitted only when the runs that ran hold
+        # more than one role -- so a single-role document's summary.json is the file it
+        # always was, and `time_ps` alone says it. `time_ps` counts equilibration as well
+        # as production; this is what tells them apart.
+        out.update(_role_keys(self._role_times(self.stages)))
         members = self._members()
         # `lineage_count` counts what the user *declared*: the untagged bucket is a member
         # (it is why a half-tagged document is multi-lineage at all) but it is not a
@@ -1306,12 +1355,20 @@ class SimulationProtocol:
         members = self._members()
         if len(members) < 2:
             return {}
+        # Per role too, under the same keys and the same condition as `totals`: every
+        # member lists every role the document ran, 0.0 where it ran none of it, so a
+        # replica that never reached production says so.
+        roles = list(_role_keys(self._role_times(self.stages)))
         out: Dict[str, Dict[str, float]] = {}
         for tag, stages in members.items():
             if tag is UNTAGGED:
                 continue
             entry: Dict[str, float] = dict(self._sum_stages(stages))
             entry["step_count"] = len(stages)
+            if roles:
+                own = _role_keys(self._role_times(stages), always=True)
+                for key in roles:
+                    entry[key] = own.get(key, 0.0)
             out[tag] = entry
         return out
 

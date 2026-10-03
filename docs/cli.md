@@ -682,6 +682,22 @@ Per lineage:
   rep3  3 run(s), 15000000 steps, 60000.000 ps
 ```
 
+**Time per role.** The totals count every dynamics run, equilibration included. Where the runs that ran hold
+more than one role, `plan` and `validate --manifest` also print the simulated time per role, and each
+lineage line carries the same split (since 1.3.0):
+
+```
+Simulated time by role (ps): equilibration 3000.000; production 60000.000
+
+Per lineage:
+  rep1  6 run(s), 15750000 steps, 63000.000 ps (equilibration 3000.000; production 60000.000)
+```
+
+`summary.json` holds them as `totals.time_ps_<role>` (`time_ps_equilibration`, `time_ps_production`, ...;
+runs without a role are `time_ps_unclassified`) and under the same keys in each `lineages` entry, where a
+role the member did not run reads 0.0. The keys are absent when all runs share one role, so such a
+summary is the file it always was.
+
 The same numbers reach `summary.json` under a top-level `lineages` key, and `totals.lineage_count`
 counts the **declared** members — untagged runs form their own bucket but are not a lineage, so the
 canonical `common/{min,heat,equil}` + `rep1..3/prod_*` campaign reports 3, not 4. Both keys are

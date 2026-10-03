@@ -425,8 +425,8 @@ class SimulationProtocol:
 | Member | Signature | Returns |
 |---|---|---|
 | `validate` | `(cross_stage: bool = True, allow_unexpected_gaps: bool = False) -> None` | Runs per-stage + (optionally) cross-stage checks, attaching notes to each stage |
-| `totals` | `() -> Dict[str, float]` | `{"steps": float, "time_ps": float}` summed across stages, plus `lineage_count` when the document holds more than one member |
-| `lineage_totals` | `() -> Dict[str, Dict[str, float]]` | Per declared member: its own `steps`, `time_ps` and `step_count`. Empty for a single-member document |
+| `totals` | `() -> Dict[str, float]` | `{"steps": float, "time_ps": float}` summed across stages, plus `time_ps_<role>` per role (for example `time_ps_equilibration`, `time_ps_production`; runs without a role count as `time_ps_unclassified`) when the runs that ran hold more than one role, `lineage_count` when the document holds more than one member, and `queued_count` when a run is queued |
+| `lineage_totals` | `() -> Dict[str, Dict[str, float]]` | Per declared member: its own `steps`, `time_ps` and `step_count`, plus the same `time_ps_<role>` keys as `totals` when `totals` has them (0.0 for a role the member did not run). Empty for a single-member document |
 | `sequence_findings` | `() -> List[Dict[str, Any]]` | The numbered-sequence holes, as `missing_run` cards |
 | `stage_findings` | `(start_index: int = 1) -> List[Dict[str, Any]]` | Every stage's own findings, as `step_check` / `unfinished_run` / `input_mismatch` cards (`ambermeta.protocol.stage_finding_cards`) — what `plan --recursive` prints |
 | `to_dict` | `() -> Dict[str, Any]` | `totals` + each stage's `to_dict()`, plus `findings` and `lineages` when there is something to report — the full protocol summary |
