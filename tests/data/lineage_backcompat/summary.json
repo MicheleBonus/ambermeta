@@ -148,7 +148,7 @@
               "WAT": 4
             },
             "num_solvent_molecules": 14659,
-            "num_solute_residues": 443,
+            "num_solute_residues": 371,
             "hmr_active": false,
             "hmr_hydrogen_mass_range": [
               1.008,
@@ -460,7 +460,7 @@
               "WAT": 4
             },
             "num_solvent_molecules": 14659,
-            "num_solute_residues": 443,
+            "num_solute_residues": 371,
             "hmr_active": false,
             "hmr_hydrogen_mass_range": [
               1.008,
@@ -773,7 +773,7 @@
               "WAT": 4
             },
             "num_solvent_molecules": 14659,
-            "num_solute_residues": 443,
+            "num_solute_residues": 371,
             "hmr_active": false,
             "hmr_hydrogen_mass_range": [
               1.008,
@@ -1086,7 +1086,7 @@
               "WAT": 4
             },
             "num_solvent_molecules": 14659,
-            "num_solute_residues": 443,
+            "num_solute_residues": 371,
             "hmr_active": false,
             "hmr_hydrogen_mass_range": [
               1.008,
@@ -1399,7 +1399,7 @@
               "WAT": 4
             },
             "num_solvent_molecules": 14659,
-            "num_solute_residues": 443,
+            "num_solute_residues": 371,
             "hmr_active": false,
             "hmr_hydrogen_mass_range": [
               1.008,

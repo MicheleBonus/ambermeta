@@ -551,7 +551,7 @@ These are the fields on `.details` — what `ambermeta info` prints and what you
 | `residue_composition` | `Dict[str, int]` | Residue-name → count (includes ions, water) |
 | `residue_atom_counts` | `Dict[str, int]` | Atoms per residue for names outside the protein and nucleic-acid sets (water, ions, lipids, ligands), from `RESIDUE_POINTER`; `WAT: 4` is a four-site water model |
 | `num_solvent_molecules` | `int` | Solvent molecule count |
-| `num_solute_residues` | `int` | `SOLVENT_POINTERS` IPTRES: the last solute residue, which counts ions placed before the water |
+| `num_solute_residues` | `int` | Residues up to `SOLVENT_POINTERS` IPTRES (the last residue LEaP files before the solvent), without the ions and water among them. Up to 1.2 this was IPTRES itself, which counts the ions LEaP adds (443 instead of 371 on the sample) |
 | `hmr_active` | `Optional[bool]` | HMR detected from masses |
 | `hmr_hydrogen_mass_range` | `Optional[Tuple[float, float]]` | (min, max) H mass |
 | `hmr_hydrogen_mass_summary` | `Optional[str]` | e.g. `1.008-1.008 amu across 32188 H` |

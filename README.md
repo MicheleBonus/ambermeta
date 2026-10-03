@@ -111,7 +111,7 @@ File Information: CH3L1_HUMAN_6NAG.top
   solvent_type: Explicit Solvent
   simulation_category: Protein / Ligand in Explicit Water
   num_solvent_molecules: 14659
-  num_solute_residues: 443
+  num_solute_residues: 371
   hmr_active: False
   hmr_hydrogen_mass_summary: 1.008-1.008 amu across 32188 H
   hmr_detection_method: atomic_number
