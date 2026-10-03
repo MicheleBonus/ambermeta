@@ -600,3 +600,71 @@ def test_the_cli_is_silent_on_per_segment_equilibration_temperatures(tmp_path, c
     capsys.readouterr()
     assert main(["validate", "--manifest", str(manifest), "--strict"]) == 0
     assert "Members differ" not in capsys.readouterr().out
+
+
+# --- PR #93 review: B2 (no production runs) and S4 (one run, two roles) --------------
+
+def test_replicas_whose_runs_all_classify_as_equilibration_are_compared():
+    """B2. Production chunks named `npt_0001` (the `npt` cue) or restrained ones classify
+    as equilibration. With no run outside the schedule roles, `temp0` is compared on the
+    last schedule role, so 300 vs 310 K is reported again."""
+    stages = [_roled(tag, "equilibration", k, temp0=temp)
+              for tag, temp in (("rep1", 300.0), ("rep2", 310.0)) for k in (1, 2)]
+    warning, = [f for f in coherence(stages) if f.kind == "parameter"]
+    assert warning.message == ("Members differ in temp0 in their equilibration runs "
+                               "(rep1: 300.0; rep2: 310.0).")
+
+
+def test_replicas_that_only_heated_are_compared_on_heating():
+    stages = [_roled(tag, "heating", 1, temp0=temp)
+              for tag, temp in (("rep1", 300.0), ("rep2", 310.0))]
+    assert [f.message for f in coherence(stages) if f.kind == "parameter"] == [
+        "Members differ in temp0 in their heating runs (rep1: 300.0; rep2: 310.0)."]
+
+
+def test_equilibration_before_production_is_still_not_compared_on_temp0():
+    """The schedule temperatures stay out once the replicas have runs outside them:
+    heating at 300 vs 310 K before production at 300 K says nothing about the replicas."""
+    stages = []
+    for tag, heat in (("rep1", 300.0), ("rep2", 310.0)):
+        stages.append(_roled(tag, "heating", 1, temp0=heat))
+        stages.append(_roled(tag, "production", 1, temp0=300.0))
+    assert [f for f in coherence(stages) if f.kind == "parameter"] == []
+
+
+@pytest.mark.parametrize("other_role", [None, "npt_sampling"])
+def test_matching_runs_with_different_roles_are_still_compared(other_role):
+    """S4. rep1's production runs are classified, rep2's equivalents carry no role (or a
+    custom one): they are one bucket, and 300 vs 310 K is reported."""
+    stages = [_roled("rep1", "production", k, temp0=300.0) for k in (1, 2)]
+    for k in (1, 2):
+        stage = _roled("rep2", "production", k, temp0=310.0)
+        stage.stage_role = other_role
+        stages.append(stage)
+    warning, = [f for f in coherence(stages) if f.kind == "parameter"]
+    assert "(rep1: 300.0; rep2: 310.0)" in warning.message
+    assert varying_axis(stages) == {"temp0": {"rep1": 300.0, "rep2": 310.0}}
+
+
+def test_the_cli_reports_npt_named_replicas_at_two_temperatures(tmp_path, capsys):
+    """Review probe `probe_npt_replicas.py`, on disk: discover, validate, scan."""
+    from tests.conftest import RunSpec, md_mdin, write_run_tree
+
+    runs = []
+    for rep, temp in (("rep1", 300.0), ("rep2", 310.0)):
+        previous = "../start.rst"
+        for i in (1, 2):
+            runs.append((f"{rep}/npt_{i:04d}",
+                         RunSpec(mdin=md_mdin("npt", 10000, temp0=temp), elapsed_ps=20.0,
+                                 begin_ps=20.0 * (i - 1), inpcrd=previous)))
+            previous = f"npt_{i:04d}.restrt"
+    tree = write_run_tree(tmp_path, runs)
+    (tree / "start.rst").write_text(
+        "start\n     2       0.0000000\n   1.0   2.0   3.0   4.0   5.0   6.0\n")
+    manifest = tree / "m.yaml"
+    assert main(["discover", str(tree), "--write", str(manifest)]) == 0
+    capsys.readouterr()
+    assert main(["validate", "--manifest", str(manifest), "--strict"]) == 1
+    assert "Members differ in temp0" in capsys.readouterr().out
+    assert main(["plan", "--recursive", str(tree), "--strict"]) == 1
+    assert "Members differ in temp0" in capsys.readouterr().out

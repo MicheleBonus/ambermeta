@@ -714,14 +714,17 @@ Lineage coherence:
   INFO 3 steps read the restart written by common/equil and carry 3 distinct resolved seeds.
 ```
 
-Settings are compared **per role**: each member's runs are grouped by their role, and members are
-compared on the runs of one role at a time (the role is named in the message; runs without a role are
-compared as whole members and the message names none). Replicas whose production runs differ in `temp0`
-are therefore reported even when each replica's equilibration runs step through several temperatures,
-and an NVT equilibration before NPT production no longer takes `ntp` out of the comparison. `temp0` is
-not compared on minimization, heating or equilibration runs, so per-segment or per-replica equilibration
-temperatures (299.9/300.0/300.1 K) are not reported. Roles in which the members differ in the same way
-share one line (`Members differ in dt in their equilibration and production runs (...)`).
+Settings are compared **per role**: each member's minimization, heating and equilibration runs are
+compared role by role, and its other runs (production, custom roles and runs without a role) together;
+the roles are named in the message, and a document whose runs carry no role is compared as before with no
+role named. Replicas whose production runs differ in `temp0` are therefore reported even when each
+replica's equilibration runs step through several temperatures, and an NVT equilibration before NPT
+production no longer takes `ntp` out of the comparison. `temp0` is compared on the production (non-schedule)
+runs; only where fewer than two replicas have such runs — every run classifies as equilibration, as for
+chunks named `npt_0001` — is it compared on the last schedule role. Equilibration temperatures that differ
+only before production (299.9/300.0/300.1 K per segment or per replica) are not reported. Roles in which
+the members differ in the same way share one line (`Members differ in dt in their equilibration and
+production runs (...)`).
 
 Only a **category error** is fatal — different atom counts *between* members, different atom counts
 *within* one member, or a member that ran no dynamics beside one that did. Those exit `1` with or

@@ -106,19 +106,24 @@ without the GUI extra.
 | `buckets` | `(steps) -> Dict[Any, List[T]]` | The same grouping over any iterable of tag-carrying objects (`Step`, or `SimulationStage` in the flat engine), so a *part* of a document can be asked the question too. |
 | `infer_lineages_from_layout` | `(run_names) -> Dict[str, str]` | `{run_name: tag}` for the runs a directory layout names — see [manifest §9.1](manifest.md#91-how-discover-infers-members). Holds only the runs it could tag, so `.get(name)` → `None` matches `Step.lineage`. |
 | `UNTAGGED` | sentinel object | The key of the shared untagged bucket. An object, not a string, so it cannot collide with a tag someone typed. |
-| `varying_axes` | `(stages) -> List[Axis]` | Per role and compared `&cntrl` key, the value each declared member holds — **only** where they differ and every member that ran that role states one value for it. `Axis` is `(role, key, held)`; `role` is `None` for runs without a role. |
-| `varying_axis` | `(stages) -> Dict[str, Dict[str, Any]]` | One row per compared key from `varying_axes`: the production runs' values where the key differs there, else the first role that differs. For a document whose runs carry no role, the comparison it always was. |
+| `varying_axes` | `(stages) -> List[Axis]` | Per bucket of runs and compared `&cntrl` key, the value each declared member holds — **only** where they differ and every member with runs in that bucket states one value for it. `Axis` is `(roles, key, held)`; `roles` are the roles of the runs compared (`None` for runs without a role). |
+| `varying_axis` | `(stages) -> Dict[str, Dict[str, Any]]` | One row per compared key from `varying_axes`: the non-schedule runs' values where the key differs there, else the first schedule role that differs. For a document whose runs carry no role, the comparison it always was. |
 | `coherence` | `(stages) -> List[Finding]` | What the members do and do not agree about. Silent below two declared members. |
 | `Finding` | dataclass | `severity` (`error`/`warning`/`info`), `kind`, `message`. |
 
-Members are compared **per role** (since 1.3.0): each member's runs are bucketed by `stage_role`, and a
-key is compared between the members that ran that role. A member whose runs of one role disagree with
-each other has no single value for that role and the key is left out there; runs without a role form
-one bucket and are compared as whole members, as before. `temp0` is not compared on minimization,
-heating or equilibration runs, whose temperatures are schedule details (ramps, staged equilibration,
-per-segment or per-replica values such as 299.9/300.0/300.1 K). Before 1.3.0 a member was one bucket,
-so a replica whose equilibration runs used several temperatures had no single value and replicas whose
-production runs differed were not reported.
+Members are compared **per bucket of runs** (since 1.3.0). Each member's runs are split into one bucket
+per schedule role (minimization, heating, equilibration) and one bucket for everything else (production,
+custom roles and runs without a role together, so the same runs of two replicas are compared even where one
+replica's are classified as production and the other's are not). A key is compared between the members
+with runs in a bucket; a member whose runs there disagree with each other has no single value and the key
+is left out for that bucket. A document whose runs carry no role is one bucket per member, as before.
+`temp0` is compared on the non-schedule bucket when two members or more have runs there; otherwise (all
+runs classify as equilibration, as for chunks named `npt_0001`, or the replicas only heated) on the last
+schedule role two members hold. Equilibration and heating temperatures that differ only in the runs before
+production (ramps, staged equilibration, per-segment or per-replica values such as 299.9/300.0/300.1 K)
+are therefore not reported. Before 1.3.0 a member was one bucket, so a replica whose equilibration runs
+used several temperatures had no single value and replicas whose production runs differed were not
+reported.
 
 `varying_axes`, `varying_axis` and `coherence` take **stages, not a `Simulation`**. A `Step` carries no parsed
 parameters at all: `temp0`, `cut`, `ntt`, `ntp` and `dt` exist only on
