@@ -239,6 +239,16 @@ def _parse_ascii_box(md: InpcrdMetadata):
 # 5. NetCDF Parser
 # -------------------------------
 
+def _nc_text(value) -> str:
+    """A NetCDF text attribute as `str`, whichever backend read it.
+
+    SciPy returns `bytes` (a `numpy.bytes_` is a `bytes` too); netCDF4 returns `str`.
+    """
+    if isinstance(value, (bytes, bytearray)):
+        return bytes(value).decode("utf-8", errors="replace")
+    return str(value)
+
+
 def _parse_netcdf_inpcrd(filepath: str) -> InpcrdMetadata:
     """
     Parses AMBER NetCDF Restart/Trajectory files.
@@ -253,24 +263,15 @@ def _parse_netcdf_inpcrd(filepath: str) -> InpcrdMetadata:
         # Held for the whole session, not just the open: reading a variable below
         # re-enters the same non-thread-safe C library.
         with open_dataset(filepath) as ds:
-            # Global Attributes
-            # Accessing attrs differs slightly between libs, but usually obj.attr works
-            if hasattr(ds, 'title'):
-                md.title = str(ds.title)
-                # Decode bytes if scipy returns bytes
-                if isinstance(md.title, bytes): md.title = md.title.decode('utf-8')
-            
-            if hasattr(ds, 'program'):
-                md.program = str(ds.program)
-                if isinstance(md.program, bytes): md.program = md.program.decode('utf-8')
-
-            if hasattr(ds, 'programVersion'):
-                md.program_version = str(ds.programVersion)
-                if isinstance(md.program_version, bytes): md.program_version = md.program_version.decode('utf-8')
-                
-            if hasattr(ds, 'Conventions'):
-                md.conventions = str(ds.Conventions)
-                if isinstance(md.conventions, bytes): md.conventions = md.conventions.decode('utf-8')
+            # Global attributes. netCDF4 hands back `str`; SciPy's reader hands back
+            # `bytes`, and `str()` of those is the repr `"b'pmemd'"`, which then reached
+            # summary.json and the methods summary. Decoded before conversion, as the
+            # trajectory reader (`mdcrd._get_nc_attr`) does.
+            for attr, slot in (("title", "title"), ("program", "program"),
+                               ("programVersion", "program_version"),
+                               ("Conventions", "conventions")):
+                if hasattr(ds, attr):
+                    setattr(md, slot, _nc_text(getattr(ds, attr)))
 
             # Dimensions
             if 'atom' in ds.dimensions:
