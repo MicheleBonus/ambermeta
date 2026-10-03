@@ -117,8 +117,10 @@ custom roles and runs without a role together, so the same runs of two replicas 
 replica's are classified as production and the other's are not). A key is compared between the members
 with runs in a bucket; a member whose runs there disagree with each other has no single value and the key
 is left out for that bucket. A document whose runs carry no role is one bucket per member, as before.
-`temp0` is compared on the non-schedule bucket when two members or more have runs there; otherwise (all
-runs classify as equilibration, as for chunks named `npt_0001`, or the replicas only heated) on the last
+`temp0` is compared on the non-schedule bucket whenever any member has runs there, among the members that
+do (one alone compares nothing, so a replica that stopped before production does not turn the
+equilibration temperatures into a difference). Only where no member has any (all runs classify as
+equilibration, as for chunks named `npt_0001`, or the replicas only heated) is it compared on the last
 schedule role two members hold. Equilibration and heating temperatures that differ only in the runs before
 production (ramps, staged equilibration, per-segment or per-replica values such as 299.9/300.0/300.1 K)
 are therefore not reported. Before 1.3.0 a member was one bucket, so a replica whose equilibration runs

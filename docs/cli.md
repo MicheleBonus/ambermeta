@@ -317,6 +317,10 @@ pattern. A run that no record links to a run here — its mdout names a file no 
 script copies every restart to one fixed name (`-c restart.rst`), or a file that was not deposited — is
 measured against the run before it in its replica, in that order, as the 1.2 scan measured every
 neighbour, so a real gap is still reported (an INFO note says so; `continues_from` is not written for it).
+That run may sit in another directory only where the protocol moves on to a later role (`equil/` ->
+`prod/`) and that directory is the replica's one directory of its role: sibling directories of one role
+(replicas the layout inference could not tag, such as `300K/rep1` beside `310K/rep2`) are never chained by
+order.
 Runs that record the same file at the same start time are a fan-out from one structure and are not
 chained. Groups that are not runs (a topology, a starting structure such as `ntp_prod_0000.rst`) are listed
 first and are not measured. A tree in which no mdout records a usable input keeps the name order and the
@@ -519,7 +523,7 @@ steps:
 # ... ntp_prod_0003..0005 follow the same shape, each chained to the previous step
 ```
 
-Note the restart is written **once**, on the step that produced it (`rst:`), and a chained consumer carries only `ref` — the id of the step it continues from. Nothing repeats the path. To find the file a chained step actually starts from, follow `ref` to the producing step and read its `rst`; `ambermeta.simulation.resolve_input_coords` does exactly that, and it is what the `input=restart of ...` line above prints. Paths are written relative to `directory` when the draft's files live under it. When `--write` puts the manifest outside `directory`, they are written relative to the manifest's own directory instead, and `discover` prints a note saying so (since 1.3.0): `validate --manifest` reads a manifest's paths from there, and `plan -m` falls back to it when none of the run files is found in its `directory` argument. A manifest written into a subdirectory of `directory` keeps paths relative to `directory` (what the GUI serving `directory` expects); `validate --manifest` then finds the files from the manifest's parent directories.
+Note the restart is written **once**, on the step that produced it (`rst:`), and a chained consumer carries only `ref` — the id of the step it continues from. Nothing repeats the path. To find the file a chained step actually starts from, follow `ref` to the producing step and read its `rst`; `ambermeta.simulation.resolve_input_coords` does exactly that, and it is what the `input=restart of ...` line above prints. Paths are written relative to `directory` when the draft's files live under it. When `--write` puts the manifest outside `directory`, they are written relative to the manifest's own directory instead, and `discover` prints a note saying so (since 1.3.0): `validate --manifest` reads a manifest's paths from there, and `plan -m` falls back to it when none of the run files is found in its `directory` argument. A manifest written into a subdirectory of `directory` keeps paths relative to `directory` (what the GUI serving `directory` and `plan -m directory` expect); `validate --manifest` reads paths from the manifest's own directory only and reports them missing there, so keep the manifest in `directory` or outside it.
 
 Exit `0` on success; `1` if `directory` doesn't exist, or if discovery finds no phases (nothing to draft) — e.g. an empty or unrecognized directory:
 
@@ -726,9 +730,10 @@ the roles are named in the message, and a document whose runs carry no role is c
 role named. Replicas whose production runs differ in `temp0` are therefore reported even when each
 replica's equilibration runs step through several temperatures, and an NVT equilibration before NPT
 production no longer takes `ntp` out of the comparison. `temp0` is compared on the production (non-schedule)
-runs; only where fewer than two replicas have such runs — every run classifies as equilibration, as for
-chunks named `npt_0001` — is it compared on the last schedule role. Equilibration temperatures that differ
-only before production (299.9/300.0/300.1 K per segment or per replica) are not reported. Roles in which
+runs, among the replicas that have them (one replica alone compares nothing); only where no replica has
+such runs — every run classifies as equilibration, as for chunks named `npt_0001` — is it compared on the
+last schedule role. Equilibration temperatures that differ only before production (299.9/300.0/300.1 K per
+segment or per replica) are not reported, also when only one replica reached production. Roles in which
 the members differ in the same way share one line (`Members differ in dt in their equilibration and
 production runs (...)`).
 
