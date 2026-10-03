@@ -519,6 +519,15 @@ Within a phase a member's own steps stay in order, and its chain still runs thro
 A single-lineage document is untouched by all of this: one member, contiguous phases, document order *is*
 run order.
 
+**A role that recurs opens a new phase, and the repeats are numbered.** A protocol that alternates roles — one
+short equilibration before every production segment, or a minimization after heating — gets a new phase
+each time the role changes, in a single- or multi-lineage document alike (the role lives on the Phase, so one
+phase cannot hold both). Since 1.3.0 `discover` names the second phase of a role "Equilibration 2", the third
+"Equilibration 3", and so on; the first keeps the plain name, so a protocol that runs each role once is named
+as before. Up to 1.2 every one of them was called "Equilibration". The methods summary describes the
+numbered repeats of a phase together with it (one "Equilibration" entry with `document_phases: 3`), as it
+did when they shared one name.
+
 ---
 
 ## 10. Consumers

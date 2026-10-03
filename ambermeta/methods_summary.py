@@ -227,6 +227,8 @@ class _Run:
         self.name = str(stage.get("name") or f"run {index + 1}")
         self.role = stage.get("stage_role") or None
         self.phase = stage.get("phase") or None
+        # The protocol group this run is described in; see `_assign_groups`.
+        self.group = self.phase or self.role or "unassigned"
         self.lineage = stage.get("lineage") or None
         self.mdin = _details(stage, "mdin")
         self.mdout = _details(stage, "mdout")
@@ -649,6 +651,38 @@ def _ns_per_day(runs: List["_Run"]) -> Any:
                         ("range", _range(values, 3))])
 
 
+_NUMBERED_PHASE = re.compile(r"^(.*\S) (\d+)$")
+
+
+def _assign_groups(runs: List["_Run"]) -> None:
+    """Set each run's protocol group: its document phase, with the numbered repeats of a
+    phase folded into it.
+
+    ``discover`` numbers the repeated phases of a protocol that alternates roles --
+    "Equilibration", "Production", "Equilibration 2", "Production 2", ... -- so the
+    manifest can tell them apart. Described phase by phase, a campaign of 200 segments
+    would be 400 entries saying the same thing; the digest describes the equilibration runs
+    once and the production runs once, as it did when those phases shared one name. A name
+    is folded only into a phase of the same role that the document also holds under the
+    bare name, so phases a user named "NVT 1" and "NVT 2" stay apart.
+    """
+    roles: Dict[str, Counter] = {}
+    for r in runs:
+        if r.phase:
+            roles.setdefault(r.phase, Counter())[r.role] += 1
+
+    def role_of(name: str) -> Any:
+        return roles[name].most_common(1)[0][0]
+
+    for r in runs:
+        if not r.phase:
+            continue
+        match = _NUMBERED_PHASE.match(r.phase)
+        if (match and int(match.group(2)) >= 2 and match.group(1) in roles
+                and role_of(match.group(1)) == role_of(r.phase)):
+            r.group = match.group(1)
+
+
 def _phase(name: str, runs: List["_Run"], multi: bool) -> Dict[str, Any]:
     roles = Counter(r.role for r in runs)
     role = roles.most_common(1)[0][0] if roles else None
@@ -684,6 +718,11 @@ def _phase(name: str, runs: List["_Run"], multi: bool) -> Dict[str, Any]:
     out: Dict[str, Any] = OrderedDict()
     out["name"] = name
     out["role"] = role
+    document_phases = OrderedDict((r.phase, None) for r in runs if r.phase)
+    if len(document_phases) > 1:
+        # Numbered repeats folded into this entry (see `_assign_groups`): the protocol
+        # returns to this phase that many times.
+        out["document_phases"] = len(document_phases)
     out["runs"] = len(runs)
     out["runs_with_output"] = len(with_output)
     out["finished_runs"] = sum(1 for r in runs if r.finished)
@@ -887,7 +926,7 @@ def _topology(fname: Any, natom: Any, runs: List["_Run"], several: bool) -> Dict
     out["residues"] = p.get("nres")
     if several:
         out["runs"] = len(runs)
-        out["phases"] = sorted({r.phase or r.role or "unassigned" for r in runs})
+        out["phases"] = sorted({r.group for r in runs})
     residues: Dict[str, Any] = OrderedDict()
     protein = classes.get("protein", {})
     if protein:
@@ -1037,7 +1076,7 @@ def _replicas(runs: List["_Run"], summary: Dict[str, Any], basis: str) -> Dict[s
     if shared and members:
         phases = OrderedDict()
         for r in shared:
-            phases[r.phase or r.role or "unassigned"] = None
+            phases[r.group] = None
         out["shared_runs"] = OrderedDict([("runs", len(shared)),
                                           ("phases", list(phases))])
     if members:
@@ -1077,7 +1116,7 @@ def _replicas(runs: List["_Run"], summary: Dict[str, Any], basis: str) -> Dict[s
             phases = OrderedDict()
             for r in runs:
                 if r.lineage == member:
-                    phases[r.phase or r.role or "unassigned"] = None
+                    phases[r.group] = None
             roles_per[" -> ".join(phases)] += 1
         out["phases_per_replica"] = [OrderedDict([("phases", k), ("replicas", n)])
                                      for k, n in roles_per.most_common(MAX_NAMES)]
@@ -1223,9 +1262,10 @@ def build_methods_summary(summary: Dict[str, Any]) -> Dict[str, Any]:
     lineage_basis = _lineages(runs, summary)
     multi = len({r.lineage for r in runs if r.lineage}) >= 1 and lineage_basis != "none"
 
+    _assign_groups(runs)
     groups: "OrderedDict[str, List[_Run]]" = OrderedDict()
     for r in runs:
-        groups.setdefault(r.phase or r.role or "unassigned", []).append(r)
+        groups.setdefault(r.group, []).append(r)
 
     totals = _dict(summary.get("totals"))
     project: Dict[str, Any] = OrderedDict()

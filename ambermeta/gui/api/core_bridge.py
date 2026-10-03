@@ -824,6 +824,20 @@ def _recorded_starting_structure(sim, grouped, base_directory):
     return _relativize(next(iter(candidates.values())), base_directory)
 
 
+def _phase_name(phases, role):
+    """The name of a new phase of `role`: the role's title, numbered from the second phase
+    of that role on.
+
+    A protocol that alternates roles -- one short equilibration before every production
+    segment -- gets a phase per run, and without the number every second phase of a
+    200-segment campaign was called "Equilibration". The first keeps the plain name, so a
+    protocol that runs each role once is named as it always was.
+    """
+    base = role.title() if role else "Stage"
+    count = sum(1 for phase in phases if (phase.role or "") == (role or ""))
+    return base if count == 0 else f"{base} {count + 1}"
+
+
 def _topology_for_atoms(choice, natom, natom_by_topology, kind_by_topology):
     """The pool topology with `natom` atoms, preferring `choice`'s kind; else `choice`."""
     if not natom or natom_by_topology.get(choice) == natom:
@@ -1029,13 +1043,13 @@ def discover_draft(base_directory, recursive=True, pattern=None, apply_tags=True
             if index is None:
                 index = len(sim.phases)
                 sim.phases.append(Phase(id=uuid.uuid4().hex[:8],
-                                        name=(role.title() if role else "Stage"), role=role))
+                                        name=_phase_name(sim.phases, role), role=role))
             phase = sim.phases[index]
             phase_index_by_lineage[member] = index
         else:
             if not sim.phases or sim.phases[-1].role != role:
                 sim.phases.append(Phase(id=uuid.uuid4().hex[:8],
-                                        name=(role.title() if role else "Stage"), role=role))
+                                        name=_phase_name(sim.phases, role), role=role))
             phase = sim.phases[-1]
         phase.steps.append(step)
 

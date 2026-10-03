@@ -445,3 +445,42 @@ def test_the_scan_path_marks_a_runs_own_restart_and_states_when_the_run_started(
     (production,) = [p for p in protocol.to_methods_dict()["protocol"]
                      if p["name"] == "production"]
     assert production["clock_ps"]["first_run_starts_at"] == 920.0
+
+
+# ---------------------------------------------------------------------------
+# 1.3.0: numbered repeats of a phase are described once
+# ---------------------------------------------------------------------------
+
+def test_the_numbered_phases_of_an_alternating_protocol_are_described_once(tmp_path):
+    """`discover` numbers the repeats ("Equilibration 2", ...); the digest folds them into
+    one entry per phase, as it did when they shared a name, and says how many there were."""
+    from tests.conftest import alternating_runs, write_run_tree
+
+    tree = write_run_tree(tmp_path, alternating_runs("rep1/", [300.0, 299.9, 300.1])
+                          + alternating_runs("rep2/", [299.9, 300.1, 300.0]))
+    assert main(["discover", str(tree), "--write", str(tree / "sim.yaml")]) == 0
+    assert main(["plan", str(tree), "-m", str(tree / "sim.yaml"),
+                 "--methods-summary-path", str(tree / "methods.json")]) == 0
+    digest = _load(tree / "methods.json")
+    assert [(p["name"], p["document_phases"], p["runs"]) for p in digest["protocol"]] == [
+        ("Equilibration", 3, 6), ("Production", 3, 6)]
+    assert digest["project"]["phases"] == 2
+    temperature = _phase(digest, "Equilibration")["settings"]["target_temperature_K"]
+    assert temperature["sequence_in_run_order"] == [300.0, 299.9, 300.1]
+    assert digest["replicas"]["phases_per_replica"] == [
+        {"phases": "Equilibration -> Production", "replicas": 2}]
+
+
+def test_only_numbered_repeats_of_a_named_phase_of_the_same_role_are_folded():
+    stages = [
+        _stage("a", "equilibration", phase="NVT 1", cntrl=EQ, control=MD_ECHO, elapsed=1.0),
+        _stage("b", "equilibration", phase="NVT 2", cntrl=EQ, control=MD_ECHO, elapsed=1.0),
+        _stage("c", "equilibration", phase="Production", cntrl=EQ, control=MD_ECHO,
+               elapsed=1.0),
+        _stage("d", "production", phase="Production 2", cntrl=PROD, control=MD_ECHO,
+               elapsed=1.0),
+    ]
+    digest = build_methods_summary({"totals": {}, "stages": stages})
+    assert [p["name"] for p in digest["protocol"]] == ["NVT 1", "NVT 2", "Production",
+                                                       "Production 2"]
+    assert all("document_phases" not in p for p in digest["protocol"])

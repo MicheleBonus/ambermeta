@@ -187,3 +187,31 @@ def test_copies_that_differ_are_still_two_candidates(tmp_path):
     (tree / "rep2" / "start.rst").write_text(_START_RST.replace("6.0000000", "7.0000000"))
     sim, _ = _edges(tree)
     assert sim.starting_structure == "complex.crd"
+
+
+def test_repeated_phases_of_an_alternating_protocol_are_numbered(tmp_path):
+    """One short equilibration before every production segment opens a phase per run;
+    the repeats are numbered rather than all called "Equilibration"."""
+    from tests.conftest import alternating_runs
+
+    tree = write_run_tree(tmp_path, alternating_runs("", [300.0, 299.9, 300.1]))
+    sim = core_bridge.discover_draft(str(tree), recursive=True)["simulation"]
+    assert [(p.name, p.role, [s.name for s in p.steps]) for p in sim.phases] == [
+        ("Equilibration", "equilibration", ["eq_0001"]),
+        ("Production", "production", ["prod_0001"]),
+        ("Equilibration 2", "equilibration", ["eq_0002"]),
+        ("Production 2", "production", ["prod_0002"]),
+        ("Equilibration 3", "equilibration", ["eq_0003"]),
+        ("Production 3", "production", ["prod_0003"]),
+    ]
+
+
+def test_replicas_share_the_numbered_phases(tmp_path):
+    from tests.conftest import alternating_runs
+
+    tree = write_run_tree(tmp_path, alternating_runs("rep1/", [300.0, 300.0])
+                          + alternating_runs("rep2/", [300.0, 300.0]))
+    sim = core_bridge.discover_draft(str(tree), recursive=True)["simulation"]
+    assert [(p.name, sorted(s.lineage for s in p.steps)) for p in sim.phases] == [
+        ("Equilibration", ["rep1", "rep2"]), ("Production", ["rep1", "rep2"]),
+        ("Equilibration 2", ["rep1", "rep2"]), ("Production 2", ["rep1", "rep2"])]
