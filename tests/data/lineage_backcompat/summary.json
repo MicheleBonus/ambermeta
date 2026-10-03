@@ -149,6 +149,7 @@
             },
             "num_solvent_molecules": 14659,
             "num_solute_residues": 371,
+            "iptres": 443,
             "hmr_active": false,
             "hmr_hydrogen_mass_range": [
               1.008,
@@ -461,6 +462,7 @@
             },
             "num_solvent_molecules": 14659,
             "num_solute_residues": 371,
+            "iptres": 443,
             "hmr_active": false,
             "hmr_hydrogen_mass_range": [
               1.008,
@@ -774,6 +776,7 @@
             },
             "num_solvent_molecules": 14659,
             "num_solute_residues": 371,
+            "iptres": 443,
             "hmr_active": false,
             "hmr_hydrogen_mass_range": [
               1.008,
@@ -1087,6 +1090,7 @@
             },
             "num_solvent_molecules": 14659,
             "num_solute_residues": 371,
+            "iptres": 443,
             "hmr_active": false,
             "hmr_hydrogen_mass_range": [
               1.008,
@@ -1400,6 +1404,7 @@
             },
             "num_solvent_molecules": 14659,
             "num_solute_residues": 371,
+            "iptres": 443,
             "hmr_active": false,
             "hmr_hydrogen_mass_range": [
               1.008,

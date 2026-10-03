@@ -261,8 +261,13 @@ class PrmtopMetadata:
     # Solvent Pointers
     num_solvent_molecules: int = 0
     # Residues up to SOLVENT_POINTERS' IPTRES, without the ions and water among them.
-    # Up to AmberMeta 1.2 this was IPTRES itself, which counts the ions LEaP adds.
+    # Every residue named as an ion (`ION_RESNAMES`) is left out, a structural metal ion
+    # (`ZN`, `MG`, ...) included: names alone do not tell it from a counter-ion. Up to
+    # AmberMeta 1.2 this was IPTRES itself, which counts the ions LEaP adds.
     num_solute_residues: int = 0
+    # SOLVENT_POINTERS' IPTRES as LEaP wrote it: the last residue before the solvent,
+    # ions included. None when the topology has no SOLVENT_POINTERS.
+    iptres: Optional[int] = None
 
     # Hydrogen mass repartitioning (HMR)
     hmr_active: Optional[bool] = None
@@ -553,6 +558,7 @@ def extract_prmtop_metadata(filepath: str) -> PrmtopMetadata:
         # sample topology, 72 of them K+/Cl-). The solute is those residues minus ions and
         # any water among them.
         md.num_solute_residues = _solute_residues(res_labels, solv_ptr[0])
+        md.iptres = solv_ptr[0] if isinstance(solv_ptr[0], int) else None
         # Note: SOLVENT_POINTERS[2] is NSPSOL (first solvent molecule index), NOT the count
         # We calculate actual solvent count from residue composition instead
         if md.residue_composition:

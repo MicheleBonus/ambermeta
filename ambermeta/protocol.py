@@ -1164,14 +1164,17 @@ class SimulationProtocol:
                 is_minimisation=(run_type == "Minimization"),
             )
 
-        if start_time_source in (ORIGIN_CONTROL_T, ORIGIN_FIRST_FRAME):
+        if (start_time_source in (ORIGIN_CONTROL_T, ORIGIN_FIRST_FRAME)
+                and current.expected_gap_ps is None):
             # The run set its own clock (`irest = 0`, new velocities): AMBER started it at
             # the mdin's `t`, whatever the coordinates it read say, so its start time says
             # nothing about the run before it. A production restarted with new velocities
             # and `t = 0` after 5000 ps of equilibration was reported as a 5000-ps overlap
             # wherever the restart's own time could not be read (a NetCDF restart on an
             # install without a NetCDF backend). Which coordinates it read is what links the
-            # two, and the recorded-input check compares exactly that.
+            # two, and the recorded-input check compares exactly that. A step that DECLARES
+            # the gap it expects (`gaps: {expected: ...}`) has stated what its `t` should
+            # be, and is still measured against that below.
             current._add_continuity_note(
                 f"INFO: {current.name} set its own clock (irest = 0); continuity with "
                 f"{prev.name} follows the recorded input coordinates, not the clock."

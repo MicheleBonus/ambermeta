@@ -94,6 +94,8 @@ This makes the old implicit "the first stage uses the initial coordinates, later
 
 Canonical tokens: `"minimization" | "heating" | "equilibration" | "production" | ""`.
 
+The two paths into the engine call it in a different order: `discover` (and so the manifest path) classifies by the name first (`classify_role(stem, mdin_details=...)`), while the directory scan of `plan --recursive` reads the mdin content first and the path last. A tree can therefore get different roles on the two paths (long `npt_*` chunks are production by content on the scan path and equilibration by name in `discover`), and since 1.3.0 roles also decide the per-role replica comparison, the `time_ps_<role>` totals and the directory order of the scan. Prefer `discover` and `plan -m`, where the roles are written down and can be corrected.
+
 ---
 
 ## 3. Continuity and sequence-hole detection

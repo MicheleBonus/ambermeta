@@ -105,3 +105,26 @@ def test_the_scan_path_reports_no_overlap_either(tmp_path, sample_md_data_dir,
     prod = _stage(protocol, "prod_0001")
     assert not [n for n in prod.continuity if not n.startswith("INFO")]
     assert any("set its own clock" in n for n in prod.continuity)
+
+
+@pytest.mark.parametrize("expected,verdict", [
+    (-5000.0, "is within expected window"), (10.0, "is shorter than expected")])
+def test_a_declared_gap_is_still_checked_on_a_run_that_set_its_own_clock(
+        tmp_path, sample_md_data_dir, no_netcdf_backend, expected, verdict):
+    """PR #93 review, M2. A step that declares the gap it expects has said what its `t`
+    should be; the own-clock shortcut must not skip that check silently."""
+    from ambermeta.simulation import iter_steps
+
+    tree = _prep_chain(tmp_path, sample_md_data_dir)
+    manifest = tree / "manifest.yaml"
+    assert main(["discover", str(tree), "--write", str(manifest)]) == 0
+    sim = load_simulation(str(manifest))
+    for _, step in iter_steps(sim):
+        if step.name == "prod_0001":
+            step.expected_gap_ps, step.gap_tolerance_ps = expected, 1.0
+    protocol = core_bridge.build_protocol(core_bridge._flatten_simulation(sim),
+                                          {"strict_validation": True}, str(tree))
+    prod = _stage(protocol, "prod_0001")
+    assert prod.observed_gap_ps == -5000.0
+    assert any(verdict in note for note in prod.continuity)
+    assert not any("set its own clock" in note for note in prod.continuity)

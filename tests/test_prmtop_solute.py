@@ -24,3 +24,9 @@ def test_the_sample_topology_has_371_solute_residues(sample_md_data_dir):
     ions = md.residue_composition["K+"] + md.residue_composition["Cl-"]
     assert ions == 72
     assert md.num_solute_residues == 443 - ions == 371
+
+
+def test_the_raw_iptres_is_kept_under_its_own_key(sample_md_data_dir):
+    """PR #93 review, M4: the field changed meaning, so LEaP's pointer stays available."""
+    md = extract_prmtop_metadata(str(sample_md_data_dir / "CH3L1_HUMAN_6NAG.top"))
+    assert md.iptres == 443
