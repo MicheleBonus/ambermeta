@@ -334,6 +334,10 @@ The ensemble words rank below production, so `nvt_prod_0001` is a production run
 with `eq` and that run was classified as equilibration, and a digit directly after a cue (`prod1`, `eq0001`)
 hid the cue. A directory cue still wins over the file name: `prod/nvt_eq_0001` is production.
 
+This priority decides the **role** only. The *phase word* the layout inference compares (§9.1) is the
+leftmost cue word of a directory label, as in 1.2: `nvt_equil/` and `npt_equil/` name the stages `nvt`
+and `npt` (two stages, not two replicas) although both are equilibration by role.
+
 A Phase's `role` is normally set once (from its Steps' classified roles, on discovery) rather than
 re-derived per Step; a Step itself has no `role` field — role lives on the Phase.
 
