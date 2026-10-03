@@ -98,6 +98,13 @@ own directory for `ambermeta validate --manifest`, `plan`'s positional `director
 for `ambermeta plan -m`, and the served directory for the GUI. Keeping the manifest beside the files it
 describes makes all three agree.
 
+`discover DIR --write PATH` with `PATH` outside `DIR` writes the paths relative to the manifest's own
+directory (absolute where no relative path exists, such as another drive on Windows) and says so, so
+`validate --manifest` finds the files. `plan -m` reads a manifest's paths from its `directory` argument
+unless none of the run files is found there and they are found beside the manifest; it then reads them from
+the manifest's directory and prints a note. Up to 1.2 such a manifest kept paths relative to `DIR`, and
+`validate --manifest` reported every file missing.
+
 ---
 
 ## 3. `simulation`: the topology pool and starting structure

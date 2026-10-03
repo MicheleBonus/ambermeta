@@ -297,3 +297,25 @@ def test_runs_without_a_role_are_counted_as_unclassified():
         engine._elapsed_ps = original
     assert totals["time_ps_production"] == 10.0
     assert totals["time_ps_unclassified"] == 2.0
+
+
+def test_the_stats_csv_has_a_lineage_column_when_lineages_exist(tmp_path, capsys):
+    import csv
+    from ambermeta.protocol import STATS_CSV_COLUMNS, write_stats_csv
+    from tests.conftest import alternating_runs, write_run_tree
+
+    tree = write_run_tree(tmp_path / "tree", alternating_runs("rep1/", [300.0])
+                          + alternating_runs("rep2/", [300.0]))
+    protocol = auto_discover(str(tree), recursive=True)
+    write_stats_csv(protocol, str(tmp_path / "stats.csv"))
+    rows = list(csv.DictReader((tmp_path / "stats.csv").open(encoding="utf-8")))
+    assert list(rows[0])[:3] == ["stage_name", "stage_role", "lineage"]
+    assert {(r["stage_name"], r["lineage"]) for r in rows} == {
+        ("rep1/eq_0001", "rep1"), ("rep1/prod_0001", "rep1"),
+        ("rep2/eq_0001", "rep2"), ("rep2/prod_0001", "rep2")}
+
+    # without lineages the header is the one it always was
+    single = auto_discover(str(tree / "rep1"), recursive=True)
+    write_stats_csv(single, str(tmp_path / "single.csv"))
+    header = (tmp_path / "single.csv").read_text(encoding="utf-8").splitlines()[0]
+    assert header.split(",") == STATS_CSV_COLUMNS

@@ -386,10 +386,22 @@ def _discover_command(args: argparse.Namespace) -> int:
             _out(line)
 
     if getattr(args, "write", None):
-        from ambermeta.simulation import write_simulation
+        from ambermeta.simulation import rebase_paths, write_simulation
         fmt = _resolve_sim_format(args.write, getattr(args, "format", None))
+        # The draft's paths are relative to the scanned directory, and a manifest's paths
+        # are read from the manifest's own directory (`validate --manifest`). Written
+        # elsewhere, the manifest named files that were not there, and every one was
+        # reported missing. Rebased, they resolve from where the manifest is.
+        manifest_dir = os.path.dirname(os.path.abspath(args.write))
+        rebased = (os.path.normcase(manifest_dir) != os.path.normcase(directory)
+                   and rebase_paths(sim, directory, manifest_dir))
         write_simulation(sim, args.write, fmt)
         _out(Colors.success(f"\nWrote v2 draft manifest: {args.write} ({fmt})"))
+        if rebased:
+            _out(Colors.warning(
+                f"NOTE: the manifest is not in {directory}, so its file paths are written "
+                f"relative to its own directory ({manifest_dir}), where "
+                f"`validate --manifest` and `plan -m` read them."))
     return 0
 
 
@@ -1265,6 +1277,31 @@ def _write_plan_artifacts(args: argparse.Namespace, protocol: SimulationProtocol
     return 1 if result["failed"] else 0
 
 
+def _manifest_base(sim, directory: str, manifest: str) -> str:
+    """The directory `plan -m` reads the manifest's relative paths from.
+
+    `directory` (the positional argument), unless none of the run files the manifest names
+    is found there and they are found beside the manifest. That is the shape of a manifest
+    `discover --write` put outside the scanned directory: its paths are written relative to
+    the manifest, and read from `directory` every file was missing.
+    """
+    from ambermeta.simulation import iter_steps
+
+    manifest_dir = os.path.dirname(os.path.abspath(manifest))
+    if os.path.normcase(manifest_dir) == os.path.normcase(directory):
+        return directory
+    paths = [p for _, step in iter_steps(sim) for p in (step.mdin, step.mdout)
+             if p and not os.path.isabs(p)]
+    if not paths or any(os.path.exists(os.path.join(directory, p)) for p in paths):
+        return directory
+    if not any(os.path.exists(os.path.join(manifest_dir, p)) for p in paths):
+        return directory
+    print(Colors.warning(
+        f"NOTE: no file the manifest names is in {directory}; reading its paths from the "
+        f"manifest's own directory ({manifest_dir})."), file=sys.stderr)
+    return manifest_dir
+
+
 def _plan_v2(args: argparse.Namespace, directory: str) -> int:
     """Summarize a v2 manifest and write any requested plan artifacts."""
     from ambermeta.simulation import load_simulation
@@ -1274,6 +1311,7 @@ def _plan_v2(args: argparse.Namespace, directory: str) -> int:
 
     expand_env = not getattr(args, "no_expand_env", False)
     sim = load_simulation(args.manifest, expand_env=expand_env)
+    directory = _manifest_base(sim, directory, args.manifest)
     settings = {
         "strict_validation": not bool(getattr(args, "skip_cross_stage_validation", None)),
         "allow_gaps": False,

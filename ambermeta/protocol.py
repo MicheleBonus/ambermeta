@@ -2931,9 +2931,17 @@ def write_stats_csv(protocol: "SimulationProtocol", filepath: str) -> None:
     """
     import csv
 
+    # A `lineage` column after `stage_role`, only when some stage carries a lineage: the
+    # replica of a row was otherwise readable only from its run name, and a CSV for a
+    # document that declares none keeps the columns it always had.
+    columns = list(STATS_CSV_COLUMNS)
+    if any(stage.lineage for stage in protocol.stages):
+        columns.insert(columns.index("stage_role") + 1, "lineage")
+
     rows: List[Dict[str, Any]] = []
     for stage in protocol.stages:
-        row: Dict[str, Any] = {"stage_name": stage.name, "stage_role": stage.stage_role or ""}
+        row: Dict[str, Any] = {"stage_name": stage.name, "stage_role": stage.stage_role or "",
+                               "lineage": stage.lineage or ""}
         stats = getattr(stage.mdout.details, "stats", None) if (
             stage.mdout and stage.mdout.details) else None
         if stats:
@@ -2970,10 +2978,10 @@ def write_stats_csv(protocol: "SimulationProtocol", filepath: str) -> None:
         rows.append(row)
 
     with open(filepath, "w", newline="", encoding="utf-8") as fh:
-        writer = csv.DictWriter(fh, fieldnames=STATS_CSV_COLUMNS)
+        writer = csv.DictWriter(fh, fieldnames=columns)
         writer.writeheader()
         for row in rows:
-            writer.writerow({k: row.get(k, "") for k in STATS_CSV_COLUMNS})
+            writer.writerow({k: row.get(k, "") for k in columns})
 
 
 PLAN_ARTIFACTS = ("summary", "methods_summary", "stats_csv")

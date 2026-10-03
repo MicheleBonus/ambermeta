@@ -752,6 +752,8 @@ A phase of the sample data (abridged):
 stage_name,stage_role,time_start_ps,time_end_ps,duration_ns,frame_count,temp_avg,temp_std,pressure_avg,pressure_std,density_avg,density_std,etot_avg,etot_std
 ```
 
+When any stage carries a lineage (a replica), a `lineage` column follows `stage_role` (since 1.3.0); a document that declares no lineage keeps the header above.
+
 ```python
 import json
 from ambermeta import auto_discover

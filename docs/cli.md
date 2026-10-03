@@ -267,6 +267,8 @@ The CSV header is exactly:
 stage_name,stage_role,time_start_ps,time_end_ps,duration_ns,frame_count,temp_avg,temp_std,pressure_avg,pressure_std,density_avg,density_std,etot_avg,etot_std
 ```
 
+When any stage carries a lineage (a replica), a `lineage` column follows `stage_role` (since 1.3.0); a document that declares no lineage keeps the header above.
+
 ### Behavior
 
 - **Fault-tolerant by default.** A missing/malformed/unreadable file is skipped, the error is recorded against its stage, a skip summary is printed, and the run exits `0`. `--strict` makes the first bad file a hard error (clean message, exit `1`, no traceback). A stage keeps every file that *did* parse.
@@ -511,7 +513,7 @@ steps:
 # ... ntp_prod_0003..0005 follow the same shape, each chained to the previous step
 ```
 
-Note the restart is written **once**, on the step that produced it (`rst:`), and a chained consumer carries only `ref` — the id of the step it continues from. Nothing repeats the path. To find the file a chained step actually starts from, follow `ref` to the producing step and read its `rst`; `ambermeta.simulation.resolve_input_coords` does exactly that, and it is what the `input=restart of ...` line above prints. Paths are written relative to `directory` when the draft's files live under it.
+Note the restart is written **once**, on the step that produced it (`rst:`), and a chained consumer carries only `ref` — the id of the step it continues from. Nothing repeats the path. To find the file a chained step actually starts from, follow `ref` to the producing step and read its `rst`; `ambermeta.simulation.resolve_input_coords` does exactly that, and it is what the `input=restart of ...` line above prints. Paths are written relative to `directory` when the draft's files live under it. When `--write` puts the manifest outside `directory`, they are written relative to the manifest's own directory instead, and `discover` prints a note saying so (since 1.3.0): `validate --manifest` reads a manifest's paths from there, and `plan -m` falls back to it when none of the run files is found in its `directory` argument.
 
 Exit `0` on success; `1` if `directory` doesn't exist, or if discovery finds no phases (nothing to draft) — e.g. an empty or unrecognized directory:
 

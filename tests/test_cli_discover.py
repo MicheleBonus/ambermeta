@@ -57,3 +57,61 @@ def test_discover_empty_directory_returns_1(tmp_path, capsys):
 def test_discover_missing_directory_returns_1(tmp_path):
     rc = cli._discover_command(_args(str(tmp_path / "nope")))
     assert rc == 1
+
+
+# ---------------------------------------------------------------------------
+# 1.3.0: a manifest written outside the scanned directory
+# ---------------------------------------------------------------------------
+
+main = cli.main
+
+
+def _alternating(tmp_path):
+    from tests.conftest import alternating_runs, write_run_tree
+    return write_run_tree(tmp_path / "runs", alternating_runs("", [300.0, 300.0]))
+
+
+def test_a_manifest_written_elsewhere_names_paths_that_resolve_from_it(tmp_path, capsys):
+    from ambermeta.simulation import iter_steps, load_simulation
+
+    tree = _alternating(tmp_path)
+    manifest = tmp_path / "manifests" / "sim.yaml"
+    manifest.parent.mkdir()
+    assert main(["discover", str(tree), "--write", str(manifest)]) == 0
+    out = capsys.readouterr().out
+    assert "relative to its own directory" in out
+    sim = load_simulation(str(manifest))
+    for _, step in iter_steps(sim):
+        assert step.mdout.startswith("../runs/")
+        assert (manifest.parent / step.mdout).is_file()
+        assert (manifest.parent / step.rst).is_file()
+
+    assert main(["validate", "--manifest", str(manifest)]) == 0
+    out = capsys.readouterr().out
+    assert "missing" not in out
+
+
+def test_plan_reads_such_a_manifest_with_either_directory(tmp_path, capsys):
+    tree = _alternating(tmp_path)
+    manifest = tmp_path / "manifests" / "sim.yaml"
+    manifest.parent.mkdir()
+    assert main(["discover", str(tree), "--write", str(manifest)]) == 0
+    capsys.readouterr()
+    for directory in (manifest.parent, tree):
+        summary = tmp_path / "summary.json"
+        assert main(["plan", str(directory), "-m", str(manifest), "--strict",
+                     "--summary-path", str(summary)]) == 0
+        import json
+        data = json.loads(summary.read_text(encoding="utf-8"))
+        assert data["totals"]["time_ps"] > 0
+        assert all(not s["load_errors"] for s in data["stages"])
+
+
+def test_a_manifest_in_the_scanned_directory_keeps_its_paths(tmp_path, capsys):
+    from ambermeta.simulation import iter_steps, load_simulation
+
+    tree = _alternating(tmp_path)
+    assert main(["discover", str(tree), "--write", str(tree / "sim.yaml")]) == 0
+    assert "relative to its own directory" not in capsys.readouterr().out
+    sim = load_simulation(str(tree / "sim.yaml"))
+    assert [s.mdout for _, s in iter_steps(sim)][0] == "eq_0001.mdout"
