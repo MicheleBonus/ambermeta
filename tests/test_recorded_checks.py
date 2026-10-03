@@ -318,19 +318,20 @@ def _methods(directory):
     from ambermeta.gui.api.core_bridge import _flatten_simulation, build_protocol
     sim = _draft(directory)
     protocol = build_protocol(_flatten_simulation(sim), {}, str(directory))
-    return {s["name"]: s for s in protocol.to_methods_dict()["stages"]}
+    return protocol.to_methods_dict()
 
 
 def test_the_methods_summary_takes_hmr_from_the_topology_masses(tmp_path):
-    for name, stage in _methods(_copy(tmp_path)).items():
-        composition = stage["system"]["composition"]
-        assert composition["hmr_active"] is False, name
-        assert "hmr_inferred_from_timestep" not in composition, name
+    (topology,) = _methods(_copy(tmp_path))["system"]["topologies"]
+    assert topology["hydrogen_masses"]["repartitioned"] is False
+    assert topology["hydrogen_masses"]["range_amu"] == [1.008, 1.008]
+    assert topology["hydrogen_masses"]["basis"] == "topology masses"
 
 
 def test_the_methods_summary_reports_the_box_of_the_coordinates_a_run_read(tmp_path):
     """The topology's box is the one tLEaP wrote before equilibration (98.3 A along x);
-    the restart ntp_prod_0002 read holds the simulated box (about 91.8 A)."""
-    box = _methods(_copy(tmp_path))["ntp_prod_0002"]["system"]["box"]
-    assert box["dimensions"][0] == pytest.approx(91.8, abs=0.5)
-    assert box["source"] == "input coordinates"
+    the restart the first run read holds the simulated box (about 91.8 A)."""
+    (topology,) = _methods(_copy(tmp_path))["system"]["topologies"]
+    box = topology["box_at_start"]
+    assert box["edges_A"][0] == pytest.approx(91.8, abs=0.5)
+    assert box["source"] == "input coordinates of ntp_prod_0001"

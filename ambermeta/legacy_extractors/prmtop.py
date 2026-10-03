@@ -252,6 +252,11 @@ class PrmtopMetadata:
 
     # Composition
     residue_composition: Dict[str, int] = field(default_factory=dict)
+    # Atoms per residue, from RESIDUE_POINTER, for the residue names outside the protein and
+    # nucleic-acid sets: water, ions, lipids, ligands. The most common size when one name
+    # has several. A water residue of 3, 4 or 5 atoms says how many sites the water model
+    # has, which the residue name (`WAT`) does not.
+    residue_atom_counts: Dict[str, int] = field(default_factory=dict)
     
     # Solvent Pointers
     num_solvent_molecules: int = 0
@@ -343,6 +348,31 @@ def _classify_simulation(md: PrmtopMetadata):
     # Refine Category if Empty
     if md.simulation_category.strip() == "in Vacuum":
         md.simulation_category = "Empty/Unknown System in Vacuum"
+
+
+_POLYMER_RESNAMES = PROTEIN_RESNAMES | DNA_RESNAMES | RNA_RESNAMES
+
+
+def _residue_atom_counts(labels: Sequence[str], starts: Sequence[Any],
+                         natom: int) -> Dict[str, int]:
+    """Most common atom count per residue name, for names outside the polymer sets.
+
+    `starts` is RESIDUE_POINTER: the 1-based index of each residue's first atom. A pointer
+    list that does not match the labels, or that does not increase, yields nothing rather
+    than sizes computed from the wrong boundaries.
+    """
+    if len(starts) != len(labels) or any(not isinstance(x, int) for x in starts):
+        return {}
+    bounds = list(starts) + [natom + 1]
+    sizes: Dict[str, Counter] = {}
+    for i, name in enumerate(labels):
+        size = bounds[i + 1] - bounds[i]
+        if size <= 0:
+            return {}
+        if not name or name in _POLYMER_RESNAMES:
+            continue
+        sizes.setdefault(name, Counter())[size] += 1
+    return {name: counter.most_common(1)[0][0] for name, counter in sizes.items()}
 
 
 def extract_prmtop_metadata(filepath: str) -> PrmtopMetadata:
@@ -493,6 +523,11 @@ def extract_prmtop_metadata(filepath: str) -> PrmtopMetadata:
                 ion_count += count
         if ion_count > 0:
             md.force_field_features.append(f"Contains Ions ({ion_count})")
+
+        pointers_res = prmtop.get("RESIDUE_POINTER")
+        if pointers_res and md.natom:
+            md.residue_atom_counts = _residue_atom_counts(
+                [str(x).strip() if x else "" for x in res_labels], pointers_res, md.natom)
 
     # 6. Solvent Pointers
     solv_ptr = prmtop.get("SOLVENT_POINTERS")

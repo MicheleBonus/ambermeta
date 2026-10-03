@@ -1,706 +1,303 @@
 {
-  "stage_sequence": [
-    {
-      "name": "ntp_prod_0001",
-      "role": "production"
+  "schema_version": "2.0",
+  "generator": {
+    "name": "AmberMeta",
+    "version": "1.2.0"
+  },
+  "about": "Methods summary of an AMBER simulation project, written by AmberMeta from its summary.json, which AmberMeta reads from the run files (topology, mdin, mdout, coordinates). The protocol is given per phase, in execution order; each setting is stated once with the number of runs that share it when not all do, and the runs that differ are listed as other values. 'source' says where a value comes from (see 'sources'). Nothing here names a force field, a water model or a preparation step unless a run file states it; see 'not_in_run_files'.",
+  "sources": {
+    "mdin": "set explicitly in the mdin",
+    "mdout": "not set in the mdin; the value AMBER used, as echoed in the mdout (the AMBER default for that run)",
+    "default": "stated by neither file; the documented AMBER default, filled in by AmberMeta",
+    "derived": "computed by AmberMeta from other values"
+  },
+  "project": {
+    "runs": 5,
+    "runs_with_output": 5,
+    "finished_runs": 5,
+    "simulated_time_ns": 100.0,
+    "simulated_time_basis": "measured from the mdout files: what the runs ran, not what the mdins asked for",
+    "phases": 1
+  },
+  "software": {
+    "md_engine": [
+      {
+        "program": "PMEMD",
+        "version": "22",
+        "runs": 5
+      }
+    ],
+    "md_engine_note": "program and version from the mdout banner; an mdout without the PMEMD banner is reported as SANDER",
+    "gpus": [
+      {
+        "model": "NVIDIA GeForce RTX 2080",
+        "runs": 5
+      }
+    ],
+    "run_dates": {
+      "first": "2023-01-11",
+      "last": "2023-01-12",
+      "runs_with_a_date": 5
     },
+    "wall_time_hours": 10.35
+  },
+  "system": {
+    "topologies": [
+      {
+        "file": "CH3L1_HUMAN_6NAG.top",
+        "atoms": 64528,
+        "residues": 15102,
+        "residues_by_class": {
+          "protein": {
+            "residues": 362,
+            "caps": {
+              "ACE": 1,
+              "NME": 1
+            },
+            "histidine_cysteine_and_protonation_variants": {
+              "CYX": 4,
+              "HID": 5,
+              "HIE": 4
+            }
+          },
+          "water": {
+            "molecules": 14659,
+            "residue_names": [
+              "WAT"
+            ],
+            "atoms_per_molecule": 4,
+            "model_hint": "4-point water model; the topology does not name the model"
+          },
+          "ions": {
+            "Cl-": 38,
+            "K+": 34
+          },
+          "other": {
+            "4YB": {
+              "count": 4,
+              "atoms": 27
+            },
+            "0YB": {
+              "count": 1,
+              "atoms": 28
+            },
+            "4YA": {
+              "count": 1,
+              "atoms": 27
+            },
+            "ROH": {
+              "count": 1,
+              "atoms": 2
+            }
+          },
+          "other_note": "residue names outside the protein, nucleic-acid, lipid, water and ion sets: ligands, glycans, modified residues"
+        },
+        "net_charge_e": 0.0,
+        "box_at_start": {
+          "edges_A": [
+            91.81,
+            71.0,
+            75.83
+          ],
+          "angles_deg": [
+            90.0,
+            90.0,
+            90.0
+          ],
+          "shape": "rectangular",
+          "source": "input coordinates of ntp_prod_0001"
+        },
+        "hydrogen_masses": {
+          "repartitioned": false,
+          "range_amu": [
+            1.008,
+            1.008
+          ],
+          "summary": "1.008-1.008 amu across 32188 H",
+          "basis": "topology masses"
+        },
+        "force_field_hints": {
+          "features": [
+            "CMAP Correction"
+          ]
+        },
+        "solvent": "Explicit Solvent"
+      }
+    ]
+  },
+  "replicas": {
+    "count": 1,
+    "note": "one chain of runs; no replicas declared"
+  },
+  "protocol": [
     {
-      "name": "ntp_prod_0002",
-      "role": "production"
-    },
-    {
-      "name": "ntp_prod_0003",
-      "role": "production"
-    },
-    {
-      "name": "ntp_prod_0004",
-      "role": "production"
-    },
-    {
-      "name": "ntp_prod_0005",
-      "role": "production"
+      "name": "Production",
+      "role": "production",
+      "runs": 5,
+      "runs_with_output": 5,
+      "finished_runs": 5,
+      "first_run": "ntp_prod_0001",
+      "last_run": "ntp_prod_0005",
+      "simulated_time_ns": 100.0,
+      "clock_ps": {
+        "first_run_starts_at": 920.0,
+        "last_frame_printed_at": 100920.0
+      },
+      "settings": {
+        "electrostatics": {
+          "value": "particle mesh Ewald",
+          "source": "mdout"
+        },
+        "nonbonded_cutoff_A": {
+          "value": 9.0,
+          "source": "mdin"
+        },
+        "run_type": {
+          "value": "molecular dynamics"
+        },
+        "ensemble": {
+          "value": "NPT",
+          "source": "derived"
+        },
+        "thermostat": {
+          "value": "Langevin",
+          "source": "mdin"
+        },
+        "target_temperature_K": {
+          "value": 300.0,
+          "source": "mdout"
+        },
+        "collision_frequency_per_ps": {
+          "value": 1.0,
+          "source": "mdin"
+        },
+        "start": {
+          "value": "coordinates and velocities from a restart (irest = 1)",
+          "source": "mdin"
+        },
+        "barostat": {
+          "value": "Berendsen",
+          "source": "mdout"
+        },
+        "pressure_scaling": {
+          "value": "isotropic",
+          "source": "mdin"
+        },
+        "target_pressure_bar": {
+          "value": 1.0,
+          "source": "mdout"
+        },
+        "pressure_relaxation_time_ps": {
+          "value": 1.0,
+          "source": "mdout"
+        },
+        "compressibility_1e-6_per_bar": {
+          "value": 44.6,
+          "source": "mdout"
+        },
+        "time_step_fs": {
+          "value": 4.0,
+          "source": "mdin"
+        },
+        "steps_per_run": {
+          "value": 5000000,
+          "source": "mdin"
+        },
+        "stated_run_length_ps": {
+          "value": 20000.0,
+          "source": "derived"
+        },
+        "frame_interval": {
+          "value": {
+            "steps": 25000,
+            "ps": 100.0
+          },
+          "source": "mdin"
+        },
+        "energy_interval_steps": {
+          "value": 25000,
+          "source": "mdin"
+        },
+        "restart_interval_steps": {
+          "value": 250000,
+          "source": "mdin"
+        },
+        "trajectory_format": {
+          "value": "NetCDF",
+          "source": "mdout"
+        },
+        "coordinate_wrapping": {
+          "value": "off",
+          "source": "mdout"
+        },
+        "constraints": {
+          "value": "SHAKE on bonds to hydrogen",
+          "source": "mdin"
+        },
+        "random_seed": {
+          "value": "chosen by AMBER at run time (ig = -1)",
+          "source": "default"
+        },
+        "positional_restraints": {
+          "value": "none",
+          "source": "mdout"
+        }
+      },
+      "resolved_seeds": {
+        "runs_with_a_seed_in_the_mdout": 5,
+        "distinct": 5
+      },
+      "observed": {
+        "temperature_K": {
+          "mean": 300.4,
+          "range_of_run_means": [
+            300.2,
+            300.4
+          ]
+        },
+        "pressure_bar": {
+          "mean": 1.14,
+          "range_of_run_means": [
+            -10.6,
+            9.21
+          ]
+        },
+        "density_g_cm3": {
+          "mean": 1.037,
+          "range_of_run_means": 1.037
+        },
+        "basis": "energies printed in the mdout files"
+      },
+      "performance_ns_per_day": {
+        "median": 232.0,
+        "range": 232.0
+      }
     }
   ],
-  "stages": [
-    {
-      "name": "ntp_prod_0001",
-      "role": "production",
-      "software": [
-        {
-          "source": "mdout",
-          "program": "PMEMD",
-          "version": "22"
-        },
-        {
-          "source": "inpcrd",
-          "program": "pmemd",
-          "version": "Version 22"
-        }
-      ],
-      "md_engine": {
-        "ensemble": "NPT (isotropic)",
-        "thermostat": "Langevin Dynamics",
-        "barostat": "Berendsen (Isotropic)",
-        "cutoff": 9.0,
-        "constraints": "H-bonds",
-        "pbc": "PBC / Constant Pressure",
-        "timestep_ps": 0.004,
-        "run_length_steps": 5000000,
-        "cntrl_parameters": {
-          "ntx": 5,
-          "irest": 1,
-          "ntpr": 25000,
-          "ntwr": 250000,
-          "ntwx": 25000,
-          "nstlim": 5000000,
-          "t": 1000.0,
-          "dt": 0.004,
-          "ntt": 3,
-          "gamma_ln": 1.0,
-          "ntp": 1,
-          "ntc": 2,
-          "ntf": 2,
-          "ntb": 2,
-          "cut": 9.0,
-          "_namelist": "cntrl"
-        },
-        "shake_active": true,
-        "run_length_ps": 20000.0
-      },
-      "restraints": {
-        "active": false
-      },
-      "system": {
-        "atom_counts": {
-          "prmtop": 64528,
-          "inpcrd": 64528,
-          "mdout": 64528
-        },
-        "box": {
-          "type": "RECTILINEAR",
-          "dimensions": [
-            91.81147888696792,
-            71.00333210110607,
-            75.83441479657631
-          ],
-          "angles": [
-            90.0,
-            90.0,
-            90.0
-          ],
-          "source": "input coordinates"
-        },
-        "composition": {
-          "residue_composition": {
-            "ACE": 1,
-            "TYR": 16,
-            "LYS": 20,
-            "LEU": 34,
-            "VAL": 14,
-            "CYX": 4,
-            "THR": 25,
-            "SER": 28,
-            "TRP": 8,
-            "GLN": 16,
-            "ARG": 19,
-            "GLU": 10,
-            "GLY": 32,
-            "ASP": 25,
-            "CYS": 1,
-            "PHE": 21,
-            "PRO": 15,
-            "ALA": 28,
-            "HIE": 4,
-            "ILE": 19,
-            "ASN": 12,
-            "HID": 5,
-            "MET": 6,
-            "NME": 1,
-            "ROH": 1,
-            "4YA": 1,
-            "4YB": 4,
-            "0YB": 1,
-            "K+": 34,
-            "Cl-": 38,
-            "WAT": 14659
-          },
-          "num_solvent_molecules": 14659,
-          "num_solute_residues": 443,
-          "total_charge": 8.020996347271433e-05,
-          "is_neutral": true,
-          "initial_density": 0.8433970648221194,
-          "solvent_type": "Explicit Solvent",
-          "simulation_category": "Protein / Ligand in Explicit Water",
-          "hmr_active": false,
-          "hmr_hydrogen_mass_range": [
-            1.008,
-            1.008
-          ],
-          "hmr_hydrogen_mass_summary": "1.008-1.008 amu across 32188 H",
-          "average_density": 1.0369550000000003,
-          "density_std": 0.0012439905798734621,
-          "density": 1.0369550000000003,
-          "first_density": 1.0348,
-          "final_density": 1.0374,
-          "water_residue_counts": {
-            "WAT": 14659
-          },
-          "ion_residue_counts": {
-            "K+": 34,
-            "Cl-": 38
-          },
-          "water_molecule_count": 14659,
-          "ion_count": 72
-        }
-      },
-      "trajectory_output": {
-        "coord_write_interval_steps": 25000,
-        "traj_format": "NetCDF"
+  "continuity": {
+    "links_measured": 4,
+    "contiguous": 4,
+    "basis": "the clock of each run's input coordinates against the end of the run before it"
+  },
+  "findings": {
+    "total": 5,
+    "patterns": 1,
+    "grouped": [
+      {
+        "kind": "step_check",
+        "occurrences": 5,
+        "example": "Time step of 4 fs, but the topology has standard hydrogen masses (no hydrogen mass repartitioning); a time step above 2 fs needs repartitioned hydrogen masses.",
+        "example_run": "ntp_prod_0001"
       }
-    },
-    {
-      "name": "ntp_prod_0002",
-      "role": "production",
-      "software": [
-        {
-          "source": "mdout",
-          "program": "PMEMD",
-          "version": "22"
-        },
-        {
-          "source": "inpcrd",
-          "program": "pmemd",
-          "version": "Version 22"
-        }
-      ],
-      "md_engine": {
-        "ensemble": "NPT (isotropic)",
-        "thermostat": "Langevin Dynamics",
-        "barostat": "Berendsen (Isotropic)",
-        "cutoff": 9.0,
-        "constraints": "H-bonds",
-        "pbc": "PBC / Constant Pressure",
-        "timestep_ps": 0.004,
-        "run_length_steps": 5000000,
-        "cntrl_parameters": {
-          "ntx": 5,
-          "irest": 1,
-          "ntpr": 25000,
-          "ntwr": 250000,
-          "ntwx": 25000,
-          "nstlim": 5000000,
-          "t": 21000.0,
-          "dt": 0.004,
-          "ntt": 3,
-          "gamma_ln": 1.0,
-          "ntp": 1,
-          "ntc": 2,
-          "ntf": 2,
-          "ntb": 2,
-          "cut": 9.0,
-          "_namelist": "cntrl"
-        },
-        "shake_active": true,
-        "run_length_ps": 20000.0
-      },
-      "restraints": {
-        "active": false
-      },
-      "system": {
-        "atom_counts": {
-          "prmtop": 64528,
-          "inpcrd": 64528,
-          "mdout": 64528
-        },
-        "box": {
-          "type": "RECTILINEAR",
-          "dimensions": [
-            91.78526594551442,
-            70.98306005877042,
-            75.81276343991902
-          ],
-          "angles": [
-            90.0,
-            90.0,
-            90.0
-          ],
-          "source": "input coordinates"
-        },
-        "composition": {
-          "residue_composition": {
-            "ACE": 1,
-            "TYR": 16,
-            "LYS": 20,
-            "LEU": 34,
-            "VAL": 14,
-            "CYX": 4,
-            "THR": 25,
-            "SER": 28,
-            "TRP": 8,
-            "GLN": 16,
-            "ARG": 19,
-            "GLU": 10,
-            "GLY": 32,
-            "ASP": 25,
-            "CYS": 1,
-            "PHE": 21,
-            "PRO": 15,
-            "ALA": 28,
-            "HIE": 4,
-            "ILE": 19,
-            "ASN": 12,
-            "HID": 5,
-            "MET": 6,
-            "NME": 1,
-            "ROH": 1,
-            "4YA": 1,
-            "4YB": 4,
-            "0YB": 1,
-            "K+": 34,
-            "Cl-": 38,
-            "WAT": 14659
-          },
-          "num_solvent_molecules": 14659,
-          "num_solute_residues": 443,
-          "total_charge": 8.020996347271433e-05,
-          "is_neutral": true,
-          "initial_density": 0.8433970648221194,
-          "solvent_type": "Explicit Solvent",
-          "simulation_category": "Protein / Ligand in Explicit Water",
-          "hmr_active": false,
-          "hmr_hydrogen_mass_range": [
-            1.008,
-            1.008
-          ],
-          "hmr_hydrogen_mass_summary": "1.008-1.008 amu across 32188 H",
-          "average_density": 1.0369945000000007,
-          "density_std": 0.0012484441573696586,
-          "density": 1.0369945000000007,
-          "first_density": 1.0366,
-          "final_density": 1.0398,
-          "water_residue_counts": {
-            "WAT": 14659
-          },
-          "ion_residue_counts": {
-            "K+": 34,
-            "Cl-": 38
-          },
-          "water_molecule_count": 14659,
-          "ion_count": 72
-        }
-      },
-      "trajectory_output": {
-        "coord_write_interval_steps": 25000,
-        "traj_format": "NetCDF"
-      }
-    },
-    {
-      "name": "ntp_prod_0003",
-      "role": "production",
-      "software": [
-        {
-          "source": "mdout",
-          "program": "PMEMD",
-          "version": "22"
-        },
-        {
-          "source": "inpcrd",
-          "program": "pmemd",
-          "version": "Version 22"
-        }
-      ],
-      "md_engine": {
-        "ensemble": "NPT (isotropic)",
-        "thermostat": "Langevin Dynamics",
-        "barostat": "Berendsen (Isotropic)",
-        "cutoff": 9.0,
-        "constraints": "H-bonds",
-        "pbc": "PBC / Constant Pressure",
-        "timestep_ps": 0.004,
-        "run_length_steps": 5000000,
-        "cntrl_parameters": {
-          "ntx": 5,
-          "irest": 1,
-          "ntpr": 25000,
-          "ntwr": 250000,
-          "ntwx": 25000,
-          "nstlim": 5000000,
-          "t": 41000.0,
-          "dt": 0.004,
-          "ntt": 3,
-          "gamma_ln": 1.0,
-          "ntp": 1,
-          "ntc": 2,
-          "ntf": 2,
-          "ntb": 2,
-          "cut": 9.0,
-          "_namelist": "cntrl"
-        },
-        "shake_active": true,
-        "run_length_ps": 20000.0
-      },
-      "restraints": {
-        "active": false
-      },
-      "system": {
-        "atom_counts": {
-          "prmtop": 64528,
-          "inpcrd": 64528,
-          "mdout": 64528
-        },
-        "box": {
-          "type": "RECTILINEAR",
-          "dimensions": [
-            91.71262390731746,
-            70.9268816067465,
-            75.75276259337217
-          ],
-          "angles": [
-            90.0,
-            90.0,
-            90.0
-          ],
-          "source": "input coordinates"
-        },
-        "composition": {
-          "residue_composition": {
-            "ACE": 1,
-            "TYR": 16,
-            "LYS": 20,
-            "LEU": 34,
-            "VAL": 14,
-            "CYX": 4,
-            "THR": 25,
-            "SER": 28,
-            "TRP": 8,
-            "GLN": 16,
-            "ARG": 19,
-            "GLU": 10,
-            "GLY": 32,
-            "ASP": 25,
-            "CYS": 1,
-            "PHE": 21,
-            "PRO": 15,
-            "ALA": 28,
-            "HIE": 4,
-            "ILE": 19,
-            "ASN": 12,
-            "HID": 5,
-            "MET": 6,
-            "NME": 1,
-            "ROH": 1,
-            "4YA": 1,
-            "4YB": 4,
-            "0YB": 1,
-            "K+": 34,
-            "Cl-": 38,
-            "WAT": 14659
-          },
-          "num_solvent_molecules": 14659,
-          "num_solute_residues": 443,
-          "total_charge": 8.020996347271433e-05,
-          "is_neutral": true,
-          "initial_density": 0.8433970648221194,
-          "solvent_type": "Explicit Solvent",
-          "simulation_category": "Protein / Ligand in Explicit Water",
-          "hmr_active": false,
-          "hmr_hydrogen_mass_range": [
-            1.008,
-            1.008
-          ],
-          "hmr_hydrogen_mass_summary": "1.008-1.008 amu across 32188 H",
-          "average_density": 1.0369005,
-          "density_std": 0.001265804509107255,
-          "density": 1.0369005,
-          "first_density": 1.037,
-          "final_density": 1.0361,
-          "water_residue_counts": {
-            "WAT": 14659
-          },
-          "ion_residue_counts": {
-            "K+": 34,
-            "Cl-": 38
-          },
-          "water_molecule_count": 14659,
-          "ion_count": 72
-        }
-      },
-      "trajectory_output": {
-        "coord_write_interval_steps": 25000,
-        "traj_format": "NetCDF"
-      }
-    },
-    {
-      "name": "ntp_prod_0004",
-      "role": "production",
-      "software": [
-        {
-          "source": "mdout",
-          "program": "PMEMD",
-          "version": "22"
-        },
-        {
-          "source": "inpcrd",
-          "program": "pmemd",
-          "version": "Version 22"
-        }
-      ],
-      "md_engine": {
-        "ensemble": "NPT (isotropic)",
-        "thermostat": "Langevin Dynamics",
-        "barostat": "Berendsen (Isotropic)",
-        "cutoff": 9.0,
-        "constraints": "H-bonds",
-        "pbc": "PBC / Constant Pressure",
-        "timestep_ps": 0.004,
-        "run_length_steps": 5000000,
-        "cntrl_parameters": {
-          "ntx": 5,
-          "irest": 1,
-          "ntpr": 25000,
-          "ntwr": 250000,
-          "ntwx": 25000,
-          "nstlim": 5000000,
-          "t": 61000.0,
-          "dt": 0.004,
-          "ntt": 3,
-          "gamma_ln": 1.0,
-          "ntp": 1,
-          "ntc": 2,
-          "ntf": 2,
-          "ntb": 2,
-          "cut": 9.0,
-          "_namelist": "cntrl"
-        },
-        "shake_active": true,
-        "run_length_ps": 20000.0
-      },
-      "restraints": {
-        "active": false
-      },
-      "system": {
-        "atom_counts": {
-          "prmtop": 64528,
-          "inpcrd": 64528,
-          "mdout": 64528
-        },
-        "box": {
-          "type": "RECTILINEAR",
-          "dimensions": [
-            91.823837960086,
-            71.01289011479972,
-            75.844623139681
-          ],
-          "angles": [
-            90.0,
-            90.0,
-            90.0
-          ],
-          "source": "input coordinates"
-        },
-        "composition": {
-          "residue_composition": {
-            "ACE": 1,
-            "TYR": 16,
-            "LYS": 20,
-            "LEU": 34,
-            "VAL": 14,
-            "CYX": 4,
-            "THR": 25,
-            "SER": 28,
-            "TRP": 8,
-            "GLN": 16,
-            "ARG": 19,
-            "GLU": 10,
-            "GLY": 32,
-            "ASP": 25,
-            "CYS": 1,
-            "PHE": 21,
-            "PRO": 15,
-            "ALA": 28,
-            "HIE": 4,
-            "ILE": 19,
-            "ASN": 12,
-            "HID": 5,
-            "MET": 6,
-            "NME": 1,
-            "ROH": 1,
-            "4YA": 1,
-            "4YB": 4,
-            "0YB": 1,
-            "K+": 34,
-            "Cl-": 38,
-            "WAT": 14659
-          },
-          "num_solvent_molecules": 14659,
-          "num_solute_residues": 443,
-          "total_charge": 8.020996347271433e-05,
-          "is_neutral": true,
-          "initial_density": 0.8433970648221194,
-          "solvent_type": "Explicit Solvent",
-          "simulation_category": "Protein / Ligand in Explicit Water",
-          "hmr_active": false,
-          "hmr_hydrogen_mass_range": [
-            1.008,
-            1.008
-          ],
-          "hmr_hydrogen_mass_summary": "1.008-1.008 amu across 32188 H",
-          "average_density": 1.0370109999999997,
-          "density_std": 0.0011605227551955363,
-          "density": 1.0370109999999997,
-          "first_density": 1.0375,
-          "final_density": 1.0367,
-          "water_residue_counts": {
-            "WAT": 14659
-          },
-          "ion_residue_counts": {
-            "K+": 34,
-            "Cl-": 38
-          },
-          "water_molecule_count": 14659,
-          "ion_count": 72
-        }
-      },
-      "trajectory_output": {
-        "coord_write_interval_steps": 25000,
-        "traj_format": "NetCDF"
-      }
-    },
-    {
-      "name": "ntp_prod_0005",
-      "role": "production",
-      "software": [
-        {
-          "source": "mdout",
-          "program": "PMEMD",
-          "version": "22"
-        },
-        {
-          "source": "inpcrd",
-          "program": "pmemd",
-          "version": "Version 22"
-        }
-      ],
-      "md_engine": {
-        "ensemble": "NPT (isotropic)",
-        "thermostat": "Langevin Dynamics",
-        "barostat": "Berendsen (Isotropic)",
-        "cutoff": 9.0,
-        "constraints": "H-bonds",
-        "pbc": "PBC / Constant Pressure",
-        "timestep_ps": 0.004,
-        "run_length_steps": 5000000,
-        "cntrl_parameters": {
-          "ntx": 5,
-          "irest": 1,
-          "ntpr": 25000,
-          "ntwr": 250000,
-          "ntwx": 25000,
-          "nstlim": 5000000,
-          "t": 81000.0,
-          "dt": 0.004,
-          "ntt": 3,
-          "gamma_ln": 1.0,
-          "ntp": 1,
-          "ntc": 2,
-          "ntf": 2,
-          "ntb": 2,
-          "cut": 9.0,
-          "_namelist": "cntrl"
-        },
-        "shake_active": true,
-        "run_length_ps": 20000.0
-      },
-      "restraints": {
-        "active": false
-      },
-      "system": {
-        "atom_counts": {
-          "prmtop": 64528,
-          "inpcrd": 64528,
-          "mdout": 64528
-        },
-        "box": {
-          "type": "RECTILINEAR",
-          "dimensions": [
-            91.80590247709232,
-            70.99901952834198,
-            75.82980879540497
-          ],
-          "angles": [
-            90.0,
-            90.0,
-            90.0
-          ],
-          "source": "input coordinates"
-        },
-        "composition": {
-          "residue_composition": {
-            "ACE": 1,
-            "TYR": 16,
-            "LYS": 20,
-            "LEU": 34,
-            "VAL": 14,
-            "CYX": 4,
-            "THR": 25,
-            "SER": 28,
-            "TRP": 8,
-            "GLN": 16,
-            "ARG": 19,
-            "GLU": 10,
-            "GLY": 32,
-            "ASP": 25,
-            "CYS": 1,
-            "PHE": 21,
-            "PRO": 15,
-            "ALA": 28,
-            "HIE": 4,
-            "ILE": 19,
-            "ASN": 12,
-            "HID": 5,
-            "MET": 6,
-            "NME": 1,
-            "ROH": 1,
-            "4YA": 1,
-            "4YB": 4,
-            "0YB": 1,
-            "K+": 34,
-            "Cl-": 38,
-            "WAT": 14659
-          },
-          "num_solvent_molecules": 14659,
-          "num_solute_residues": 443,
-          "total_charge": 8.020996347271433e-05,
-          "is_neutral": true,
-          "initial_density": 0.8433970648221194,
-          "solvent_type": "Explicit Solvent",
-          "simulation_category": "Protein / Ligand in Explicit Water",
-          "hmr_active": false,
-          "hmr_hydrogen_mass_range": [
-            1.008,
-            1.008
-          ],
-          "hmr_hydrogen_mass_summary": "1.008-1.008 amu across 32188 H",
-          "average_density": 1.037146,
-          "density_std": 0.0012929200327380056,
-          "density": 1.037146,
-          "first_density": 1.0393,
-          "final_density": 1.0374,
-          "water_residue_counts": {
-            "WAT": 14659
-          },
-          "ion_residue_counts": {
-            "K+": 34,
-            "Cl-": 38
-          },
-          "water_molecule_count": 14659,
-          "ion_count": 72
-        }
-      },
-      "trajectory_output": {
-        "coord_write_interval_steps": 25000,
-        "traj_format": "NetCDF"
-      }
-    }
+    ],
+    "note": "findings are what AmberMeta found to check in the run files; INFO remarks are left out"
+  },
+  "not_in_run_files": [
+    "force field names (protein, nucleic acid, lipid, carbohydrate) and ligand parameters",
+    "water model name (the topology gives only the number of sites per water molecule)",
+    "ion parameters and salt concentration (counter-ions and added salt look alike)",
+    "how protonation states were assigned (the residue names give the states, not the method)",
+    "system preparation: structure source, modeling of missing parts, solvation, ion placement",
+    "analysis software and analysis protocol"
   ]
 }

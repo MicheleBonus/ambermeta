@@ -224,21 +224,42 @@ options:
 | Flag | Output |
 |---|---|
 | `--summary-path FILE` | Full protocol summary (JSON/YAML; `--summary-format` forces the format) |
-| `--methods-summary-path FILE` | Materials-&-Methods JSON: software, MD engine settings, system composition, restraints |
+| `--methods-summary-path FILE` | Methods summary (JSON): a compact digest of the full summary for writing a Methods section; see below |
 | `--stats-csv FILE` | Per-stage statistics (one row per stage) |
 
+The **methods summary** is built from the same record as `summary.json` (by
+`ambermeta.methods_summary.build_methods_summary`) and stays small: a few kB for a short
+chain, under about 20 kB for a campaign of thousands of runs. It holds the software, GPUs
+and run dates; the system per topology (residues by class, water molecules with the number
+of sites per molecule, ions, other residues, net charge, the box at the start, hydrogen
+masses, force-field hints); the replicas and the run they branch from; the protocol as
+phases in execution order; the observed temperature, pressure and density; continuity; the
+findings grouped by pattern with one example each; and a list of what no AMBER run file
+records (force field and water model names, ion parameters, protonation method,
+preparation, analysis). Each phase states every setting once, with the number of runs that
+share it when not all do, the runs or replicas that differ, and a `source`:
+
+| `source` | Meaning |
+|---|---|
+| `mdin` | Set explicitly in the mdin |
+| `mdout` | Not set in the mdin; the value AMBER used, as its mdout echoes it |
+| `default` | Stated by neither file; the documented AMBER default, filled in by AmberMeta |
+| `derived` | Computed by AmberMeta (the ensemble, the stated run length) |
+
+To rebuild it from an existing summary, including one written by an older AmberMeta:
+`python -m ambermeta.methods_summary summary.json -o methods_summary.json`.
+
 > **Intent and execution are different numbers, and the bundle carries both.**
-> `methods_summary.json` describes the **protocol that was specified**: everything under a
-> stage's `md_engine` — `cntrl_parameters`, `run_length_steps`, and `run_length_ps`
-> (`run_length_steps × timestep_ps`) — is read from the input deck and states what the run
-> was *asked* to do. `summary.json`'s `totals` and `stats.csv`'s `duration_ns` describe what
-> the run *did*: they are measured from each mdout's own frames and count nothing for a run
-> that was queued and never started, or that was killed part-way.
+> A phase's `stated_run_length_ps` (`nstlim × dt`) is the protocol as **specified**: what
+> each run was *asked* to do. Its `simulated_time_ns`, like `summary.json`'s `totals` and
+> `stats.csv`'s `duration_ns`, is what the runs *did*: measured from each mdout's own frames,
+> counting nothing for a run that was queued and never started, or that was killed
+> part-way.
 >
 > The two therefore disagree, correctly, for any truncated run: a chunk that declared
-> `nstlim = 2500000, dt = 0.002` reports `run_length_ps: 5000.0` in the methods summary and
-> contributes 3000 ps to the totals if that is where it stopped. Quote `run_length_ps` when
-> writing up the protocol; quote the totals when reporting sampling.
+> `nstlim = 2500000, dt = 0.002` states 5000 ps and contributes 3000 ps to the simulated
+> time if that is where it stopped. Quote the stated length when writing up the protocol;
+> quote the simulated time when reporting sampling.
 
 The CSV header is exactly:
 

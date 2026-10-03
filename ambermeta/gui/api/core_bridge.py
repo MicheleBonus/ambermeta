@@ -81,7 +81,7 @@ def document_to_payload(stages: List[Dict[str, Any]], settings: Dict[str, Any],
         # test_an_untagged_step_adds_no_key_to_the_engine_payload green: the default is
         # `None`, which is falsy, so an ordinary step contributes no `status` key here
         # either — the same emit-when-set rule `_step_payload` enforces on the document.
-        for provenance in ("lineage", "step_id", "parent_id", "status"):
+        for provenance in ("lineage", "step_id", "parent_id", "status", "phase"):
             val = s.get(provenance)
             if val:
                 entry[provenance] = val
@@ -390,7 +390,7 @@ def _flatten_simulation(sim):
             # file to read the time out of.
             inpcrd = resolve_input_coords(sim, s)
             flat.append({
-                "name": s.name, "role": p.role, "step_id": s.id,
+                "name": s.name, "role": p.role, "phase": p.name, "step_id": s.id,
                 # The producing step, carried as an id. `inpcrd` above is that producer's
                 # restart *path*, which several steps can share, so the edge itself cannot
                 # be recovered from it downstream.

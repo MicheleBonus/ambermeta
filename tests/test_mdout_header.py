@@ -175,13 +175,27 @@ def test_the_header_reaches_the_stage_on_the_manifest_path(sample_md_data_dir, t
     assert {s.mdout_header.resolved_ig for s in seeded} == set(SEEDS.values())
 
 
-def test_the_header_stays_out_of_the_artifacts(sample_md_data_dir):
-    """`MdoutMetadata` is serialised with `asdict()` straight into summary.json, so a field
-    added there appears verbatim in an artifact users keep and fails the back-compat gate
-    with real non-null values. That is why this is a side-car object on the stage, and why
-    `SimulationStage.to_dict()`'s fixed key list is load-bearing."""
+def test_the_header_reaches_summary_json_only_as_its_control_settings(sample_md_data_dir):
+    """The header is a side-car on the stage, never `asdict()`-ed into the mdout's own
+    details. What summary.json keeps of it is `mdout_control`: the CONTROL DATA settings
+    AMBER used and the resolved seed, which the methods summary reports."""
     from ambermeta.protocol import auto_discover
     protocol = auto_discover(str(sample_md_data_dir), manifest=None, recursive=True)
-    assert any(s.mdout_header for s in protocol.stages)
-    assert "70038" not in str(protocol.to_dict())
-    assert all("mdout_header" not in s for s in protocol.to_dict()["stages"])
+    stages = protocol.to_dict()["stages"]
+    assert all("mdout_header" not in s for s in stages)
+    assert all("ig" not in ((s["files"]["mdout"] or {}).get("details") or {}) for s in stages)
+    by_name = {s["name"]: s for s in stages}
+    control = by_name["ntp_prod_0001"]["mdout_control"]
+    assert control["ig"] == 70038
+    assert control["temp0"] == 300.0 and control["pres0"] == 1.0
+    assert control["comp"] == 44.6 and control["taup"] == 1.0
+    assert control["gamma_ln"] == 1.0 and control["ntp"] == 1 and control["dt"] == 0.004
+
+
+def test_the_control_reader_keeps_dt_apart_from_t():
+    from ambermeta.mdout_header import MdoutHeader, _read_control_data
+    header = MdoutHeader()
+    _read_control_data("     t       =1800.00000, dt      =   0.00200, vlimit  =  -1.00000",
+                       header)
+    _read_control_data("     t       =**********, dt      =   0.00400", header)
+    assert header.control == {"dt": 0.002}

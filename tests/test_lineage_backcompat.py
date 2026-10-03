@@ -13,8 +13,9 @@ running them rather than by reading:
 * **`sum()` changed in CPython 3.12.** `builtins.sum` became compensated (Neumaier)
   summation and three prmtop floats are computed with it (`total_charge`, `total_mass`,
   `density`/`initial_density`). CI's matrix is 3.9 *and* 3.12, so the two jobs legitimately
-  write different bytes for identical input: 15 of `summary.json`'s 967 leaves and 10 of
-  `methods_summary.json`'s 507, all three of those names and nothing else. A hardcoded hash
+  write different bytes for identical input: 15 of `summary.json`'s leaves, all three of
+  those names and nothing else (measured on the 1.2.0 goldens). `methods_summary.json` is
+  built from the same values. A hardcoded hash
   for either JSON would pass on the machine that generated it and fail the other CI job —
   on the one test every lineage change is told to keep green.
 
