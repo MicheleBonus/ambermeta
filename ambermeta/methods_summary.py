@@ -375,7 +375,11 @@ class _Run:
         igb, igb_src = get("igb")
         ntb, ntb_src = get("ntb")
         ntp, ntp_src = get("ntp")
-        if ntb_src == "default":
+        # A summary without `mdout_control` says only THAT pressure was regulated, not how
+        # it was scaled (`_echo`). That is unknown only where the mdin did not state `ntp`:
+        # an NPT run's mdin always does, since AMBER requires it for a constant-pressure box.
+        ntp_unknown = bool(self.echo.get("_ntp_unknown")) and ntp_src != "mdin"
+        if ntb_src == "default" or (ntb is None and ntp is not None):
             # AMBER's own rule: ntb follows ntp and igb when the mdin does not set it.
             ntb = 0 if (igb or 0) > 0 else (2 if (ntp or 0) > 0 else 1)
         if igb is not None and igb > 0:
@@ -401,7 +405,11 @@ class _Run:
         else:
             put("run_type", "molecular dynamics", None)
             ntt, ntt_src = get("ntt")
-            if ntt is not None and ntb is not None and not self.echo.get("_ntp_unknown"):
+            # Derived from the mdin's settings (AMBER's defaults where it states none) and,
+            # for an older summary, from the barostat its mdout named. The ensemble needs
+            # only whether pressure was regulated, which both say even where the scaling is
+            # unknown; gating it on that left every NPT run of an older summary without one.
+            if ntt is not None and ntb is not None:
                 put("ensemble", self._ensemble(ntb, ntp, ntt, igb), "derived")
             if ntt is not None:
                 put("thermostat", _THERMOSTATS.get(ntt, f"ntt = {ntt}"), ntt_src)
@@ -433,7 +441,7 @@ class _Run:
                 if barostat is not None:
                     put("barostat", _BAROSTATS.get(barostat, f"barostat = {barostat}"),
                         baro_src)
-                if not self.echo.get("_ntp_unknown"):
+                if not ntp_unknown:
                     put("pressure_scaling", _PRESSURE_SCALING.get(ntp, f"ntp = {ntp}"), ntp_src)
                 put_key("target_pressure_bar", "pres0")
                 if barostat == 2:
