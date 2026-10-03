@@ -275,15 +275,14 @@ def test_the_methods_summary_states_intent_while_the_totals_state_execution(
     """The two artifacts `plan` writes in one action disagree for a truncated run, and that
     is correct rather than a bug -- but only because they are answering different questions.
 
-    `methods_summary.json`'s `md_engine.run_length_ps` is `run_length_steps x timestep_ps`,
-    read from the input deck: the protocol as SPECIFIED, alongside `cntrl_parameters` and
-    everything else in that all-intent block. `summary.json`'s `totals` are measured from
-    the mdout's own frames: what the machine DID.
+    `methods_summary.json`'s `stated_run_length_ps` is `nstlim x dt`, from the input deck:
+    the protocol as SPECIFIED. Its `simulated_time_ns`, like `summary.json`'s `totals`, is
+    measured from the mdout's own frames: what the machine DID.
 
     Pinned here because the difference is invisible on every other fixture in the repo --
     everywhere else the runs did exactly what they declared -- and because the discrepancy
     was originally found the other way round, on five real runs whose totals were wrong and
-    whose `run_length_ps` was right. docs/cli.md's plan-artifacts table states which is
+    whose stated length was right. docs/cli.md's plan-artifacts table states which is
     which; this is the assertion that keeps that statement true.
     """
     import json
@@ -292,10 +291,12 @@ def test_the_methods_summary_states_intent_while_the_totals_state_execution(
     protocol = auto_discover(str(truncated_run_tree), recursive=True)
     write_protocol_outputs(protocol, {"methods_summary": str(tmp_path / "methods.json")})
     methods = json.loads((tmp_path / "methods.json").read_text(encoding="utf-8"))
-    by_name = {s["name"]: s for s in methods["stages"]}
+    production = [p for p in methods["protocol"] if p["role"] == "production"][0]
 
-    # Both chunks declared the same 5000 ps, and the methods summary says so for both.
-    assert by_name["prod_0001"]["md_engine"]["run_length_ps"] == 5000.0
-    assert by_name["prod_0002"]["md_engine"]["run_length_ps"] == 5000.0
-    # The totals count what ran: prod_0002 stopped at 3000.
+    # Both chunks declared the same 5000 ps, and the methods summary says so once, for both.
+    assert production["settings"]["stated_run_length_ps"]["value"] == 5000.0
+    assert "runs" not in production["settings"]["stated_run_length_ps"]
+    # The totals count what ran: prod_0002 stopped at 3000, and the methods summary's
+    # simulated time is the same measured number.
     assert protocol.totals()["time_ps"] == 8000.0
+    assert production["simulated_time_ns"] == 8.0

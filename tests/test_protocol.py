@@ -495,107 +495,71 @@ def test_a_tagged_manifest_partitions_continuity_end_to_end(tmp_path, monkeypatc
                 if not note.startswith("INFO:")]
 
 
-def test_methods_summary_prunes_stats_and_includes_reproducibility_metadata():
+def test_methods_summary_states_settings_once_and_leaves_out_the_statistics_arrays():
     from types import SimpleNamespace
 
     stage = protocol.SimulationStage(name="stage1", stage_role="equilibration")
     stage.mdin = SimpleNamespace(
         details=SimpleNamespace(
-            ensemble="NPT",
-            temp_control="Langevin",
-            press_control="Monte Carlo",
-            dt=0.002,
-            length_steps=5000,
-            coord_freq=500,
-            traj_format="NetCDF",
+            cntrl_parameters={"imin": 0, "ntt": 3, "gamma_ln": 2.0, "temp0": 310.0,
+                              "ntp": 1, "barostat": 2, "dt": 0.002, "nstlim": 5000,
+                              "ntwx": 500, "ntc": 2, "ntf": 2, "cut": 10.0},
         )
     )
     stage.mdout = SimpleNamespace(
         details=SimpleNamespace(
             program="PMEMD",
             version="22",
-            thermostat="Langevin",
-            barostat="Monte Carlo",
-            dt=0.002,
-            nstlim=5000,
             natoms=1000,
-            box_type="Cubic",
             stats=SimpleNamespace(temps=[300.0, 301.0], etots=[-1.0, -2.0]),
-        )
-    )
-    stage.inpcrd = SimpleNamespace(
-        details=SimpleNamespace(
-            natoms=1000,
-            has_box=True,
-            box_dimensions=[10.0, 10.0, 10.0],
-            box_angles=[90.0, 90.0, 90.0],
-            program="sander",
-            program_version="20",
         )
     )
     stage.prmtop = SimpleNamespace(
         details=SimpleNamespace(
+            filename="system.prmtop",
             natom=1000,
             box_dimensions=[10.0, 10.0, 10.0],
             box_angles=[90.0, 90.0, 90.0],
         )
     )
-    stage.mdcrd = SimpleNamespace(
-        details=SimpleNamespace(
-            n_atoms=1000,
-            avg_dt=1.0,
-            n_frames=100,
-            box_type="Orthogonal",
-            program="cpptraj",
-        )
-    )
 
-    proto = protocol.SimulationProtocol(stages=[stage])
-    methods = proto.to_methods_dict()
+    methods = protocol.SimulationProtocol(stages=[stage]).to_methods_dict()
 
-    assert methods["stages"][0]["md_engine"]["timestep_ps"] == 0.002
-    assert methods["stages"][0]["trajectory_output"]["coord_write_interval_steps"] == 500
-    assert methods["stages"][0]["system"]["atom_counts"]["prmtop"] == 1000
-    assert methods["stage_sequence"] == [{"name": "stage1", "role": "equilibration"}]
+    assert methods["schema_version"] == "2.0"
+    settings = methods["protocol"][0]["settings"]
+    assert settings["time_step_fs"] == {"value": 2.0, "source": "mdin"}
+    assert settings["target_temperature_K"] == {"value": 310.0, "source": "mdin"}
+    assert settings["barostat"] == {"value": "Monte Carlo", "source": "mdin"}
+    assert settings["frame_interval"]["value"] == {"steps": 500, "ps": 1.0}
+    # Not set in the mdin and not echoed by any mdout: the AMBER default, marked as one.
+    assert settings["target_pressure_bar"] == {"value": 1.0, "source": "default"}
+    assert methods["system"]["topologies"][0]["atoms"] == 1000
+    assert methods["software"]["md_engine"] == [
+        {"program": "PMEMD", "version": "22", "runs": 1}]
 
     methods_json = json.dumps(methods)
-    assert "stats" not in methods_json
+    assert "temps" not in methods_json and "etots" not in methods_json
 
 
 def test_methods_summary_timestep_prefers_the_header_over_the_legacy_default():
-    """F2 (fix-wave follow-up): `to_methods_dict` used to read `mdin.dt` then
-    `mdout.details.dt` directly, never consulting `mdout_header.control_dt_ps` -- the SAME
-    pre-fix order `_timestep_ps` (used by `totals()`/`stats.csv`) was corrected out of,
-    because `MdoutMetadata.dt` (the legacy whole-file parser's reading) defaults to a
-    TRUTHY `0.001` indistinguishable from a genuinely-stated one.
-
-    Shape that discriminates the two orders: no `mdin` at all (an archived input deck, or a
-    directory scan that never found one -- `to_dict()`'s own `md_engine` block is built to
-    tolerate this), a legacy-parsed mdout stuck at its untrue default `0.001`, and a header
-    that DID resolve the real `dt` from CONTROL DATA, `0.002`. The pre-migration code had no
-    `mdin` branch to run at all here, so only the mdout branch fired and reported the wrong
-    `0.001`; `_timestep_ps` -- and therefore this, post-migration -- reports the header's
-    `0.002` because it is checked FIRST, before the legacy reading is ever reached.
-    """
+    """`MdoutMetadata.dt` (the legacy whole-file parser's reading) defaults to a TRUTHY
+    `0.001` indistinguishable from a genuinely stated one; the header's `control_dt_ps` is
+    what AMBER resolved. With no mdin at all, the methods summary must report the header's
+    0.002 ps, as the value the mdout echoes."""
     from types import SimpleNamespace
 
     stage = protocol.SimulationStage(name="stage1", stage_role="equilibration")
     stage.mdout_header = SimpleNamespace(control_dt_ps=0.002)
     stage.mdout = SimpleNamespace(details=SimpleNamespace(dt=0.001))  # the untrue 0.001 default
 
-    proto = protocol.SimulationProtocol(stages=[stage])
-    methods = proto.to_methods_dict()
+    methods = protocol.SimulationProtocol(stages=[stage]).to_methods_dict()
 
-    assert methods["stages"][0]["md_engine"]["timestep_ps"] == 0.002
-    assert methods["stages"][0]["md_engine"]["timestep_ps"] != 0.001
+    assert methods["protocol"][0]["settings"]["time_step_fs"] == {"value": 2.0,
+                                                                 "source": "mdout"}
 
 
 def _fan_out_protocol():
-    """One shared equilibration, three replicas branching off it.
-
-    Flat and ordered, `stage_sequence` reads as `equil -> rep1 -> rep2 -> rep3`; only the
-    first of those three arrows happened.
-    """
+    """One shared equilibration, three replicas branching off it."""
     stage = protocol.SimulationStage
     return protocol.SimulationProtocol(stages=[
         stage("common/equil", stage_role="equilibration", step_id="eq"),
@@ -608,30 +572,41 @@ def _fan_out_protocol():
     ])
 
 
-def test_stage_sequence_names_the_member_each_entry_belongs_to():
-    """Ruling 13.1.3. Without the tag the list asserts rep1 ran, then rep2, then rep3."""
-    sequence = _fan_out_protocol().to_methods_dict()["stage_sequence"]
+def test_the_methods_summary_names_the_replicas_and_where_they_branch():
+    """Ruling 13.1.3: a flat ordered list would assert rep1 ran, then rep2, then rep3.
+    The replicas block says which members exist and which run they continue from."""
+    methods = _fan_out_protocol().to_methods_dict()
 
-    assert sequence == [
-        {"name": "common/equil", "role": "equilibration"},
-        {"name": "rep1/prod_0001", "role": "production", "lineage": "rep1"},
-        {"name": "rep2/prod_0001", "role": "production", "lineage": "rep2"},
-        {"name": "rep3/prod_0001", "role": "production", "lineage": "rep3"},
-    ]
+    replicas = methods["replicas"]
+    assert replicas["count"] == 3
+    assert replicas["names"] == ["rep1", "rep2", "rep3"]
+    assert replicas["shared_runs"] == {"runs": 1, "phases": ["equilibration"]}
+    assert replicas["branch_from"] == [{"run": "common/equil (shared run)", "replicas": 3}]
+    phases = methods["protocol"]
+    assert [p["name"] for p in phases] == ["equilibration", "production"]
+    assert phases[1]["replicas"] == 3
+    assert phases[1]["runs_per_replica"] == {"each": 1, "replicas": 3}
 
 
-def test_an_untagged_stage_sequence_is_byte_identical():
-    """The control: additive only, so an untagged methods_summary.json cannot move."""
+def test_summary_json_names_the_member_and_the_parent_of_each_run():
+    stages = _fan_out_protocol().to_dict()["stages"]
+
+    assert [s.get("lineage") for s in stages] == [None, "rep1", "rep2", "rep3"]
+    assert [s.get("continues_from") for s in stages] == [
+        None, "common/equil", "common/equil", "common/equil"]
+
+
+def test_an_untagged_document_reports_one_chain_in_execution_order():
     stage = protocol.SimulationStage
-    untagged = protocol.SimulationProtocol(stages=[
+    methods = protocol.SimulationProtocol(stages=[
         stage("min_0001", stage_role="minimization"),
         stage("prod_0001", stage_role="production"),
-    ])
+    ]).to_methods_dict()
 
-    assert json.dumps(untagged.to_methods_dict()["stage_sequence"]) == json.dumps([
-        {"name": "min_0001", "role": "minimization"},
-        {"name": "prod_0001", "role": "production"},
-    ])
+    assert methods["replicas"] == {"count": 1,
+                                   "note": "one chain of runs; no replicas declared"}
+    assert [p["name"] for p in methods["protocol"]] == ["minimization", "production"]
+    assert all("replicas" not in p for p in methods["protocol"])
 
 
 def test_an_empty_lineage_is_not_a_member():
@@ -642,18 +617,16 @@ def test_an_empty_lineage_is_not_a_member():
     """
     only = protocol.SimulationProtocol(
         stages=[protocol.SimulationStage("x", stage_role="production", lineage="")]
-    ).to_methods_dict()["stage_sequence"]
+    )
 
-    assert only == [{"name": "x", "role": "production"}]
+    assert only.to_methods_dict()["replicas"]["count"] == 1
+    assert "lineage" not in only.to_dict()["stages"][0]
 
 
-def test_the_tagged_entry_states_a_graph_fact_and_nothing_statistical():
-    """Decision 4: which member a run belongs to, never how many or how independent."""
-    methods = _fan_out_protocol().to_methods_dict()
+def test_the_replicas_block_states_graph_facts_and_nothing_statistical():
+    """Decision 4: which member a run belongs to, never how independent the members are."""
+    blob = json.dumps(_fan_out_protocol().to_methods_dict())
 
-    keys = {key for entry in methods["stage_sequence"] for key in entry}
-    assert keys == {"name", "role", "lineage"}
-    blob = json.dumps(methods)
     assert "ensemble_size" not in blob and "independent" not in blob
 
 
@@ -669,9 +642,8 @@ def test_a_tagged_manifest_carries_its_members_into_the_methods_summary(tmp_path
 
     proto = auto_discover(str(stage_dir), manifest=manifest)
 
-    assert [entry.get("lineage") for entry in proto.to_methods_dict()["stage_sequence"]] == [
-        None, "rep1", "rep2",
-    ]
+    assert proto.to_methods_dict()["replicas"]["names"] == ["rep1", "rep2"]
+    assert [s.get("lineage") for s in proto.to_dict()["stages"]] == [None, "rep1", "rep2"]
 
 
 def test_to_plain_converts_numpy_scalars_and_tuples_for_yaml():

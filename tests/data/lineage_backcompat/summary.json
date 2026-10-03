@@ -11,6 +11,49 @@
       "gap_tolerance_ps": null,
       "observed_gap_ps": null,
       "restart_path": "<RUNDIR>/ntp_prod_0000.rst",
+      "phase": "Production",
+      "elapsed_ps": 20000.0,
+      "mdout_control": {
+        "imin": 0,
+        "nmropt": 0,
+        "ntx": 5,
+        "irest": 1,
+        "ntxo": 2,
+        "ntpr": 25000,
+        "ntwr": 250000,
+        "iwrap": 0,
+        "ntwx": 25000,
+        "ntwv": 0,
+        "ntwe": 0,
+        "ioutfm": 1,
+        "ntf": 2,
+        "ntb": 2,
+        "igb": 0,
+        "cut": 9.0,
+        "ibelly": 0,
+        "ntr": 0,
+        "nstlim": 5000000,
+        "nscm": 1000,
+        "dt": 0.004,
+        "temp0": 300.0,
+        "tempi": 0.0,
+        "gamma_ln": 1.0,
+        "ntp": 1,
+        "pres0": 1.0,
+        "comp": 44.6,
+        "taup": 1.0,
+        "ntc": 2,
+        "ew_type": 0,
+        "use_pme": 1,
+        "vdwmeth": 1,
+        "ig": 70038
+      },
+      "findings": [
+        {
+          "kind": "step_check",
+          "message": "Time step of 4 fs, but the topology has standard hydrogen masses (no hydrogen mass repartitioning); a time step above 2 fs needs repartitioned hydrogen masses."
+        }
+      ],
       "summary": {
         "intent": "production",
         "result": "Completed",
@@ -93,6 +136,15 @@
               "K+": 34,
               "Cl-": 38,
               "WAT": 14659
+            },
+            "residue_atom_counts": {
+              "ROH": 2,
+              "4YA": 27,
+              "4YB": 27,
+              "0YB": 28,
+              "K+": 1,
+              "Cl-": 1,
+              "WAT": 4
             },
             "num_solvent_molecules": 14659,
             "num_solute_residues": 443,
@@ -270,6 +322,49 @@
       "gap_tolerance_ps": null,
       "observed_gap_ps": 0.0,
       "restart_path": "<RUNDIR>/ntp_prod_0001.rst",
+      "phase": "Production",
+      "elapsed_ps": 20000.0,
+      "mdout_control": {
+        "imin": 0,
+        "nmropt": 0,
+        "ntx": 5,
+        "irest": 1,
+        "ntxo": 2,
+        "ntpr": 25000,
+        "ntwr": 250000,
+        "iwrap": 0,
+        "ntwx": 25000,
+        "ntwv": 0,
+        "ntwe": 0,
+        "ioutfm": 1,
+        "ntf": 2,
+        "ntb": 2,
+        "igb": 0,
+        "cut": 9.0,
+        "ibelly": 0,
+        "ntr": 0,
+        "nstlim": 5000000,
+        "nscm": 1000,
+        "dt": 0.004,
+        "temp0": 300.0,
+        "tempi": 0.0,
+        "gamma_ln": 1.0,
+        "ntp": 1,
+        "pres0": 1.0,
+        "comp": 44.6,
+        "taup": 1.0,
+        "ntc": 2,
+        "ew_type": 0,
+        "use_pme": 1,
+        "vdwmeth": 1,
+        "ig": 761443
+      },
+      "findings": [
+        {
+          "kind": "step_check",
+          "message": "Time step of 4 fs, but the topology has standard hydrogen masses (no hydrogen mass repartitioning); a time step above 2 fs needs repartitioned hydrogen masses."
+        }
+      ],
       "summary": {
         "intent": "production",
         "result": "Completed",
@@ -352,6 +447,15 @@
               "K+": 34,
               "Cl-": 38,
               "WAT": 14659
+            },
+            "residue_atom_counts": {
+              "ROH": 2,
+              "4YA": 27,
+              "4YB": 27,
+              "0YB": 28,
+              "K+": 1,
+              "Cl-": 1,
+              "WAT": 4
             },
             "num_solvent_molecules": 14659,
             "num_solute_residues": 443,
@@ -520,7 +624,8 @@
           }
         },
         "mdcrd": null
-      }
+      },
+      "continues_from": "ntp_prod_0001"
     },
     {
       "name": "ntp_prod_0003",
@@ -529,6 +634,49 @@
       "gap_tolerance_ps": null,
       "observed_gap_ps": 0.0,
       "restart_path": "<RUNDIR>/ntp_prod_0002.rst",
+      "phase": "Production",
+      "elapsed_ps": 20000.0,
+      "mdout_control": {
+        "imin": 0,
+        "nmropt": 0,
+        "ntx": 5,
+        "irest": 1,
+        "ntxo": 2,
+        "ntpr": 25000,
+        "ntwr": 250000,
+        "iwrap": 0,
+        "ntwx": 25000,
+        "ntwv": 0,
+        "ntwe": 0,
+        "ioutfm": 1,
+        "ntf": 2,
+        "ntb": 2,
+        "igb": 0,
+        "cut": 9.0,
+        "ibelly": 0,
+        "ntr": 0,
+        "nstlim": 5000000,
+        "nscm": 1000,
+        "dt": 0.004,
+        "temp0": 300.0,
+        "tempi": 0.0,
+        "gamma_ln": 1.0,
+        "ntp": 1,
+        "pres0": 1.0,
+        "comp": 44.6,
+        "taup": 1.0,
+        "ntc": 2,
+        "ew_type": 0,
+        "use_pme": 1,
+        "vdwmeth": 1,
+        "ig": 410249
+      },
+      "findings": [
+        {
+          "kind": "step_check",
+          "message": "Time step of 4 fs, but the topology has standard hydrogen masses (no hydrogen mass repartitioning); a time step above 2 fs needs repartitioned hydrogen masses."
+        }
+      ],
       "summary": {
         "intent": "production",
         "result": "Completed",
@@ -611,6 +759,15 @@
               "K+": 34,
               "Cl-": 38,
               "WAT": 14659
+            },
+            "residue_atom_counts": {
+              "ROH": 2,
+              "4YA": 27,
+              "4YB": 27,
+              "0YB": 28,
+              "K+": 1,
+              "Cl-": 1,
+              "WAT": 4
             },
             "num_solvent_molecules": 14659,
             "num_solute_residues": 443,
@@ -779,7 +936,8 @@
           }
         },
         "mdcrd": null
-      }
+      },
+      "continues_from": "ntp_prod_0002"
     },
     {
       "name": "ntp_prod_0004",
@@ -788,6 +946,49 @@
       "gap_tolerance_ps": null,
       "observed_gap_ps": 0.0,
       "restart_path": "<RUNDIR>/ntp_prod_0003.rst",
+      "phase": "Production",
+      "elapsed_ps": 20000.0,
+      "mdout_control": {
+        "imin": 0,
+        "nmropt": 0,
+        "ntx": 5,
+        "irest": 1,
+        "ntxo": 2,
+        "ntpr": 25000,
+        "ntwr": 250000,
+        "iwrap": 0,
+        "ntwx": 25000,
+        "ntwv": 0,
+        "ntwe": 0,
+        "ioutfm": 1,
+        "ntf": 2,
+        "ntb": 2,
+        "igb": 0,
+        "cut": 9.0,
+        "ibelly": 0,
+        "ntr": 0,
+        "nstlim": 5000000,
+        "nscm": 1000,
+        "dt": 0.004,
+        "temp0": 300.0,
+        "tempi": 0.0,
+        "gamma_ln": 1.0,
+        "ntp": 1,
+        "pres0": 1.0,
+        "comp": 44.6,
+        "taup": 1.0,
+        "ntc": 2,
+        "ew_type": 0,
+        "use_pme": 1,
+        "vdwmeth": 1,
+        "ig": 613120
+      },
+      "findings": [
+        {
+          "kind": "step_check",
+          "message": "Time step of 4 fs, but the topology has standard hydrogen masses (no hydrogen mass repartitioning); a time step above 2 fs needs repartitioned hydrogen masses."
+        }
+      ],
       "summary": {
         "intent": "production",
         "result": "Completed",
@@ -870,6 +1071,15 @@
               "K+": 34,
               "Cl-": 38,
               "WAT": 14659
+            },
+            "residue_atom_counts": {
+              "ROH": 2,
+              "4YA": 27,
+              "4YB": 27,
+              "0YB": 28,
+              "K+": 1,
+              "Cl-": 1,
+              "WAT": 4
             },
             "num_solvent_molecules": 14659,
             "num_solute_residues": 443,
@@ -1038,7 +1248,8 @@
           }
         },
         "mdcrd": null
-      }
+      },
+      "continues_from": "ntp_prod_0003"
     },
     {
       "name": "ntp_prod_0005",
@@ -1047,6 +1258,49 @@
       "gap_tolerance_ps": null,
       "observed_gap_ps": 0.0,
       "restart_path": "<RUNDIR>/ntp_prod_0004.rst",
+      "phase": "Production",
+      "elapsed_ps": 20000.0,
+      "mdout_control": {
+        "imin": 0,
+        "nmropt": 0,
+        "ntx": 5,
+        "irest": 1,
+        "ntxo": 2,
+        "ntpr": 25000,
+        "ntwr": 250000,
+        "iwrap": 0,
+        "ntwx": 25000,
+        "ntwv": 0,
+        "ntwe": 0,
+        "ioutfm": 1,
+        "ntf": 2,
+        "ntb": 2,
+        "igb": 0,
+        "cut": 9.0,
+        "ibelly": 0,
+        "ntr": 0,
+        "nstlim": 5000000,
+        "nscm": 1000,
+        "dt": 0.004,
+        "temp0": 300.0,
+        "tempi": 0.0,
+        "gamma_ln": 1.0,
+        "ntp": 1,
+        "pres0": 1.0,
+        "comp": 44.6,
+        "taup": 1.0,
+        "ntc": 2,
+        "ew_type": 0,
+        "use_pme": 1,
+        "vdwmeth": 1,
+        "ig": 570364
+      },
+      "findings": [
+        {
+          "kind": "step_check",
+          "message": "Time step of 4 fs, but the topology has standard hydrogen masses (no hydrogen mass repartitioning); a time step above 2 fs needs repartitioned hydrogen masses."
+        }
+      ],
       "summary": {
         "intent": "production",
         "result": "Completed",
@@ -1129,6 +1383,15 @@
               "K+": 34,
               "Cl-": 38,
               "WAT": 14659
+            },
+            "residue_atom_counts": {
+              "ROH": 2,
+              "4YA": 27,
+              "4YB": 27,
+              "0YB": 28,
+              "K+": 1,
+              "Cl-": 1,
+              "WAT": 4
             },
             "num_solvent_molecules": 14659,
             "num_solute_residues": 443,
@@ -1297,7 +1560,8 @@
           }
         },
         "mdcrd": null
-      }
+      },
+      "continues_from": "ntp_prod_0004"
     }
   ]
 }

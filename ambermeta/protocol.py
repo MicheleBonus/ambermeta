@@ -15,13 +15,13 @@ from ambermeta.parsers.mdin import MdinData, MdinParser
 from ambermeta.mdout_header import MdoutHeader, looks_like_mdout, read_mdout_header
 from ambermeta.parsers.mdout import MdoutData, MdoutParser
 from ambermeta.parsers.prmtop import PrmtopData, PrmtopParser
-from ambermeta.legacy_extractors.prmtop import ION_RESNAMES, WATER_RESNAMES
 from ambermeta.recorded_inputs import compare_recorded_input
 from ambermeta.topology_pool import implies_hmr
 from ambermeta.errors import AmberMetaError, FileLoadError, classify_exception
 from ambermeta.logging_config import get_logger
 from ambermeta.roles import classify_role
 from ambermeta.lineages import UNTAGGED, buckets, infer_lineages_from_layout
+from ambermeta.lineages import coherence as _coherence
 # The one spelling of the boundary rule. Its parameters are annotated `Step` but it reads
 # nothing except `.lineage`, and `SimulationStage` carries that too — re-stating the rule
 # here would make a third copy of it, which is how the two chainers drifted apart already.
@@ -85,45 +85,6 @@ def _serialize_metadata(metadata: Any) -> Optional[Dict[str, Any]]:
     }
 
 
-def _prune_methods_value(value: Any) -> Any:
-    if value is None:
-        return None
-    if isinstance(value, dict):
-        pruned = {}
-        for key, val in value.items():
-            cleaned = _prune_methods_value(val)
-            if cleaned is None:
-                continue
-            # Only skip empty containers, not falsy values like 0 or False
-            if isinstance(cleaned, (dict, list)) and len(cleaned) == 0:
-                continue
-            pruned[key] = cleaned
-        return pruned
-    if isinstance(value, list):
-        pruned_list = []
-        for item in value:
-            cleaned = _prune_methods_value(item)
-            if cleaned is None:
-                continue
-            # Only skip empty containers, not falsy values like 0 or False
-            if isinstance(cleaned, (dict, list)) and len(cleaned) == 0:
-                continue
-            pruned_list.append(cleaned)
-        return pruned_list
-    return value
-
-
-def _sanitize_identifier(value: Any) -> Optional[str]:
-    if value is None:
-        return None
-    if not isinstance(value, str):
-        value = str(value)
-    normalized = value.strip()
-    if not normalized or normalized.lower() in {"unknown", "none", "n/a"}:
-        return None
-    return normalized
-
-
 @dataclass
 class SimulationStage:
     name: str
@@ -164,6 +125,10 @@ class SimulationStage:
     lineage: Optional[str] = None
     step_id: Optional[str] = None
     parent_id: Optional[str] = None
+    # The name of the document Phase this stage came from; manifest path only. `stage_role`
+    # is the phase's role, and two phases may share one (an NVT and an NPT equilibration),
+    # so the methods summary groups by this name where it exists.
+    phase: Optional[str] = None
     # Whether this stage produced output. The only non-default value is "queued": an mdin
     # with no mdout, set by both engine entry points (the manifest path and the scan path
     # — see `_looks_queued`) rather than derived here, because they are the two places
@@ -534,6 +499,24 @@ class SimulationStage:
         # level down.
         if self.status is not None:
             out["status"] = self.status
+        # Provenance and recorded settings the methods summary is built from. Each is
+        # emitted only when there is something to say, so a stage that has none of them
+        # serialises as it did before they existed.
+        if self.lineage:
+            out["lineage"] = self.lineage
+        if self.phase:
+            out["phase"] = self.phase
+        elapsed = _elapsed_ps(self)
+        if elapsed is not None:
+            # The same number `totals()` adds up, so a per-phase or per-replica sum built
+            # from summary.json agrees with the totals beside it.
+            out["elapsed_ps"] = elapsed
+        control = _mdout_control(self.mdout_header)
+        if control:
+            out["mdout_control"] = control
+        if self.findings:
+            out["findings"] = [{"kind": kind, "message": message}
+                               for kind, message in self.findings]
         out.update({
             "summary": self.summary(),
             "validation": list(self.validation),
@@ -549,6 +532,30 @@ class SimulationStage:
             },
         })
         return out
+
+
+def _mdout_control(header: Any) -> Dict[str, Any]:
+    """The CONTROL DATA settings an mdout header stated, plus the resolved seed as `ig`.
+
+    What AMBER used, defaults filled in, which is what the methods summary reports for a
+    setting the mdin did not write. Read defensively: tests and callers build stages with
+    stand-in headers that carry only the attributes they need.
+    """
+    if header is None:
+        return {}
+    control = getattr(header, "control", None)
+    out: Dict[str, Any] = dict(control) if isinstance(control, dict) else {}
+    # The header's dedicated readers cover a few of the same fields; where the general
+    # reader missed one, theirs stands.
+    for key, attr in (("irest", "irest"), ("dt", "control_dt_ps"), ("ntwx", "control_ntwx"),
+                      ("ntpr", "control_ntpr"), ("nstlim", "control_nstlim")):
+        value = getattr(header, attr, None)
+        if key not in out and isinstance(value, (int, float)) and not isinstance(value, bool):
+            out[key] = value
+    seed = getattr(header, "resolved_ig", None)
+    if isinstance(seed, int) and not isinstance(seed, bool):
+        out["ig"] = seed
+    return out
 
 
 def _written_span_ps(nsteps: Any, dt: Any, interval_steps: Optional[int]) -> Optional[float]:
@@ -1298,9 +1305,19 @@ class SimulationProtocol:
         return stage_finding_cards(self.stages, start_index=start_index)
 
     def to_dict(self) -> Dict[str, Any]:
+        stages = []
+        names = {s.step_id: s.name for s in self.stages if s.step_id}
+        for stage in self.stages:
+            entry = stage.to_dict()
+            # The run this one continues from, by name: the document's own edge, which the
+            # flattened input path cannot recover once several runs share a restart.
+            parent = names.get(stage.parent_id) if stage.parent_id else None
+            if parent:
+                entry["continues_from"] = parent
+            stages.append(entry)
         out: Dict[str, Any] = {
             "totals": self.totals(),
-            "stages": [stage.to_dict() for stage in self.stages],
+            "stages": stages,
         }
         # Emitted only when there is something to report, so a summary.json for a document
         # with no holes is the file it always was. `plan` printed this finding on the
@@ -1317,421 +1334,20 @@ class SimulationProtocol:
         lineages = self.lineage_totals()
         if lineages:
             out["lineages"] = lineages
+        # What the declared replicas agree and disagree about (atom counts, settings,
+        # seeds at a branch point): the findings `plan` prints, kept in the artifact.
+        # Silent for a document with fewer than two declared members.
+        coherent = [{"severity": f.severity, "kind": f.kind, "message": f.message}
+                    for f in _coherence(self.stages)]
+        if coherent:
+            out["lineage_findings"] = coherent
         return out
 
     def to_methods_dict(self) -> Dict[str, Any]:
-        def _collect_software(stage: SimulationStage) -> List[Dict[str, str]]:
-            tools: List[Dict[str, str]] = []
-
-            def _add_tool(source: str, program: Any, version: Any = None) -> None:
-                program_clean = _sanitize_identifier(program)
-                version_clean = _sanitize_identifier(version)
-                if not program_clean and not version_clean:
-                    return
-                entry: Dict[str, str] = {"source": source}
-                if program_clean:
-                    entry["program"] = program_clean
-                if version_clean:
-                    entry["version"] = version_clean
-                tools.append(entry)
-
-            if stage.mdout and stage.mdout.details:
-                _add_tool(
-                    "mdout",
-                    getattr(stage.mdout.details, "program", None),
-                    getattr(stage.mdout.details, "version", None),
-                )
-            if stage.inpcrd and stage.inpcrd.details:
-                _add_tool(
-                    "inpcrd",
-                    getattr(stage.inpcrd.details, "program", None),
-                    getattr(stage.inpcrd.details, "program_version", None),
-                )
-            if stage.mdcrd and stage.mdcrd.details:
-                _add_tool(
-                    "mdcrd",
-                    getattr(stage.mdcrd.details, "program", None),
-                    None,
-                )
-            return tools
-
-        def _collect_md_engine(stage: SimulationStage) -> Dict[str, Any]:
-            md_engine: Dict[str, Any] = {}
-            # F2 (fix-wave follow-up): this used to read `mdin.dt` then `mdout.dt` here,
-            # independently of `_timestep_ps` -- the SAME rule `totals()`/`stats.csv` use,
-            # already carrying the fix for the doubled-`steps` regression (header
-            # `control_dt_ps` first, so an mdin's stated `dt` is preferred over the legacy
-            # parser's truthy 0.001 default). A `methods_summary.json` built from the old
-            # order never consulted `control_dt_ps` at all, so it could still publish the
-            # doubled figure whenever `mdin.dt` was unavailable -- one rule, fixed in one
-            # place, drifting from its own unfixed copy. Computed once, here, rather than
-            # inline at each of the two sites below, so both branches read the identical
-            # value regardless of which one (or both) run.
-            timestep_ps = _timestep_ps(stage)
-
-            def _collect_pme_indicators(
-                cntrl_parameters: Dict[str, Any], mdout_details: Optional[Any]
-            ) -> Dict[str, Any]:
-                indicators: Dict[str, Any] = {}
-                pme_keys = (
-                    "ew_type",
-                    "pme",
-                    "pme_enabled",
-                    "use_pme",
-                    "pme_grid",
-                    "fft_grid",
-                    "fft_grid_x",
-                    "fft_grid_y",
-                    "fft_grid_z",
-                    "ewald",
-                )
-                for key in pme_keys:
-                    if key in cntrl_parameters and cntrl_parameters[key] is not None:
-                        indicators[key] = cntrl_parameters[key]
-                if mdout_details is not None:
-                    for key in pme_keys:
-                        value = getattr(mdout_details, key, None)
-                        if value is not None:
-                            indicators.setdefault(key, value)
-                return indicators
-
-            if stage.mdin and stage.mdin.details:
-                details = stage.mdin.details
-                cntrl_parameters = getattr(details, "cntrl_parameters", {}) or {}
-                md_engine.update(
-                    {
-                        "ensemble": getattr(details, "ensemble", None),
-                        "thermostat": getattr(details, "temp_control", None),
-                        "barostat": getattr(details, "press_control", None),
-                        # Removed duplicate temp_control and press_control
-                        "cutoff": getattr(details, "cutoff", None),
-                        "constraints": getattr(details, "constraints", None),
-                        "pbc": getattr(details, "pbc", None),
-                        "timestep_ps": timestep_ps,
-                        "run_length_steps": getattr(details, "length_steps", None),
-                        "cntrl_parameters": cntrl_parameters or None,
-                    }
-                )
-                pme_indicators = _collect_pme_indicators(cntrl_parameters, None)
-                if pme_indicators:
-                    md_engine["pme"] = pme_indicators
-            if stage.mdout and stage.mdout.details:
-                details = stage.mdout.details
-                md_engine.setdefault("thermostat", getattr(details, "thermostat", None))
-                md_engine.setdefault("barostat", getattr(details, "barostat", None))
-                md_engine.setdefault("timestep_ps", timestep_ps)
-                md_engine.setdefault("run_length_steps", getattr(details, "nstlim", None))
-                if getattr(details, "cutoff", None) is not None:
-                    md_engine.setdefault("cutoff", getattr(details, "cutoff", None))
-                    # Removed redundant cutoff_mdout field
-                if getattr(details, "shake_active", None) is not None:
-                    md_engine["shake_active"] = getattr(details, "shake_active", None)
-                pme_indicators = _collect_pme_indicators({}, details)
-                if pme_indicators:
-                    existing_pme = md_engine.get("pme")
-                    if isinstance(existing_pme, dict):
-                        for key, value in pme_indicators.items():
-                            existing_pme.setdefault(key, value)
-                    else:
-                        md_engine["pme"] = pme_indicators
-            # INTENT, deliberately, and it does NOT agree with `summary.json`'s totals for a
-            # run that did not finish what it declared. `md_engine` is an all-intent block:
-            # `cntrl_parameters` verbatim from the deck, `run_length_steps` from `nstlim`,
-            # the ensemble and thermostat the deck asked for. `run_length_ps` is
-            # `run_length_steps x timestep_ps` and belongs with them -- it is the protocol's
-            # stated length, which is what a Methods section reports.
-            #
-            # Making it execution-derived instead was considered and rejected: it would be
-            # the single measured number in a block of declarations, sitting immediately
-            # beside a `run_length_steps` it visibly is NOT the product of, which is a worse
-            # self-contradiction than the one it would fix and one a reader is far more
-            # likely to trip over. The honest fix is to say which is which, and docs/cli.md's
-            # plan-artifacts table now does, in the artifact's own terms: methods_summary is
-            # what was asked for, summary.json/stats.csv are what happened.
-            #
-            # This is also no longer the discrepancy it was found as. The five real runs that
-            # exposed it were `irest = 0` runs whose totals were being over-reported by 1800
-            # ps each; `run_length_ps` was RIGHT and the totals were wrong (see
-            # `_origin_time_ps`). With that fixed the two agree wherever a run did what it
-            # declared, and differ only where it genuinely did not.
-            if md_engine.get("run_length_steps") and md_engine.get("timestep_ps"):
-                try:
-                    md_engine["run_length_ps"] = float(md_engine["run_length_steps"]) * float(md_engine["timestep_ps"])
-                except (TypeError, ValueError):
-                    pass
-            return md_engine
-
-        def _collect_restraints(stage: SimulationStage) -> Dict[str, Any]:
-            if not stage.mdin or not stage.mdin.details:
-                return {}
-
-            details = stage.mdin.details
-            cntrl = getattr(details, "cntrl_parameters", {}) or {}
-            wt_schedules = getattr(details, "wt_schedules", []) or []
-            definitions = getattr(details, "restraint_definitions", []) or []
-
-            ntr_value = cntrl.get("ntr")
-            restraint_weight = cntrl.get("restraint_wt")
-
-            mask_keys = [
-                key
-                for key in cntrl.keys()
-                if isinstance(key, str)
-                and (
-                    "restraintmask" in key.lower()
-                    or key.lower().startswith("restraint_mask")
-                    or key.lower().startswith("restraintmask")
-                )
-            ]
-            mask_primary = cntrl.get("restraintmask")
-            if mask_primary is None and mask_keys:
-                mask_primary = cntrl.get(sorted(mask_keys, key=str.lower)[0])
-
-            mask_variants = {
-                key: cntrl.get(key)
-                for key in sorted(mask_keys, key=str.lower)
-                if key != "restraintmask"
-            }
-
-            schedule = []
-            for entry in wt_schedules:
-                quantity = getattr(entry, "quantity", None)
-                if not quantity:
-                    continue
-                quantity_upper = str(quantity).upper()
-                if not quantity_upper.startswith("REST"):
-                    continue
-                schedule.append(
-                    {
-                        "type": quantity_upper,
-                        "start_step": getattr(entry, "istep1", None),
-                        "end_step": getattr(entry, "istep2", None),
-                        "start_value": getattr(entry, "value1", None),
-                        "end_value": getattr(entry, "value2", None),
-                        "increment": getattr(entry, "iinc", None),
-                        "multiplier": getattr(entry, "imult", None),
-                    }
-                )
-
-            active = getattr(details, "restraints_active", None)
-            if active is None and ntr_value is not None:
-                active = str(ntr_value) not in {"0", "0.0", "False", "false"}
-
-            return {
-                "active": active,
-                "ntr": ntr_value,
-                "weight": restraint_weight,
-                "mask": {"primary": mask_primary, "variants": mask_variants},
-                "definitions": list(definitions) if definitions else None,
-                "schedule": schedule,
-            }
-
-        def _collect_system(stage: SimulationStage) -> Dict[str, Any]:
-            atom_counts: Dict[str, Any] = {}
-            if stage.prmtop and stage.prmtop.details:
-                atom_counts["prmtop"] = getattr(stage.prmtop.details, "natom", None)
-            if stage.inpcrd and stage.inpcrd.details:
-                atom_counts["inpcrd"] = getattr(stage.inpcrd.details, "natoms", None)
-            if stage.mdout and stage.mdout.details:
-                atom_counts["mdout"] = getattr(stage.mdout.details, "natoms", None)
-            if stage.mdcrd and stage.mdcrd.details:
-                atom_counts["mdcrd"] = getattr(stage.mdcrd.details, "n_atoms", None)
-
-            box_type = None
-            if stage.mdout and stage.mdout.details:
-                box_type = getattr(stage.mdout.details, "box_type", None) or box_type
-            if stage.mdcrd and stage.mdcrd.details:
-                box_type = getattr(stage.mdcrd.details, "box_type", None) or box_type
-
-            # The box of the coordinates the run read. The topology's box is the one tLEaP
-            # wrote before any equilibration, and preferring it reported the pre-NPT box
-            # for every run of a production chain; it is only the fallback, and says so.
-            box_dimensions = None
-            box_angles = None
-            box_source = None
-            if stage.inpcrd and stage.inpcrd.details:
-                box_dimensions = getattr(stage.inpcrd.details, "box_dimensions", None)
-                box_angles = getattr(stage.inpcrd.details, "box_angles", None)
-                if box_dimensions:
-                    box_source = ("restart written by this run" if stage.inpcrd_is_own_restart
-                                  else "input coordinates")
-            if not box_dimensions and stage.prmtop and stage.prmtop.details:
-                box_dimensions = getattr(stage.prmtop.details, "box_dimensions", None)
-                box_angles = getattr(stage.prmtop.details, "box_angles", None) or box_angles
-                if box_dimensions:
-                    box_source = "topology (as built)"
-
-            box: Dict[str, Any] = {
-                "type": box_type,
-                "dimensions": box_dimensions,
-                "angles": box_angles,
-                "source": box_source,
-            }
-            composition: Dict[str, Any] = {}
-            if stage.prmtop and stage.prmtop.details:
-                details = stage.prmtop.details
-                residue_composition = getattr(details, "residue_composition", None)
-                composition.update(
-                    {
-                        "residue_composition": residue_composition,
-                        "num_solvent_molecules": getattr(details, "num_solvent_molecules", None),
-                        "num_solute_residues": getattr(details, "num_solute_residues", None),
-                        "total_charge": getattr(details, "total_charge", None),
-                        "is_neutral": getattr(details, "is_neutral", None),
-                        "initial_density": getattr(details, "density", None),  # From prmtop - initial value
-                        "solvent_type": getattr(details, "solvent_type", None),
-                        "simulation_category": getattr(details, "simulation_category", None),
-                        "hmr_active": getattr(details, "hmr_active", None),
-                        "hmr_hydrogen_mass_range": getattr(details, "hmr_hydrogen_mass_range", None),
-                        "hmr_hydrogen_mass_summary": getattr(details, "hmr_hydrogen_mass_summary", None),
-                    }
-                )
-
-            # Infer HMR from the time step only where no topology masses were read. A
-            # topology whose masses are standard is not HMR whatever the time step; that
-            # disagreement is a finding (`_validate_hmr_time_step`), not something to
-            # overwrite here.
-            dt = None
-            if stage.mdin and stage.mdin.details:
-                dt = getattr(stage.mdin.details, "dt", None)
-            if dt is None and stage.mdout and stage.mdout.details:
-                dt = getattr(stage.mdout.details, "dt", None)
-            if dt is not None and isinstance(dt, (int, float)):
-                if implies_hmr(dt) and composition.get("hmr_active") is None:
-                    composition["hmr_active"] = True
-                    composition["hmr_inferred_from_timestep"] = True
-
-            # Add observed density from mdout if available (actual simulation values)
-            if stage.mdout and stage.mdout.details:
-                mdout_details = stage.mdout.details
-                stats = getattr(mdout_details, "stats", None)
-                if stats:
-                    density_stats = getattr(stats, "density_stats", None)
-                    if density_stats:
-                        avg, std = density_stats.get_stats()
-                        if avg is not None:
-                            composition["average_density"] = avg
-                            composition["density_std"] = std
-                            # Use average as the primary density if available
-                            composition["density"] = avg
-                    # Get first and last density from trajectory
-                    first_density = getattr(stats, "first_density", None)
-                    last_density = getattr(stats, "last_density", None)
-                    if first_density is not None:
-                        composition["first_density"] = first_density
-                    if last_density is not None:
-                        composition["final_density"] = last_density
-
-            # Fall back to initial density from prmtop if no observed density
-            if "density" not in composition:
-                composition["density"] = composition.get("initial_density")
-
-            # Add observed box dimensions from mdcrd if available
-            if stage.mdcrd and stage.mdcrd.details:
-                mdcrd_details = stage.mdcrd.details
-                volume_stats = getattr(mdcrd_details, "volume_stats", None)
-                if volume_stats:
-                    composition["observed_volume_mean"] = volume_stats[2] if len(volume_stats) > 2 else None
-                    composition["observed_volume_min"] = volume_stats[0] if len(volume_stats) > 0 else None
-                    composition["observed_volume_max"] = volume_stats[1] if len(volume_stats) > 1 else None
-
-            # Add water and ion information from residue composition
-            if stage.prmtop and stage.prmtop.details:
-                residue_composition = getattr(stage.prmtop.details, "residue_composition", None)
-                if residue_composition:
-                    water_residues = {
-                        residue: count
-                        for residue, count in residue_composition.items()
-                        if residue in WATER_RESNAMES
-                    }
-                    ion_residues = {
-                        residue: count
-                        for residue, count in residue_composition.items()
-                        if residue in ION_RESNAMES
-                    }
-                    composition.update(
-                        {
-                            "water_residue_counts": water_residues or None,
-                            "ion_residue_counts": ion_residues or None,
-                            "water_molecule_count": sum(water_residues.values()) if water_residues else None,
-                            "ion_count": sum(ion_residues.values()) if ion_residues else None,
-                        }
-                    )
-
-            # Consolidate density fields to minimize redundancy:
-            # If density is constant (e.g., NVT or minimization), only keep 'density'
-            # If trajectory shows density variation, keep detailed breakdown
-            density_tolerance = 1e-4  # Relative tolerance for density comparison
-            initial = composition.get("initial_density")
-            avg = composition.get("average_density")
-            first = composition.get("first_density")
-            final = composition.get("final_density")
-
-            def densities_equal(a, b):
-                if a is None or b is None:
-                    return a is None and b is None
-                return abs(a - b) < max(abs(a), abs(b)) * density_tolerance
-
-            # Check if all density values are effectively the same
-            densities_to_check = [d for d in [initial, avg, first, final] if d is not None]
-            if densities_to_check:
-                all_equal = all(densities_equal(densities_to_check[0], d) for d in densities_to_check)
-                if all_equal:
-                    # Consolidate to single 'density' field
-                    composition["density"] = avg if avg is not None else (first if first is not None else initial)
-                    # Remove redundant fields
-                    for key in ["initial_density", "average_density", "first_density", "final_density", "density_std"]:
-                        composition.pop(key, None)
-
-            return {"atom_counts": atom_counts, "box": box, "composition": composition}
-
-        def _collect_trajectory(stage: SimulationStage) -> Dict[str, Any]:
-            trajectory: Dict[str, Any] = {}
-            if stage.mdin and stage.mdin.details:
-                details = stage.mdin.details
-                trajectory.update(
-                    {
-                        "coord_write_interval_steps": getattr(details, "coord_freq", None),
-                        "traj_format": getattr(details, "traj_format", None),
-                    }
-                )
-            if stage.mdcrd and stage.mdcrd.details:
-                details = stage.mdcrd.details
-                trajectory.setdefault("frame_interval_ps", getattr(details, "avg_dt", None))
-                trajectory.setdefault("n_frames", getattr(details, "n_frames", None))
-            return trajectory
-
-        stages_payload = []
-        stage_sequence = []
-        for stage in self.stages:
-            # A flat ordered list reads as one chain, so a fan-out published here claims
-            # rep1 ran, then rep2, then rep3. The tag says which member the run belongs to
-            # and nothing else — no count, no independence claim (decision 4). Emitted only
-            # when set, like Step.lineage in the manifest, so an untagged document's
-            # methods_summary.json is unchanged.
-            sequence_entry: Dict[str, Optional[str]] = {
-                "name": stage.name,
-                "role": stage.stage_role,
-            }
-            if stage.lineage:
-                sequence_entry["lineage"] = stage.lineage
-            stage_sequence.append(sequence_entry)
-            stage_payload = {
-                "name": stage.name,
-                "role": stage.stage_role,
-                "software": _collect_software(stage),
-                "md_engine": _collect_md_engine(stage),
-                "restraints": _collect_restraints(stage),
-                "system": _collect_system(stage),
-                "trajectory_output": _collect_trajectory(stage),
-            }
-            stages_payload.append(_prune_methods_value(stage_payload))
-
-        payload = {
-            "stage_sequence": stage_sequence,
-            "stages": stages_payload,
-        }
-        return _prune_methods_value(payload)
+        """The methods summary: :func:`ambermeta.methods_summary.build_methods_summary`
+        applied to :meth:`to_dict`. See that module for the fields."""
+        from ambermeta.methods_summary import build_methods_summary
+        return build_methods_summary(self.to_dict())
 
 
 def _resolve(directory: Optional[str], path: str) -> str:
@@ -2018,6 +1634,7 @@ def _manifest_to_stages(
         stage.lineage = entry.get("lineage") or None
         stage.step_id = entry.get("step_id") or None
         stage.parent_id = entry.get("parent_id") or None
+        stage.phase = entry.get("phase") or None
 
         stages.append(stage)
 
@@ -3386,11 +3003,27 @@ def write_protocol_outputs(protocol: "SimulationProtocol", targets: Dict[str, st
         else:
             written.append({"artifact": artifact, "path": path})
 
+    # One serialisation for both summaries: the methods summary is built from exactly the
+    # dict summary.json is written from, so the two cannot disagree.
+    record: Dict[str, Any] = {}
+
+    def _record() -> Dict[str, Any]:
+        if not record:
+            record.update(protocol.to_dict())
+        return record
+
     if "summary" in targets:
-        _attempt("summary", lambda p: _dump(protocol.to_dict(), p, summary_format))
+        _attempt("summary", lambda p: _dump(_record(), p, summary_format))
     if "methods_summary" in targets:
-        # Always JSON: it is the publication-facing artifact and the CLI writes JSON.
-        _attempt("methods_summary", lambda p: _dump(protocol.to_methods_dict(), p, "json"))
+        # Always JSON; see `ambermeta.methods_summary`.
+        from ambermeta.methods_summary import build_methods_summary, dumps_methods_summary
+
+        def _methods(path: str) -> None:
+            digest = build_methods_summary(to_plain(_record()))
+            os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(dumps_methods_summary(digest))
+        _attempt("methods_summary", _methods)
     if "stats_csv" in targets:
         def _stats(path: str) -> None:
             os.makedirs(os.path.dirname(path) or ".", exist_ok=True)

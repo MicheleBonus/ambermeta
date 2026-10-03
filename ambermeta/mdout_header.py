@@ -17,6 +17,11 @@ mdin:
 * the **File Assignments** block, which is the chain AMBER itself asserts: the INPCRD it
   read and the RESTRT it wrote, rather than an inference from filename adjacency.
 
+The CONTROL DATA block also states every setting a Methods section reports (target
+temperature, coupling constants, target pressure, compressibility, cutoff, SHAKE) with
+AMBER's defaults filled in. :attr:`MdoutHeader.control` keeps those, so a value the mdin
+never set can still be reported as what AMBER used rather than as AmberMeta's guess.
+
 Deliberately separate from :func:`ambermeta.legacy_extractors.mdout.parse_mdout`, on two
 counts. It stops at the results banner instead of reading the whole file — 0.12 ms against
 10.6 ms on the repo's 2553-line fixtures, which is what makes it affordable during a
@@ -33,7 +38,7 @@ from __future__ import annotations
 import os
 import re
 from dataclasses import dataclass, field
-from typing import Dict, Optional, Set
+from typing import Any, Dict, Optional, Set
 
 from ambermeta.parse_cache import cached_parse
 
@@ -88,6 +93,25 @@ _CONTROL_NSTLIM = re.compile(r"(?:^|,)\s*nstlim\s*=\s*(\d+)")
 # `RESOURCE USE`, above the CONTROL DATA block: ` NATOM  =   64528 NTYPES =      24 ...`.
 _NATOM = re.compile(r"^\s*NATOM\s*=\s*(\d+)")
 
+# The CONTROL DATA settings kept in `MdoutHeader.control`: what a Methods section reports,
+# plus the switches that say which of those apply. Lower-case names only, as AMBER prints
+# them; the Ewald block's `Box X =`/`Cutoff=`/`Tol =` fields are not in this set, so the
+# unanchored key reader below cannot pick them up. `ig` is not here: the seed has its own
+# reader (`_IG`) that refuses the negative request value.
+CONTROL_KEYS = frozenset((
+    "imin", "nmropt", "ntx", "irest", "ntxo", "ntpr", "ntwr", "ntwx", "ioutfm", "iwrap",
+    "ntwv", "ntwe", "ntf", "ntb", "igb", "saltcon", "cut", "ntr", "ibelly", "nstlim",
+    "nscm", "dt", "ntt", "temp0", "tempi", "gamma_ln", "tautp", "vrand", "ntp",
+    "barostat", "mcbarint", "pres0", "comp", "taup", "csurften", "ntc", "maxcyc", "ncyc",
+    "ntmin", "use_pme", "ew_type", "vdwmeth", "numexchg", "icfe", "ifsc", "clambda",
+    "icnstph", "solvph", "igamd", "restraint_wt",
+))
+# `key = value` anywhere on a line, the key not preceded by a word character, so `dt`
+# never reads as `t`. Only fields named in `CONTROL_KEYS` are kept; a `*****` overflow
+# does not match the number pattern and is left out, which is the truthful answer.
+_CONTROL_FIELD = re.compile(
+    r"(?<![A-Za-z0-9_])([A-Za-z_][A-Za-z0-9_]*)\s*=\s*([-+]?(?:\d+\.?\d*|\.\d+)(?:[eEdD][-+]?\d+)?)")
+
 # The File Assignments prefix is columns 1-10: `|`, the tag right-aligned in 7, then `: `.
 _ASSIGNMENT_VALUE_COLUMN = 10
 
@@ -136,6 +160,10 @@ class MdoutHeader:
     #: The atom count from `RESOURCE USE`. `discover` binds a run to the topology of this
     #: size when the pool holds several, rather than to the pool's first one.
     natom: Optional[int] = None
+    #: The CONTROL DATA settings in :data:`CONTROL_KEYS`, as AMBER resolved and printed
+    #: them, first value per key. Integers stay integers. Empty when the block was not
+    #: reached or not recognised; a key absent here is one the file did not state.
+    control: Dict[str, Any] = field(default_factory=dict)
 
     def assignment(self, tag: str) -> Optional[str]:
         """The value for `tag`, or None when it is absent **or** was clipped.
@@ -289,6 +317,21 @@ def _read_control_data(line: str, header: MdoutHeader) -> None:
         match = _CONTROL_NSTLIM.search(line)
         if match:
             header.control_nstlim = int(match.group(1))
+    for key, raw in _CONTROL_FIELD.findall(line):
+        if key in CONTROL_KEYS and key not in header.control:
+            value = _number(raw)
+            if value is not None:
+                header.control[key] = value
+
+
+def _number(raw: str) -> Any:
+    """`raw` as an int when it is written as one, else as a float; None if neither."""
+    try:
+        if re.fullmatch(r"[-+]?\d+", raw):
+            return int(raw)
+        return float(raw.replace("d", "e").replace("D", "e"))
+    except ValueError:
+        return None
 
 
 def _matched_float(pattern: "re.Pattern", line: str) -> Optional[float]:
