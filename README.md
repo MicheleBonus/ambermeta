@@ -1,3 +1,10 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/logo/ambermeta_logo_dark.svg">
+    <img src="docs/assets/logo/ambermeta_logo.svg" alt="AmberMeta" width="520">
+  </picture>
+</p>
+
 # AmberMeta
 
 **AmberMeta is a provenance engine for AMBER molecular-dynamics workflows. It reads the files a run already produced — `prmtop`, `mdin`, `mdout`, `mdcrd`, `inpcrd` — reconstructs the simulation behind them as a `Simulation → Phase → Step` document, validates that the steps actually connect, and exports a machine-readable record you can drop into a methods section or a downstream pipeline.**
