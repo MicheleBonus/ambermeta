@@ -6,6 +6,7 @@
 | `ambermeta_logo_dark.svg` | logo on dark backgrounds ("Meta" and the M in light gray) |
 | `ambermeta_icon.svg` | the drop alone: icon, favicon, avatar |
 | `ambermeta_logo.png` | transparent PNG of the logo, 2466 px wide |
+| `source/` | editable sources: the logo with live text, the font, the original design, and the scripts that redrew it |
 
 The drop of amber, the resin that preserves things unchanged, holds a small run chain; the M is drawn
 as a protocol graph of five nodes.
