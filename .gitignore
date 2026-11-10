@@ -78,3 +78,6 @@ dmypy.json
 
 # Superpowers visual brainstorm (local mockups & UI state)
 .superpowers/
+
+# ux-audit skill output (reports and screenshots stay local)
+.claude/ux-audit/
