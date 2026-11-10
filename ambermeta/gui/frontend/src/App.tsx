@@ -25,7 +25,7 @@ import { FilePicker } from "@/components/FilePicker/FilePicker";
 import { FilePanel } from "@/components/FilePanel/FilePanel";
 import { Canvas } from "@/components/Canvas/Canvas";
 import { ProposalStrip } from "@/components/Canvas/ProposalStrip";
-import { SuggestionsContext } from "@/components/Suggestions/suggestionsContext";
+import { SuggestionsContext, SuggestionDismissalProvider } from "@/components/Suggestions/suggestionsContext";
 import { Inspector } from "@/components/Inspector/Inspector";
 import { resolveDrop, type SlotKind } from "@/components/Canvas/resolveDrop";
 import { canvasCollisionDetection } from "@/components/Canvas/dropSpecificity";
@@ -251,6 +251,7 @@ export default function App() {
 
   return (
     <SelectionProvider>
+      <SuggestionDismissalProvider>
       <SuggestionsContext.Provider value={suggestions}>
         <DndContext
           sensors={sensors}
@@ -307,6 +308,7 @@ export default function App() {
           <Toaster />
         </DndContext>
       </SuggestionsContext.Provider>
+      </SuggestionDismissalProvider>
     </SelectionProvider>
   );
 }

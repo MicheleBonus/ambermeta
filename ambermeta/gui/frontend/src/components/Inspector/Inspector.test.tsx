@@ -6,6 +6,7 @@ import { QueryClientProvider } from "@tanstack/react-query";
 import { http, HttpResponse } from "msw";
 import { server, emptyDocument } from "@/test/server";
 import { queryClient } from "@/api/queryClient";
+import { SuggestionDismissalProvider } from "@/components/Suggestions/suggestionsContext";
 import { SelectionProvider, useSelection } from "@/state/selection";
 import { Inspector } from "./Inspector";
 
@@ -22,8 +23,10 @@ function setup(path = FILE_PATH) {
   render(
     <QueryClientProvider client={queryClient}>
       <SelectionProvider>
-        <SelectFile path={path} />
-        <Inspector />
+        <SuggestionDismissalProvider>
+          <SelectFile path={path} />
+          <Inspector />
+        </SuggestionDismissalProvider>
       </SelectionProvider>
     </QueryClientProvider>
   );

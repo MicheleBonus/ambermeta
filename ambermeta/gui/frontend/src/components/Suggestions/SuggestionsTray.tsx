@@ -1,16 +1,29 @@
-import { useState } from "react";
-import { useSuggestions } from "./suggestionsContext";
-import { useUndo } from "@/api/hooks";
+import { useDismissal, useSuggestions } from "./suggestionsContext";
+import { useSelection, type SelKind } from "@/state/selection";
 import { Button } from "@/components/common";
 import type { Suggestion } from "@/types";
 
-function hasAction(s: Suggestion, name: string): boolean {
-  return s.actions.some((a) => a.toLowerCase() === name.toLowerCase());
+/** Where a card's subject is on the canvas, when it is about one step or one phase. */
+function subjectOf(s: Suggestion): { kind: SelKind; id: string; label: string } | null {
+  if (s.step_id) return { kind: "step", id: s.step_id, label: "Show step" };
+  if (s.phase_id) return { kind: "phase", id: s.phase_id, label: "Show phase" };
+  return null;
 }
 
-function SuggestionCard({ s, onDismiss }: { s: Suggestion; onDismiss: (id: string) => void }) {
-  const undo = useUndo();
-  const needsYou = s.severity === "needs_you";
+/** A card offers what the GUI does with it, and nothing else.
+ *
+ *  Accept, Adjust and Ignore all used to hide the card: "Accept" on a physics finding
+ *  read as resolving it while `validate --strict` still failed on it. The server's
+ *  `actions` name what could be done about a finding; the ones the GUI performs are
+ *  showing its subject (the server's "Investigate") and hiding the card.
+ *
+ *  Applied cards had an Undo that called the history undo. They describe the document as
+ *  it stands, after every validate, so that Undo reversed whichever edit came last -- a
+ *  rename made after Discover, not the inference on the card. Undo stays in the top bar
+ *  and on Ctrl+Z, where it says what it does. */
+function SuggestionCard({ s, onDismiss }: { s: Suggestion; onDismiss: (s: Suggestion) => void }) {
+  const { select } = useSelection();
+  const subject = subjectOf(s);
 
   return (
     <div
@@ -20,20 +33,11 @@ function SuggestionCard({ s, onDismiss }: { s: Suggestion; onDismiss: (id: strin
       <div className="text-sm font-medium text-ink">{s.title}</div>
       <div className="text-xs text-ink-muted font-mono">{s.evidence}</div>
       <div className="flex gap-2 pt-1">
-        {needsYou ? (
-          <>
-            <Button variant="primary" onClick={() => onDismiss(s.id)}>Accept</Button>
-            <Button variant="ghost" onClick={() => onDismiss(s.id)}>Adjust</Button>
-            <Button variant="ghost" onClick={() => onDismiss(s.id)}>Ignore</Button>
-          </>
-        ) : (
-          <>
-            <Button variant="ghost" onClick={() => onDismiss(s.id)}>Dismiss</Button>
-            {hasAction(s, "undo") && (
-              <Button variant="ghost" onClick={() => undo.mutate()}>Undo</Button>
-            )}
-          </>
+        {subject && (
+          <Button variant={s.severity === "needs_you" ? "primary" : "ghost"}
+            onClick={() => select(subject.kind, subject.id)}>{subject.label}</Button>
         )}
+        <Button variant="ghost" onClick={() => onDismiss(s)}>Dismiss</Button>
       </div>
     </div>
   );
@@ -41,10 +45,9 @@ function SuggestionCard({ s, onDismiss }: { s: Suggestion; onDismiss: (id: strin
 
 export function SuggestionsTray() {
   const suggestions = useSuggestions();
-  const [dismissed, setDismissed] = useState<Set<string>>(new Set());
-  const dismiss = (id: string) => setDismissed((prev) => new Set(prev).add(id));
+  const { isDismissed, dismiss } = useDismissal();
 
-  const visible = suggestions.filter((s) => !dismissed.has(s.id));
+  const visible = suggestions.filter((s) => !isDismissed(s));
   const needsYou = visible.filter((s) => s.severity === "needs_you");
   const applied = visible.filter((s) => s.severity !== "needs_you");
 
