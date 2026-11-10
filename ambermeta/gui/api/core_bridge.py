@@ -969,7 +969,8 @@ def discover_draft(base_directory, recursive=True, pattern=None, apply_tags=True
     from ambermeta.topology_pool import classify_topology_pool, implies_hmr
     from ambermeta.coords import sniff_coordinate_kind
     from ambermeta.protocol import (
-        smart_group_files, _coords_are_run_output, _run_stems, _looks_queued)
+        smart_group_files, _coords_are_run_output, _run_stems, _looks_queued,
+        collision_notes)
     from ambermeta.parsers import MdinParser
     from ambermeta.mdout_header import read_mdout_header
     import uuid
@@ -1149,6 +1150,8 @@ def discover_draft(base_directory, recursive=True, pattern=None, apply_tags=True
     warnings = []
     if len(sim.topologies) > 1:
         warnings.append(f"{len(sim.topologies)} topologies found; confirm normal vs HMR.")
+    for stem in sorted(grouped):
+        warnings.extend(collision_notes(stem, grouped[stem]))
 
     # The proposal is built from `sim` itself (not from `tags` directly) so discover_draft
     # and `POST /steps/infer-lineages` share one implementation of what a proposal IS —

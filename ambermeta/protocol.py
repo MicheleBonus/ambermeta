@@ -2386,6 +2386,24 @@ def auto_detect_restart_chain(
     return restart_mapping
 
 
+def collision_notes(stem: str, kinds: Dict[str, str]) -> List[str]:
+    """One note per kind for which `smart_group_files` passed over a file of `stem`.
+
+    Two files of one kind under one name (`prod.mdcrd` beside `prod.nc`, `system.parm7`
+    beside `system.prmtop`) compete for one slot; the first in sorted order is read. Not
+    INFO, because the file passed over may be the one that matters (a NetCDF trajectory
+    with frame times, beside an ASCII one with none), and nothing else names it. Shared by
+    the `plan --recursive` scan and Discover, so both say it the same way.
+    """
+    notes = []
+    for kind in ("prmtop", "mdin", "mdout", "mdcrd", "inpcrd"):
+        skipped = kinds.get(f"_collision_{kind}")
+        if skipped and kinds.get(kind):
+            notes.append(f"{stem} has more than one {kind} file: read "
+                         f"{os.path.basename(kinds[kind])}; not read: {skipped}.")
+    return notes
+
+
 def smart_group_files(
     directory: str,
     pattern: Optional[str] = None,
@@ -2476,8 +2494,11 @@ def smart_group_files(
         group = grouped.setdefault(stem, {})
         if kind in group:
             # Same stem + same kind (e.g. prod.nc and prod.mdcrd): keep the first
-            # (sorted) deterministically and record the collision.
-            group.setdefault(f"_collision_{kind}", os.path.basename(full_path))
+            # (sorted) deterministically and record every file passed over, which the
+            # stage builder below turns into a note on the run.
+            key = f"_collision_{kind}"
+            skipped = os.path.basename(full_path)
+            group[key] = f"{group[key]}, {skipped}" if key in group else skipped
             continue
         group[kind] = full_path
 
@@ -2722,6 +2743,8 @@ def auto_discover(
             stage.validation.append(
                 f"INFO: Part of sequence '{seq_base}' (item {int(seq_idx)+1} of {seq_len})"
             )
+
+        stage.validation.extend(collision_notes(stem, kinds))
 
         if "prmtop" in file_kinds:
             stage.prmtop = _safe_parse(PrmtopParser, file_kinds["prmtop"], "prmtop", stage, strict=strict)
