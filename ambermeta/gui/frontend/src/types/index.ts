@@ -16,8 +16,12 @@ export interface StepModel {
   expected_gap_ps: number | null; gap_tolerance_ps: number | null; notes: string[];
 }
 export interface PhaseModel { id: string; name: string; role: StageRole; steps: StepModel[]; }
+/** A finding the user settled: its exact text (`findingText`) and why it stands. */
+export interface Acknowledgement { finding: string; note: string; }
 export interface SimulationModel {
   version: number; topologies: TopologyModel[]; starting_structure: string | null; phases: PhaseModel[];
+  /** Kept in the manifest; absent from a document nobody has reviewed. */
+  acknowledged?: Acknowledgement[];
 }
 export interface RuntimeSettings {
   auto_link_restarts: boolean; strict_validation: boolean; allow_gaps: boolean; use_relative_paths: boolean;
@@ -42,6 +46,8 @@ export interface Suggestion {
   step_id?: string; phase_id?: string; base?: string; missing?: number[];
   /** missing_run: the lineage the finding is scoped to, null for the untagged bucket. */
   lineage?: string | null;
+  /** The manifest's note, when it acknowledges this finding. */
+  acknowledged?: string | null;
 }
 export interface MissingFile { kind: string; path: string; }
 export interface StageIssue {
@@ -60,6 +66,8 @@ export interface CoherenceFinding {
   severity: "error" | "warning" | "info";
   kind: string;
   message: string;
+  /** The manifest's note, when it acknowledges this warning. */
+  acknowledged?: string | null;
 }
 export interface ValidationReport {
   ok: boolean; totals: Record<string, number>;
@@ -67,6 +75,9 @@ export interface ValidationReport {
   coherence: CoherenceFinding[];
   protocol_issues: string[];
   stage_issues: StageIssue[]; suggestions: Suggestion[];
+  /** The manifest's acknowledgements that matched a finding, and those that matched none. */
+  acknowledged?: Acknowledgement[];
+  stale_acknowledgements?: Acknowledgement[];
 }
 // --- lineage proposal: what discovery inferred, never what it wrote (P2.2) ---
 

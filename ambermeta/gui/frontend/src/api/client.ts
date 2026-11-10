@@ -73,6 +73,8 @@ export const api = {
   updateTopology: (id: string, b: UpdateTopology) => put<DocumentResponse>(`/topologies/${id}`, b),
   removeTopology: (id: string) => del<DocumentResponse>(`/topologies/${id}`),
   setStartingStructure: (path: string | null) => put<DocumentResponse>("/simulation/starting-structure", { path }),
+  acknowledge: (a: { finding: string; note: string }) => post<DocumentResponse>("/acknowledged", a),
+  unacknowledge: (finding: string) => post<DocumentResponse>("/acknowledged/remove", { finding }),
 
   createPhase: (b: PhaseCreate) => post<DocumentResponse>("/phases", b),
   updatePhase: (id: string, b: PhaseUpdate) => put<DocumentResponse>(`/phases/${id}`, b),

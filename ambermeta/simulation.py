@@ -75,11 +75,24 @@ class Phase:
 
 
 @dataclass
+class Acknowledgement:
+    """A finding the user has looked at, and why it stands.
+
+    `finding` is the finding's exact text, the `title: evidence` line `validate` prints
+    (`ambermeta.acknowledgements.finding_text`), so it can be copied from the terminal into
+    the manifest. A finding whose text changes is a new finding and shows again.
+    """
+    finding: str
+    note: str
+
+
+@dataclass
 class Simulation:
     version: int = 2
     topologies: List[Topology] = field(default_factory=list)
     starting_structure: Optional[str] = None
     phases: List[Phase] = field(default_factory=list)
+    acknowledged: List[Acknowledgement] = field(default_factory=list)
 
 
 def _step_payload(step: Step, phase_id: str, order: int) -> Dict[str, Any]:
@@ -108,7 +121,7 @@ def _step_payload(step: Step, phase_id: str, order: int) -> Dict[str, Any]:
 
 
 def simulation_to_payload(sim: Simulation) -> Dict[str, Any]:
-    return {
+    payload = {
         "version": sim.version,
         "simulation": {
             "topologies": [{"id": t.id, "path": t.path, "kind": t.kind} for t in sim.topologies],
@@ -123,6 +136,36 @@ def simulation_to_payload(sim: Simulation) -> Dict[str, Any]:
             for p in sim.phases for j, s in enumerate(p.steps)
         ],
     }
+    # Emitted only when there is one, like `gaps`: a document nobody has reviewed keeps the
+    # exact shape it had before acknowledgements existed.
+    if sim.acknowledged:
+        payload["acknowledged"] = [{"finding": a.finding, "note": a.note}
+                                   for a in sim.acknowledged]
+    return payload
+
+
+def _acknowledgements(raw: Any) -> List[Acknowledgement]:
+    """The manifest's `acknowledged` list, refused entry by entry when it is malformed.
+
+    Refused rather than skipped: an acknowledgement read as nothing would bring its finding
+    back with no word about the note the user wrote, and one without a note is a dismissal,
+    which is what this list exists to replace.
+    """
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        raise AmberMetaError("acknowledged must be a list of {finding, note} entries.")
+    out = []
+    for i, entry in enumerate(raw, start=1):
+        finding = entry.get("finding") if isinstance(entry, dict) else None
+        if not isinstance(finding, str) or not finding.strip():
+            raise AmberMetaError(f"acknowledged entry {i} names no finding.")
+        note = entry.get("note")
+        if not isinstance(note, str) or not note.strip():
+            raise AmberMetaError(
+                f"acknowledged entry {i} ({finding!r}) needs a note saying why it stands.")
+        out.append(Acknowledgement(finding=finding, note=note.strip()))
+    return out
 
 
 def payload_to_simulation(payload: Dict[str, Any]) -> Simulation:
@@ -176,6 +219,7 @@ def payload_to_simulation(payload: Dict[str, Any]) -> Simulation:
         phase = phases_by_id.get(s.get("phase"))
         if phase is not None:
             phase.steps.append(step)
+    sim.acknowledged = _acknowledgements(payload.get("acknowledged"))
     _adopt_legacy_restart_paths(sim)
     return sim
 

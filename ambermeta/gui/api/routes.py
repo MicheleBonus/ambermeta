@@ -20,6 +20,7 @@ from .schemas import (
     ValidationReport,
     FileMetadata, FileInfo, RawFile, Suggestion, PlanRequest, PlanResult,
     LineageProposal, InferLineagesRequest, LineageProposalResponse,
+    AcknowledgeRequest, RemoveAcknowledgement,
 )
 
 router = APIRouter()
@@ -173,6 +174,10 @@ def discover_document(req: DiscoverRequest) -> DiscoverResult:
     # a loop of `PATCH /steps/lineage`-style writes would push one snapshot per tag and
     # evict the very Discover result being annotated (`set_lineages`' docstring records
     # this same trap for the bulk-tag route).
+    # The user's acknowledgements are carried the same way: they name findings by text,
+    # so they apply to the fresh scan as they did to the old one, and any that no longer
+    # match are reported by the next Validate as stale rather than lost here.
+    out["simulation"].acknowledged = list(sim0.acknowledged)
     previous = {step.name: step.lineage for _, step in iter_steps(sim0) if step.lineage}
     for _, step in iter_steps(out["simulation"]):
         tag = previous.pop(step.name, None)
@@ -489,6 +494,32 @@ def set_starting_structure(req: SetStartingStructure) -> DocumentResponse:
     store = get_store()
     req.path = _stored_path(req.path, store.get().base_directory)
     store.set_starting_structure(req.path)
+    return store.to_response()
+
+
+@router.post("/acknowledged", response_model=DocumentResponse)
+def acknowledge_finding(req: AcknowledgeRequest) -> DocumentResponse:
+    """Settle a finding with a note, kept in the manifest (`ambermeta.acknowledgements`).
+
+    A note is required: without one this is the dismissal it replaces, which records
+    nothing and explains nothing.
+    """
+    if not req.finding.strip():
+        raise HTTPException(status_code=400, detail="Name the finding to acknowledge.")
+    if not req.note.strip():
+        raise HTTPException(status_code=400,
+                            detail="An acknowledgement needs a note saying why the finding "
+                                   "stands.")
+    store = get_store()
+    store.acknowledge(req.finding, req.note.strip())
+    return store.to_response()
+
+
+@router.post("/acknowledged/remove", response_model=DocumentResponse)
+def remove_acknowledgement(req: RemoveAcknowledgement) -> DocumentResponse:
+    """Reopen a finding."""
+    store = get_store()
+    store.unacknowledge(req.finding)
     return store.to_response()
 
 

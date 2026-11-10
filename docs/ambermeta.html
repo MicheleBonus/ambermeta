@@ -319,6 +319,7 @@ Validation: OK, 5 findings to review</span></code></pre>
 <tr><td><code>--stats-csv FILE</code></td><td>Per-stage statistics, one row per stage</td></tr>
 </tbody>
 </table>
+<aside class="warn"><strong>Settling a finding.</strong> A finding you have reviewed can be acknowledged in the manifest with a note (<code>acknowledged: [{finding, note}]</code>, the finding named by the exact line <code>validate</code> prints). It is then listed apart with its note, no longer counts for <code>--strict</code>, and is carried into <code>summary.json</code> and the methods summary. In the GUI, use <strong>Acknowledge…</strong> on the card.</aside>
 <aside class="warn"><strong>One simulation per folder.</strong> A folder whose runs report different atom counts holds several systems: a restart written by a run of one size cannot be read by a run of another. <code>discover</code>, <code>plan --recursive</code> and the GUI's Discover refuse such a folder (exit <code>1</code>) and name each system; run each system's folder on its own, or pass <code>--as-one-simulation</code> for a false alarm. A manifest is never checked this way.</aside>
 <aside class="warn"><strong>Fault-tolerant by default.</strong> A missing/malformed/unreadable file is skipped, the error is recorded against its stage, and the run exits <code>0</code>. <code>--strict</code> makes the first bad file a hard error (clean message, exit <code>1</code>, no traceback), and also exits <code>1</code> when any finding is reported. A stage keeps every file that <em>did</em> parse.</aside>
 

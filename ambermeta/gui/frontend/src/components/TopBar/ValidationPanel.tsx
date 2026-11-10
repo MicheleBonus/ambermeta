@@ -32,18 +32,32 @@ export function ValidationPanel(
   // and a run's own findings. `continuity_gap` is left out because each one is also in
   // `protocol_issues`, which is counted above. Without these the badge stayed green for a
   // document the CLI exits 1 on.
+  // An acknowledged finding is settled: the manifest says why it stands, so it is listed
+  // with its note below and counted apart, never as a note to review.
   const findingCount = (report?.suggestions ?? []).filter(
-    (s) => s.severity === "needs_you" && FINDING_KINDS.has(s.kind),
+    (s) => s.severity === "needs_you" && FINDING_KINDS.has(s.kind) && !s.acknowledged,
   ).length;
+  // A continuity gap is both a card and a protocol note, with the same text, so settling
+  // the card settles the note.
+  const settledText = new Set((report?.suggestions ?? [])
+    .filter((s) => s.acknowledged).map((s) => s.evidence));
+  const openText = new Set((report?.suggestions ?? [])
+    .filter((s) => s.severity === "needs_you" && FINDING_KINDS.has(s.kind) && !s.acknowledged)
+    .map((s) => s.evidence));
+  const openIssues = (report?.protocol_issues ?? []).filter((p) => !settledText.has(p));
+  const acknowledged = report?.acknowledged ?? [];
+  const stale = report?.stale_acknowledgements ?? [];
   // The counted findings no step card shows: a sequence hole belongs to no step, so the
   // badge counted it while nothing in the panel listed it. A run's own findings are on
   // their step's card already (`stage_issues`), so only the unscoped ones are listed here.
   const unscopedFindings = (report?.suggestions ?? []).filter(
-    (s) => s.severity === "needs_you" && FINDING_KINDS.has(s.kind) && !s.step_id,
+    (s) => s.severity === "needs_you" && FINDING_KINDS.has(s.kind) && !s.step_id
+      && !s.acknowledged,
   );
-  const noteCount = (report?.protocol_issues.length ?? 0)
-    + coherence.filter((f) => f.severity === "warning").length
+  const noteCount = openIssues.length
+    + coherence.filter((f) => f.severity === "warning" && !f.acknowledged).length
     + findingCount;
+  const settled = acknowledged.length ? `, ${acknowledged.length} acknowledged` : "";
 
   // A category error -- members holding different atom counts, or minimisation mixed with
   // dynamics -- is not attached to any one stage, so the old ladder (which read only
@@ -55,11 +69,21 @@ export function ValidationPanel(
     } else if (stageErrors > 0) {
       status = { tone: "error", label: `${stageErrors} stage(s) with errors` };
     } else if (noteCount > 0) {
-      status = { tone: "warning", label: `Valid, with ${noteCount} note(s)` };
+      status = { tone: "warning", label: `Valid, with ${noteCount} note(s)${settled}` };
     } else {
-      status = { tone: "valid", label: "All checks passed" };
+      status = { tone: "valid", label: `All checks passed${settled}` };
     }
   }
+
+  // A run's own finding reaches its step as the bare message, and its card as
+  // `<step name>: <message>`; a continuity note is the same text in both.
+  const isSettled = (name: string, warning: string) =>
+    settledText.has(`${name}: ${warning}`) || settledText.has(warning);
+  // Only a finding marks a step 'check'. A stage warning that no finding carries ("No atom
+  // counts available") is a remark: nothing counts it, so badging it contradicted the
+  // panel's own "All checks passed".
+  const isOpenFinding = (name: string, warning: string) =>
+    openText.has(`${name}: ${warning}`) || openText.has(warning);
 
   const toneOf = (severity: string) =>
     severity === "error" ? "text-error" : severity === "warning" ? "text-warning" : "text-ink-muted";
@@ -79,17 +103,41 @@ export function ValidationPanel(
         <section className="mb-3">
           <h3 className="text-sm font-semibold mb-1">Lineages</h3>
           <ul className="text-sm space-y-0.5">
-            {coherence.map((f, i) => (
+            {coherence.filter((f) => !f.acknowledged).map((f, i) => (
               <li key={i} className={toneOf(f.severity)}>{f.message}</li>
             ))}
           </ul>
         </section>
       ) : null}
-      {report?.protocol_issues.length ? (
+      {openIssues.length ? (
         <section className="mb-3">
           <h3 className="text-sm font-semibold mb-1">Protocol notes</h3>
           <ul className="text-sm text-warning space-y-0.5">
-            {report.protocol_issues.map((p, i) => <li key={i}>{p}</li>)}
+            {openIssues.map((p, i) => <li key={i}>{p}</li>)}
+          </ul>
+        </section>
+      ) : null}
+      {acknowledged.length ? (
+        <section className="mb-3">
+          <h3 className="text-sm font-semibold mb-1">Acknowledged</h3>
+          <ul className="text-sm space-y-1">
+            {acknowledged.map((a, i) => (
+              <li key={i}>
+                <div className="text-ink-secondary">{a.finding}</div>
+                <div className="text-ink-muted text-xs">Note: {a.note}</div>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
+      {stale.length ? (
+        <section className="mb-3">
+          <h3 className="text-sm font-semibold mb-1">Acknowledged, no longer found</h3>
+          <p className="text-xs text-ink-muted mb-1">
+            The manifest acknowledges these, but no finding reads this way any more.
+          </p>
+          <ul className="text-sm text-ink-secondary space-y-0.5">
+            {stale.map((a, i) => <li key={i}>{a.finding}</li>)}
           </ul>
         </section>
       ) : null}
@@ -109,12 +157,15 @@ export function ValidationPanel(
               {/* "ok" is about the step's files; a step that carries a finding is valid
                   and still worth a look, so it is not shown green. */}
               {!s.ok ? <Badge tone="error">error</Badge>
-                : s.warnings.length ? <Badge tone="warning">check</Badge>
+                : s.warnings.some((w) => isOpenFinding(s.name, w)) ? <Badge tone="warning">check</Badge>
                 : <Badge tone="valid">ok</Badge>}
               <span>{s.name}</span>
             </button>
             {s.errors.map((e, i) => <p key={`e${i}`} className="text-error text-sm">{e}</p>)}
-            {s.warnings.map((w, i) => <p key={`w${i}`} className="text-warning text-sm">{w}</p>)}
+            {s.warnings.map((w, i) => isSettled(s.name, w)
+              ? <p key={`w${i}`} className="text-ink-muted text-sm">{w} (acknowledged)</p>
+              : <p key={`w${i}`} className={`${isOpenFinding(s.name, w) ? "text-warning"
+                  : "text-ink-secondary"} text-sm`}>{w}</p>)}
             {s.info.map((n, i) => <p key={`i${i}`} className="text-ink-muted text-sm">{n}</p>)}
           </div>
         ))}

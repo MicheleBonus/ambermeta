@@ -183,7 +183,7 @@ class DocumentStore:
         raise KeyError(topology_id)
 
     def _sim_to_model(self):
-        from .schemas import (SimulationModel, PhaseModel, StepModel,
+        from .schemas import (AcknowledgementModel, SimulationModel, PhaseModel, StepModel,
                               TopologyModel, InputCoordsModel)
         sim = self._doc.simulation
         return SimulationModel(
@@ -204,6 +204,8 @@ class DocumentStore:
                     gap_tolerance_ps=s.gap_tolerance_ps, notes=list(s.notes),
                 ) for s in p.steps
             ]) for p in sim.phases],
+            acknowledged=[AcknowledgementModel(finding=a.finding, note=a.note)
+                          for a in sim.acknowledged],
         )
 
     # -- reads --------------------------------------------------------------
@@ -344,6 +346,28 @@ class DocumentStore:
                 for s in p.steps:
                     if s.topology == topology_id:
                         s.topology = None
+            self._doc.dirty = True
+
+    def acknowledge(self, finding: str, note: str) -> None:
+        """Settle `finding` with `note`; a second note for the same finding replaces it."""
+        from ambermeta.simulation import Acknowledgement
+        with self.lock:
+            self._snapshot()
+            sim = self._doc.simulation
+            for entry in sim.acknowledged:
+                if entry.finding == finding:
+                    entry.note = note
+                    break
+            else:
+                sim.acknowledged.append(Acknowledgement(finding=finding, note=note))
+            self._doc.dirty = True
+
+    def unacknowledge(self, finding: str) -> None:
+        """Reopen `finding`: drop its acknowledgement."""
+        with self.lock:
+            self._snapshot()
+            sim = self._doc.simulation
+            sim.acknowledged = [a for a in sim.acknowledged if a.finding != finding]
             self._doc.dirty = True
 
     def set_starting_structure(self, path: Optional[str]) -> None:

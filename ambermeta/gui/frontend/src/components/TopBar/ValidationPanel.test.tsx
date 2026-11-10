@@ -165,12 +165,16 @@ const stage = (over: Partial<StageIssue>): StageIssue => ({
 });
 
 it("marks a step with a finding 'check', not a green 'ok'", async () => {
-  // The walk-through found a green "ok" badge sitting right above an orange finding.
-  await show(report({ stage_issues: [
-    stage({ warnings: ["This step declares prod_0001.restrt as its input coordinates, "
-                       + "but its mdout records prod_0002.restrt."] }),
-    stage({ name: "prod_0004" }),
-  ] }));
+  // The walk-through found a green "ok" badge sitting right above an orange finding. The
+  // server sends a run's finding twice, as the step's warning and as a card; it is the
+  // card that makes it a finding.
+  const message = "This step declares prod_0001.restrt as its input coordinates, "
+    + "but its mdout records prod_0002.restrt.";
+  await show(report({
+    stage_issues: [stage({ warnings: [message] }), stage({ name: "prod_0004" })],
+    suggestions: [{ ...finding("input_mismatch", `prod_0003: ${message}`),
+                    title: "Declared input differs from the recorded one", step_id: "st3" }],
+  }));
   const flagged = await screen.findByRole("button", { name: /prod_0003/ });
   expect(within(flagged).getByText("check")).toBeInTheDocument();
   const clean = screen.getByRole("button", { name: /prod_0004/ });
@@ -184,4 +188,64 @@ it("states simulated time in ns", async () => {
   }));
   await waitFor(() => expect(screen.getByText(/41\.1 ns total/)).toBeInTheDocument());
   expect(screen.getByText(/2 run\(s\) · 20 ns/)).toBeInTheDocument();
+});
+
+// --- acknowledged findings ------------------------------------------------------------
+
+it("does not count an acknowledged finding, and lists it with its note", async () => {
+  const hole = { ...finding("missing_run", "The prod runs here are numbered 1, 3."),
+                 title: "prod run 2 is missing", acknowledged: "not deposited" };
+  await show(report({
+    suggestions: [hole],
+    acknowledged: [{ finding: `${hole.title}: ${hole.evidence}`, note: "not deposited" }],
+  }));
+  await waitFor(() =>
+    expect(screen.getByText("All checks passed, 1 acknowledged")).toBeInTheDocument());
+  expect(screen.getByText(/not deposited/)).toBeInTheDocument();
+});
+
+it("an acknowledged continuity note is not counted through the protocol notes either", async () => {
+  // A continuity gap is both a card and a protocol note, with the same text.
+  const gap = { ...finding("continuity_gap", "Gap of 20 ps before prod_0003."),
+                title: "Continuity note", step_id: "st3", acknowledged: "queue restart" };
+  await show(report({
+    suggestions: [gap],
+    protocol_issues: [gap.evidence],
+    acknowledged: [{ finding: `${gap.title}: ${gap.evidence}`, note: "queue restart" }],
+  }));
+  await waitFor(() =>
+    expect(screen.getByText("All checks passed, 1 acknowledged")).toBeInTheDocument());
+});
+
+it("names an acknowledgement that no longer matches any finding", async () => {
+  await show(report({
+    stale_acknowledgements: [{ finding: "prod run 9 is missing: gone", note: "old" }],
+  }));
+  expect(await screen.findByText("Acknowledged, no longer found")).toBeInTheDocument();
+  expect(screen.getByText("prod run 9 is missing: gone")).toBeInTheDocument();
+});
+
+it("a step whose only finding is acknowledged is ok again, and says so", async () => {
+  const message = "Time step of 4 fs, but the topology has standard hydrogen masses.";
+  await show(report({
+    stage_issues: [stage({ name: "prod_0001", warnings: [message] })],
+    suggestions: [{ ...finding("step_check", `prod_0001: ${message}`), title: "Run check",
+                    step_id: "st1", acknowledged: "HMR topology not deposited" }],
+    acknowledged: [{ finding: `Run check: prod_0001: ${message}`, note: "HMR topology not deposited" }],
+  }));
+  const row = await screen.findByRole("button", { name: /prod_0001/ });
+  expect(within(row).getByText("ok")).toBeInTheDocument();
+  expect(screen.getByText(`${message} (acknowledged)`)).toBeInTheDocument();
+});
+
+it("a remark that is not a finding does not mark its step 'check'", async () => {
+  // "No atom counts available" is a stage warning but no finding: nothing counts it, so a
+  // 'check' badge beside "All checks passed" contradicted the panel's own verdict.
+  await show(report({
+    stage_issues: [stage({ name: "prod_0001",
+                            warnings: ["No atom counts available for validation."] })],
+  }));
+  const row = await screen.findByRole("button", { name: /prod_0001/ });
+  expect(within(row).getByText("ok")).toBeInTheDocument();
+  expect(screen.getByText("All checks passed")).toBeInTheDocument();
 });

@@ -66,6 +66,10 @@ export const useReorderSteps = () => docMutation((a: { phaseId: string; ids: str
 
 export const useAssign = () => docMutation((b: AssignRequest) => api.assign(b));
 
+export const useAcknowledge = () =>
+  docMutation((a: { finding: string; note: string }) => api.acknowledge(a));
+export const useUnacknowledge = () => docMutation((finding: string) => api.unacknowledge(finding));
+
 export const useDiscover = () =>
   useMutation({
     mutationFn: (a: DiscoverRequest) => api.discover(a),
