@@ -522,7 +522,10 @@ def _export_command(args: argparse.Namespace) -> int:
         print(Colors.error(f"ERROR: Manifest not found: {manifest}"), file=sys.stderr)
         return 1
     try:
-        sim = load_simulation(manifest)
+        # Unexpanded: export rewrites the manifest itself, and expanding `$MYDATA` here
+        # wrote this machine's absolute paths into a file meant to travel. Expansion is
+        # for reading the run files a manifest names, which export never does.
+        sim = load_simulation(manifest, expand_env=False)
     except (IOError, OSError, ValueError, RuntimeError, AmberMetaError) as e:
         print(Colors.error(f"ERROR: Failed to load manifest: {e}"), file=sys.stderr)
         return 1
@@ -1287,6 +1290,14 @@ def _init_command(args: argparse.Namespace) -> int:
     """Write a starting v2 (Simulation -> Phase -> Step) manifest template."""
     directory = os.path.abspath(args.directory)
     output_path = os.path.join(directory, args.output)
+
+    if os.path.splitext(args.output)[1].lower() not in (".yaml", ".yml"):
+        # The template is commented YAML, and its comments are the point. Written to a
+        # `.json` name it was a file `validate --manifest` then refused as a JSON syntax
+        # error; any other name is one no manifest reader opens.
+        print(Colors.error(f"ERROR: {args.output}: the template is commented YAML, so "
+                           "name it .yaml or .yml. Nothing was written."), file=sys.stderr)
+        return 1
 
     if os.path.exists(output_path) and not args.force:
         refuse = Colors.error(f"ERROR: {args.output} already exists. "

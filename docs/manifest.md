@@ -373,8 +373,9 @@ steps:
 ```
 
 Disable it with `expand_env=False` on `load_simulation`, or `--no-expand-env` on `ambermeta plan`.
-`ambermeta export`, `ambermeta validate --manifest`, and the GUI load with the default, so expansion is
-always on for them.
+`ambermeta validate --manifest` and the GUI load with the default, so expansion is always on for them.
+`ambermeta export` reads with expansion off, because it rewrites the manifest: a `${VAR}` in the input
+is a `${VAR}` in its output, not the path it stands for on this machine.
 
 ---
 
