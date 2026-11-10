@@ -164,8 +164,9 @@ def discover_document(req: DiscoverRequest) -> DiscoverResult:
     # silently discarded every tag the user had declared. Recoverable with Ctrl+Z because
     # reset_history=False, but nothing in the UI said so.
     #
-    # Matched on Step.name, the path-prefixed run stem: step ids are freshly generated on
-    # every scan (core_bridge.discover_draft mints a new uuid4 per step), so they cannot
+    # Matched on Step.name, the path-prefixed run stem. Discover's ids are now derived from
+    # the name (core_bridge._readable_id), but a step the user added or renamed carries an
+    # id that a fresh scan cannot reproduce, so they cannot
     # identify anything across one. Re-applied to the fresh scan's OWN Simulation object,
     # in memory, before it is ever handed to `store.replace` -- so the whole operation
     # still costs the single undo frame Discover always cost. Doing this afterwards through

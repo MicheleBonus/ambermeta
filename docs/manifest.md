@@ -282,9 +282,9 @@ Real example — running `discover` on the sample production sequence in
 first two Steps of the `--write`'d manifest:
 
 ```yaml
-- id: 5dd38413
+- id: ntp_prod_0001
   name: ntp_prod_0001
-  phase: 6899ce10
+  phase: production
   order: 0
   topology: top_CH3L1_HUMAN_6NAG
   input_coords:
@@ -294,14 +294,14 @@ first two Steps of the `--write`'d manifest:
   mdcrd: null
   notes: []
   rst: ntp_prod_0001.rst
-- id: a1ed8c23
+- id: ntp_prod_0002
   name: ntp_prod_0002
-  phase: 6899ce10
+  phase: production
   order: 1
   topology: top_CH3L1_HUMAN_6NAG
   input_coords:
     source: step
-    ref: 5dd38413
+    ref: ntp_prod_0001
   mdin: ntp_prod_0002.mdin
   mdout: ntp_prod_0002.mdout
   mdcrd: null
@@ -405,6 +405,13 @@ is shared, not exclusive to the draft: `plan --recursive` applies the same rule 
 continuity checks stay inside each member too. Its restart auto-detection does as well, with one gap worth
 knowing: a leftover restart with no `mdin`/`mdout` beside it is not a run, so it is untagged, and an untagged
 producer is not refused to anybody — that one file stays open to every member.
+
+A drafted manifest is meant to be read and edited. Its ids are the names: a step's id is its name with
+anything but letters, digits, `_`, `.` and `-` turned into `_` (`equil/01_min` becomes `equil_01_min`), a
+phase's id is its name in lower case (`production`), and a clash gets `_2`. So `ref: ntp_prod_0002` says
+which run a step continues from, and scanning the same directory twice gives the same file. A YAML draft
+also starts with comments listing what needs you and what `discover` guessed; nothing reads them, and
+re-saving the manifest drops them. Ids you write yourself can be any string.
 
 `init` is simpler: it always writes the same fixed, commented v2 YAML template — a starting point you fill
 in by hand rather than a draft of what's on disk. It does not scan anything; its positional `directory`

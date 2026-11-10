@@ -288,7 +288,8 @@ def _input_from(sim, step) -> str:
 def _input_source_label(sim, step) -> str:
     """Where this step's coordinates come from, in words.
 
-    Names the step it continues from, not that step's id: ids are uuid4 hex slices, so
+    Names the step it continues from, not that step's id: a GUI-made step's id is a uuid4
+    hex slice (discover's are the names, `core_bridge._readable_id`), so
     printing the raw ref said the run started from something called "bd573ee9".
     """
     from ambermeta.simulation import iter_steps, resolve_input_coords
@@ -500,6 +501,25 @@ def _report_separate_systems(exc, directory: str, command: str) -> int:
     return 1
 
 
+def _draft_header(suggestions, manifest_name: str) -> str:
+    """What `discover` guessed and what it could not settle, as YAML comments.
+
+    `discover` prints this list and `--write` used to keep none of it, so the manifest
+    beside it carried no trace of what to check. Comments, so no reader sees them; they
+    are gone once the manifest is re-saved (`export`, the GUI's Save), which is the point
+    at which someone has looked at it.
+    """
+    needs = [s for s in suggestions if s.get("severity") != "applied"]
+    guessed = [s for s in suggestions if s.get("severity") == "applied"]
+    lines = ["# Drafted by `ambermeta discover` from the run files. Check what it guessed,",
+             f"# then run: ambermeta validate --manifest {manifest_name}"]
+    for heading, items in (("Needs you:", needs), ("Guessed from the files:", guessed)):
+        if items:
+            lines += ["#", f"# {heading}"]
+            lines += [f"#   - {s.get('title')}" for s in items]
+    return "\n".join(lines) + "\n\n"
+
+
 def _discover_command(args: argparse.Namespace) -> int:
     """Discover-as-draft: scan a directory into a Simulation draft; optionally write v2."""
     from ambermeta.gui.api.core_bridge import discover_draft
@@ -564,6 +584,12 @@ def _discover_command(args: argparse.Namespace) -> int:
         rebased = (not _is_within(manifest_dir, directory)
                    and rebase_paths(sim, directory, manifest_dir))
         write_simulation(sim, args.write, fmt)
+        if fmt == "yaml":
+            # JSON has no comments, so only a YAML draft carries the list.
+            with open(args.write, "r", encoding="utf-8") as handle:
+                body = handle.read()
+            with open(args.write, "w", encoding="utf-8") as handle:
+                handle.write(_draft_header(suggestions, os.path.basename(args.write)) + body)
         _out(Colors.success(f"\nWrote v2 draft manifest: {args.write} ({fmt})"))
         if rebased:
             _out(Colors.warning(

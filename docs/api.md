@@ -245,7 +245,7 @@ sim.phases[0].steps[0].input_coords
 
 sim.phases[0].steps[1].input_coords
 # InputCoords(source='step', ref='4a09deaa', path=None)
-#   `ref` is steps[0].id — a uuid4 slice, regenerated on every discover run.
+#   `ref` is steps[0].id: the step's name, `ntp_prod_0001`.
 
 sim.phases[0].steps[0].rst
 # 'ntp_prod_0001.rst'   <- the restart lives on the step that WROTE it

@@ -49,7 +49,10 @@ def test_discover_overwrites_with_force(tmp_path, sample_md_data_dir, capsys):
     rc, _, _ = _run(["discover", str(sample_md_data_dir), "--write", str(target), "--force"], capsys)
 
     assert rc == 0
-    assert target.read_text(encoding="utf-8").startswith("version: 2")
+    text = target.read_text(encoding="utf-8")
+    # Replaced: the old content is gone and a manifest is there (after the draft's
+    # comment header, so not necessarily on the first line).
+    assert "old\n" not in text and "\nversion: 2" in text
 
 
 def test_export_will_not_overwrite_a_file_without_force(tmp_path, sample_md_data_dir, capsys):
