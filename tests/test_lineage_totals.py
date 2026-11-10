@@ -244,7 +244,7 @@ def test_totals_say_how_much_was_equilibration_and_how_much_production(tmp_path,
     assert totals["time_ps_production"] == pytest.approx(60.0)
     assert list(totals)[:4] == ["steps", "time_ps", "time_ps_equilibration",
                                 "time_ps_production"]
-    assert "Simulated time by role (ps): equilibration 3.000; production 60.000" in out
+    assert "Simulated time: 63 ps (equilibration 3 ps; production 60 ps)" in out
 
 
 def test_the_scan_path_prints_the_same_breakdown(tmp_path, capsys):
@@ -252,7 +252,7 @@ def test_the_scan_path_prints_the_same_breakdown(tmp_path, capsys):
     protocol = auto_discover(str(tree), recursive=True)
     assert protocol.totals()["time_ps_production"] == pytest.approx(60.0)
     assert main(["plan", "--recursive", str(tree)]) == 0
-    assert ("Simulated time by role (ps): equilibration 3.000; production 60.000"
+    assert ("Simulated time: 63 ps (equilibration 3 ps; production 60 ps)"
             in capsys.readouterr().out)
 
 
@@ -271,8 +271,9 @@ def test_each_lineage_is_broken_down_by_role(tmp_path, capsys):
     assert lineages["rep3"]["time_ps_production"] == 0.0
     assert main(["validate", "--manifest", str(tree / "manifest.yaml")]) in (0, 1)
     out = capsys.readouterr().out
-    assert "rep1  4 run(s)" in out and "(equilibration 2.000; production 40.000)" in out
-    assert "(equilibration 1.000; production 0.000)" in out
+    assert "rep1  4 run(s), 42 ps (equilibration 2 ps; production 40 ps)" in out
+    # rep3 never reached production: its zero stays beside its siblings' 40 ps.
+    assert "(equilibration 1 ps; production 0 ps)" in out
 
 
 def test_a_single_role_document_gains_no_role_keys(crashed_replica_tree):

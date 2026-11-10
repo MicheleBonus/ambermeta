@@ -88,17 +88,18 @@ Starting structure: ntp_prod_0000.rst
 Phases: 1
 
 Phase: Production [production]
-  - ntp_prod_0001  topology=CH3L1_HUMAN_6NAG.top  input=starting structure  (mdin=ntp_prod_0001.mdin, mdout=ntp_prod_0001.mdout)
-  - ntp_prod_0002  topology=CH3L1_HUMAN_6NAG.top  input=restart of ntp_prod_0001 (ntp_prod_0001.rst)  (mdin=ntp_prod_0002.mdin, mdout=ntp_prod_0002.mdout)
-  - ntp_prod_0003  topology=CH3L1_HUMAN_6NAG.top  input=restart of ntp_prod_0002 (ntp_prod_0002.rst)  (mdin=ntp_prod_0003.mdin, mdout=ntp_prod_0003.mdout)
-  - ntp_prod_0004  topology=CH3L1_HUMAN_6NAG.top  input=restart of ntp_prod_0003 (ntp_prod_0003.rst)  (mdin=ntp_prod_0004.mdin, mdout=ntp_prod_0004.mdout)
-  - ntp_prod_0005  topology=CH3L1_HUMAN_6NAG.top  input=restart of ntp_prod_0004 (ntp_prod_0004.rst)  (mdin=ntp_prod_0005.mdin, mdout=ntp_prod_0005.mdout)
+  - ntp_prod_0001  from the starting structure
+  - ntp_prod_0002  from ntp_prod_0001
+  - ntp_prod_0003  from ntp_prod_0002
+  - ntp_prod_0004  from ntp_prod_0003
+  - ntp_prod_0005  from ntp_prod_0004
 
 Suggestions:
   - [applied] ntp_prod_0000.rst set as the starting structure
   - [applied] Phase roles inferred from file content/names
 
-Wrote v2 draft manifest: tests/data/amber/md_test_files/sim.yaml (yaml)
+Wrote v2 draft manifest: sim.yaml (yaml)
+NOTE: the manifest is not in /abs/path/tests/data/amber/md_test_files, so its file paths are written relative to its own directory (/abs/path), where `validate --manifest` and `plan -m` read them.
 ```
 
 **Inspect a single file in depth:**
@@ -135,6 +136,8 @@ $ ambermeta validate --manifest sim.yaml
 
 Simulation validation
 
+Simulated time: 100 ns
+
 Findings:
   - Run check: ntp_prod_0001: Time step of 4 fs, but the topology has standard hydrogen masses (no hydrogen mass repartitioning); a time step above 2 fs needs repartitioned hydrogen masses.
   - Run check: ntp_prod_0002: Time step of 4 fs, but the topology has standard hydrogen masses (no hydrogen mass repartitioning); a time step above 2 fs needs repartitioned hydrogen masses.
@@ -147,15 +150,17 @@ Validation: OK
 
 The chain is intact, so the verdict is `OK`, but each run is compared with what AMBER recorded, and the sample as bundled ran at `dt = 0.004` ps with a topology whose 32,188 hydrogens all weigh 1.008 amu. A 4-fs time step needs repartitioned hydrogen masses, so either the runs used a different (HMR) topology than the one bundled, or they were integrated at a step their hydrogens do not support. On your own data with an HMR topology this finding does not appear. Findings leave the exit code at `0` by default; `--strict` makes any finding exit `1`, so `--strict` on the untouched sample exits `1`.
 
-**Re-emit the manifest — here, converting it from YAML to JSON:**
+**Write the summary files** (`summary.json`, the methods summary, and per-run statistics) into one folder:
 
 ```text
-$ ambermeta export sim.yaml -o sim.json
-
-Wrote v2 manifest: sim.json (json)
+$ ambermeta plan -m sim.yaml --out results/
+...
+Wrote summary: /abs/path/results/summary.json
+Wrote methods_summary: /abs/path/results/methods_summary.json
+Wrote stats_csv: /abs/path/results/stats.csv
 ```
 
-The full, manifest-driven workflow — editing a manifest by hand, re-validating, and exporting reproducibility artifacts — is in the [CLI reference](docs/cli.md) and the [tutorials](docs/tutorials.md).
+That is the whole path: `discover --write`, read and fix the manifest, `validate --manifest`, then `plan -m ... --out`. `ambermeta --help` lists the same four steps. Editing a manifest by hand, converting it between YAML and JSON (`export`), and each summary file in detail are in the [CLI reference](docs/cli.md) and the [tutorials](docs/tutorials.md).
 
 ---
 
@@ -341,7 +346,7 @@ A single-page, fully offline HTML version of these docs lives at [`docs/ambermet
 
 - **Replicas are compared per role.** Settings (`dt`, `temp0`, `cut`, `ntt`, `ntp`) are compared between replicas role by role for minimization, heating and equilibration runs, and on all other runs (production, custom roles, unclassified) together, so replicas whose production runs differ in `temp0` are reported even when each replica's equilibration runs use several temperatures (`Members differ in temp0 in their production runs (...)`). `temp0` is compared on those production runs (among the replicas that have them), and on the last equilibration (or heating) role only where no replica has such runs; per-segment or per-replica equilibration temperatures before production are not reported.
 - **`plan --recursive` follows the recorded inputs.** The directory scan orders and links runs by the input coordinates each `mdout` records, as `discover` does, so names that do not sort in run order (`eq_0001 -> prod_0001 -> eq_0002 -> ...`) no longer produce false gaps and overlaps. A run that no record links to a run here (a job script that copies every restart to one fixed name, restarts not deposited) is still measured against the run before it, so real gaps are reported, and continuity problems are now listed under Findings and count for `--strict`. Topology and starting-structure groups are listed but not measured.
-- **Simulated time per role.** Where the runs hold more than one role, `summary.json` totals and each lineage gain `time_ps_<role>` (`time_ps_equilibration`, `time_ps_production`, ...), and `plan`/`validate` print `Simulated time by role (ps): ...`.
+- **Simulated time per role.** Where the runs hold more than one role, `summary.json` totals and each lineage gain `time_ps_<role>` (`time_ps_equilibration`, `time_ps_production`, ...), and `plan`/`validate` print `Simulated time: 63 ns (equilibration 3 ns; production 60 ns)`.
 - **Repeated phases are numbered.** A protocol that alternates roles gets `Equilibration`, `Production`, `Equilibration 2`, `Production 2`, ... from `discover`; the methods summary still describes each phase once.
 - **Smaller fixes:** `stats.csv` has a `lineage` column when lineages exist; `discover --write` outside the scanned directory writes paths relative to the manifest (a manifest in a subdirectory keeps paths relative to the scanned directory, for the GUI); replica directories holding byte-identical copies of the starting restart give one starting structure; NetCDF attributes read through SciPy are decoded (`pmemd`, not `b'pmemd'`); `num_solute_residues` no longer counts ions (371, not 443, on the sample; LEaP's raw value is the new `iptres`); the methods summary of an older `summary.json` keeps the ensemble of NPT runs.
 

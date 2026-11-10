@@ -166,10 +166,10 @@ Starting structure: ntp_prod_0000.rst
 Phases: 1
 
 Phase: Production [production]
-  - ntp_prod_0001  topology=CH3L1_HUMAN_6NAG.top  input=starting structure  (mdin=ntp_prod_0001.mdin, mdout=ntp_prod_0001.mdout)
-  - ntp_prod_0002  topology=CH3L1_HUMAN_6NAG.top  input=restart of ntp_prod_0001 (ntp_prod_0001.rst)  (mdin=ntp_prod_0002.mdin, mdout=ntp_prod_0002.mdout)
-  - ntp_prod_0004  topology=CH3L1_HUMAN_6NAG.top  input=restart of ntp_prod_0002 (ntp_prod_0002.rst)  (mdin=ntp_prod_0004.mdin, mdout=ntp_prod_0004.mdout)
-  - ntp_prod_0005  topology=CH3L1_HUMAN_6NAG.top  input=restart of ntp_prod_0004 (ntp_prod_0004.rst)  (mdin=ntp_prod_0005.mdin, mdout=ntp_prod_0005.mdout)
+  - ntp_prod_0001  from the starting structure
+  - ntp_prod_0002  from ntp_prod_0001
+  - ntp_prod_0004  from ntp_prod_0002
+  - ntp_prod_0005  from ntp_prod_0004
 
 Suggestions:
   - [needs_you] ntp_prod sequence is missing member(s) 3
@@ -182,6 +182,8 @@ And the same hole surfacing through `validate --manifest` on the resulting v2 ma
 ```
 $ ambermeta validate --manifest sim.yaml
 Simulation validation
+
+Simulated time: 80 ns
 
 Findings:
   - ntp_prod sequence is missing member(s) 3: present members of 'ntp_prod' skip index(es) 3

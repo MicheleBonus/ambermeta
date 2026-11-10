@@ -272,6 +272,19 @@ def _topology_path(sim, topo_id: Optional[str]) -> str:
     return topo_id or "no topology"
 
 
+def _input_from(sim, step) -> str:
+    """`from ntp_prod_0001`, `from the starting structure`: the short form of the label."""
+    from ambermeta.simulation import iter_steps
+
+    ic = step.input_coords
+    if ic.source == "starting_structure":
+        return "from the starting structure"
+    if ic.source == "step":
+        name = next((s.name for _, s in iter_steps(sim) if s.id == ic.ref), None)
+        return f"from {name}" if name else f"from {_input_source_label(sim, step)}"
+    return f"from {ic.path}" if ic.path else "input=?"
+
+
 def _input_source_label(sim, step) -> str:
     """Where this step's coordinates come from, in words.
 
@@ -331,9 +344,17 @@ def _print_simulation(sim, report=None, *, verbose: bool = False,
             # this line is unchanged for it too, and only a queued step gains the suffix.
             tag = f"  lineage={step.lineage}" if step.lineage else ""
             status = f"  status={step.status}" if step.status else ""
-            line = (f"  - {step.name}  topology={topo}"
-                    f"  input={_input_source_label(sim, step)}{tag}{status}")
-            _out(line + (f"  ({files})" if files else ""))
+            if verbose:
+                line = (f"  - {step.name}  topology={topo}"
+                        f"  input={_input_source_label(sim, step)}{tag}{status}")
+                _out(line + (f"  ({files})" if files else ""))
+                continue
+            # One line a person can scan: where the run's coordinates came from, and the
+            # topology only when the pool has more than one (it is named once above). The
+            # file paths repeat the run's name, so they wait for -v.
+            topo_part = (f"  topology={topo}"
+                         if len(sim.topologies) > 1 or not step.topology else "")
+            _out(f"  - {step.name}  {_input_from(sim, step)}{topo_part}{tag}{status}")
     if report is not None:
         if verbose:
             for issue in report.get("stage_issues", []):
@@ -503,7 +524,7 @@ def _discover_command(args: argparse.Namespace) -> int:
         _out("No simulation files discovered; nothing to draft.")
         return 1
 
-    _print_simulation(sim)
+    _print_simulation(sim, verbose=bool(getattr(args, "verbose", False)))
     for w in result.get("warnings", []) or []:
         _out(Colors.warning(f"WARNING: {w}"))
     suggestions = result.get("suggestions", []) or []
@@ -601,19 +622,45 @@ def _print_coherence(protocol):
     return findings
 
 
-def _role_breakdown(totals) -> str:
-    """`equilibration 3000.000; production 60000.000` from a totals dict, or ''."""
-    return "; ".join(f"{role} {ps:.3f}" for role, ps in role_times(totals or {}))
+def _duration(ps: float) -> str:
+    """`41.1 ns`, `3 ps`: ns from 1000 ps up, ps below, without padding zeros.
+
+    The JSON keeps picoseconds; this is only how a person reads them. `41100.000` had to
+    be counted digit by digit to be read as 41 ns.
+    """
+    value, unit = (ps / 1000.0, "ns") if abs(ps) >= 1000 else (ps, "ps")
+    text = f"{value:.3f}".rstrip("0").rstrip(".")
+    return f"{text or '0'} {unit}"
+
+
+def _role_breakdown(totals, roles=None) -> str:
+    """`equilibration 3 ns; production 60 ns` from a totals dict, or ''.
+
+    `roles` limits it to those roles (all of them when None).
+    """
+    return "; ".join(f"{role} {_duration(ps)}" for role, ps in role_times(totals or {})
+                     if roles is None or role in roles)
+
+
+def _time_line(totals) -> Optional[str]:
+    """`Simulated time: 63 ps (equilibration 3 ps; production 60 ps)`, or None.
+
+    The split by role appears when the runs hold more than one role: the total counts
+    equilibration as well as production, and the split tells them apart. One line, the
+    same in every mode, rather than a total in one mode and a split in another.
+    """
+    if not totals or totals.get("time_ps") is None:
+        return None
+    breakdown = _role_breakdown(totals)
+    return (f"Simulated time: {_duration(totals['time_ps'])}"
+            + (f" ({breakdown})" if breakdown else ""))
 
 
 def _print_role_totals(totals) -> None:
-    """Simulated time per role, when the runs hold more than one role.
-
-    The total counts equilibration as well as production; this line tells them apart.
-    """
-    breakdown = _role_breakdown(totals)
-    if breakdown:
-        _out(f"\nSimulated time by role (ps): {breakdown}")
+    """The simulated time of a validated document (see `_time_line`)."""
+    line = _time_line(totals)
+    if line:
+        _out("\n" + line)
 
 
 def _print_lineage_totals(lineages) -> None:
@@ -627,11 +674,15 @@ def _print_lineage_totals(lineages) -> None:
         return
     _out("\nPer lineage:")
     width = max(len(tag) for tag in lineages)
+    # A role no member ran is left out: the shared equilibration of a campaign belongs to
+    # no member, and every replica listed `equilibration 0.000`. A role SOME member ran
+    # stays, zeros included, because a replica's `production 0 ps` beside its siblings'
+    # is how a replica that never reached production shows as a quantity.
+    shown = {role for entry in lineages.values() for role, ps in role_times(entry) if ps}
     for tag in lineages:
         entry = lineages[tag]
-        breakdown = _role_breakdown(entry)
-        _out(f"  {tag:<{width}}  {entry['step_count']} run(s), "
-             f"{entry['steps']:.0f} steps, {entry['time_ps']:.3f} ps"
+        breakdown = _role_breakdown(entry, roles=shown) if len(shown) > 1 else ""
+        _out(f"  {tag:<{width}}  {entry['step_count']} run(s), {_duration(entry['time_ps'])}"
              + (f" ({breakdown})" if breakdown else ""))
 
 
@@ -641,10 +692,7 @@ def _print_protocol(protocol: SimulationProtocol, verbose: bool = False) -> None
     _out("================")
     _out(f"Stages: {len(protocol.stages)}")
     _out(f"Total steps: {totals['steps']:.0f}")
-    _out(f"Total simulated time (ps): {totals['time_ps']:.3f}")
-    breakdown = _role_breakdown(totals)
-    if breakdown:
-        _out(f"Simulated time by role (ps): {breakdown}")
+    _out(_time_line(totals))
     if "lineage_count" in totals:
         _out(f"Declared lineages: {totals['lineage_count']:.0f}")
     # Emit-when-nonzero, matching `totals()` itself: a directory with nothing queued prints
@@ -790,8 +838,8 @@ def _print_protocol(protocol: SimulationProtocol, verbose: bool = False) -> None
             _out(stats_line)
         if stage.restart_path:
             _out(f"  restart: {stage.restart_path}")
-        if summary.get("evidence"):
-            _out(f"  evidence: {summary['evidence']}")
+        # `evidence` is these same notes joined with "; " (SimulationStage.summary), so
+        # printing both said everything twice. It stays in summary.json.
         if stage.validation:
             for note in stage.validation:
                 _out(f"  note: {note}")
@@ -1157,10 +1205,10 @@ _ambermeta_completion() {
 
     case "${COMP_WORDS[1]}" in
         plan)
-            COMPREPLY=( $(compgen -W "--help -m --manifest --skip-cross-stage-validation --strict --recursive --interactive -v --verbose --summary-path --summary-format --methods-summary-path --stats-csv --no-expand-env --pattern --auto-detect-restarts --prmtop --as-one-simulation" -- "$cur") )
+            COMPREPLY=( $(compgen -W "--help -m --manifest --skip-cross-stage-validation --strict --recursive --interactive -v --verbose --out --summary-path --summary-format --methods-summary-path --stats-csv --no-expand-env --pattern --auto-detect-restarts --prmtop --as-one-simulation" -- "$cur") )
             ;;
         discover)
-            COMPREPLY=( $(compgen -W "--help --recursive --no-recursive --pattern --write --force --format --as-one-simulation" -- "$cur") )
+            COMPREPLY=( $(compgen -W "--help -v --verbose --recursive --no-recursive --pattern --write --force --format --as-one-simulation" -- "$cur") )
             ;;
         validate)
             COMPREPLY=( $(compgen -W "--help --strict --format --manifest --allow-gaps" -- "$cur") )
@@ -1219,10 +1267,10 @@ _ambermeta() {
     args)
       case "$words[2]" in
         plan)
-          _arguments '--manifest[Path to manifest file]:file:_files' '--recursive[Auto-discover files]' '--interactive[Prompt for stages]' '--summary-path[Write protocol summary]:file:_files' '--summary-format[Summary format]:format:(json yaml)' '--methods-summary-path[Write methods summary]:file:_files' '--stats-csv[Write stats CSV]:file:_files' '--pattern[Regex file filter]:pattern:' '--prmtop[Global topology file]:file:_files' '--skip-cross-stage-validation[Skip continuity checks]' '--strict[Abort on first unreadable file]' '--no-expand-env[Disable env var expansion]' '--auto-detect-restarts[Link restarts automatically]' '(-v --verbose)'{-v,--verbose}'[Show detailed stage metadata]' '--as-one-simulation[Treat runs of different sizes as one simulation]' '*:path:_files'
+          _arguments '--manifest[Path to manifest file]:file:_files' '--recursive[Auto-discover files]' '--interactive[Prompt for stages]' '--out[Write all summaries into a folder]:dir:_files -/' '--summary-path[Write protocol summary]:file:_files' '--summary-format[Summary format]:format:(json yaml)' '--methods-summary-path[Write methods summary]:file:_files' '--stats-csv[Write stats CSV]:file:_files' '--pattern[Regex file filter]:pattern:' '--prmtop[Global topology file]:file:_files' '--skip-cross-stage-validation[Skip continuity checks]' '--strict[Abort on first unreadable file]' '--no-expand-env[Disable env var expansion]' '--auto-detect-restarts[Link restarts automatically]' '(-v --verbose)'{-v,--verbose}'[Show detailed stage metadata]' '--as-one-simulation[Treat runs of different sizes as one simulation]' '*:path:_files'
           ;;
         discover)
-          _arguments '(--recursive --no-recursive)'{--recursive,--no-recursive}'[Recurse into subdirectories]' '--pattern[Regex file filter]:pattern:' '--write[Write v2 manifest to path]:file:_files' '--force[Overwrite the --write file]' '--format[Format for --write]:format:(json yaml)' '--as-one-simulation[Treat runs of different sizes as one simulation]' '*:path:_files'
+          _arguments '(--recursive --no-recursive)'{--recursive,--no-recursive}'[Recurse into subdirectories]' '--pattern[Regex file filter]:pattern:' '--write[Write v2 manifest to path]:file:_files' '--force[Overwrite the --write file]' '--format[Format for --write]:format:(json yaml)' '(-v --verbose)'{-v,--verbose}'[List each run in full]' '--as-one-simulation[Treat runs of different sizes as one simulation]' '*:path:_files'
           ;;
         export)
           _arguments '(-o --output)'{-o,--output}'[Output path]:file:_files' '--force[Overwrite the --output file]' '--format[Output format]:format:(json yaml)' '1:manifest:_files'
@@ -1252,7 +1300,7 @@ _ambermeta "$@"
         "fish": r'''# ambermeta fish completion
 complete -c ambermeta -f
 
-complete -c ambermeta -n "__fish_use_subcommand" -a "plan" -d "Build and summarize a SimulationProtocol"
+complete -c ambermeta -n "__fish_use_subcommand" -a "plan" -d "Write the summary files for a simulation"
 complete -c ambermeta -n "__fish_use_subcommand" -a "discover" -d "Discover files into a Simulation draft (v2)"
 complete -c ambermeta -n "__fish_use_subcommand" -a "export" -d "Re-emit a v2 manifest, optionally converting its format"
 complete -c ambermeta -n "__fish_use_subcommand" -a "validate" -d "Validate simulation files"
@@ -1272,6 +1320,7 @@ complete -c ambermeta -n "__fish_seen_subcommand_from plan" -l strict -d "Abort 
 complete -c ambermeta -n "__fish_seen_subcommand_from plan" -l recursive -d "Auto-discover simulation files recursively"
 complete -c ambermeta -n "__fish_seen_subcommand_from plan" -l interactive -d "Enable interactive prompt mode"
 complete -c ambermeta -n "__fish_seen_subcommand_from plan" -s v -l verbose -d "Show detailed metadata"
+complete -c ambermeta -n "__fish_seen_subcommand_from plan" -l out -d "Write all summaries into a folder"
 complete -c ambermeta -n "__fish_seen_subcommand_from plan" -l summary-path -d "Write protocol summary"
 complete -c ambermeta -n "__fish_seen_subcommand_from plan" -l summary-format -d "Summary format" -xa "json yaml"
 complete -c ambermeta -n "__fish_seen_subcommand_from plan" -l methods-summary-path -d "Write methods summary JSON"
@@ -1286,6 +1335,7 @@ complete -c ambermeta -n "__fish_seen_subcommand_from discover" -l recursive -d 
 complete -c ambermeta -n "__fish_seen_subcommand_from discover" -l no-recursive -d "Do not recurse"
 complete -c ambermeta -n "__fish_seen_subcommand_from discover" -l pattern -d "Regex file filter"
 complete -c ambermeta -n "__fish_seen_subcommand_from discover" -l write -d "Write v2 manifest to path"
+complete -c ambermeta -n "__fish_seen_subcommand_from discover" -s v -l verbose -d "List each run in full"
 complete -c ambermeta -n "__fish_seen_subcommand_from discover" -l as-one-simulation -d "Treat runs of different sizes as one simulation"
 complete -c ambermeta -n "__fish_seen_subcommand_from discover" -l force -d "Overwrite the --write file"
 complete -c ambermeta -n "__fish_seen_subcommand_from discover" -l format -d "Format for --write" -xa "json yaml"
@@ -1424,10 +1474,20 @@ def _write_plan_artifacts(args: argparse.Namespace, protocol: SimulationProtocol
     from ambermeta.protocol import (
         read_prior_summary, totals_delta, write_protocol_outputs)
 
+    # `--out DIR` names all three under the names the GUI's Plan uses; a path given for
+    # one of them wins for that file.
+    out_dir = getattr(args, "out", None)
+    summary_path = args.summary_path
+    if out_dir and not summary_path:
+        ext = "yaml" if getattr(args, "summary_format", None) == "yaml" else "json"
+        summary_path = os.path.join(out_dir, f"summary.{ext}")
+    defaults = {"methods_summary": "methods_summary.json", "stats_csv": "stats.csv"}
     targets = {}
-    for artifact, raw in (("summary", args.summary_path),
+    for artifact, raw in (("summary", summary_path),
                           ("methods_summary", args.methods_summary_path),
                           ("stats_csv", getattr(args, "stats_csv", None))):
+        if not raw and out_dir and artifact in defaults:
+            raw = os.path.join(out_dir, defaults[artifact])
         if raw:
             targets[artifact] = os.path.abspath(raw)
     if not targets:
@@ -1446,7 +1506,7 @@ def _write_plan_artifacts(args: argparse.Namespace, protocol: SimulationProtocol
                            "aimed at " + ", ".join(dupes)), file=sys.stderr)
         return 2
 
-    fmt = _resolve_sim_format(args.summary_path or "", args.summary_format)
+    fmt = _resolve_sim_format(summary_path or "", args.summary_format)
 
     # Read any prior summary BEFORE write_protocol_outputs (below) overwrites it, and see
     # `read_prior_summary`'s docstring for why reading afterwards would disable the whole
@@ -1718,33 +1778,27 @@ def build_parser() -> argparse.ArgumentParser:
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
-Commands:
-  plan      Build a simulation protocol from manifest or auto-discovery
-  discover  Discover files into a Simulation draft (v2) and optionally write a manifest
-  validate  Quick validation of simulation files
-  info      Display detailed metadata for a single file
-  init      Generate a starting v2 manifest file
-  export    Re-emit a v2 manifest, optionally converting its format (json/yaml)
+Typical workflow (one simulation per folder):
+  1. ambermeta discover runs/ --write sim.yaml    draft a manifest from the run files
+  2. read sim.yaml, or open it in `ambermeta gui runs/`, and fix what was guessed
+  3. ambermeta validate --manifest sim.yaml       check the chain and each run
+  4. ambermeta plan -m sim.yaml --out results/    write summary.json,
+                                                  methods_summary.json and stats.csv
 
-Examples:
-  ambermeta plan -m manifest.yaml           Build protocol from manifest
-  ambermeta plan . --recursive              Auto-discover files recursively
-  ambermeta plan . --interactive            Prompt for stage definitions
-  ambermeta plan -m manifest.yaml \\
-    --methods-summary-path methods.json     Export publication-ready summary
-  ambermeta discover . --write sim.yaml       Draft a v2 manifest from a directory
-  ambermeta validate system.prmtop *.mdout  Validate multiple files
-  ambermeta validate --manifest sim.yaml      Validate a whole simulation (continuity/gaps)
-  ambermeta info --format json system.prmtop  Show metadata as JSON
-  ambermeta init -o template.yaml           Write a starting v2 manifest template
-  ambermeta export sim.yaml -o sim.json       Convert a v2 manifest to JSON
+Other examples:
+  ambermeta plan runs/ --recursive                summarize a folder without a manifest
+  ambermeta validate system.prmtop *.mdout        check individual files
+  ambermeta info --format json system.prmtop      one file's metadata as JSON
+  ambermeta export sim.yaml -o sim.json           convert a manifest to JSON
+  ambermeta init -o template.yaml                 a blank manifest to fill in by hand
 
-File Types:
-  prmtop:  .prmtop, .top, .parm7    (topology/parameters)
-  mdin:    .mdin, .in               (input control)
-  mdout:   .mdout, .out             (output log)
-  mdcrd:   .nc, .mdcrd, .crd        (trajectory)
-  inpcrd:  .rst, .rst7, .ncrst      (coordinates/restart)
+File types:
+  topology:     .prmtop, .parm7, .top
+  input:        .mdin, .in
+  output:       .mdout, .out
+  trajectory:   .nc, .mdcrd, .x, .trj
+  coordinates:  .rst7, .rst, .restrt, .ncrst, .inpcrd
+  .crd is a trajectory or LEaP coordinates, told apart by content.
 
 For documentation, visit: https://github.com/MicheleBonus/ambermeta
 """,
@@ -1777,104 +1831,125 @@ For documentation, visit: https://github.com/MicheleBonus/ambermeta
 
     plan_parser = subparsers.add_parser(
         "plan",
-        help="Build and summarize a SimulationProtocol from manifest, recursive discovery, or explicit interactive mode",
+        help="Write the summary files (summary.json, methods summary, stats CSV) for a "
+             "simulation",
         description=(
-            "Build and summarize a SimulationProtocol from manifest, recursive discovery, or explicit interactive mode. "
-            "Interactive mode prompts for stage roles, file paths, restart (inpcrd) paths, "
-            "and expected gap/tolerance values."
+            "Summarize a simulation and write its summary files. With -m, from a v2 "
+            "manifest: the usual way, after `ambermeta discover --write`. With --recursive, "
+            "straight from the run files in a folder, without a manifest. With "
+            "--interactive, from runs you describe at prompts (role, files, restart, "
+            "expected gap and tolerance)."
         ),
     )
     plan_parser.add_argument(
         "directory",
         nargs="?",
         default=".",
-        help="Directory containing the files referenced by the manifest (default: current directory)",
+        help="Folder the run files are in (default: current directory). With -m, a "
+             "manifest whose files are not found there is read from its own folder.",
     )
-    plan_parser.add_argument(
+    plan_mode = plan_parser.add_argument_group("Mode (choose one)")
+    plan_mode.add_argument(
         "-m",
         "--manifest",
-        help="Path to a YAML or JSON manifest describing stages and file paths",
+        help="Path to a YAML or JSON v2 manifest",
     )
-    plan_parser.add_argument(
-        "--skip-cross-stage-validation",
-        action="store_const", const=True, default=None,
-        help="Skip the continuity checks between consecutive stages "
-             "(they run by default)",
+    plan_mode.add_argument(
+        "--recursive",
+        action="store_true",
+        help="Scan the folder and its subfolders for run files, without a manifest. Files "
+             "are grouped by name without extension, and roles are inferred from the "
+             "mdin, then from folder and file names (equil -> equilibration, prod -> "
+             "production).",
     )
-    plan_parser.add_argument(
+    plan_mode.add_argument(
+        "--interactive",
+        action="store_true",
+        help="Describe the runs at prompts.",
+    )
+    plan_outputs = plan_parser.add_argument_group(
+        "Output files (any mode)",
+        "--out writes all three under their usual names; a path given for one of them "
+        "takes precedence for that file.")
+    plan_manifest = plan_parser.add_argument_group("With -m")
+    plan_scan = plan_parser.add_argument_group("With --recursive")
+    plan_other = plan_parser.add_argument_group("Other options (any mode)")
+    plan_outputs.add_argument(
+        "--out",
+        metavar="DIR",
+        help="Write summary.json, methods_summary.json and stats.csv into this folder "
+             "(created if missing)",
+    )
+    plan_outputs.add_argument(
+        "--summary-path",
+        help="Path for the full summary (JSON or YAML)",
+    )
+    plan_outputs.add_argument(
+        "--summary-format",
+        choices=["json", "yaml"],
+        help="Format of the full summary (default: from the file extension; with --out, "
+             "json)",
+    )
+    plan_outputs.add_argument(
+        "--methods-summary-path",
+        help=(
+            "Path for the methods summary: a JSON digest of the summary for writing a "
+            "Methods section (software, MD settings, system composition, trajectory "
+            "cadence), without energies and other per-frame data"
+        ),
+    )
+    # UX-007: CSV export for statistics
+    plan_outputs.add_argument(
+        "--stats-csv",
+        help="Path for per-run statistics (temperature, pressure, density, energy) as CSV",
+    )
+    plan_other.add_argument(
         "--strict",
         action="store_true",
         help="Abort on the first unreadable/malformed input file instead of "
              "skipping it, and exit 1 if any continuity or sequence finding was "
              "reported. Default is to skip the file, print the findings and exit 0.",
     )
-    plan_parser.add_argument(
-        "--recursive",
-        action="store_true",
-        help="Auto-discover simulation files recursively (no interactive prompts). "
-             "Files are grouped by stem (filename without extension) and stage roles "
-             "are inferred from directory names (equil -> equilibration, prod -> production).",
+    plan_other.add_argument(
+        "--skip-cross-stage-validation",
+        action="store_const", const=True, default=None,
+        help="Skip the continuity checks between consecutive runs "
+             "(they run by default)",
     )
-    plan_parser.add_argument(
-        "--interactive",
-        action="store_true",
-        help="Enable interactive prompt mode for manually defining stages.",
-    )
-    plan_parser.add_argument(
+    plan_other.add_argument(
         "-v",
         "--verbose",
         action="store_true",
-        help="Show detailed metadata, warnings, and continuity information for each stage",
-    )
-    plan_parser.add_argument(
-        "--summary-path",
-        help="Path to write a structured protocol summary (JSON or YAML)",
-    )
-    plan_parser.add_argument(
-        "--summary-format",
-        choices=["json", "yaml"],
-        help="Force the structured summary format (default: inferred from file extension)",
-    )
-    plan_parser.add_argument(
-        "--methods-summary-path",
-        help=(
-            "Write a Materials & Methods-ready JSON summary with reproducibility-critical metadata "
-            "(software versions, MD settings, system composition, and trajectory cadence) while omitting "
-            "energies and other nonessential arrays"
-        ),
-    )
-    # UX-007: CSV export for statistics
-    plan_parser.add_argument(
-        "--stats-csv",
-        help="Export per-stage statistics to a CSV file",
+        help="Show detailed metadata, warnings, and continuity information for each run",
     )
     # DS-002: Environment variable expansion
-    plan_parser.add_argument(
+    plan_manifest.add_argument(
         "--no-expand-env",
         action="store_true",
-        help="Disable environment variable expansion in manifest paths",
+        help="Do not expand environment variables ($VAR) in the manifest's paths",
     )
     # DS-004: Pattern-based filtering
-    plan_parser.add_argument(
+    plan_scan.add_argument(
         "--pattern",
         type=_regex,
-        help="Regex pattern to filter discovered files (e.g., 'prod_.*' for production runs)",
+        help="Only scan files whose path matches this regular expression (e.g. 'prod_.*' "
+             "for production runs)",
     )
-    # DS-005: Auto restart detection
-    plan_parser.add_argument(
-        "--auto-detect-restarts",
-        action="store_true",
-        help="Automatically detect and link restart files between stages",
-    )
-    # Global prmtop to avoid redundant specification
-    plan_parser.add_argument(
-        "--prmtop",
-        help="Global prmtop file to use for all stages (avoids specifying it per stage)",
-    )
-    plan_parser.add_argument(
+    plan_scan.add_argument(
         "--as-one-simulation",
         action="store_true",
-        help=_AS_ONE_SIMULATION_HELP + " (with --recursive)",
+        help=_AS_ONE_SIMULATION_HELP,
+    )
+        # DS-005: Auto restart detection
+    plan_other.add_argument(
+        "--auto-detect-restarts",
+        action="store_true",
+        help="Find each run's restart file next to it and link it to the run that follows",
+    )
+    # Global prmtop to avoid redundant specification
+    plan_other.add_argument(
+        "--prmtop",
+        help="Topology to use for every run that names none",
     )
 
     discover_parser = subparsers.add_parser(
@@ -1894,6 +1969,7 @@ For documentation, visit: https://github.com/MicheleBonus/ambermeta
     discover_parser.add_argument("--force", action="store_true", help="Overwrite the --write file if it already exists")
     discover_parser.add_argument("--format", choices=["json", "yaml"], help="Format for --write (default: inferred from extension, else json)")
     discover_parser.add_argument("--as-one-simulation", action="store_true", help=_AS_ONE_SIMULATION_HELP)
+    discover_parser.add_argument("-v", "--verbose", action="store_true", help="List each run with its topology and its mdin/mdout/trajectory paths")
 
     # UX-005: validate subcommand
     validate_parser = subparsers.add_parser(
