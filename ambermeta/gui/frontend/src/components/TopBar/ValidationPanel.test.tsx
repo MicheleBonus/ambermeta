@@ -107,6 +107,8 @@ it("does not list a run's own finding twice", async () => {
   }));
   await waitFor(() => expect(screen.getByText("Valid, with 1 note(s)")).toBeInTheDocument());
   expect(screen.getAllByText(new RegExp(message.slice(0, 30)))).toHaveLength(1);
+  // A second listing would be a line of its own under "Findings", headed by the card title.
+  expect(screen.queryByRole("heading", { name: "Findings" })).not.toBeInTheDocument();
 });
 
 it("does not count what discovery applied", async () => {
