@@ -701,7 +701,7 @@ with open("summary.json", encoding="utf-8") as fh:
 print(dumps_methods_summary(digest))
 ```
 
-or `python -m ambermeta.methods_summary summary.json -o methods_summary.json`. A summary
+or `python -m ambermeta.methods_summary summary.json -o methods_summary.json` (`-o methods_summary.md` or `--format md` for the Markdown rendering, `render_methods_markdown(digest)`). A summary
 written by an older AmberMeta works too, with less detail; the `basis` fields say what was
 inferred.
 

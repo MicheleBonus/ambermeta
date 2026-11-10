@@ -150,13 +150,14 @@ Validation: OK, 5 findings to review
 
 The chain is intact, so the verdict is `OK`, but each run is compared with what AMBER recorded, and the sample as bundled ran at `dt = 0.004` ps with a topology whose 32,188 hydrogens all weigh 1.008 amu. A 4-fs time step needs repartitioned hydrogen masses, so either the runs used a different (HMR) topology than the one bundled, or they were integrated at a step their hydrogens do not support. On your own data with an HMR topology this finding does not appear. Findings leave the exit code at `0` by default; `--strict` makes any finding exit `1`, so `--strict` on the untouched sample exits `1`.
 
-**Write the summary files** (`summary.json`, the methods summary, and per-run statistics) into one folder:
+**Write the summary files** (`summary.json`, the methods summary as JSON and as Markdown to read, and per-run statistics) into one folder:
 
 ```text
 $ ambermeta plan -m sim.yaml --out results/
 ...
 Wrote summary: /abs/path/results/summary.json
 Wrote methods_summary: /abs/path/results/methods_summary.json
+Wrote methods_summary_md: /abs/path/results/methods_summary.md
 Wrote stats_csv: /abs/path/results/stats.csv
 ```
 

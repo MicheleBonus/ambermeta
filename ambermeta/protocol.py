@@ -3237,7 +3237,7 @@ def write_stats_csv(protocol: "SimulationProtocol", filepath: str) -> None:
             writer.writerow({k: row.get(k, "") for k in columns})
 
 
-PLAN_ARTIFACTS = ("summary", "methods_summary", "stats_csv")
+PLAN_ARTIFACTS = ("summary", "methods_summary", "methods_summary_md", "stats_csv")
 
 
 def read_prior_summary(path: str, summary_format: str = "json") -> Any:
@@ -3416,16 +3416,31 @@ def write_protocol_outputs(protocol: "SimulationProtocol", targets: Dict[str, st
 
     if "summary" in targets:
         _attempt("summary", lambda p: _dump(_record(), p, summary_format))
+    digest: Dict[str, Any] = {}
+
+    def _digest() -> Dict[str, Any]:
+        # One digest for the JSON and the Markdown, so the two cannot say different things.
+        if not digest:
+            from ambermeta.methods_summary import build_methods_summary
+            digest.update(build_methods_summary(to_plain(_record())))
+        return digest
+
     if "methods_summary" in targets:
-        # Always JSON; see `ambermeta.methods_summary`.
-        from ambermeta.methods_summary import build_methods_summary, dumps_methods_summary
+        from ambermeta.methods_summary import dumps_methods_summary
 
         def _methods(path: str) -> None:
-            digest = build_methods_summary(to_plain(_record()))
             os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
             with open(path, "w", encoding="utf-8") as fh:
-                fh.write(dumps_methods_summary(digest))
+                fh.write(dumps_methods_summary(_digest()))
         _attempt("methods_summary", _methods)
+    if "methods_summary_md" in targets:
+        from ambermeta.methods_summary import render_methods_markdown
+
+        def _methods_md(path: str) -> None:
+            os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(render_methods_markdown(_digest()))
+        _attempt("methods_summary_md", _methods_md)
     if "stats_csv" in targets:
         def _stats(path: str) -> None:
             os.makedirs(os.path.dirname(path) or ".", exist_ok=True)

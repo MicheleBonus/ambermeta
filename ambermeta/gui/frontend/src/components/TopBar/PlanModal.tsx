@@ -35,7 +35,7 @@ function targetExists(typed: string, tree: FileInfo[], base: string | null): boo
 
 /** One tickable output, its default filename, and what it is for. */
 interface Output {
-  key: "manifest" | "summary" | "methods_summary" | "stats_csv";
+  key: "manifest" | "summary" | "methods_summary" | "methods_summary_md" | "stats_csv";
   label: string;
   hint: string;
   defaultPath: string;
@@ -53,6 +53,9 @@ const OUTPUTS: Output[] = [
   { key: "methods_summary", label: "Methods summary",
     hint: "the reproducibility-critical subset, for a Materials & Methods section",
     defaultPath: "methods_summary.json" },
+  { key: "methods_summary_md", label: "Methods summary (readable)",
+    hint: "the same, laid out to read: one table of settings per phase",
+    defaultPath: "methods_summary.md" },
   { key: "stats_csv", label: "Statistics CSV",
     hint: "one row per stage of mdout averages — needs mdout files",
     defaultPath: "stats.csv" },
@@ -72,7 +75,8 @@ export function PlanModal({ open, onClose }: { open: boolean; onClose: () => voi
   const plan = usePlan();
   const base = doc?.base_directory ?? null;
   const [enabled, setEnabled] = useState<Record<string, boolean>>({
-    manifest: true, summary: true, methods_summary: true, stats_csv: false,
+    manifest: true, summary: true, methods_summary: true, methods_summary_md: true,
+    stats_csv: false,
   });
   const [paths, setPaths] = useState<Record<string, string>>(
     Object.fromEntries(OUTPUTS.map((o) => [o.key, o.defaultPath])),
@@ -112,6 +116,8 @@ export function PlanModal({ open, onClose }: { open: boolean; onClose: () => voi
     save_manifest_path: enabled.manifest ? paths.manifest.trim() || null : null,
     summary_path: enabled.summary ? paths.summary.trim() || null : null,
     methods_summary_path: enabled.methods_summary ? paths.methods_summary.trim() || null : null,
+    methods_summary_md_path: enabled.methods_summary_md
+      ? paths.methods_summary_md.trim() || null : null,
     stats_csv_path: enabled.stats_csv ? paths.stats_csv.trim() || null : null,
     summary_format: summaryFormat,
   };

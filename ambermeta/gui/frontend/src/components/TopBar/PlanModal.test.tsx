@@ -68,9 +68,23 @@ it("writes the manifest and both summaries in one action, which is the whole poi
     save_manifest_path: "manifest.yaml",
     summary_path: "summary.json",
     methods_summary_path: "methods_summary.json",
+    // The same digest laid out to read: what a person writing the Methods section opens.
+    methods_summary_md_path: "methods_summary.md",
     stats_csv_path: null,          // unticked by default: it needs mdout files
     summary_format: "json",
   });
+});
+
+it("the readable methods summary can be left out", async () => {
+  const plan = capturePlan();
+  await renderPlan();
+
+  await userEvent.click(screen.getByRole("checkbox", { name: "Methods summary (readable)" }));
+  await userEvent.click(screen.getByRole("button", { name: "Write" }));
+
+  await waitFor(() => expect(plan.calls).toBe(1));
+  expect(plan.body.methods_summary_md_path).toBeNull();
+  expect(plan.body.methods_summary_path).toBe("methods_summary.json");
 });
 
 it("reports every file it wrote, so the user is not left guessing where they went", async () => {
@@ -107,7 +121,8 @@ it("will not run with nothing selected", async () => {
   const plan = capturePlan();
   await renderPlan();
 
-  for (const name of ["Manifest", "Protocol summary", "Methods summary"]) {
+  for (const name of ["Manifest", "Protocol summary", "Methods summary",
+                      "Methods summary (readable)"]) {
     await userEvent.click(screen.getByRole("checkbox", { name }));
   }
 

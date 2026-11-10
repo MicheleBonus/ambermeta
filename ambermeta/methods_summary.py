@@ -1345,8 +1345,257 @@ def dumps_methods_summary(digest: Any) -> str:
     return render(digest, 0) + "\n"
 
 
+# ---------------------------------------------------------------------------
+# Markdown
+# ---------------------------------------------------------------------------
+
+# Unit suffixes of the digest's keys, longest first so `_per_ps` wins over `_ps`.
+_UNIT_SUFFIXES = (
+    ("_1e-6_per_bar", "10^-6/bar"), ("_per_ps", "1/ps"), ("_g_cm3", "g/cm3"),
+    ("_amu", "amu"), ("_hours", "h"),
+    ("_steps", "steps"), ("_deg", "deg"), ("_bar", "bar"), ("_fs", "fs"), ("_ps", "ps"),
+    ("_ns", "ns"), ("_A", "Å"), ("_K", "K"), ("_e", "e"),
+)
+
+
+_ACRONYMS = {"md": "MD", "gpu": "GPU", "gpus": "GPUs", "pme": "PME", "hmr": "HMR"}
+
+
+def _md_label(key: str, *, capital: bool = True) -> str:
+    """`time_step_fs` -> `Time step (fs)`: the key in words, its unit in brackets."""
+    unit = ""
+    for suffix, name in _UNIT_SUFFIXES:
+        if key.endswith(suffix) and len(key) > len(suffix):
+            key, unit = key[:-len(suffix)], f" ({name})"
+            break
+    words = [_ACRONYMS.get(w, w) for w in key.replace("_", " ").split()]
+    text = " ".join(words) or key
+    if capital:
+        text = text[:1].upper() + text[1:]
+    return text + unit
+
+
+def _md_value(value: Any) -> str:
+    """A value on one line: numbers without padding zeros, lists and mappings inline."""
+    if value is None:
+        return ""
+    if isinstance(value, bool):
+        return "yes" if value else "no"
+    if isinstance(value, float):
+        return f"{value:.6g}"
+    if isinstance(value, (list, tuple)):
+        sep = "; " if any(isinstance(v, dict) for v in value) else ", "
+        return sep.join(_md_value(v) for v in value)
+    if isinstance(value, dict):
+        return ", ".join(f"{_md_label(str(k), capital=False)} {_md_value(v)}".strip()
+                         for k, v in value.items())
+    return str(value)
+
+
+def _md_cell(value: Any) -> str:
+    return _md_value(value).replace("|", "\\|").replace("\n", " ")
+
+
+def _md_bullets(data: Dict[str, Any], skip: Sequence[str] = (), indent: int = 0) -> List[str]:
+    """Every key of `data` not in `skip` as a bullet. A mapping of mappings nests; anything
+    else is one line. This is what keeps a key the renderer has no rule for on the page."""
+    pad = "  " * indent
+    lines: List[str] = []
+    for key, value in data.items():
+        if key in skip:
+            continue
+        if isinstance(value, dict) and any(isinstance(v, dict) for v in value.values()):
+            lines.append(f"{pad}- {_md_label(key)}:")
+            lines += _md_bullets(value, indent=indent + 1)
+        else:
+            lines.append(f"{pad}- {_md_label(key)}: {_md_value(value)}")
+    return lines
+
+
+def _md_runs(entry: Dict[str, Any]) -> Optional[str]:
+    """`5 runs (5 with output, 5 finished)` from a project or phase entry."""
+    if "runs" not in entry:
+        return None
+    extra = [f"{entry[k]} {label}" for k, label in (("runs_with_output", "with output"),
+                                                     ("finished_runs", "finished"))
+             if k in entry]
+    return f"{entry['runs']}" + (f" ({', '.join(extra)})" if extra else "")
+
+
+def _md_setting_notes(setting: Dict[str, Any]) -> str:
+    """How the runs of a phase differ on one setting, from the digest's own fields."""
+    parts: List[str] = []
+    if "runs" in setting:
+        n = setting["runs"]
+        parts.append(f"{n} run{'s' if n != 1 else ''}")
+    if setting.get("sequence_in_run_order"):
+        parts.append("in run order: " + " -> ".join(
+            _md_value(v) for v in setting["sequence_in_run_order"]))
+    others = []
+    for other in setting.get("other_values") or []:
+        bits = [f"{other.get('runs')} run{'s' if other.get('runs') != 1 else ''}"]
+        if other.get("source"):
+            bits.append(str(other["source"]))
+        if other.get("replicas"):
+            bits.append("replicas " + _md_value(other["replicas"]))
+        elif other.get("example_run"):
+            bits.append(f"e.g. {other['example_run']}")
+        others.append(f"{_md_value(other.get('value'))} ({', '.join(bits)})")
+    if others:
+        parts.append("also " + ", ".join(others))
+    if setting.get("more_values"):
+        parts.append(f"and {setting['more_values']} more values")
+    return "; ".join(parts)
+
+
+def _md_settings_table(settings: Dict[str, Any]) -> List[str]:
+    lines = ["| Setting | Value | Source | Runs that differ |", "|---|---|---|---|"]
+    for key, setting in settings.items():
+        if not isinstance(setting, dict):
+            setting = {"value": setting}
+        lines.append(f"| {_md_label(key)} | {_md_cell(setting.get('value'))} | "
+                     f"{_md_cell(setting.get('source'))} | "
+                     f"{_md_setting_notes(setting).replace('|', chr(92) + '|')} |")
+    return lines
+
+
+def _md_findings(findings: Dict[str, Any]) -> List[str]:
+    lines: List[str] = []
+    total, patterns = findings.get("total"), findings.get("patterns")
+    if total is not None:
+        lines.append(f"{total} finding{'s' if total != 1 else ''}"
+                     + (f" in {patterns} pattern{'s' if patterns != 1 else ''}"
+                        if patterns is not None else "") + ".")
+        lines.append("")
+    for group in findings.get("grouped") or []:
+        bits = [f"{group.get('occurrences')} occurrence"
+                f"{'s' if group.get('occurrences') != 1 else ''}"]
+        if group.get("example_run"):
+            bits.append(f"e.g. {group['example_run']}")
+        if group.get("replicas"):
+            bits.append(f"{group['replicas']} replicas")
+        lines.append(f"- {group.get('kind')}: {group.get('example')} ({', '.join(bits)})")
+    if findings.get("more_patterns"):
+        lines.append(f"- and {findings['more_patterns']} more patterns")
+    if findings.get("note"):
+        lines += ["", f"_{findings['note']}_"]
+    lines += _md_bullets(findings, skip=("total", "patterns", "grouped", "more_patterns",
+                                          "note", "acknowledged"))
+    acknowledged = findings.get("acknowledged") or []
+    if acknowledged:
+        lines += ["", "### Acknowledged by the depositor", ""]
+        for entry in acknowledged:
+            lines.append(f"- {entry.get('finding')}")
+            lines.append(f"  Note: {entry.get('note')}")
+    return lines
+
+
+_MD_KNOWN = ("schema_version", "generator", "about", "sources", "project", "software",
+             "system", "replicas", "protocol", "continuity", "findings", "not_in_run_files")
+
+
+def render_methods_markdown(digest: Dict[str, Any]) -> str:
+    """The methods summary as Markdown: the same digest, laid out for a person.
+
+    A rendering and nothing more. No sentence here says what the digest does not, so it
+    adds no claim to check; the JSON stays the record. Known sections get headings and the
+    settings get one table per phase; any key without a rule of its own is still shown as
+    `Key: value`, so a field added to the digest later cannot vanish from the page.
+    Deterministic: the same digest gives the same text.
+    """
+    lines: List[str] = ["# Methods summary", ""]
+    if digest.get("about"):
+        lines += [str(digest["about"]), ""]
+    sources = digest.get("sources") or {}
+    if sources:
+        lines.append("Sources: " + "; ".join(f"**{k}**: {v}" for k, v in sources.items())
+                     + ".")
+        lines.append("")
+    generator = digest.get("generator") or {}
+    if generator or digest.get("schema_version"):
+        lines.append(f"Written by {generator.get('name', 'AmberMeta')} "
+                     f"{generator.get('version', '')}".rstrip()
+                     + (f" (methods summary schema {digest['schema_version']})."
+                        if digest.get("schema_version") else "."))
+        lines.append("")
+
+    project = digest.get("project") or {}
+    if project:
+        lines += ["## Project", ""]
+        runs = _md_runs(project)
+        if runs:
+            lines.append(f"- Runs: {runs}")
+        lines += _md_bullets(project, skip=("runs", "runs_with_output", "finished_runs"))
+        lines.append("")
+
+    software = digest.get("software") or {}
+    if software:
+        lines += ["## Software", ""]
+        for engine in software.get("md_engine") or []:
+            name = " ".join(str(engine[k]) for k in ("program", "version") if engine.get(k))
+            lines.append(f"- MD engine: {name} ({engine.get('runs')} runs)")
+        lines += _md_bullets(software, skip=("md_engine",))
+        lines.append("")
+
+    system = digest.get("system") or {}
+    if system:
+        lines += ["## System", ""]
+        for topology in system.get("topologies") or []:
+            lines += [f"### {topology.get('file')}", ""]
+            lines += _md_bullets(topology, skip=("file",))
+            lines.append("")
+        lines += _md_bullets(system, skip=("topologies",))
+        if lines[-1] != "":
+            lines.append("")
+
+    replicas = digest.get("replicas") or {}
+    if replicas:
+        lines += ["## Replicas", ""] + _md_bullets(replicas) + [""]
+
+    phases = digest.get("protocol") or []
+    if phases:
+        lines += ["## Protocol", ""]
+        for i, phase in enumerate(phases, start=1):
+            role = phase.get("role")
+            lines += [f"### {i}. {phase.get('name')}"
+                      + (f" ({role})" if role and role != str(phase.get('name')).lower()
+                         else ""), ""]
+            runs = _md_runs(phase)
+            if runs:
+                lines.append(f"- Runs: {runs}")
+            lines += _md_bullets(phase, skip=("name", "role", "runs", "runs_with_output",
+                                              "finished_runs", "settings", "observed"))
+            lines.append("")
+            if phase.get("settings"):
+                lines += _md_settings_table(phase["settings"]) + [""]
+            observed = phase.get("observed") or {}
+            if observed:
+                lines += ["Observed:", ""] + _md_bullets(observed) + [""]
+
+    continuity = digest.get("continuity") or {}
+    if continuity:
+        lines += ["## Continuity", ""] + _md_bullets(continuity) + [""]
+
+    findings = digest.get("findings") or {}
+    if findings:
+        lines += ["## Findings", ""] + _md_findings(findings) + [""]
+
+    missing = digest.get("not_in_run_files") or []
+    if missing:
+        lines += ["## Not recorded in the run files", ""]
+        lines += [f"- [ ] {item}" for item in missing] + [""]
+
+    rest = {k: v for k, v in digest.items() if k not in _MD_KNOWN}
+    if rest:
+        lines += ["## Other", ""] + _md_bullets(rest) + [""]
+
+    while lines and lines[-1] == "":
+        lines.pop()
+    return "\n".join(lines) + "\n"
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
-    """`python -m ambermeta.methods_summary summary.json [-o methods_summary.json]`."""
+    """`python -m ambermeta.methods_summary summary.json [-o methods_summary.json|.md]`."""
     import argparse
 
     parser = argparse.ArgumentParser(
@@ -1356,6 +1605,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser.add_argument("summary", help="summary.json written by `ambermeta plan`")
     parser.add_argument("-o", "--output", help="where to write the methods summary "
                                                "(default: standard output)")
+    parser.add_argument("--format", choices=["json", "md"],
+                        help="json (the record) or md (the same, laid out to read); default: "
+                             "md for an --output ending in .md, else json")
     args = parser.parse_args(argv)
     with open(args.summary, "r", encoding="utf-8") as fh:
         if args.summary.lower().endswith((".yaml", ".yml")):
@@ -1363,7 +1615,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             data = yaml.safe_load(fh)
         else:
             data = json.load(fh)
-    text = dumps_methods_summary(build_methods_summary(data))
+    fmt = args.format or ("md" if (args.output or "").lower().endswith(".md") else "json")
+    digest = build_methods_summary(data)
+    text = render_methods_markdown(digest) if fmt == "md" else dumps_methods_summary(digest)
     if args.output:
         with open(args.output, "w", encoding="utf-8") as fh:
             fh.write(text)

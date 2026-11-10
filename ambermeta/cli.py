@@ -1262,7 +1262,7 @@ _ambermeta_completion() {
 
     case "${COMP_WORDS[1]}" in
         plan)
-            COMPREPLY=( $(compgen -W "--help -m --manifest --skip-cross-stage-validation --strict --recursive --interactive -v --verbose --out --summary-path --summary-format --methods-summary-path --stats-csv --no-expand-env --pattern --auto-detect-restarts --prmtop --as-one-simulation" -- "$cur") )
+            COMPREPLY=( $(compgen -W "--help -m --manifest --skip-cross-stage-validation --strict --recursive --interactive -v --verbose --out --summary-path --summary-format --methods-summary-path --methods-summary-md --stats-csv --no-expand-env --pattern --auto-detect-restarts --prmtop --as-one-simulation" -- "$cur") )
             ;;
         discover)
             COMPREPLY=( $(compgen -W "--help -v --verbose --recursive --no-recursive --pattern --write --force --format --as-one-simulation" -- "$cur") )
@@ -1324,7 +1324,7 @@ _ambermeta() {
     args)
       case "$words[2]" in
         plan)
-          _arguments '--manifest[Path to manifest file]:file:_files' '--recursive[Auto-discover files]' '--interactive[Prompt for stages]' '--out[Write all summaries into a folder]:dir:_files -/' '--summary-path[Write protocol summary]:file:_files' '--summary-format[Summary format]:format:(json yaml)' '--methods-summary-path[Write methods summary]:file:_files' '--stats-csv[Write stats CSV]:file:_files' '--pattern[Regex file filter]:pattern:' '--prmtop[Global topology file]:file:_files' '--skip-cross-stage-validation[Skip continuity checks]' '--strict[Abort on first unreadable file]' '--no-expand-env[Disable env var expansion]' '--auto-detect-restarts[Link restarts automatically]' '(-v --verbose)'{-v,--verbose}'[Show detailed stage metadata]' '--as-one-simulation[Treat runs of different sizes as one simulation]' '*:path:_files'
+          _arguments '--manifest[Path to manifest file]:file:_files' '--recursive[Auto-discover files]' '--interactive[Prompt for stages]' '--out[Write all summaries into a folder]:dir:_files -/' '--summary-path[Write protocol summary]:file:_files' '--summary-format[Summary format]:format:(json yaml)' '--methods-summary-path[Write methods summary]:file:_files' '--methods-summary-md[Write the methods summary as Markdown]:file:_files' '--stats-csv[Write stats CSV]:file:_files' '--pattern[Regex file filter]:pattern:' '--prmtop[Global topology file]:file:_files' '--skip-cross-stage-validation[Skip continuity checks]' '--strict[Abort on first unreadable file]' '--no-expand-env[Disable env var expansion]' '--auto-detect-restarts[Link restarts automatically]' '(-v --verbose)'{-v,--verbose}'[Show detailed stage metadata]' '--as-one-simulation[Treat runs of different sizes as one simulation]' '*:path:_files'
           ;;
         discover)
           _arguments '(--recursive --no-recursive)'{--recursive,--no-recursive}'[Recurse into subdirectories]' '--pattern[Regex file filter]:pattern:' '--write[Write v2 manifest to path]:file:_files' '--force[Overwrite the --write file]' '--format[Format for --write]:format:(json yaml)' '(-v --verbose)'{-v,--verbose}'[List each run in full]' '--as-one-simulation[Treat runs of different sizes as one simulation]' '*:path:_files'
@@ -1381,6 +1381,7 @@ complete -c ambermeta -n "__fish_seen_subcommand_from plan" -l out -d "Write all
 complete -c ambermeta -n "__fish_seen_subcommand_from plan" -l summary-path -d "Write protocol summary"
 complete -c ambermeta -n "__fish_seen_subcommand_from plan" -l summary-format -d "Summary format" -xa "json yaml"
 complete -c ambermeta -n "__fish_seen_subcommand_from plan" -l methods-summary-path -d "Write methods summary JSON"
+complete -c ambermeta -n "__fish_seen_subcommand_from plan" -l methods-summary-md -d "Write methods summary as Markdown"
 complete -c ambermeta -n "__fish_seen_subcommand_from plan" -l stats-csv -d "Export per-stage statistics"
 complete -c ambermeta -n "__fish_seen_subcommand_from plan" -l no-expand-env -d "Disable environment var expansion"
 complete -c ambermeta -n "__fish_seen_subcommand_from plan" -l pattern -d "Regex filter for discovered files"
@@ -1538,10 +1539,12 @@ def _write_plan_artifacts(args: argparse.Namespace, protocol: SimulationProtocol
     if out_dir and not summary_path:
         ext = "yaml" if getattr(args, "summary_format", None) == "yaml" else "json"
         summary_path = os.path.join(out_dir, f"summary.{ext}")
-    defaults = {"methods_summary": "methods_summary.json", "stats_csv": "stats.csv"}
+    defaults = {"methods_summary": "methods_summary.json",
+                "methods_summary_md": "methods_summary.md", "stats_csv": "stats.csv"}
     targets = {}
     for artifact, raw in (("summary", summary_path),
                           ("methods_summary", args.methods_summary_path),
+                          ("methods_summary_md", getattr(args, "methods_summary_md", None)),
                           ("stats_csv", getattr(args, "stats_csv", None))):
         if not raw and out_dir and artifact in defaults:
             raw = os.path.join(out_dir, defaults[artifact])
@@ -1935,8 +1938,8 @@ For documentation, visit: https://github.com/MicheleBonus/ambermeta
     plan_outputs.add_argument(
         "--out",
         metavar="DIR",
-        help="Write summary.json, methods_summary.json and stats.csv into this folder "
-             "(created if missing)",
+        help="Write summary.json, methods_summary.json, methods_summary.md and stats.csv "
+             "into this folder (created if missing)",
     )
     plan_outputs.add_argument(
         "--summary-path",
@@ -1960,6 +1963,12 @@ For documentation, visit: https://github.com/MicheleBonus/ambermeta
     plan_outputs.add_argument(
         "--stats-csv",
         help="Path for per-run statistics (temperature, pressure, density, energy) as CSV",
+    )
+    plan_outputs.add_argument(
+        "--methods-summary-md",
+        metavar="PATH",
+        help="Path for the methods summary laid out to read (Markdown): the same content "
+             "as the JSON, with one table of settings per phase",
     )
     plan_other.add_argument(
         "--strict",
