@@ -3,9 +3,11 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 from typing import Any, Dict, List, Optional
 
+from ambermeta import __version__
 from ambermeta.errors import AmberMetaError
 from ambermeta.logging_config import configure_logging, get_logger
 from ambermeta.roles import classify_role
@@ -48,6 +50,43 @@ def _tolerate_unencodable_output() -> None:
             stream.reconfigure(errors="replace")
         except (AttributeError, ValueError, OSError):
             pass
+
+
+def _problem(*args, **kwargs) -> None:
+    """A line that reports a problem: stdout as usual, stderr under `-q`.
+
+    docs/cli.md: "`-q` Suppress stdout; errors/usage still go to stderr". Problems went
+    through `_out`, so `-q validate nope.mdout` printed nothing at all and exited 1.
+    """
+    if _QUIET:
+        print(*args, file=sys.stderr, **kwargs)
+    else:
+        print(*args, **kwargs)
+
+
+def _prepare_output(path: str, force: bool) -> bool:
+    """Whether a manifest may be written to `path`; says why not when it may not.
+
+    An existing file is refused without --force, as `init` always did: `discover --write`
+    and `export -o` replaced one without a word, so re-running `discover --write sim.yaml`
+    wiped a hand-edited manifest. A missing parent directory is created, as
+    `plan --summary-path` does, instead of failing with "Unexpected error".
+    """
+    if os.path.exists(path) and not force:
+        print(Colors.error(f"ERROR: {path} already exists. Use --force to overwrite."),
+              file=sys.stderr)
+        return False
+    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+    return True
+
+
+def _regex(value: str) -> str:
+    """argparse type for --pattern: a pattern that does not compile is a usage error."""
+    try:
+        re.compile(value)
+    except re.error as exc:
+        raise argparse.ArgumentTypeError(f"{value!r} is not a valid regular expression: {exc}")
+    return value
 
 
 def _out(*args, **kwargs) -> None:
@@ -302,6 +341,15 @@ def _print_simulation(sim, report=None, *, verbose: bool = False,
                          + (issue.get("info") or []))
                 for line in lines:
                     _out(f"    {issue['name']}: {line}")
+        else:
+            # What makes the report not OK, without -v: "Validation: ISSUES FOUND" used to
+            # be the only line, and only -v or --strict said which files.
+            problems = [(i["name"], e) for i in report.get("stage_issues", [])
+                        for e in (i.get("errors") or [])]
+            if problems:
+                _problem("\nFile problems:")
+                for name, err in problems:
+                    _problem(f"  - {name}: {err}")
         _sim_findings(report, strict=strict)
 
 
@@ -405,6 +453,9 @@ def _discover_command(args: argparse.Namespace) -> int:
     if not os.path.isdir(directory):
         print(Colors.error(f"ERROR: Directory not found: {directory}"), file=sys.stderr)
         return 1
+    # Before the scan, so a refusal does not come after the whole draft has been printed.
+    if getattr(args, "write", None) and not _prepare_output(args.write, getattr(args, "force", False)):
+        return 1
 
     # apply_tags=True (also the default): `discover --write`'s manifest IS this command's
     # confirmation step, so unlike the GUI's Discover it writes the inferred grouping
@@ -473,6 +524,8 @@ def _export_command(args: argparse.Namespace) -> int:
         return 1
 
     if args.output:
+        if not _prepare_output(args.output, getattr(args, "force", False)):
+            return 1
         fmt = _resolve_sim_format(args.output, getattr(args, "format", None))
         write_simulation(sim, args.output, fmt)
         _out(Colors.success(f"Wrote v2 manifest: {args.output} ({fmt})"))
@@ -909,9 +962,9 @@ def _validate_command(args: argparse.Namespace) -> int:
             filepath = file_result["file"]
             status = file_result["status"]
             if status == "error":
-                _out(f"\n{Colors.error('ERROR')}: {filepath}")
+                _problem(f"\n{Colors.error('ERROR')}: {filepath}")
                 for err in file_result["errors"]:
-                    _out(f"  - {err}")
+                    _problem(f"  - {err}")
             elif status == "warning":
                 _out(f"\n{Colors.warning('WARN')}: {filepath}")
                 for warn in file_result["warnings"]:
@@ -921,7 +974,7 @@ def _validate_command(args: argparse.Namespace) -> int:
 
         _out("\n" + "=" * 50)
         if has_errors:
-            _out(Colors.error("Validation FAILED with errors"))
+            _problem(Colors.error("Validation FAILED with errors"))
         elif has_warnings and args.strict:
             _out(Colors.warning("Validation FAILED (strict mode, warnings present)"))
         elif has_warnings:
@@ -1047,7 +1100,7 @@ _ambermeta_completion() {
     prev="${COMP_WORDS[COMP_CWORD-1]}"
 
     local commands="plan discover validate info init export gui completion"
-    local global_opts="--help --log-level --log-file --quiet -q"
+    local global_opts="--help --version --log-level --log-file --quiet -q"
 
     if [[ ${COMP_CWORD} -eq 1 ]]; then
         COMPREPLY=( $(compgen -W "${commands} ${global_opts}" -- "$cur") )
@@ -1059,7 +1112,7 @@ _ambermeta_completion() {
             COMPREPLY=( $(compgen -W "--help -m --manifest --skip-cross-stage-validation --strict --recursive --interactive -v --verbose --summary-path --summary-format --methods-summary-path --stats-csv --no-expand-env --pattern --auto-detect-restarts --prmtop" -- "$cur") )
             ;;
         discover)
-            COMPREPLY=( $(compgen -W "--help --recursive --no-recursive --pattern --write --format" -- "$cur") )
+            COMPREPLY=( $(compgen -W "--help --recursive --no-recursive --pattern --write --force --format" -- "$cur") )
             ;;
         validate)
             COMPREPLY=( $(compgen -W "--help --strict --format --manifest --allow-gaps" -- "$cur") )
@@ -1071,7 +1124,7 @@ _ambermeta_completion() {
             COMPREPLY=( $(compgen -W "--help -o --output --force" -- "$cur") )
             ;;
         export)
-            COMPREPLY=( $(compgen -W "--help -o --output --format" -- "$cur") )
+            COMPREPLY=( $(compgen -W "--help -o --output --force --format" -- "$cur") )
             ;;
         gui)
             COMPREPLY=( $(compgen -W "--help --host --port --no-browser" -- "$cur") )
@@ -1104,6 +1157,7 @@ _ambermeta() {
   )
 
   _arguments \
+    '--version[Print the version and exit]' \
     '--log-level[Set logging level]:level:(DEBUG INFO WARNING ERROR)' \
     '--log-file[Write logs to a file]:file:_files' \
     '(-q --quiet)'{-q,--quiet}'[Suppress all output except errors]' \
@@ -1120,10 +1174,10 @@ _ambermeta() {
           _arguments '--manifest[Path to manifest file]:file:_files' '--recursive[Auto-discover files]' '--interactive[Prompt for stages]' '--summary-path[Write protocol summary]:file:_files' '--summary-format[Summary format]:format:(json yaml)' '--methods-summary-path[Write methods summary]:file:_files' '--stats-csv[Write stats CSV]:file:_files' '--pattern[Regex file filter]:pattern:' '--prmtop[Global topology file]:file:_files' '--skip-cross-stage-validation[Skip continuity checks]' '--strict[Abort on first unreadable file]' '--no-expand-env[Disable env var expansion]' '--auto-detect-restarts[Link restarts automatically]' '(-v --verbose)'{-v,--verbose}'[Show detailed stage metadata]' '*:path:_files'
           ;;
         discover)
-          _arguments '(--recursive --no-recursive)'{--recursive,--no-recursive}'[Recurse into subdirectories]' '--pattern[Regex file filter]:pattern:' '--write[Write v2 manifest to path]:file:_files' '--format[Format for --write]:format:(json yaml)' '*:path:_files'
+          _arguments '(--recursive --no-recursive)'{--recursive,--no-recursive}'[Recurse into subdirectories]' '--pattern[Regex file filter]:pattern:' '--write[Write v2 manifest to path]:file:_files' '--force[Overwrite the --write file]' '--format[Format for --write]:format:(json yaml)' '*:path:_files'
           ;;
         export)
-          _arguments '(-o --output)'{-o,--output}'[Output path]:file:_files' '--format[Output format]:format:(json yaml)' '1:manifest:_files'
+          _arguments '(-o --output)'{-o,--output}'[Output path]:file:_files' '--force[Overwrite the --output file]' '--format[Output format]:format:(json yaml)' '1:manifest:_files'
           ;;
         validate)
           _arguments '--strict[Treat warnings as errors]' '--format[Output format]:format:(text json yaml)' '--manifest[Validate a whole simulation manifest]:file:_files' '--allow-gaps[Treat unexpected inter-step gaps as allowed]' '*:file:_files'
@@ -1160,6 +1214,7 @@ complete -c ambermeta -n "__fish_use_subcommand" -a "gui" -d "Launch web-based G
 complete -c ambermeta -n "__fish_use_subcommand" -a "completion" -d "Print shell completion script"
 
 complete -c ambermeta -s q -l quiet -d "Suppress all output except errors"
+complete -c ambermeta -l version -d "Print the version and exit"
 complete -c ambermeta -l log-level -d "Set logging level" -xa "DEBUG INFO WARNING ERROR"
 complete -c ambermeta -l log-file -d "Write logs to a file"
 
@@ -1182,9 +1237,11 @@ complete -c ambermeta -n "__fish_seen_subcommand_from discover" -l recursive -d 
 complete -c ambermeta -n "__fish_seen_subcommand_from discover" -l no-recursive -d "Do not recurse"
 complete -c ambermeta -n "__fish_seen_subcommand_from discover" -l pattern -d "Regex file filter"
 complete -c ambermeta -n "__fish_seen_subcommand_from discover" -l write -d "Write v2 manifest to path"
+complete -c ambermeta -n "__fish_seen_subcommand_from discover" -l force -d "Overwrite the --write file"
 complete -c ambermeta -n "__fish_seen_subcommand_from discover" -l format -d "Format for --write" -xa "json yaml"
 
 complete -c ambermeta -n "__fish_seen_subcommand_from export" -s o -l output -d "Output path"
+complete -c ambermeta -n "__fish_seen_subcommand_from export" -l force -d "Overwrite the --output file"
 complete -c ambermeta -n "__fish_seen_subcommand_from export" -l format -d "Output format" -xa "json yaml"
 
 complete -c ambermeta -n "__fish_seen_subcommand_from validate" -l strict -d "Treat warnings as errors"
@@ -1241,6 +1298,7 @@ def _init_command(args: argparse.Namespace) -> int:
             _out("Aborted.")
             return 1
 
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
     with open(output_path, "w", encoding="utf-8") as fh:
         fh.write(_generate_v2_template())
     _out(Colors.success(f"Created {args.output} (v2)"))
@@ -1396,7 +1454,15 @@ def _plan_v2(args: argparse.Namespace, directory: str) -> int:
     )
 
     expand_env = not getattr(args, "no_expand_env", False)
-    sim = load_simulation(args.manifest, expand_env=expand_env)
+    # As `validate --manifest` and `export` say it: these were "Unexpected error" here.
+    if not os.path.exists(args.manifest):
+        print(Colors.error(f"ERROR: Manifest not found: {args.manifest}"), file=sys.stderr)
+        return 1
+    try:
+        sim = load_simulation(args.manifest, expand_env=expand_env)
+    except (IOError, OSError, ValueError, TypeError, RuntimeError, AmberMetaError) as e:
+        print(Colors.error(f"ERROR: Failed to load manifest: {e}"), file=sys.stderr)
+        return 1
     # A relative `--prmtop` is named from the positional directory, whichever directory
     # the manifest's own paths turn out to be read from.
     global_prmtop = getattr(args, "prmtop", None)
@@ -1621,6 +1687,12 @@ For documentation, visit: https://github.com/MicheleBonus/ambermeta
 """,
     )
 
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"%(prog)s {__version__}",
+        help="Print the version and exit",
+    )
     # Global logging options
     parser.add_argument(
         "--log-level",
@@ -1722,6 +1794,7 @@ For documentation, visit: https://github.com/MicheleBonus/ambermeta
     # DS-004: Pattern-based filtering
     plan_parser.add_argument(
         "--pattern",
+        type=_regex,
         help="Regex pattern to filter discovered files (e.g., 'prod_.*' for production runs)",
     )
     # DS-005: Auto restart detection
@@ -1748,8 +1821,9 @@ For documentation, visit: https://github.com/MicheleBonus/ambermeta
     )
     discover_parser.add_argument("directory", nargs="?", default=".", help="Directory to scan (default: current directory)")
     discover_parser.add_argument("--recursive", action=argparse.BooleanOptionalAction, default=True, help="Recurse into subdirectories (default: on; use --no-recursive to disable)")
-    discover_parser.add_argument("--pattern", help="Regex filter for discovered files")
+    discover_parser.add_argument("--pattern", type=_regex, help="Regex filter for discovered files")
     discover_parser.add_argument("--write", help="Write the draft to this path as a v2 manifest")
+    discover_parser.add_argument("--force", action="store_true", help="Overwrite the --write file if it already exists")
     discover_parser.add_argument("--format", choices=["json", "yaml"], help="Format for --write (default: inferred from extension, else json)")
 
     # UX-005: validate subcommand
@@ -1812,6 +1886,7 @@ For documentation, visit: https://github.com/MicheleBonus/ambermeta
     )
     export_parser.add_argument("manifest", help="Path to the v2 manifest to convert")
     export_parser.add_argument("-o", "--output", help="Write to this path (default: print JSON to stdout)")
+    export_parser.add_argument("--force", action="store_true", help="Overwrite the --output file if it already exists")
     export_parser.add_argument("--format", choices=["json", "yaml"], help="Output format (default: inferred from --output extension)")
 
     # UX-009: init subcommand
