@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import AbstractSet, Any, Dict, List, Optional
 
 from ambermeta.errors import AmberMetaError
 from ambermeta.manifest import _read_raw_manifest
@@ -358,7 +358,8 @@ def same_lineage(a: Step, b: Step) -> bool:
     return (a.lineage or None) == (b.lineage or None)
 
 
-def relink_restarts(sim: Simulation, before: Dict[str, Optional[str]]) -> None:
+def relink_restarts(sim: Simulation, before: Dict[str, Optional[str]],
+                    keep: AbstractSet[str] = frozenset()) -> None:
     """Follow the order with the links the tool itself derived, and only those.
 
     ``before`` is the predecessor map from *before* the reorder. It is what separates a
@@ -375,6 +376,9 @@ def relink_restarts(sim: Simulation, before: Dict[str, Optional[str]]) -> None:
       and is left exactly as it is.
 
     Steps absent from ``before`` are new and keep whatever they were created with.
+    Steps in ``keep`` are left as they are too: the GUI passes the ones whose link the
+    run's own mdout confirms (`recorded_inputs.recorded_confirmations`), because a link
+    AMBER recorded is evidence and the new order is not.
 
     **Only in a single-member document.** A multi-member one is left alone entirely; see
     below for why.
@@ -398,7 +402,7 @@ def relink_restarts(sim: Simulation, before: Dict[str, Optional[str]]) -> None:
     seen: List[Step] = []
     for _, step in iter_steps(sim):
         ic = step.input_coords
-        if step.id in before:
+        if step.id in before and step.id not in keep:
             was = before[step.id]
             new_prev = seen[-1] if seen else None
             if ic.source == "step" and ic.ref == was:

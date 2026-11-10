@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
 from ambermeta.lineages import buckets, infer_lineages_from_layout
+from ambermeta.recorded_inputs import recorded_confirmations
 from ambermeta.simulation import (
     Simulation, Phase, Step, Topology, InputCoords, crosses_lineage, same_lineage,
     iter_steps, predecessors, relink_restarts, repair_dangling_refs, resolve_input_coords,
@@ -144,9 +145,33 @@ class DocumentStore:
 
         ``before`` must be captured with ``_order()`` BEFORE the mutation: it is the only
         way to tell a link this tool inferred from one the user picked by hand.
+
+        A link the run's own mdout confirms is kept: on the sample, moving one step re-
+        declared three runs as reading restarts their mdouts say they never read, and the
+        edit said nothing. Any link the new order does change is reported in `_warnings`,
+        so the edit says what it cost.
         """
-        if self._doc.settings.get("auto_link_restarts"):
-            relink_restarts(self._doc.simulation, before)
+        if not self._doc.settings.get("auto_link_restarts"):
+            return
+        sim = self._doc.simulation
+        links = {s.id: (s.input_coords.source, s.input_coords.ref) for _, s in iter_steps(sim)}
+        relink_restarts(sim, before,
+                        keep=recorded_confirmations(sim, self._doc.base_directory))
+        names = {s.id: s.name or s.id for _, s in iter_steps(sim)}
+
+        def said(link: Tuple[str, Optional[str]]) -> str:
+            source, ref = link
+            if source == "step" and ref in names:
+                return f"continues from {names[ref]}"
+            return "reads the starting structure" if source == "starting_structure" else source
+
+        changed = [f"{names[s.id]} now {said(now)} (before: {said(links[s.id])})"
+                   for _, s in iter_steps(sim) if s.id in links
+                   for now in [(s.input_coords.source, s.input_coords.ref)] if now != links[s.id]]
+        if changed:
+            self._warnings.append(
+                f"The new order re-linked {len(changed)} step(s): " + "; ".join(changed)
+                + ". No mdout records these links; links a run's mdout records are kept.")
 
     def _order(self) -> Dict[str, Optional[str]]:
         return predecessors(self._doc.simulation)
@@ -458,7 +483,7 @@ class DocumentStore:
             # BEFORE it, so without this a step added to a non-final phase forks the
             # chain: two steps claim the same producer and the new one feeds nobody.
             self._relink(before)
-            self._warnings = notes          # after _snapshot(), which clears them
+            self._warnings = notes + self._warnings   # after _snapshot(), which clears them
             self._doc.dirty = True
             return sid
 
