@@ -39,11 +39,19 @@ _EXT_FORMAT = {"yml": "yaml", "yaml": "yaml", "json": "json", "toml": "toml", "c
 
 
 def resolve_format(path: Optional[str], explicit: Optional[str]) -> str:
+    """The format to write `path` in.
+
+    A manifest name (.yaml, .yml, .json) decides its own format, ahead of an explicit
+    one: Open reads a manifest by its extension, and the Save dialog's Format, which
+    starts at yaml, wrote YAML into `manifest.json`, a file that Open then could not read.
+    """
+    ext = os.path.splitext(path)[1].lower() if path else ""
+    if ext in _MANIFEST_SUFFIXES:
+        return _EXT_FORMAT[ext.lstrip(".")]
     if explicit:
         return explicit
     if path:
-        ext = os.path.splitext(path)[1].lower().lstrip(".")
-        return _EXT_FORMAT.get(ext, "yaml")
+        return _EXT_FORMAT.get(ext.lstrip("."), "yaml")
     return "yaml"
 
 
@@ -144,6 +152,11 @@ def file_metadata(path: str) -> Dict[str, Any]:
     kind = _EXT_KIND.get(ext, "other")
     if kind == "other" and not ext:
         kind = _DEFAULT_BASENAME_KIND.get(os.path.basename(path).lower(), "other")
+    if ext == ".crd":
+        # LEaP's coordinate file and a trajectory share `.crd`; the file list types it by
+        # content (`files.classify`), and the Inspector has to parse what the list shows.
+        from ambermeta.coords import sniff_coordinate_kind
+        kind = "inpcrd" if sniff_coordinate_kind(path) == "inpcrd" else "mdcrd"
     parser_cls = _KIND_PARSER.get(kind)
     if parser_cls is None:
         return {"details": None, "warnings": ["Unsupported file type"], "kind": kind}
@@ -189,8 +202,10 @@ def build_validation_report(stages: List[Dict[str, Any]], settings: Dict[str, An
     if protocol is None:
         protocol = build_protocol(stages, settings, base_directory)
 
-    # Per-document missing-file pass (resolved against base_directory).
-    missing_by_name: Dict[str, List[Dict[str, str]]] = {}
+    # Per-document missing-file pass (resolved against base_directory). Keyed by step id
+    # where there is one: two steps may share a name (every new step starts as "step 1"),
+    # and keyed by name, one step's missing mdout was reported on both.
+    missing_by_key: Dict[str, List[Dict[str, str]]] = {}
     global_prmtop = settings.get("global_prmtop")
     for s in stages:
         miss: List[Dict[str, str]] = []
@@ -207,7 +222,7 @@ def build_validation_report(stages: List[Dict[str, Any]], settings: Dict[str, An
             if full and not os.path.exists(full):
                 miss.append({"kind": kind, "path": rel})
         if miss:
-            missing_by_name[s.get("name", "")] = miss
+            missing_by_key[s.get("step_id") or s.get("name", "")] = miss
 
     stage_issues: List[Dict[str, Any]] = []
     protocol_issues: List[str] = []
@@ -222,7 +237,7 @@ def build_validation_report(stages: List[Dict[str, Any]], settings: Dict[str, An
                 errors.append(le.get("message") or le.get("kind") or str(le))
             else:
                 errors.append(str(le))
-        miss = missing_by_name.get(sd["name"], [])
+        miss = missing_by_key.get(stage.step_id or sd["name"], [])
         for m in miss:
             errors.append("missing {kind}: {path}".format(**m))
         for note in sd.get("continuity", []):
