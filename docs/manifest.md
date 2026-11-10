@@ -230,6 +230,9 @@ input_coords: { source: path, path: "restarts/custom.rst7" }
 | `step` | `ref: <step id>` | The **`rst` of the referenced Step** — the restart that Step wrote. This is the continuity chain: Step *N*'s input is Step *N−1*'s output. |
 | `path` | `path: "..."` | An explicit coordinate file, bypassing both of the above (e.g. a restart from outside this Simulation). |
 
+Any other `source` is refused when the manifest is loaded, with the step named: a misspelt
+source would otherwise leave the step with no input at all.
+
 The file that joins two Steps is written once, on the Step that **produces** it:
 
 ```yaml

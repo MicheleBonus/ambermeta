@@ -1,5 +1,5 @@
 """Pydantic schemas for the AmberMeta GUI API (v2: Simulation -> Phase -> Step)."""
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Literal, Optional, Any
 from pydantic import BaseModel, Field
 from enum import Enum
 
@@ -53,7 +53,9 @@ class TopologyModel(BaseModel):
 
 
 class InputCoordsModel(BaseModel):
-    source: str = "starting_structure"   # starting_structure | step | path
+    # The same three `simulation.INPUT_SOURCES` the manifest loader accepts: anything
+    # else resolves to no input at all, and is refused here with a 422.
+    source: Literal["starting_structure", "step", "path"] = "starting_structure"
     ref: Optional[str] = None
     path: Optional[str] = None
 
