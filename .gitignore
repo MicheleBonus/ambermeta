@@ -81,3 +81,5 @@ dmypy.json
 
 # ux-audit skill output (reports and screenshots stay local)
 .claude/ux-audit/
+# Page snapshots and console logs the Playwright MCP plugin writes to the workspace root
+.playwright-mcp/
