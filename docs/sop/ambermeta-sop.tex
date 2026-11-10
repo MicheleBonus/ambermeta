@@ -185,12 +185,14 @@ Once accepted, each phase carries a banner naming the member and its run count
 Press \textbf{Validate}. Findings arrive in the right-hand tray in two groups:
 
 \begin{description}[leftmargin=1.4em,style=nextline,font=\bfseries]
-  \item[\textsc{applied}] Inferences AmberMeta already acted on, each with an
-        \textbf{Undo}. Skim these, because they are claims about your data. The starting
-        structure and phase roles usually land here.
-  \item[\textsc{needs you}] Questions it will not answer on its own. \textbf{Accept}
-        agrees, \textbf{Adjust} lets you supply the right value, \textbf{Ignore} records
-        that you considered it.
+  \item[\textsc{applied}] Inferences AmberMeta already acted on. Skim these, because
+        they are claims about your data. The starting structure and phase roles usually
+        land here. To reverse one, change what it set in the timeline: clear the starting
+        structure, or pick another role for the phase.
+  \item[\textsc{needs you}] Questions it will not answer on its own. A card about one
+        step has \textbf{Show step}, which opens that step in the inspector.
+        \textbf{Dismiss} hides a card for the session and resolves nothing: fix the cause
+        in the timeline, then press \textbf{Validate} again.
 \end{description}
 
 \noindent The findings you are most likely to see, and what they mean:
@@ -200,7 +202,7 @@ Press \textbf{Validate}. Findings arrive in the right-hand tray in two groups:
 \toprule
 \textbf{Finding} & \textbf{What to do}\\
 \midrule
-Confirm the HMR topology & Check the flagged topology really is the mass-repartitioned one, then accept.\\
+Confirm the HMR topology & Check the flagged topology really is the mass-repartitioned one. If it is not, set its kind with the selector next to it in the pool.\\
 Gap detected without stated expectation & Two consecutive runs do not meet in time. Either a run is missing from the deposit, or the gap is real and deliberate. Say which.\\
 Atom count mismatch across files & A step is bound to the wrong topology. Rebind it in the timeline.\\
 Trajectory is truncated or still being written & The run is incomplete or was copied mid-write. Re-copy it, or accept that its times come from the log instead.\\
@@ -208,8 +210,9 @@ Trajectory is truncated or still being written & The run is incomplete or was co
 \end{tabularx}
 \end{center}
 
-Resolve findings until only ones you have deliberately accepted or ignored remain. A
-a finding left unresolved is an unanswered question travelling with your data.
+Resolve findings until the only ones left are those you can explain. Dismissing a card
+only tidies the tray: \textbf{Validate} and the summary still report the finding. A
+finding left unresolved is an unanswered question travelling with your data.
 
 \subsection{Save, then Plan}
 

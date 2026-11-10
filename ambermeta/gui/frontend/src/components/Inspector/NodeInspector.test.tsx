@@ -6,6 +6,7 @@ import { QueryClientProvider } from "@tanstack/react-query";
 import { http, HttpResponse } from "msw";
 import { server, emptyDocument } from "@/test/server";
 import { queryClient } from "@/api/queryClient";
+import { SuggestionDismissalProvider } from "@/components/Suggestions/suggestionsContext";
 import { SelectionProvider, useSelection, type SelKind } from "@/state/selection";
 import { makeStep } from "@/test/factories";
 import { Inspector } from "./Inspector";
@@ -60,8 +61,10 @@ async function renderInspector(kind: SelKind, id: string) {
   render(
     <QueryClientProvider client={queryClient}>
       <SelectionProvider>
-        <Select kind={kind} id={id} />
-        <Inspector />
+        <SuggestionDismissalProvider>
+          <Select kind={kind} id={id} />
+          <Inspector />
+        </SuggestionDismissalProvider>
       </SelectionProvider>
     </QueryClientProvider>,
   );
