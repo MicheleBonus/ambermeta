@@ -868,6 +868,8 @@ ERROR: Failed to load manifest: old_v1_manifest.yaml is not a v2 manifest (no 's
 
 Write a starting **v2 template** manifest — a static, commented example to hand-edit. `init` does **not** scan `directory` or the filesystem at all; `directory` only sets where the output file is written. To build a v2 manifest from files already on disk, use [`discover --write`](#discover) instead.
 
+The template is commented YAML, so `-o` must name a `.yaml` or `.yml` file; any other name is refused before anything is written.
+
 ```bash
 ambermeta init [directory] [options]
 ```
@@ -1075,7 +1077,7 @@ The generated scripts complete all eight subcommands, including `discover` and `
 
 `NO_COLOR` (any non-empty value, per [no-color.org](https://no-color.org)) turns coloured output off even on a terminal.
 
-Manifest paths support `${VAR}`/`$VAR` expansion by default. Every manifest-reading command — `plan -m`, `export`, `validate --manifest` — loads through `ambermeta.simulation.load_simulation`, which shares the same underlying reader, so expansion behaves identically everywhere (`init` never reads a manifest, only writes a template):
+Manifest paths support `${VAR}`/`$VAR` expansion by default. `plan -m` and `validate --manifest` load through `ambermeta.simulation.load_simulation`, which shares the same underlying reader, so expansion behaves identically in both. `export` reads with expansion off: it rewrites the manifest itself, so `${PROJECT_DIR}` stays `${PROJECT_DIR}` in its output rather than becoming this machine's path. (`init` never reads a manifest, only writes a template.)
 
 ```yaml
 version: 2
