@@ -86,8 +86,9 @@ steps:
 | `simulation` | mapping | The topology pool + the starting structure (§3). |
 | `phases` | list | Ordered Phase records (§4). |
 | `steps` | list | Ordered Step records, each tagged with the `phase` id it belongs to (§5). A document with no `steps` list is not a manifest — see §11. |
+| `acknowledged` | list, optional | Findings you have reviewed, each with a note saying why it stands (§9.3). Written only when there is one. |
 
-Those four are the whole vocabulary. In particular there is **no `settings` key**: `payload_to_simulation`
+Those five are the whole vocabulary. In particular there is **no `settings` key**: `payload_to_simulation`
 never reads one, and adding one to a file changes nothing. Validation behaviour is chosen by the caller —
 `ambermeta plan` builds its settings purely from its CLI flags, so `--skip-cross-stage-validation` simply
 turns the cross-stage continuity checks off; it is not overriding anything written in the file.
@@ -555,6 +556,31 @@ phase cannot hold both). Since 1.3.0 `discover` names the second phase of a role
 as before. Up to 1.2 every one of them was called "Equilibration". The methods summary describes the
 numbered repeats of a phase together with it (one "Equilibration" entry with `document_phases: 3`), as it
 did when they shared one name.
+
+### 9.3 Settling a finding: `acknowledged`
+
+A finding you have looked at and accept (a replica stopped on purpose, a run that was not
+deposited, a topology that is not in the deposit) is settled with a note:
+
+```yaml
+acknowledged:
+- finding: 'Run check: ntp_prod_0001: Time step of 4 fs, but the topology has standard hydrogen masses (no hydrogen mass repartitioning); a time step above 2 fs needs repartitioned hydrogen masses.'
+  note: The runs used an HMR topology, CH3L1_HUMAN_6NAG.hmr.top, which was not deposited.
+```
+
+- `finding` is the finding's exact text: the `title: evidence` line that `validate --manifest`
+  prints under **Findings**, or the message of a replica-coherence warning. Copy it from the terminal,
+  or use **Acknowledge…** in the GUI, which writes the same thing.
+- `note` is required: an entry without one is refused when the manifest is read, as is one that names
+  no finding.
+- Matching is on the exact text. A finding whose text changes, because the data changed or a new
+  version words it differently, is a new finding and shows again; the old entry is then listed as
+  *no longer found*, so it can be removed or rewritten.
+- An acknowledged finding is listed apart, with its note, under **Acknowledged**; it does not count
+  towards `--strict` or towards the findings to review, and `plan` copies it into `summary.json` and
+  the methods summary. A replica-coherence *error* (members of different sizes, minimisation beside
+  dynamics) cannot be acknowledged: those members are not runs of one experiment.
+- Each finding is settled on its own, so five runs with the same check need five entries.
 
 ---
 

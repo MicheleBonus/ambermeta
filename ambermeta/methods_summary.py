@@ -1246,6 +1246,14 @@ def _findings(runs: List["_Run"], summary: Dict[str, Any]) -> Dict[str, Any]:
                                        ("grouped", listed)])
     if len(groups) > MAX_FINDINGS:
         out["more_patterns"] = len(groups) - MAX_FINDINGS
+    # What the depositor said about findings they reviewed: the finding (paths shortened
+    # like every other example here) and their note, word for word. The findings above
+    # are still counted; this is the explanation beside them, not a filter.
+    acknowledged = [a for a in summary.get("acknowledged") or [] if isinstance(a, dict)]
+    if acknowledged:
+        out["acknowledged"] = [OrderedDict([("finding", _shorten(str(a.get("finding", "")))),
+                                            ("note", str(a.get("note", "")))])
+                               for a in acknowledged]
     out["note"] = ("findings are what AmberMeta found to check in the run files; "
                    "INFO remarks are left out")
     return out

@@ -18,6 +18,7 @@ ambermeta/
   topology_pool.py       # TopologyPool + classify_topology_pool() — HMR detection over a set of prmtops
   coords.py              # sniff_coordinate_kind() — inpcrd vs mdcrd by content, not extension
   systems.py             # separate_systems() — runs of different atom counts are separate simulations
+  acknowledgements.py    # finding_text(), apply_acknowledgements() — findings a manifest settles with a note
   protocol.py            # SimulationStage, SimulationProtocol, ProtocolBuilder — discovery, assembly,
                           # continuity/sequence-gap detection; still the shared validation machinery
   manifest.py            # tolerant YAML/JSON reader + in-memory stage-dict helpers; STAGE_FILE_KINDS

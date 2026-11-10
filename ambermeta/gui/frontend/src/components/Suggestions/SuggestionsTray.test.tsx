@@ -1,10 +1,10 @@
 import { it, expect, vi } from "vitest";
 import { useState } from "react";
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { http, HttpResponse } from "msw";
-import { server } from "@/test/server";
+import { server, emptyDocument } from "@/test/server";
 import { queryClient } from "@/api/queryClient";
 import { SelectionProvider, useSelection } from "@/state/selection";
 import { SuggestionsContext, SuggestionDismissalProvider } from "./suggestionsContext";
@@ -95,7 +95,7 @@ it("a finding about one step offers to show that step, and nothing it cannot do"
 
   expect(screen.getByTestId("selection")).toHaveTextContent("step:st_0001");
   expect(within(card).getAllByRole("button").map((b) => b.textContent))
-    .toEqual(["Show step", "Dismiss"]);
+    .toEqual(["Show step", "Acknowledge…", "Dismiss"]);
 });
 
 it("no card can reverse an edit through the history undo", async () => {
@@ -156,4 +156,50 @@ it("a finding whose content changed is shown again", async () => {
   view.rerender(<Harness list={[worse]} />);
 
   expect(screen.getByText("prod sequence is missing member(s) 2, 3")).toBeInTheDocument();
+});
+
+// --- settling a finding --------------------------------------------------------------
+// Dismiss recorded nothing, so the finding came back on the next Validate, in --strict
+// and in the methods summary. An acknowledgement is kept in the manifest with a note.
+
+const NOTE = "prod_0002 was not deposited.";
+const textOf = (s: Suggestion) => `${s.title}: ${s.evidence}`;
+
+it("a finding can be acknowledged with a note, and the note is what is sent", async () => {
+  let body: unknown;
+  server.use(http.post("/api/acknowledged", async ({ request }) => {
+    body = await request.json();
+    return HttpResponse.json(emptyDocument);
+  }));
+  setup([missingRun]);
+  const card = screen.getByTestId("suggestion-sug_1");
+
+  await userEvent.click(within(card).getByRole("button", { name: "Acknowledge…" }));
+  const save = within(card).getByRole("button", { name: "Save note" });
+  expect(save).toBeDisabled();   // no note, no acknowledgement
+  await userEvent.type(within(card).getByLabelText("Why this finding stands"), NOTE);
+  await userEvent.click(save);
+
+  // The finding is named by the line `validate` prints, which is how the CLI matches it.
+  await waitFor(() => expect(body).toEqual({ finding: textOf(missingRun), note: NOTE }));
+});
+
+it("an acknowledged finding is listed apart with its note, and can be reopened", async () => {
+  let body: unknown;
+  server.use(http.post("/api/acknowledged/remove", async ({ request }) => {
+    body = await request.json();
+    return HttpResponse.json(emptyDocument);
+  }));
+  setup([{ ...missingRun, acknowledged: NOTE }]);
+
+  expect(screen.getByText(/^acknowledged$/i)).toBeInTheDocument();
+  expect(screen.queryByText(/needs you/i)).not.toBeInTheDocument();
+  expect(screen.getByText(NOTE)).toBeInTheDocument();
+  await userEvent.click(screen.getByRole("button", { name: "Reopen" }));
+  await waitFor(() => expect(body).toEqual({ finding: textOf(missingRun) }));
+});
+
+it("an applied card offers no acknowledgement", () => {
+  setup([roleGuess]);
+  expect(screen.queryByRole("button", { name: "Acknowledge…" })).not.toBeInTheDocument();
 });

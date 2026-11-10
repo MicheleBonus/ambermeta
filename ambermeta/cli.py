@@ -382,14 +382,11 @@ def _coherence_errors(report):
 
 #: The suggestion kinds that are problems, never the `[applied]` ones. The last three are
 #: a run's own findings (`ambermeta.protocol.FINDING_KINDS`).
-PROBLEM_KINDS = ("continuity_gap", "missing_run",
-                 "step_check", "unfinished_run", "input_mismatch")
-
-
 def _problem_suggestions(report):
-    """The suggestions that are problems, never the `[applied]` ones."""
-    return [s for s in (report.get("suggestions") or [])
-            if s.get("kind") in PROBLEM_KINDS]
+    """The suggestions that are problems and still open: never the `[applied]` ones, and
+    never one the manifest acknowledges (`ambermeta.acknowledgements`)."""
+    from ambermeta.acknowledgements import open_problems
+    return open_problems(report)
 
 
 def _report_findings(report):
@@ -404,7 +401,28 @@ def _report_findings(report):
     they mean rather than filtering this one. Both shapes carry a `kind`.
     """
     return _problem_suggestions(report) + [
-        f for f in (report.get("coherence") or []) if f.get("severity") == "warning"]
+        f for f in (report.get("coherence") or [])
+        if f.get("severity") == "warning" and not f.get("acknowledged")]
+
+
+def _print_acknowledged(report) -> None:
+    """The findings the manifest settles, each with its note, and the stale entries.
+
+    Listed apart rather than hidden: an acknowledgement says why a finding stands, and the
+    reader of `validate` should see both. One that matches no finding any more is named so
+    it can be removed, or rewritten for the finding that replaced it.
+    """
+    acknowledged = report.get("acknowledged") or []
+    if acknowledged:
+        _out("\nAcknowledged:")
+        for entry in acknowledged:
+            _out(f"  - {entry['finding']}")
+            _out(f"      note: {entry['note']}")
+    stale = report.get("stale_acknowledgements") or []
+    if stale:
+        _out("\nAcknowledged, no longer found:")
+        for entry in stale:
+            _out(f"  - {entry['finding']}")
 
 
 def _sim_findings(report, *, strict: bool = False) -> None:
@@ -418,7 +436,7 @@ def _sim_findings(report, *, strict: bool = False) -> None:
     _print_role_totals(report.get("totals"))
     _print_lineage_totals(report.get("lineages"))
     _print_findings(_problem_suggestions(report))
-    coherence = report.get("coherence") or []
+    coherence = [f for f in (report.get("coherence") or []) if not f.get("acknowledged")]
     if coherence:
         _out("\nLineage coherence:")
         for f in coherence:
@@ -428,16 +446,21 @@ def _sim_findings(report, *, strict: bool = False) -> None:
         _out("\nProtocol notes:")
         for note in issues:
             _out(f"  - {note}")
+    _print_acknowledged(report)
     findings = len(_report_findings(report))
+    settled = len(report.get("acknowledged") or [])
     ok = bool(report.get("ok")) and not (strict and findings)
     if not ok:
         _out("\nValidation: ISSUES FOUND")
-    elif findings:
-        # OK is about validity (the chain holds, the files are there), and it sat straight
-        # under the findings, so a reader skimming for the verdict saw OK and stopped.
-        _out(f"\nValidation: OK, {findings} finding{'s' if findings != 1 else ''} to review")
-    else:
-        _out("\nValidation: OK")
+        return
+    # OK is about validity (the chain holds, the files are there), and it sat straight
+    # under the findings, so a reader skimming for the verdict saw OK and stopped.
+    parts = []
+    if findings:
+        parts.append(f"{findings} finding{'s' if findings != 1 else ''} to review")
+    if settled:
+        parts.append(f"{settled} acknowledged")
+    _out("\nValidation: OK" + (", " + ", ".join(parts) if parts else ""))
 
 
 def _resolve_sim_format(path: str, requested: Optional[str]) -> str:
@@ -1638,6 +1661,7 @@ def _plan_v2(args: argparse.Namespace, directory: str) -> int:
 
     strict = bool(getattr(args, "strict", False))
     report = validate_simulation(sim, settings, directory, protocol=protocol)
+    protocol.acknowledged = report.get("acknowledged") or []
     _print_simulation(sim, report, verbose=bool(getattr(args, "verbose", False)),
                       strict=strict)
 

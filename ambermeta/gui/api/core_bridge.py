@@ -578,6 +578,9 @@ def validate_simulation(sim, settings, base_directory, protocol=None):
     # findings block prints them and `--strict` counts them.
     suggestions.extend(stage_finding_cards(protocol.stages, start_index=len(suggestions) + 1))
     report["suggestions"] = suggestions
+    # The findings the user has settled, with their notes (see `ambermeta.acknowledgements`).
+    from ambermeta.acknowledgements import apply_acknowledgements
+    apply_acknowledgements(report, sim.acknowledged)
     return report
 
 
@@ -605,6 +608,10 @@ def write_plan_outputs(sim, settings, base_directory, targets: Dict[str, str],
         read_prior_summary, totals_delta, write_protocol_outputs)
 
     protocol = build_protocol(_flatten_simulation(sim), dict(settings), base_directory)
+    # Which findings the manifest acknowledges is known only from a validation of it,
+    # reusing the protocol just built, as `plan -m` does.
+    protocol.acknowledged = validate_simulation(
+        sim, settings, base_directory, protocol=protocol).get("acknowledged") or []
 
     # BEFORE the write, never after. `write_protocol_outputs` below overwrites the very
     # file being compared against, so a read placed after it sees this run's own output --

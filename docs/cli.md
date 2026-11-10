@@ -680,6 +680,32 @@ Validation: OK, 5 findings to review
 
 The sample as bundled reports this on every run: its runs used `dt = 0.004` ps, and the bundled topology's 32,188 hydrogens all weigh 1.008 amu. Either the runs used a repartitioned topology that is not the one bundled, or they integrated standard-mass hydrogens at a time step those do not support; relabelling the topology as HMR would resolve neither. A run on an HMR topology does not raise it. The verdict stays `OK` because a finding is not an invalid document; with `--strict` the same run prints `Validation: ISSUES FOUND` and exits `1`.
 
+**Settling a finding.** A finding you have reviewed can be acknowledged in the manifest with a note
+([manifest §9.3](manifest.md#93-settling-a-finding-acknowledged)): copy its line from **Findings** into
+an `acknowledged:` entry. It is then listed apart with the note, no longer counts for `--strict`, and
+travels into `summary.json` and the methods summary. An entry that matches no finding any more is named,
+so it can be removed:
+
+```text
+$ ambermeta validate --manifest sim.yaml
+...
+Findings:
+  - Run check: ntp_prod_0002: Time step of 4 fs, ...
+  ... (three more)
+
+Acknowledged:
+  - Run check: ntp_prod_0001: Time step of 4 fs, but the topology has standard hydrogen masses (no hydrogen mass repartitioning); a time step above 2 fs needs repartitioned hydrogen masses.
+      note: The runs used an HMR topology, CH3L1_HUMAN_6NAG.hmr.top, which was not deposited.
+
+Acknowledged, no longer found:
+  - ntp_prod run 9 is missing: no longer true
+
+Validation: OK, 4 findings to review, 1 acknowledged
+```
+
+In `--format json`, an acknowledged finding's card carries `"acknowledged": "<note>"`, and the report
+lists `acknowledged` and `stale_acknowledgements` as `{finding, note}` entries.
+
 ```text
 $ ambermeta validate --manifest sim.yaml --format json
 {

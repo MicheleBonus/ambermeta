@@ -213,6 +213,8 @@ Each step's `input_coords.source` is one of `starting_structure`, `step` (with `
 ambermeta validate --manifest simulation.yaml --format json
 ```
 
+A finding you have reviewed (a replica stopped on purpose, a run that was not deposited) can be settled in the manifest with a note, under `acknowledged:`; it is then listed apart with that note, no longer fails `--strict`, and is carried into the summaries. See [manifest §9.3](docs/manifest.md#93-settling-a-finding-acknowledged).
+
 The complete schema — every key, all input-coordinate sources, gap configuration, environment-variable expansion, and role tokens — is documented in the [manifest schema reference](docs/manifest.md).
 
 ### Coming from v1?

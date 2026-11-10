@@ -99,11 +99,18 @@ class PhaseModel(BaseModel):
         use_enum_values = True
 
 
+class AcknowledgementModel(BaseModel):
+    """A settled finding: its exact text and the note saying why it stands."""
+    finding: str
+    note: str
+
+
 class SimulationModel(BaseModel):
     version: int = 2
     topologies: List[TopologyModel] = Field(default_factory=list)
     starting_structure: Optional[str] = None
     phases: List[PhaseModel] = Field(default_factory=list)
+    acknowledged: List[AcknowledgementModel] = Field(default_factory=list)
 
 
 class RuntimeSettings(BaseModel):
@@ -161,6 +168,15 @@ class UpdateTopology(BaseModel):
 
 class SetStartingStructure(BaseModel):
     path: Optional[str] = None
+
+
+class AcknowledgeRequest(BaseModel):
+    finding: str
+    note: str
+
+
+class RemoveAcknowledgement(BaseModel):
+    finding: str
 
 
 class PhaseCreate(BaseModel):
@@ -293,6 +309,8 @@ class Suggestion(BaseModel):
     # build_suggestions' dict silently, so the card would name no member and nothing
     # would say why.
     lineage: Optional[str] = None
+    # The note the manifest gives for this finding, when it acknowledges it.
+    acknowledged: Optional[str] = None
 
 
 class LineageTotals(BaseModel):
@@ -414,6 +432,7 @@ class CoherenceFinding(BaseModel):
     severity: str    # error | warning | info
     kind: str        # atom_count | run_type | parameter | seed | fan_out
     message: str
+    acknowledged: Optional[str] = None   # the manifest's note, for an acknowledged warning
 
 
 class ValidationReport(BaseModel):
@@ -424,6 +443,9 @@ class ValidationReport(BaseModel):
     protocol_issues: List[str] = Field(default_factory=list)
     stage_issues: List[StageIssue] = Field(default_factory=list)
     suggestions: List[Suggestion] = Field(default_factory=list)
+    # The manifest's acknowledgements that matched a finding, and those that matched none.
+    acknowledged: List[AcknowledgementModel] = Field(default_factory=list)
+    stale_acknowledgements: List[AcknowledgementModel] = Field(default_factory=list)
 
 
 class FileMetadata(BaseModel):

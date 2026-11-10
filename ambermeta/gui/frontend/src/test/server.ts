@@ -15,6 +15,8 @@ export const emptyValidationReport: ValidationReport = {
   ok: true, totals: {}, lineages: null, coherence: [], protocol_issues: [],
   stage_issues: [],
   suggestions: [],
+  acknowledged: [],
+  stale_acknowledgements: [],
 };
 
 export const apiHandlers = [

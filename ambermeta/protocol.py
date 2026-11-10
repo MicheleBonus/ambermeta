@@ -975,6 +975,10 @@ def role_times(totals: Dict[str, Any]) -> List[Tuple[str, float]]:
 @dataclass
 class SimulationProtocol:
     stages: List[SimulationStage] = field(default_factory=list)
+    # The findings the manifest acknowledges, as `{"finding", "note"}` (see
+    # `ambermeta.acknowledgements`). Set by whoever validated the document against its
+    # manifest; a scan has none. Written to summary.json so the note outlives the terminal.
+    acknowledged: List[Dict[str, str]] = field(default_factory=list)
 
     def validate(self, cross_stage: bool = True, allow_unexpected_gaps: bool = False) -> None:
         for stage in self.stages:
@@ -1496,6 +1500,9 @@ class SimulationProtocol:
                     for f in _coherence(self.stages)]
         if coherent:
             out["lineage_findings"] = coherent
+        # Emitted only when there is one, so an unreviewed document's summary is unchanged.
+        if self.acknowledged:
+            out["acknowledged"] = [dict(a) for a in self.acknowledged]
         return out
 
     def to_methods_dict(self) -> Dict[str, Any]:
