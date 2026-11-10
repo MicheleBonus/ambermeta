@@ -10,9 +10,14 @@ let toasts: Toast[] = [];
 const listeners = new Set<() => void>();
 let nextId = 1;
 const emit = () => listeners.forEach((l) => l());
+/** How long an information toast stays. An error, a warning or an offer (Undo) stays
+ *  until it is dismissed: "Saved to ..." toasts used to stack over the tray all session. */
+const INFO_TOAST_MS = 6000;
 function push(t: Omit<Toast, "id">): void {
-  toasts = [...toasts, { id: nextId++, ...t }];
+  const id = nextId++;
+  toasts = [...toasts, { id, ...t }];
   emit();
+  if (t.tone === "info" && !t.action) setTimeout(() => dismissToast(id), INFO_TOAST_MS);
 }
 export function pushToast(message: string, tone: ToastTone = "info", action?: ToastAction): void {
   // An offer to reverse something is a statement about the last edit by construction:

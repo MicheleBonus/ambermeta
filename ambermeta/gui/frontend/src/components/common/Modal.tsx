@@ -70,7 +70,7 @@ export function Modal(
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/20"
          onMouseDown={onClose}>
-      <div ref={ref} tabIndex={-1} role="dialog" aria-label={title}
+      <div ref={ref} tabIndex={-1} role="dialog" aria-modal="true" aria-label={title}
            onMouseDown={(e) => e.stopPropagation()}
            className="bg-surface border border-hairline rounded-lg shadow-lg w-[min(560px,92vw)] max-h-[85vh] overflow-auto outline-none">
         <header className="px-4 py-3 border-b border-hairline font-semibold">{title}</header>

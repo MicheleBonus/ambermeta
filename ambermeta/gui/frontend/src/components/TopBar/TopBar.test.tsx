@@ -73,3 +73,11 @@ describe("ExportModal", () => {
     expect(values).toEqual(["yaml", "json"]);
   });
 });
+
+it("offers Save as, which a saved document otherwise has no way to reach", async () => {
+  // Once a document had a path, Save wrote straight back to it and never asked again.
+  const onSaveAs = vi.fn();
+  renderTopBar({ onSaveAs });
+  await userEvent.click(await screen.findByRole("button", { name: "Save as…" }));
+  expect(onSaveAs).toHaveBeenCalledTimes(1);
+});

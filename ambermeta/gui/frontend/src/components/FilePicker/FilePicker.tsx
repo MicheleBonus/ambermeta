@@ -10,6 +10,11 @@ interface Props {
   /** Show only files of this kind — a picker whose title names a slot must not
    *  offer everything else on disk. Omit it to list the whole tree. */
   filterType?: FileType;
+  /** List only manifests (.yaml/.yml/.json). Save always does; Open asks for it, because
+   *  the same picker also fills step slots, where run files are the point. */
+  manifests?: boolean;
+  /** The name the Save field starts with, as Plan's dialog does. */
+  defaultPath?: string;
   onPick: (result: { path: string; format?: ExportFormat }) => void;
   onClose: () => void;
 }
@@ -30,11 +35,11 @@ function flatten(nodes: FileInfo[], q: string, type?: FileType): FileInfo[] {
   return out;
 }
 
-export function FilePicker({ open, mode, title, filterType, onPick, onClose }: Props) {
+export function FilePicker({ open, mode, title, filterType, manifests, defaultPath, onPick, onClose }: Props) {
   // Only while it is on screen: a closed picker was walking the whole tree anyway.
   const { data: tree = [] } = useFiles({ recursive: true, include_all: true, enabled: open });
   const [q, setQ] = useState("");
-  const [path, setPath] = useState("");
+  const [path, setPath] = useState(defaultPath ?? "");
   const [format, setFormat] = useState<ExportFormat>("yaml");
   // The backend types anything it does not recognise as `other`, so a .log output or a .crd
   // restart is invisible in a slot-filtered picker. Relaxing the filter is the way out that
@@ -45,8 +50,8 @@ export function FilePicker({ open, mode, title, filterType, onPick, onClose }: P
   // "to overwrite", and picking a run's own .mdin replaced the input with YAML.
   const files = useMemo(() => {
     const all = flatten(tree, q.toLowerCase(), type);
-    return mode === "save" ? all.filter((f) => MANIFEST_NAME.test(f.name)) : all;
-  }, [tree, q, type, mode]);
+    return mode === "save" || manifests ? all.filter((f) => MANIFEST_NAME.test(f.name)) : all;
+  }, [tree, q, type, mode, manifests]);
   // A name that is not a manifest name is refused by the server; say so here, before Save.
   const manifestName = MANIFEST_NAME.test(path.trim());
   // Whether the target names a file already on disk, whatever the search box holds. A

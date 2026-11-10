@@ -62,3 +62,8 @@ it("still closes on Escape, with the latest handler rather than a stale one", as
   expect(second).toHaveBeenCalledOnce();
   expect(first).toHaveBeenCalledOnce();
 });
+
+it("tells assistive technology that the rest of the page is inert", () => {
+  render(<Modal open title="Discover runs" onClose={vi.fn()}><p>body</p></Modal>);
+  expect(screen.getByRole("dialog")).toHaveAttribute("aria-modal", "true");
+});

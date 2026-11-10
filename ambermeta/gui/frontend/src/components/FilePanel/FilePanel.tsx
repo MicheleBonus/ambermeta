@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { createContext, useContext, useMemo, useState } from "react";
 import { useDraggable } from "@dnd-kit/core";
 import { useFiles } from "@/api/hooks";
 import { useSelection } from "@/state/selection";
@@ -41,9 +41,29 @@ export function filterTree(nodes: FileInfo[], q: string): FileInfo[] {
   return out;
 }
 
-function hint(file: FileInfo): string | null {
+/** `parent/stem` of a file: the run a restart beside an mdin or mdout of that stem came from. */
+function stemKey(file: FileInfo): string {
+  return `${file.parent}/${file.name.replace(/\.[^.]*$/, "")}`;
+}
+
+/** The `parent/stem` of every run in the tree, i.e. every mdin or mdout. */
+function runStemsOf(nodes: FileInfo[]): Set<string> {
+  const out = new Set<string>();
+  const walk = (n: FileInfo) => {
+    if (!n.is_directory && (n.file_type === "mdin" || n.file_type === "mdout")) out.add(stemKey(n));
+    n.children?.forEach(walk);
+  };
+  nodes.forEach(walk);
+  return out;
+}
+
+const RunStems = createContext<ReadonlySet<string>>(new Set());
+
+/** Every restart was labelled a likely starting structure, including the ones runs wrote.
+ *  Discover takes a restart that no run in the tree wrote, so only those get the hint. */
+function hint(file: FileInfo, runStems: ReadonlySet<string>): string | null {
   if (file.name.includes("hmr")) return "looks like your HMR topology";
-  if (file.file_type === "inpcrd") return "looks like the starting structure";
+  if (file.file_type === "inpcrd" && !runStems.has(stemKey(file))) return "looks like the starting structure";
   return null;
 }
 
@@ -54,7 +74,7 @@ function FileRow({ file, depth }: { file: FileInfo; depth: number }) {
     data: { fileType: file.file_type, path: file.path },
   });
   const isSelected = sel.kind === "file" && sel.id === file.path;
-  const h = hint(file);
+  const h = hint(file, useContext(RunStems));
 
   return (
     // The listeners live on the whole row, not on the 14px grip: the grip is about 10% of the
@@ -153,6 +173,7 @@ export function FilePanel() {
 
   const q = query.trim().toLowerCase();
   const shown = useMemo(() => filterTree(files ?? [], q), [files, q]);
+  const runStems = useMemo(() => runStemsOf(files ?? []), [files]);
   // Invert what is actually on screen, so one click always flips the row the
   // user sees — at any depth, whether or not it was opened by the default.
   const toggle = (path: string, isOpen: boolean) =>
@@ -186,16 +207,18 @@ export function FilePanel() {
         {!isPending && !isError && shown.length === 0 && (
           <p className="p-2 text-xs text-ink-muted">No files found.</p>
         )}
-        {shown.map((node) => (
-          <TreeNode
-            key={node.path}
-            node={node}
-            depth={0}
-            expanded={expanded}
-            toggle={toggle}
-            forceOpen={q.length > 0}
-          />
-        ))}
+        <RunStems.Provider value={runStems}>
+          {shown.map((node) => (
+            <TreeNode
+              key={node.path}
+              node={node}
+              depth={0}
+              expanded={expanded}
+              toggle={toggle}
+              forceOpen={q.length > 0}
+            />
+          ))}
+        </RunStems.Provider>
       </div>
     </div>
   );

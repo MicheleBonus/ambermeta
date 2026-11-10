@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
+import type { ComponentProps } from "react";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClientProvider } from "@tanstack/react-query";
@@ -174,4 +175,41 @@ describe("FilePicker", () => {
     expect(onPick).not.toHaveBeenCalled();
   });
 
+});
+
+describe("the manifest pickers", () => {
+  const withManifest: FileInfo[] = [
+    ...mixed,
+    { path: "/work/sim.yaml", name: "sim.yaml", file_type: "other",
+      is_directory: false, size: 1, extension: ".yaml", parent: "/work", children: null },
+  ];
+
+  function renderPicker(props: Partial<ComponentProps<typeof FilePicker>>) {
+    queryClient.clear();
+    server.use(http.get("/api/files", () => HttpResponse.json(withManifest)));
+    const onPick = vi.fn();
+    render(
+      <QueryClientProvider client={queryClient}>
+        <FilePicker open mode="open" title="Open manifest" onPick={onPick} onClose={vi.fn()} {...props} />
+      </QueryClientProvider>,
+    );
+    return onPick;
+  }
+
+  it("Open offers only manifests when asked to", async () => {
+    // Opening a run file came back as "JSON syntax error at line 1, column 1".
+    renderPicker({ manifests: true });
+    await screen.findByText("sim.yaml");
+    expect(screen.queryByText("system.prmtop")).not.toBeInTheDocument();
+    expect(screen.queryByText("02_heat.mdin")).not.toBeInTheDocument();
+  });
+
+  it("Save starts from a name it will accept, as Plan does", async () => {
+    // The field showed "manifest.yaml" as a placeholder with Save disabled.
+    const onPick = renderPicker({ mode: "save", title: "Save manifest as", defaultPath: "manifest.yaml" });
+    const path = await screen.findByLabelText(/path/i);
+    expect(path).toHaveValue("manifest.yaml");
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(onPick).toHaveBeenCalledWith({ path: "manifest.yaml", format: "yaml" });
+  });
 });
