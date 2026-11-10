@@ -54,10 +54,19 @@ def _within_base(path: str, base: str) -> str:
                             detail="Access denied: path outside base directory")
 
 
-def _guard_path(path, base: str) -> None:
-    """Reject a request-supplied path that escapes the base dir (403). No-op for empty/None."""
-    if path:
-        _within_base(path, base)
+def _stored_path(path, base: str):
+    """A request-supplied path in the form the document keeps: relative to the base dir.
+
+    Rejects a path that escapes the base dir (403) first. The file list hands the client
+    absolute paths, and storing one as sent put the full machine path, drive and user
+    name included, into the manifest beside Discover's base-relative paths, so the
+    manifest broke as soon as the folder moved. Separators are `/`, as Discover writes
+    them. Empty/None pass through.
+    """
+    if not path:
+        return path
+    resolved = _within_base(path, base)
+    return os.path.relpath(resolved, os.path.realpath(base)).replace(os.sep, "/")
 
 
 @router.get("/document", response_model=DocumentResponse)
@@ -430,7 +439,7 @@ def _enum_value(v) -> Optional[str]:
 def add_topology(req: AddTopology) -> DocumentResponse:
     store = get_store()
     doc = store.get()
-    _guard_path(req.path, doc.base_directory)
+    req.path = _stored_path(req.path, doc.base_directory)
     store.add_topology(req.path, _enum_value(req.kind) or "normal")
     return store.to_response()
 
@@ -438,7 +447,7 @@ def add_topology(req: AddTopology) -> DocumentResponse:
 @router.put("/topologies/{topology_id}", response_model=DocumentResponse)
 def update_topology(topology_id: str, req: UpdateTopology) -> DocumentResponse:
     store = get_store()
-    _guard_path(req.path, store.get().base_directory)
+    req.path = _stored_path(req.path, store.get().base_directory)
     patch = {"path": req.path, "kind": _enum_value(req.kind)}
     try:
         store.update_topology(topology_id, patch)
@@ -460,7 +469,7 @@ def remove_topology(topology_id: str) -> DocumentResponse:
 @router.put("/simulation/starting-structure", response_model=DocumentResponse)
 def set_starting_structure(req: SetStartingStructure) -> DocumentResponse:
     store = get_store()
-    _guard_path(req.path, store.get().base_directory)
+    req.path = _stored_path(req.path, store.get().base_directory)
     store.set_starting_structure(req.path)
     return store.to_response()
 
@@ -512,11 +521,12 @@ def delete_phase(phase_id: str, reassign_to: Optional[str] = Query(None)) -> Doc
 def create_step(phase_id: str, req: StepCreate) -> DocumentResponse:
     store = get_store()
     base_directory = store.get().base_directory
-    _guard_path(req.mdin, base_directory)
-    _guard_path(req.mdout, base_directory)
-    _guard_path(req.mdcrd, base_directory)
-    _guard_path(req.rst, base_directory)
-    _guard_path(req.input_coords.path if req.input_coords else None, base_directory)
+    req.mdin = _stored_path(req.mdin, base_directory)
+    req.mdout = _stored_path(req.mdout, base_directory)
+    req.mdcrd = _stored_path(req.mdcrd, base_directory)
+    req.rst = _stored_path(req.rst, base_directory)
+    if req.input_coords is not None:
+        req.input_coords.path = _stored_path(req.input_coords.path, base_directory)
     fields = {
         "name": req.name, "topology": req.topology,
         "input_coords": req.input_coords.model_dump() if req.input_coords else None,
@@ -551,12 +561,12 @@ def update_step(step_id: str, req: StepUpdate) -> DocumentResponse:
     store = get_store()
     base_directory = store.get().base_directory
     if req.files is not None:
-        _guard_path(req.files.mdin, base_directory)
-        _guard_path(req.files.mdout, base_directory)
-        _guard_path(req.files.mdcrd, base_directory)
-        _guard_path(req.files.rst, base_directory)
+        req.files.mdin = _stored_path(req.files.mdin, base_directory)
+        req.files.mdout = _stored_path(req.files.mdout, base_directory)
+        req.files.mdcrd = _stored_path(req.files.mdcrd, base_directory)
+        req.files.rst = _stored_path(req.files.rst, base_directory)
     if req.input_coords is not None:
-        _guard_path(req.input_coords.path, base_directory)
+        req.input_coords.path = _stored_path(req.input_coords.path, base_directory)
     patch = {}
     if req.name is not None:
         patch["name"] = req.name
@@ -659,7 +669,7 @@ def move_step(step_id: str, req: StepMove) -> DocumentResponse:
 @router.post("/assign", response_model=DocumentResponse)
 def assign(req: AssignRequest) -> DocumentResponse:
     store = get_store()
-    _guard_path(req.path, store.get().base_directory)
+    req.path = _stored_path(req.path, store.get().base_directory)
     try:
         store.assign_file(req.path, req.target_type, target_id=req.target_id,
                           kind=_enum_value(req.kind), slot=req.slot)

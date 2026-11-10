@@ -82,7 +82,7 @@ Each pane is resizable (drag the divider); widths persist across sessions.
 1. **Discover.** Click **Discover**, optionally uncheck "Search subdirectories" or set a filename pattern, then **Run discover**. The server scans the launch directory, groups files by stem, classifies the topology pool (normal vs. HMR), picks a starting structure, and chains later steps' input coordinates to the previous step's output restart — the previous step **of the same lineage**, when the directory layout names members (`rep1/`, `rep2/`, … sibling directories whose run sets the inference can reconcile); each member then starts from the starting structure and same-role steps of every member share one phase. This **replaces** the current draft (a confirmation guards unsaved changes) and repopulates the suggestions tray.
 2. **Declare the replicas.** If the scan found a grouping, the **proposal strip** (§5a) opens on top of the result: the members it inferred, the directories each was built from, and — where AMBER's own mdouts evidence it — the restart handoffs that cross a directory boundary. Nothing is written until you press **Accept**; **Not replicas** dismisses it and leaves every run untagged. If the scan refused to infer a grouping (it refuses more layouts than it accepts), press **Define replicas…** in the top bar and pick the path segment yourself.
 3. **Assign & adjust.** Drag a file from **Files** onto the topology pool, the starting-structure slot, a step's `mdin`/`mdout`/`mdcrd`/`rst` slot, or a phase's/step's topology target. Or select a file in **Files** and use the Inspector's **Assign** actions (§6) — the same mutations, without dragging.
-4. **Arrange.** In the **Canvas**, drag a step's grip handle to reorder it within a phase or drop it onto another phase to move it; drag a phase's grip handle to reorder phases.
+4. **Arrange.** In the **Canvas**, drag a step's grip handle to reorder it within a phase or drop it onto another phase to move it; drag a phase's grip handle to reorder phases. Without dragging, select the step or phase and use **Move up**, **Move down** or **Move to phase** in the Inspector (§6): the same moves, reachable from the keyboard.
 5. **Validate.** Click **Validate**. The panel lists per-step issues (missing files, continuity/sequence problems, and each run's own findings against what AMBER recorded) and protocol-level notes, and lets you jump to a step. A simulation with continuity notes, sequence holes, or findings on a run shows as *valid, with N note(s)* — never a silent clean pass when something is worth a look. A run's own findings (§9) also land in the suggestions tray as **Needs you** cards.
 6. **Save / Plan / Export.** **Save** writes the canonical **v2 manifest** to disk (YAML or JSON) and reports the path it wrote. **Plan** is the step after that: it writes the manifest *and* the artifacts [`ambermeta plan`](cli.md) produces — `summary.json`, `methods_summary.json`, and optionally a statistics CSV — so the whole pipeline is one action rather than a save followed by a trip to a terminal. If it is about to overwrite a `summary.json` whose totals differ from what it is writing, it says so — inline under the list of files it wrote, and as a toast — so a number you quoted from the old file is never replaced in silence. **Export** previews YAML or JSON for copying without writing anything.
 
@@ -101,9 +101,11 @@ Files are tagged by type from extension, and by canonical Amber default basename
 | `prmtop` | `.prmtop`, `.parm7`, `.top` | `prmtop`, `parm7` |
 | `mdin` | `.mdin`, `.in` | `mdin` |
 | `mdout` | `.mdout`, `.out` | `mdout` |
-| `mdcrd` | `.mdcrd`, `.nc`, `.crd`, `.x`, `.trj` | `mdcrd` |
-| `inpcrd` | `.inpcrd`, `.rst`, `.rst7`, `.restrt`, `.ncrst` | `inpcrd`, `restrt` |
+| `mdcrd` | `.mdcrd`, `.nc`, `.x`, `.trj`, and a `.crd` without an atom-count line under its title (a trajectory) | `mdcrd` |
+| `inpcrd` | `.inpcrd`, `.rst`, `.rst7`, `.restrt`, `.ncrst`, and a `.crd` with one (LEaP's coordinate file) | `inpcrd`, `restrt` |
 
+> A `.crd` is typed by its content: AMBER uses the extension for LEaP's single-frame coordinate file and for trajectories alike, and an atom-count line under the title is what marks the coordinate file (the check Discover uses to pick the starting structure).
+>
 > `.in`/`.out` are claimed for Amber `mdin`/`mdout` by convention — a non-Amber `.in`/`.out` in the launch directory would be mis-typed as one. Content sniffing is a possible follow-up, not done today.
 
 The tree descends up to five levels and skips `.`-prefixed directories, `__pycache__`, `node_modules`, and `.git`. Use the search box to filter by name. Every row is a drag source; drop it on a canvas target to assign it, or select it to inspect and use the Assign actions.
@@ -174,8 +176,8 @@ It opens two ways:
 The Inspector's content depends on what's selected:
 
 - **A file** (from the Files pane, or a step's bound topology) — a **peek** header (filename plus a few curated fields: atoms, residues, frames, steps, `hmr_active`, box), an **Assign** section (below), and a tabbed detail view: **Overview** (parsed-field count, warning count), **Full details** (every parsed field), **Raw file** (a byte-capped prefix of the file), **Warnings**.
-- **A step** — an inline editor for its name, topology, input-coordinate source and "continues from", output restart (with a readback of who reads it), expected gap, gap tolerance and notes, plus Delete.
-- **A phase** — an inline editor for its name and role, plus Delete (with an optional "move its steps to" reassignment).
+- **A step** — an inline editor for its name, topology, input-coordinate source and "continues from", output restart (with a readback of who reads it), expected gap, gap tolerance and notes; **Move up** / **Move down** within its phase and **Move to phase**; plus Delete.
+- **A phase** — an inline editor for its name and role; **Move up** / **Move down** in the protocol; plus Delete (with an optional "move its steps to" reassignment).
 - **The Simulation, or nothing** — the **suggestions tray** (§7).
 
 ### Assign actions (per selected file type)
@@ -250,6 +252,7 @@ The tray re-runs validation (and refills itself) after every document mutation, 
 
   For an unclosed bracket the first position is where the mistake is: it is where the bracket opened.
 - **Save** always writes the canonical **v2 manifest** — YAML or JSON only, chosen by the target's extension or by the Save dialog's format selector, which offers exactly those two.
+- **Paths are stored relative to the launch directory**, with `/` separators, whichever way a file was assigned (drag, the Assign actions, a slot's file picker, the step editor), so they match the paths Discover writes and the manifest still resolves after the folder is moved or opened on another machine.
 - **Save writes only to a manifest name.** The target must end in `.yaml`, `.yml` or `.json`, the names Open reads back; anything else is refused with `400` before anything is written, so a run's own `.mdin`, `.mdout`, topology or restart can never be replaced by a manifest. The same rule holds for the manifest **Plan** writes. The Save dialog lists only manifests as files to overwrite, and says `This file exists and will be replaced.` when the name you pick or type is already on disk.
 - **A save reports what it actually wrote.** Every route here is a synchronous `def`, so Starlette runs it in a worker thread and an edit can land while a manifest is still being written — seconds, on a large campaign over a network filesystem. What went to disk is the document as it stood when the write began, so an edit made during it is genuinely not in the file. The dirty dot therefore stays lit and the result carries a warning:
 

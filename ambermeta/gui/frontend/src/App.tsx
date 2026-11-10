@@ -45,6 +45,14 @@ export default function App() {
   const [inspW, setInspW] = usePersistentSize("insp-w", 360);
   const { data: doc } = useDocument();
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
+  // Only the pointer sensor is registered, so dnd-kit's default instructions -- "press the
+  // space bar to pick up" -- described a drag that never started. Say what does work.
+  const dragInstructions = {
+    draggable:
+      "Drag with a mouse or other pointer to move this item. From the keyboard, select the step " +
+      "or phase and use Move up, Move down or Move to phase in the inspector; a file is assigned " +
+      "from a slot's file picker.",
+  };
   const assign = useAssign();
   const reorderSteps = useReorderSteps();
   const moveStep = useMoveStep();
@@ -255,6 +263,7 @@ export default function App() {
       <SuggestionsContext.Provider value={suggestions}>
         <DndContext
           sensors={sensors}
+          accessibility={{ screenReaderInstructions: dragInstructions }}
           collisionDetection={canvasCollisionDetection}
           onDragStart={onDragStart}
           onDragEnd={onDragEnd}

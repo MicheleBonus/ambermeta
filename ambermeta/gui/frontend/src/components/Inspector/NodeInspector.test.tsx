@@ -212,3 +212,65 @@ describe("selecting a phase no longer lands on a placeholder pane", () => {
     expect(screen.queryByLabelText(/move its steps to/i)).not.toBeInTheDocument();
   });
 });
+
+// Reordering and moving were drag-only: the drag handles told keyboard users to press
+// Space, and nothing picked the item up. These do the same as dropping onto a neighbour.
+describe("steps and phases can be moved without dragging", () => {
+  function capturePost(path: string): Captured {
+    const seen: Captured = { body: undefined, params: {}, url: "", calls: 0 };
+    server.use(
+      http.post(path, async ({ request, params }) => {
+        seen.calls += 1;
+        seen.params = params;
+        seen.url = request.url;
+        seen.body = await request.json();
+        return HttpResponse.json(DOC);
+      }),
+    );
+    return seen;
+  }
+
+  it("moves a step up within its phase", async () => {
+    const reorder = capturePost("/api/phases/:phaseId/steps/reorder");
+    await renderInspector("step", "s1");
+
+    await userEvent.click(screen.getByRole("button", { name: "Move up" }));
+
+    await waitFor(() => expect(reorder.calls).toBe(1));
+    expect(reorder.params.phaseId).toBe("p0");
+    expect(reorder.body).toEqual({ step_ids: ["s1", "s0"] });
+  });
+
+  it("moves the first step down, and cannot move it further up", async () => {
+    const reorder = capturePost("/api/phases/:phaseId/steps/reorder");
+    await renderInspector("step", "s0");
+
+    expect(screen.getByRole("button", { name: "Move up" })).toBeDisabled();
+    await userEvent.click(screen.getByRole("button", { name: "Move down" }));
+
+    await waitFor(() => expect(reorder.calls).toBe(1));
+    expect(reorder.body).toEqual({ step_ids: ["s1", "s0"] });
+  });
+
+  it("moves a step into another phase", async () => {
+    const move = capturePost("/api/steps/:stepId/move");
+    await renderInspector("step", "s0");
+
+    await userEvent.selectOptions(screen.getByLabelText("Move to phase"), "p1");
+
+    await waitFor(() => expect(move.calls).toBe(1));
+    expect(move.params.stepId).toBe("s0");
+    expect(move.body).toEqual({ phase_id: "p1", index: -1 });
+  });
+
+  it("moves a phase down the protocol", async () => {
+    const reorder = capturePost("/api/phases/reorder");
+    await renderInspector("phase", "p0");
+
+    expect(screen.getByRole("button", { name: "Move up" })).toBeDisabled();
+    await userEvent.click(screen.getByRole("button", { name: "Move down" }));
+
+    await waitFor(() => expect(reorder.calls).toBe(1));
+    expect(reorder.body).toEqual({ phase_ids: ["p1", "p0"] });
+  });
+});

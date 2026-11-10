@@ -34,6 +34,12 @@ export function ValidationPanel(
   const findingCount = (report?.suggestions ?? []).filter(
     (s) => s.severity === "needs_you" && FINDING_KINDS.has(s.kind),
   ).length;
+  // The counted findings no step card shows: a sequence hole belongs to no step, so the
+  // badge counted it while nothing in the panel listed it. A run's own findings are on
+  // their step's card already (`stage_issues`), so only the unscoped ones are listed here.
+  const unscopedFindings = (report?.suggestions ?? []).filter(
+    (s) => s.severity === "needs_you" && FINDING_KINDS.has(s.kind) && !s.step_id,
+  );
   const noteCount = (report?.protocol_issues.length ?? 0)
     + coherence.filter((f) => f.severity === "warning").length
     + findingCount;
@@ -83,6 +89,14 @@ export function ValidationPanel(
           <h3 className="text-sm font-semibold mb-1">Protocol notes</h3>
           <ul className="text-sm text-warning space-y-0.5">
             {report.protocol_issues.map((p, i) => <li key={i}>{p}</li>)}
+          </ul>
+        </section>
+      ) : null}
+      {unscopedFindings.length ? (
+        <section className="mb-3">
+          <h3 className="text-sm font-semibold mb-1">Findings</h3>
+          <ul className="text-sm text-warning space-y-0.5">
+            {unscopedFindings.map((s, i) => <li key={i}>{s.title}</li>)}
           </ul>
         </section>
       ) : null}

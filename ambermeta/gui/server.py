@@ -5,7 +5,9 @@ This module provides the main server application and launcher function
 for the web-based GUI.
 """
 
+import errno
 import os
+import socket
 import sys
 import webbrowser
 import threading
@@ -284,6 +286,38 @@ def _get_placeholder_html() -> str:
 """
 
 
+def check_port(host: str, port: int) -> None:
+    """Refuse a port the server cannot listen on, before anything is printed or started.
+
+    `run_gui` printed `Server: http://host:port` and only then let uvicorn bind, so a busy
+    port came out as that URL and a raw bind error -- and the URL led to whatever held the
+    port, usually another AmberMeta GUI serving another directory. Port 0 made uvicorn
+    pick a free port, start, and never say which; a number above 65535 ended in a
+    traceback.
+
+    The probe sets SO_REUSEADDR on POSIX only: there it lets a port in TIME_WAIT from a
+    server just stopped be reused, as uvicorn's own socket will, without letting it share
+    one that is listening. On Windows the same option would let the probe bind a port
+    another process is listening on.
+    """
+    if not 1 <= port <= 65535:
+        raise ValueError(f"Port {port} is not usable: pick a port between 1 and 65535.")
+    family = socket.AF_INET6 if ":" in host else socket.AF_INET
+    probe = socket.socket(family, socket.SOCK_STREAM)
+    try:
+        if os.name != "nt":
+            probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        probe.bind((host, port))
+    except OSError as exc:
+        if exc.errno == errno.EADDRINUSE:
+            raise OSError(
+                f"Port {port} on {host} is already in use, perhaps by another AmberMeta "
+                "GUI. Pass --port to choose another.") from exc
+        raise OSError(f"Cannot listen on {host}:{port}: {exc.strerror or exc}") from exc
+    finally:
+        probe.close()
+
+
 def run_gui(
     directory: str = ".",
     port: int = 8765,
@@ -311,6 +345,8 @@ def run_gui(
     if not os.path.isdir(directory):
         print(f"Error: Directory not found: {directory}")
         sys.exit(1)
+
+    check_port(host, port)
 
     print(f"Starting AmberMeta GUI...")
     print(f"Base directory: {directory}")

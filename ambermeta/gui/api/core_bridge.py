@@ -327,6 +327,28 @@ def preview_simulation(sim, base_directory, fmt):
     return {"content": content, "warnings": []}
 
 
+def _run_stem(step, base_directory):
+    """What a step's run is called on disk: its mdout's path without the extension, else
+    its mdin's, relative to the base directory with `/` separators; its name only when it
+    names no file.
+
+    Numbered-sequence holes are runs whose files are missing, and the numbering belongs
+    to the files. Keyed on the step's name instead, a display-name edit decided whether
+    a run that was plainly there got reported as missing. Discover names a step after this
+    same stem (`rep1/prod_0002`), so a discovered document is scanned exactly as before.
+    """
+    for path in (step.mdout, step.mdin):
+        if not path:
+            continue
+        if os.path.isabs(path):
+            try:
+                path = os.path.relpath(path, base_directory)
+            except ValueError:       # another drive on Windows: keep it as written
+                pass
+        return os.path.splitext(path.replace("\\", "/"))[0]
+    return step.name
+
+
 def build_suggestions(sim, base_directory, proposed=None):
     from ambermeta.lineages import lineages
     from ambermeta.protocol import sequence_findings
@@ -345,9 +367,13 @@ def build_suggestions(sim, base_directory, proposed=None):
     # override: a document whose tags ARE written (the CLI's default, or any document
     # post-Accept) needs no `proposed` at all, and the two sources only differ for the one
     # caller that supplies both.
+    #
+    # The scan keys each step on its run (`_run_stem`), not its name: renaming
+    # `ntp_prod_0002` to `prod_two` reported a run that was still there as missing.
+    stems = [_run_stem(s, base_directory) for s in steps]
     out = sequence_findings(
-        [s.name for s in steps],
-        [(proposed or {}).get(s.name) or s.lineage for s in steps])
+        stems,
+        [(proposed or {}).get(stem) or s.lineage for stem, s in zip(stems, steps)])
 
     def _sug(kind, severity, title, evidence, actions):
         return {"id": f"sug_{len(out) + 1}", "kind": kind, "severity": severity,

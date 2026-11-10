@@ -1,7 +1,8 @@
 import { useState } from "react";
-import { useDocument, useDeletePhase, useUpdatePhase } from "@/api/hooks";
+import { useDocument, useDeletePhase, useReorderPhases, useUpdatePhase } from "@/api/hooks";
 import { useSelection } from "@/state/selection";
 import { Button } from "@/components/common";
+import { reorderIds } from "@/components/Canvas/reorderIds";
 import { ROLE_OPTIONS } from "@/lib/roles";
 import type { StageRole } from "@/types";
 import { CommitField, CONTROL, Field } from "./NodeFields";
@@ -11,6 +12,7 @@ export function PhaseInspector({ phaseId }: { phaseId: string }) {
   const { select } = useSelection();
   const updatePhase = useUpdatePhase();
   const deletePhase = useDeletePhase();
+  const reorderPhases = useReorderPhases();
   // Where this phase's steps go when it is deleted. "" means delete them with the phase.
   const [reassignTo, setReassignTo] = useState("");
 
@@ -20,6 +22,8 @@ export function PhaseInspector({ phaseId }: { phaseId: string }) {
     return <div className="p-3 text-sm text-ink-muted">That phase is no longer in the document.</div>;
   }
   const others = phases.filter((p) => p.id !== phase.id);
+  const phaseIds = phases.map((p) => p.id);
+  const position = phaseIds.indexOf(phase.id);
 
   return (
     <div className="flex flex-col h-full overflow-auto">
@@ -46,6 +50,25 @@ export function PhaseInspector({ phaseId }: { phaseId: string }) {
             ))}
           </select>
         </Field>
+      </div>
+
+      {/* The move a phase drag makes, for anyone not dragging (see StepInspector). */}
+      <div className="p-3 border-b border-hairline space-y-2">
+        <div className="text-xs text-ink-muted uppercase tracking-wide">Position</div>
+        <div className="flex gap-2">
+          <Button
+            disabled={position === 0}
+            onClick={() => reorderPhases.mutate(reorderIds(phaseIds, phase.id, phaseIds[position - 1]))}
+          >
+            Move up
+          </Button>
+          <Button
+            disabled={position === phaseIds.length - 1}
+            onClick={() => reorderPhases.mutate(reorderIds(phaseIds, phase.id, phaseIds[position + 1]))}
+          >
+            Move down
+          </Button>
+        </div>
       </div>
 
       <div className="p-3 space-y-3">

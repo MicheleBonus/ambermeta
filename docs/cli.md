@@ -1059,7 +1059,7 @@ The generated scripts complete all eight subcommands, including `discover` and `
 | Code | Command(s) | Meaning |
 |---|---|---|
 | `0` | all | Success (including a fault-tolerant `plan` that skipped bad files, or a `plan`/`validate` run that reported findings without `--strict`) |
-| `1` | `plan`, `discover`, `validate`, `export`, `init`, `info`, `gui` | Runtime failure: unreadable/missing input, parse failure, nothing discovered, manifest not found/invalid, validation findings, a `--strict` hard stop, `--strict` with any finding — continuity, sequence hole, a run's own finding (`step_check`, `unfinished_run`, `input_mismatch`), or lineage-coherence warning — on `plan` as well as `validate`, or a missing extra/directory (`gui`) |
+| `1` | `plan`, `discover`, `validate`, `export`, `init`, `info`, `gui` | Runtime failure: unreadable/missing input, parse failure, nothing discovered, manifest not found/invalid, validation findings, a `--strict` hard stop, `--strict` with any finding — continuity, sequence hole, a run's own finding (`step_check`, `unfinished_run`, `input_mismatch`), or lineage-coherence warning — on `plan` as well as `validate`, or a missing extra/directory, a port already in use, or a port outside 1-65535 (`gui`) |
 | `2` | `plan`, `validate` | Bad invocation: `plan` with no mode selected (`--manifest`/`--recursive`/`--interactive`); `validate` with neither `files` nor `--manifest` |
 
 ---
