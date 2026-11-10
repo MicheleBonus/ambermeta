@@ -25,11 +25,11 @@ Starting structure: ntp_prod_0000.rst
 Phases: 1
 
 Phase: Production [production]
-  - ntp_prod_0001  topology=CH3L1_HUMAN_6NAG.top  input=starting structure  (mdin=ntp_prod_0001.mdin, mdout=ntp_prod_0001.mdout)
-  - ntp_prod_0002  topology=CH3L1_HUMAN_6NAG.top  input=restart of ntp_prod_0001 (ntp_prod_0001.rst)  (mdin=ntp_prod_0002.mdin, mdout=ntp_prod_0002.mdout)
-  - ntp_prod_0003  topology=CH3L1_HUMAN_6NAG.top  input=restart of ntp_prod_0002 (ntp_prod_0002.rst)  (mdin=ntp_prod_0003.mdin, mdout=ntp_prod_0003.mdout)
-  - ntp_prod_0004  topology=CH3L1_HUMAN_6NAG.top  input=restart of ntp_prod_0003 (ntp_prod_0003.rst)  (mdin=ntp_prod_0004.mdin, mdout=ntp_prod_0004.mdout)
-  - ntp_prod_0005  topology=CH3L1_HUMAN_6NAG.top  input=restart of ntp_prod_0004 (ntp_prod_0004.rst)  (mdin=ntp_prod_0005.mdin, mdout=ntp_prod_0005.mdout)
+  - ntp_prod_0001  from the starting structure
+  - ntp_prod_0002  from ntp_prod_0001
+  - ntp_prod_0003  from ntp_prod_0002
+  - ntp_prod_0004  from ntp_prod_0003
+  - ntp_prod_0005  from ntp_prod_0004
 
 Suggestions:
   - [applied] ntp_prod_0000.rst set as the starting structure
@@ -79,6 +79,8 @@ ambermeta validate --manifest sim.yaml
 ```
 Simulation validation
 
+Simulated time: 100 ns
+
 Findings:
   - Run check: ntp_prod_0001: Time step of 4 fs, but the topology has standard hydrogen masses (no hydrogen mass repartitioning); a time step above 2 fs needs repartitioned hydrogen masses.
   - Run check: ntp_prod_0002: Time step of 4 fs, but the topology has standard hydrogen masses (no hydrogen mass repartitioning); a time step above 2 fs needs repartitioned hydrogen masses.
@@ -108,17 +110,23 @@ Re-emits the manifest as canonical v2 in the format implied by the `-o` extensio
 ### Export all publication artifacts in one run
 
 ```bash
-ambermeta plan . --manifest sim.yaml \
-  --summary-path protocol.json \
-  --methods-summary-path methods.json \
-  --stats-csv stats.csv
+ambermeta plan -m sim.yaml --out results/
 ```
 
 ```
 ...
-Wrote summary: /abs/path/protocol.json
-Wrote methods_summary: /abs/path/methods.json
-Wrote stats_csv: /abs/path/stats.csv
+Wrote summary: /abs/path/results/summary.json
+Wrote methods_summary: /abs/path/results/methods_summary.json
+Wrote stats_csv: /abs/path/results/stats.csv
+```
+
+To name a file yourself, give its own option, which wins over `--out` for that file:
+
+```bash
+ambermeta plan . --manifest sim.yaml \
+  --summary-path protocol.json \
+  --methods-summary-path methods.json \
+  --stats-csv stats.csv
 ```
 
 `methods.json` is the methods summary, a compact digest of `protocol.json` for writing a Methods section (rebuild it from any `protocol.json` with `python -m ambermeta.methods_summary protocol.json -o methods.json`); `stats.csv` is one row per step (temperature/pressure/density/energy as mean ± σ); `protocol.json` is the full record. The command first prints the same `Simulation summary` block as `discover`, then writes the three artifacts. Each one needs its own path — aiming two at the same file is a hard error (exit `2`).
@@ -137,7 +145,7 @@ Protocol summary
 ================
 Stages: 7
 Total steps: 25000000
-Total simulated time (ps): 100000.000
+Simulated time: 100 ns
 ...
 ```
 

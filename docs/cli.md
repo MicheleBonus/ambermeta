@@ -70,9 +70,8 @@ Supports prmtop, mdin, mdout, mdcrd (NetCDF), and restart files.
 
 positional arguments:
   {plan,discover,validate,info,export,init,gui,completion}
-    plan                Build and summarize a SimulationProtocol from
-                        manifest, recursive discovery, or explicit interactive
-                        mode
+    plan                Write the summary files (summary.json, methods
+                        summary, stats CSV) for a simulation
     discover            Discover files into a Simulation draft
                         (Sim->Phase->Step) and optionally write a v2 manifest
     validate            Validate simulation files without building full
@@ -92,33 +91,27 @@ options:
   --log-file LOG_FILE   Write logs to a file in addition to stderr
   -q, --quiet           Suppress all output except errors
 
-Commands:
-  plan      Build a simulation protocol from manifest or auto-discovery
-  discover  Discover files into a Simulation draft (v2) and optionally write a manifest
-  validate  Quick validation of simulation files
-  info      Display detailed metadata for a single file
-  init      Generate a starting v2 manifest file
-  export    Re-emit a v2 manifest, optionally converting its format (json/yaml)
+Typical workflow (one simulation per folder):
+  1. ambermeta discover runs/ --write sim.yaml    draft a manifest from the run files
+  2. read sim.yaml, or open it in `ambermeta gui runs/`, and fix what was guessed
+  3. ambermeta validate --manifest sim.yaml       check the chain and each run
+  4. ambermeta plan -m sim.yaml --out results/    write summary.json,
+                                                  methods_summary.json and stats.csv
 
-Examples:
-  ambermeta plan -m manifest.yaml           Build protocol from manifest
-  ambermeta plan . --recursive              Auto-discover files recursively
-  ambermeta plan . --interactive            Prompt for stage definitions
-  ambermeta plan -m manifest.yaml \
-    --methods-summary-path methods.json     Export publication-ready summary
-  ambermeta discover . --write sim.yaml       Draft a v2 manifest from a directory
-  ambermeta validate system.prmtop *.mdout  Validate multiple files
-  ambermeta validate --manifest sim.yaml      Validate a whole simulation (continuity/gaps)
-  ambermeta info --format json system.prmtop  Show metadata as JSON
-  ambermeta init -o template.yaml           Write a starting v2 manifest template
-  ambermeta export sim.yaml -o sim.json       Convert a v2 manifest to JSON
+Other examples:
+  ambermeta plan runs/ --recursive                summarize a folder without a manifest
+  ambermeta validate system.prmtop *.mdout        check individual files
+  ambermeta info --format json system.prmtop      one file's metadata as JSON
+  ambermeta export sim.yaml -o sim.json           convert a manifest to JSON
+  ambermeta init -o template.yaml                 a blank manifest to fill in by hand
 
-File Types:
-  prmtop:  .prmtop, .top, .parm7    (topology/parameters)
-  mdin:    .mdin, .in               (input control)
-  mdout:   .mdout, .out             (output log)
-  mdcrd:   .nc, .mdcrd, .crd        (trajectory)
-  inpcrd:  .rst, .rst7, .ncrst      (coordinates/restart)
+File types:
+  topology:     .prmtop, .parm7, .top
+  input:        .mdin, .in
+  output:       .mdout, .out
+  trajectory:   .nc, .mdcrd, .x, .trj
+  coordinates:  .rst7, .rst, .restrt, .ncrst, .inpcrd
+  .crd is a trajectory or LEaP coordinates, told apart by content.
 
 For documentation, visit: https://github.com/MicheleBonus/ambermeta
 ```
@@ -141,71 +134,85 @@ ambermeta plan [directory] [options]
 
 <!-- BEGIN_CLI_HELP:plan -->
 ```text
-usage: ambermeta plan [-h] [-m MANIFEST] [--skip-cross-stage-validation]
-                      [--strict] [--recursive] [--interactive] [-v]
-                      [--summary-path SUMMARY_PATH]
+usage: ambermeta plan [-h] [-m MANIFEST] [--recursive] [--interactive]
+                      [--out DIR] [--summary-path SUMMARY_PATH]
                       [--summary-format {json,yaml}]
                       [--methods-summary-path METHODS_SUMMARY_PATH]
-                      [--stats-csv STATS_CSV] [--no-expand-env]
-                      [--pattern PATTERN] [--auto-detect-restarts]
-                      [--prmtop PRMTOP] [--as-one-simulation]
+                      [--stats-csv STATS_CSV] [--strict]
+                      [--skip-cross-stage-validation] [-v] [--no-expand-env]
+                      [--pattern PATTERN] [--as-one-simulation]
+                      [--auto-detect-restarts] [--prmtop PRMTOP]
                       [directory]
 
-Build and summarize a SimulationProtocol from manifest, recursive discovery,
-or explicit interactive mode. Interactive mode prompts for stage roles, file
-paths, restart (inpcrd) paths, and expected gap/tolerance values.
+Summarize a simulation and write its summary files. With -m, from a v2
+manifest: the usual way, after `ambermeta discover --write`. With --recursive,
+straight from the run files in a folder, without a manifest. With
+--interactive, from runs you describe at prompts (role, files, restart,
+expected gap and tolerance).
 
 positional arguments:
-  directory             Directory containing the files referenced by the
-                        manifest (default: current directory)
+  directory             Folder the run files are in (default: current
+                        directory). With -m, a manifest whose files are not
+                        found there is read from its own folder.
 
 options:
   -h, --help            show this help message and exit
+
+Mode (choose one):
   -m MANIFEST, --manifest MANIFEST
-                        Path to a YAML or JSON manifest describing stages and
-                        file paths
-  --skip-cross-stage-validation
-                        Skip the continuity checks between consecutive stages
-                        (they run by default)
+                        Path to a YAML or JSON v2 manifest
+  --recursive           Scan the folder and its subfolders for run files,
+                        without a manifest. Files are grouped by name without
+                        extension, and roles are inferred from the mdin, then
+                        from folder and file names (equil -> equilibration,
+                        prod -> production).
+  --interactive         Describe the runs at prompts.
+
+Output files (any mode):
+  --out writes all three under their usual names; a path given for one of
+  them takes precedence for that file.
+
+  --out DIR             Write summary.json, methods_summary.json and stats.csv
+                        into this folder (created if missing)
+  --summary-path SUMMARY_PATH
+                        Path for the full summary (JSON or YAML)
+  --summary-format {json,yaml}
+                        Format of the full summary (default: from the file
+                        extension; with --out, json)
+  --methods-summary-path METHODS_SUMMARY_PATH
+                        Path for the methods summary: a JSON digest of the
+                        summary for writing a Methods section (software, MD
+                        settings, system composition, trajectory cadence),
+                        without energies and other per-frame data
+  --stats-csv STATS_CSV
+                        Path for per-run statistics (temperature, pressure,
+                        density, energy) as CSV
+
+With -m:
+  --no-expand-env       Do not expand environment variables ($VAR) in the
+                        manifest's paths
+
+With --recursive:
+  --pattern PATTERN     Only scan files whose path matches this regular
+                        expression (e.g. 'prod_.*' for production runs)
+  --as-one-simulation   Treat every run found as one simulation even when
+                        their atom counts differ (by default a folder holding
+                        several systems is refused)
+
+Other options (any mode):
   --strict              Abort on the first unreadable/malformed input file
                         instead of skipping it, and exit 1 if any continuity
                         or sequence finding was reported. Default is to skip
                         the file, print the findings and exit 0.
-  --recursive           Auto-discover simulation files recursively (no
-                        interactive prompts). Files are grouped by stem
-                        (filename without extension) and stage roles are
-                        inferred from directory names (equil -> equilibration,
-                        prod -> production).
-  --interactive         Enable interactive prompt mode for manually defining
-                        stages.
+  --skip-cross-stage-validation
+                        Skip the continuity checks between consecutive runs
+                        (they run by default)
   -v, --verbose         Show detailed metadata, warnings, and continuity
-                        information for each stage
-  --summary-path SUMMARY_PATH
-                        Path to write a structured protocol summary (JSON or
-                        YAML)
-  --summary-format {json,yaml}
-                        Force the structured summary format (default: inferred
-                        from file extension)
-  --methods-summary-path METHODS_SUMMARY_PATH
-                        Write a Materials & Methods-ready JSON summary with
-                        reproducibility-critical metadata (software versions,
-                        MD settings, system composition, and trajectory
-                        cadence) while omitting energies and other
-                        nonessential arrays
-  --stats-csv STATS_CSV
-                        Export per-stage statistics to a CSV file
-  --no-expand-env       Disable environment variable expansion in manifest
-                        paths
-  --pattern PATTERN     Regex pattern to filter discovered files (e.g.,
-                        'prod_.*' for production runs)
+                        information for each run
   --auto-detect-restarts
-                        Automatically detect and link restart files between
-                        stages
-  --prmtop PRMTOP       Global prmtop file to use for all stages (avoids
-                        specifying it per stage)
-  --as-one-simulation   Treat every run found as one simulation even when
-                        their atom counts differ (by default a folder holding
-                        several systems is refused) (with --recursive)
+                        Find each run's restart file next to it and link it to
+                        the run that follows
+  --prmtop PRMTOP       Topology to use for every run that names none
 ```
 <!-- END_CLI_HELP:plan -->
 
@@ -227,6 +234,7 @@ options:
 
 | Flag | Output |
 |---|---|
+| `--out DIR` | All three below, as `summary.json` (`summary.yaml` with `--summary-format yaml`), `methods_summary.json` and `stats.csv` in `DIR`, created if missing. A path given for one of them wins for that file. |
 | `--summary-path FILE` | Full protocol summary (JSON/YAML; `--summary-format` forces the format) |
 | `--methods-summary-path FILE` | Methods summary (JSON): a compact digest of the full summary for writing a Methods section; see below |
 | `--stats-csv FILE` | Per-stage statistics (one row per stage) |
@@ -292,7 +300,7 @@ Protocol summary
 ================
 Stages: 7
 Total steps: 25000000
-Total simulated time (ps): 100000.000
+Simulated time: 100 ns
 
 - ntp_prod_0001
   intent: production
@@ -302,7 +310,6 @@ Total simulated time (ps): 100000.000
   inpcrd: atoms=64528, box, time=20920 ps
   stats: frames=200, time=1020–20920 ps, temp=300.43 ± 1.25 K, density=1.0370 ± 0.0012 g/cc
   restart: .../ntp_prod_0001.rst
-  evidence: INFO: Part of sequence 'ntp_prod' (item 2 of 6); INFO: stage_role 'production' inferred from mdin file; ...
   note: INFO: Part of sequence 'ntp_prod' (item 2 of 6)
   note: INFO: stage_role 'production' inferred from mdin file
 ```
@@ -347,11 +354,13 @@ Starting structure: ntp_prod_0000.rst
 Phases: 1
 
 Phase: Production [production]
-  - ntp_prod_0001  topology=CH3L1_HUMAN_6NAG.top  input=starting structure  (mdin=ntp_prod_0001.mdin, mdout=ntp_prod_0001.mdout)
-  - ntp_prod_0002  topology=CH3L1_HUMAN_6NAG.top  input=restart of ntp_prod_0001 (ntp_prod_0001.rst)  (mdin=ntp_prod_0002.mdin, mdout=ntp_prod_0002.mdout)
-  - ntp_prod_0003  topology=CH3L1_HUMAN_6NAG.top  input=restart of ntp_prod_0002 (ntp_prod_0002.rst)  (mdin=ntp_prod_0003.mdin, mdout=ntp_prod_0003.mdout)
-  - ntp_prod_0004  topology=CH3L1_HUMAN_6NAG.top  input=restart of ntp_prod_0003 (ntp_prod_0003.rst)  (mdin=ntp_prod_0004.mdin, mdout=ntp_prod_0004.mdout)
-  - ntp_prod_0005  topology=CH3L1_HUMAN_6NAG.top  input=restart of ntp_prod_0004 (ntp_prod_0004.rst)  (mdin=ntp_prod_0005.mdin, mdout=ntp_prod_0005.mdout)
+  - ntp_prod_0001  from the starting structure
+  - ntp_prod_0002  from ntp_prod_0001
+  - ntp_prod_0003  from ntp_prod_0002
+  - ntp_prod_0004  from ntp_prod_0003
+  - ntp_prod_0005  from ntp_prod_0004
+
+Simulated time: 100 ns
 
 Findings:
   - Run check: ntp_prod_0001: Time step of 4 fs, but the topology has standard hydrogen masses (no hydrogen mass repartitioning); a time step above 2 fs needs repartitioned hydrogen masses.
@@ -389,7 +398,7 @@ ambermeta discover [directory] [options]
 ```text
 usage: ambermeta discover [-h] [--recursive | --no-recursive]
                           [--pattern PATTERN] [--write WRITE] [--force]
-                          [--format {json,yaml}] [--as-one-simulation]
+                          [--format {json,yaml}] [--as-one-simulation] [-v]
                           [directory]
 
 Scan a directory into a draft Simulation using the same discover-as-draft
@@ -413,6 +422,8 @@ options:
   --as-one-simulation   Treat every run found as one simulation even when
                         their atom counts differ (by default a folder holding
                         several systems is refused)
+  -v, --verbose         List each run with its topology and its
+                        mdin/mdout/trajectory paths
 ```
 <!-- END_CLI_HELP:discover -->
 
@@ -449,11 +460,11 @@ Starting structure: ntp_prod_0000.rst
 Phases: 1
 
 Phase: Production [production]
-  - ntp_prod_0001  topology=CH3L1_HUMAN_6NAG.top  input=starting structure  (mdin=ntp_prod_0001.mdin, mdout=ntp_prod_0001.mdout)
-  - ntp_prod_0002  topology=CH3L1_HUMAN_6NAG.top  input=restart of ntp_prod_0001 (ntp_prod_0001.rst)  (mdin=ntp_prod_0002.mdin, mdout=ntp_prod_0002.mdout)
-  - ntp_prod_0003  topology=CH3L1_HUMAN_6NAG.top  input=restart of ntp_prod_0002 (ntp_prod_0002.rst)  (mdin=ntp_prod_0003.mdin, mdout=ntp_prod_0003.mdout)
-  - ntp_prod_0004  topology=CH3L1_HUMAN_6NAG.top  input=restart of ntp_prod_0003 (ntp_prod_0003.rst)  (mdin=ntp_prod_0004.mdin, mdout=ntp_prod_0004.mdout)
-  - ntp_prod_0005  topology=CH3L1_HUMAN_6NAG.top  input=restart of ntp_prod_0004 (ntp_prod_0004.rst)  (mdin=ntp_prod_0005.mdin, mdout=ntp_prod_0005.mdout)
+  - ntp_prod_0001  from the starting structure
+  - ntp_prod_0002  from ntp_prod_0001
+  - ntp_prod_0003  from ntp_prod_0002
+  - ntp_prod_0004  from ntp_prod_0003
+  - ntp_prod_0005  from ntp_prod_0004
 
 Suggestions:
   - [applied] ntp_prod_0000.rst set as the starting structure
@@ -474,12 +485,12 @@ followed:
 $ ambermeta discover runs/
 
 Phase: Production [production]
-  - rep1/prod_0001  topology=...  input=starting structure  (mdin=rep1/prod_0001.mdin, ...)
-  - rep1/prod_0002  topology=...  input=restart of rep1/prod_0001 (rep1/prod_0001.rst)  ...
-  - rep2/prod_0001  topology=...  input=starting structure  (mdin=rep2/prod_0001.mdin, ...)
-  - rep2/prod_0002  topology=...  input=restart of rep2/prod_0001 (rep2/prod_0001.rst)  ...
-  - rep3/prod_0001  topology=...  input=starting structure  (mdin=rep3/prod_0001.mdin, ...)
-  - rep3/prod_0002  topology=...  input=restart of rep3/prod_0001 (rep3/prod_0001.rst)  ...
+  - rep1/prod_0001  from the starting structure
+  - rep1/prod_0002  from rep1/prod_0001
+  - rep2/prod_0001  from the starting structure
+  - rep2/prod_0002  from rep2/prod_0001
+  - rep3/prod_0001  from the starting structure
+  - rep3/prod_0002  from rep3/prod_0001
 
 Suggestions:
   - [applied] CH3L1_HUMAN_6NAG.crd set as the starting structure
@@ -646,6 +657,8 @@ $ ambermeta validate --manifest sim.yaml
 
 Simulation validation
 
+Simulated time: 100 ns
+
 Findings:
   - Run check: ntp_prod_0001: Time step of 4 fs, but the topology has standard hydrogen masses (no hydrogen mass repartitioning); a time step above 2 fs needs repartitioned hydrogen masses.
   - Run check: ntp_prod_0002: Time step of 4 fs, but the topology has standard hydrogen masses (no hydrogen mass repartitioning); a time step above 2 fs needs repartitioned hydrogen masses.
@@ -719,9 +732,9 @@ replica that stopped early is visible as a quantity beside the finding that name
 
 ```
 Per lineage:
-  rep1  3 run(s), 15000000 steps, 60000.000 ps
-  rep2  1 run(s),  5000000 steps, 20000.000 ps
-  rep3  3 run(s), 15000000 steps, 60000.000 ps
+  rep1  3 run(s), 60 ns
+  rep2  1 run(s), 20 ns
+  rep3  3 run(s), 60 ns
 ```
 
 **Time per role.** The totals count every dynamics run, equilibration included. Where the runs that ran hold
@@ -729,10 +742,10 @@ more than one role, `plan` and `validate --manifest` also print the simulated ti
 lineage line carries the same split (since 1.3.0):
 
 ```
-Simulated time by role (ps): equilibration 3000.000; production 60000.000
+Simulated time: 63 ns (equilibration 3 ns; production 60 ns)
 
 Per lineage:
-  rep1  6 run(s), 15750000 steps, 63000.000 ps (equilibration 3000.000; production 60000.000)
+  rep1  6 run(s), 63 ns (equilibration 3 ns; production 60 ns)
 ```
 
 `summary.json` holds them as `totals.time_ps_<role>` (`time_ps_equilibration`, `time_ps_production`, ...;

@@ -50,7 +50,7 @@ def test_plan_v2_manifest_prints_structure(tmp_path, capsys):
     assert "prod_001" in out                        # step name is printed
     # The chain is reported by the NAME of the step it continues from. Printing the raw
     # input_coords.ref showed the reader an internal id instead.
-    assert "input=restart of minimize" in out
+    assert "from minimize" in out
     assert "st_min" not in out
 
 

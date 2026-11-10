@@ -41,11 +41,11 @@ Starting structure: ntp_prod_0000.rst
 Phases: 1
 
 Phase: Production [production]
-  - ntp_prod_0001  topology=CH3L1_HUMAN_6NAG.top  input=starting structure  (mdin=ntp_prod_0001.mdin, mdout=ntp_prod_0001.mdout)
-  - ntp_prod_0002  topology=CH3L1_HUMAN_6NAG.top  input=restart of ntp_prod_0001 (ntp_prod_0001.rst)  (mdin=ntp_prod_0002.mdin, mdout=ntp_prod_0002.mdout)
-  - ntp_prod_0003  topology=CH3L1_HUMAN_6NAG.top  input=restart of ntp_prod_0002 (ntp_prod_0002.rst)  (mdin=ntp_prod_0003.mdin, mdout=ntp_prod_0003.mdout)
-  - ntp_prod_0004  topology=CH3L1_HUMAN_6NAG.top  input=restart of ntp_prod_0003 (ntp_prod_0003.rst)  (mdin=ntp_prod_0004.mdin, mdout=ntp_prod_0004.mdout)
-  - ntp_prod_0005  topology=CH3L1_HUMAN_6NAG.top  input=restart of ntp_prod_0004 (ntp_prod_0004.rst)  (mdin=ntp_prod_0005.mdin, mdout=ntp_prod_0005.mdout)
+  - ntp_prod_0001  from the starting structure
+  - ntp_prod_0002  from ntp_prod_0001
+  - ntp_prod_0003  from ntp_prod_0002
+  - ntp_prod_0004  from ntp_prod_0003
+  - ntp_prod_0005  from ntp_prod_0004
 
 Suggestions:
   - [applied] ntp_prod_0000.rst set as the starting structure
@@ -105,6 +105,8 @@ ambermeta validate --manifest draft.yaml
 
 ```
 Simulation validation
+
+Simulated time: 100 ns
 
 Findings:
   - Run check: ntp_prod_0001: Time step of 4 fs, but the topology has standard hydrogen masses (no hydrogen mass repartitioning); a time step above 2 fs needs repartitioned hydrogen masses.
@@ -223,10 +225,10 @@ Starting structure: ntp_prod_0000.rst
 Phases: 1
 
 Phase: Production [production]
-  - ntp_prod_0001  topology=CH3L1_HUMAN_6NAG.top  input=starting structure  (mdin=ntp_prod_0001.mdin, mdout=ntp_prod_0001.mdout)
-  - ntp_prod_0002  topology=CH3L1_HUMAN_6NAG.top  input=restart of ntp_prod_0001 (ntp_prod_0001.rst)  (mdin=ntp_prod_0002.mdin, mdout=ntp_prod_0002.mdout)
-  - ntp_prod_0004  topology=CH3L1_HUMAN_6NAG.top  input=restart of ntp_prod_0002 (ntp_prod_0002.rst)  (mdin=ntp_prod_0004.mdin, mdout=ntp_prod_0004.mdout)
-  - ntp_prod_0005  topology=CH3L1_HUMAN_6NAG.top  input=restart of ntp_prod_0004 (ntp_prod_0004.rst)  (mdin=ntp_prod_0005.mdin, mdout=ntp_prod_0005.mdout)
+  - ntp_prod_0001  from the starting structure
+  - ntp_prod_0002  from ntp_prod_0001
+  - ntp_prod_0004  from ntp_prod_0002
+  - ntp_prod_0005  from ntp_prod_0004
 
 Suggestions:
   - [needs_you] ntp_prod sequence is missing member(s) 3
@@ -244,6 +246,8 @@ ambermeta validate --manifest manifest.yaml
 
 ```
 Simulation validation
+
+Simulated time: 80 ns
 
 Findings:
   - ntp_prod sequence is missing member(s) 3: present members of 'ntp_prod' skip index(es) 3
@@ -264,6 +268,8 @@ ambermeta validate --manifest manifest.yaml --strict; echo "exit: $?"
 
 ```
 Simulation validation
+
+Simulated time: 80 ns
 
 Findings:
   - ntp_prod sequence is missing member(s) 3: present members of 'ntp_prod' skip index(es) 3
@@ -303,6 +309,8 @@ ambermeta validate --manifest broken.yaml
 
 ```
 Simulation validation
+
+Simulated time: 100 ns
 
 Findings:
   - Continuity note: Stage appears to overlap previous stage by 20000 ps.
@@ -477,6 +485,8 @@ ambermeta validate --manifest gui_manifest.yaml
 
 ```
 Simulation validation
+
+Simulated time: 100 ns
 
 Findings:
   - Run check: ntp_prod_0001: Time step of 4 fs, but the topology has standard hydrogen masses (no hydrogen mass repartitioning); a time step above 2 fs needs repartitioned hydrogen masses.
