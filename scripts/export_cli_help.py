@@ -93,7 +93,11 @@ def main() -> int:
             f"error: docs/cli.md must be generated with Python {want}, but this is {got}.\n"
             f"argparse's help formatting is version-dependent, so running this on "
             f"{got} would silently rewrite docs/cli.md into a form that fails the "
-            f"cli-docs-sync check on CI (which pins {want}).",
+            f"cli-docs-sync check on CI (which pins {want}).\n"
+            f"If uv is installed, it can fetch {want} for this one run (the script "
+            f"imports ambermeta from the checkout, so nothing else needs installing):\n"
+            f"  uv run --python {want} --no-project python scripts/export_cli_help.py"
+            f"{' --check' if args.check else ''}",
             file=sys.stderr,
         )
         return 2
