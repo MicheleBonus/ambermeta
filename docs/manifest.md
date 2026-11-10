@@ -257,6 +257,8 @@ model exists to record. The rule holds across every path that maintains the chai
 `discover`'s draft, reordering steps or phases, moving a step between phases, adding a step, and the
 re-chaining that follows a delete.
 
+Reordering is also bounded by the evidence: a link the run's own mdout confirms (the INPCRD it records is the input the step declares) is never re-derived from the new order, whatever the order says. Only links nothing records follow the order, and the GUI names each one it changes.
+
 A boundary needs **two different declared tags**. An untagged Step is the implicit single member and
 continues into, or out of, anything — one shared equilibration feeding N replicas is the commonest layout
 there is, and it is a real edge, so `common/equil` → `rep1/prod_0001` is never refused on tag grounds.

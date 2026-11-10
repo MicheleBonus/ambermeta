@@ -22,9 +22,9 @@ returns None for it, because a clipped path matches nothing reliably.
 from __future__ import annotations
 
 import os
-from typing import Optional
+from typing import Optional, Set
 
-__all__ = ["compare_recorded_input"]
+__all__ = ["compare_recorded_input", "recorded_confirmations"]
 
 
 def _resolve_here(recorded: str, run_directory: str) -> Optional[str]:
@@ -97,3 +97,32 @@ def _in_sibling(parts, declared_path: str) -> bool:
         return False
     candidate = os.path.join(os.path.dirname(declared_dir), parts[-2], parts[-1])
     return os.path.isfile(candidate) and not _same_file(candidate, declared_path)
+
+
+def recorded_confirmations(sim, base_directory: str) -> Set[str]:
+    """Ids of the steps whose declared input is the file their own mdout records reading.
+
+    A "continues from" that the run's INPCRD confirms is evidence, not adjacency, so the
+    GUI's reorder keeps it instead of re-deriving it from the new order (see
+    `simulation.relink_restarts`). Steps without an mdout, whose mdout names no INPCRD,
+    or whose record names another file, are not confirmed.
+    """
+    from ambermeta.mdout_header import read_mdout_header
+    from ambermeta.simulation import iter_steps, resolve_input_coords
+
+    def here(path: str) -> str:
+        return path if os.path.isabs(path) else os.path.join(base_directory, path)
+
+    confirmed: Set[str] = set()
+    for _, step in iter_steps(sim):
+        declared = resolve_input_coords(sim, step) if step.mdout else None
+        if not declared or not os.path.isfile(here(step.mdout)):
+            continue
+        try:
+            recorded = read_mdout_header(here(step.mdout)).assignment("INPCRD")
+        except (OSError, ValueError):
+            continue
+        if recorded and compare_recorded_input(
+                here(declared), recorded, os.path.dirname(here(step.mdout))) is None:
+            confirmed.add(step.id)
+    return confirmed
