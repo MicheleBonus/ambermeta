@@ -79,9 +79,13 @@ def test_the_reuse_window_expires_so_a_finished_run_can_change_the_answer(store,
     """
     calls = _count_calls(monkeypatch)
     monkeypatch.setattr(routes, "_REUSE_WINDOW_S", 0.0)
+    # A clock that always moves. Sleeping 10 ms did not guarantee that on Windows, where
+    # `time.monotonic()` ticks every 15.6 ms: the two passes read the same instant, the
+    # elapsed time was 0 <= 0.0, and the report was reused about one run in ten.
+    ticks = iter(range(1, 10_000))
+    monkeypatch.setattr(routes.time, "monotonic", lambda: float(next(ticks)))
 
     routes.validate_protocol()
-    time.sleep(0.01)
     routes.validate_protocol()
 
     assert len(calls) == 2, "the report outlived its window"

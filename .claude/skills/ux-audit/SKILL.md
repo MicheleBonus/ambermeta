@@ -48,7 +48,7 @@ Read `errors.md` in this directory and follow it.
 
 ## 5. Report
 
-Write the report to `.claude/ux-audit/reports/<YYYY-MM-DD>-<scope>.md` (git does not track it). If an earlier report exists, compare with the latest one and set each finding's status to `new`, `still open` or `fixed`.
+Write the report to `.claude/ux-audit/reports/<YYYY-MM-DD>-<scope>.md` (git does not track it). If that name is taken by an earlier run today, add `-2`, `-3`, and so on, so the earlier report stays as the baseline. If an earlier report exists, compare with the latest one of the same scope and set each finding's status to `new`, `still open` or `fixed`.
 
 Reproduce every finding a second time before writing it down. Each finding has exactly this shape:
 

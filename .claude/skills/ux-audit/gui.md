@@ -21,6 +21,14 @@ To audit `hole/` or `replicas/`, stop the server and start it again on that dire
 - Take a `browser_take_screenshot` of each state you report on. Save them next to the report and name them in its `observed:` line.
 - Use `browser_resize` at 1440×900 and 1024×768. The app is desktop-only by design, so don't report layouts narrower than that.
 
+What the harness does not do for you, learned the hard way:
+- `browser_drag` (Playwright's `dragTo`) does not start a dnd-kit drag. In `browser_run_code_unsafe`, press on the source, move a few pixels, then `page.mouse.move(x, y, { steps: 25 })` to the target and release.
+- Give every action in a `browser_run_code_unsafe` script a short timeout (`{ timeout: 5000 }`). The default is 30 s per action, so a loop over a few covered buttons runs past the tool's two-minute limit.
+- Stopping a backgrounded `browser_run_code_unsafe` with TaskStop does not stop the script. It keeps driving the page and can leave the document in a state that looks like an app bug. Keep scripts short instead of relying on stopping them.
+- A `page.once('dialog')` handler left by an earlier script fires later, for example on a `beforeunload`. Call `page.removeAllListeners('dialog')` before navigating.
+- Wait for state, not for time: after Discover, poll `GET /api/document` until it has phases. A cold parse cache can take longer than a fixed wait.
+- On Windows, stopping the background `sh am gui …` task leaves Python listening on the port. Find it with `Get-NetTCPConnection -LocalPort <port>`, check its command line, and stop that process.
+
 ## Workflows
 
 Walk these in order on `run/`, following the descriptions in `docs/gui.md`:
