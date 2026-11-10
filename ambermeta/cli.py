@@ -805,7 +805,15 @@ def _get_parser_for_file(filepath: str):
         return MdinParser(filepath)
     elif ext in (".out", ".mdout") or "mdout" in basename:
         return MdoutParser(filepath)
-    elif ext in (".nc", ".mdcrd", ".crd", ".x") or "mdcrd" in basename:
+    elif ext == ".crd":
+        # `.crd` is LEaP's coordinate file as often as a trajectory: read by extension,
+        # the sample's 64,528-atom CH3L1_HUMAN_6NAG.crd came out as a trajectory with
+        # no atoms. Typed by content, as the GUI and Discover already do.
+        from ambermeta.coords import sniff_coordinate_kind
+        if sniff_coordinate_kind(filepath) == "inpcrd":
+            return InpcrdParser(filepath)
+        return MdcrdParser(filepath)
+    elif ext in (".nc", ".mdcrd", ".x") or "mdcrd" in basename:
         return MdcrdParser(filepath)
     elif ext in (".rst", ".rst7", ".ncrst", ".inpcrd", ".restrt"):
         return InpcrdParser(filepath)

@@ -105,6 +105,11 @@ def save_document(req: SaveRequest) -> SaveResult:
         warnings = core_bridge.save_simulation(sim, base_directory, target, fmt)
     except (RuntimeError, ValueError, OSError) as exc:
         raise HTTPException(status_code=400, detail=f"Could not save manifest: {exc}")
+    if req.format and req.format != fmt:
+        warnings = list(warnings) + [
+            f"Saved {os.path.basename(target)} as {fmt.upper()}, the format its name says; "
+            f"Open reads a manifest by its extension. To save {req.format.upper()}, use a "
+            f"name ending in {'.json' if req.format == 'json' else '.yaml'}."]
     # What went into the file is the snapshot taken above, not whatever the store holds by
     # the time the write finishes -- and writing a 1097-step manifest to a network
     # filesystem is not instantaneous. An edit that landed in that window is genuinely not

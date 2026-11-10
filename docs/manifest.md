@@ -208,8 +208,8 @@ gaps: { expected: 100.0, tolerance: 0.5 }
 
 | Key | Meaning |
 |---|---|
-| `expected` | Expected inter-run time discontinuity before this Step, in ps. `null`/omitted if none expected. |
-| `tolerance` | Tolerance around `expected` for the continuity check. `null`/omitted to use the frame-interval-based default (see [architecture §3](architecture.md#3-continuity-and-sequence-hole-detection)). |
+| `expected` | Expected inter-run time discontinuity before this Step, in ps. `null`/omitted if none expected. `0` is a statement: the runs abut exactly, and any gap is measured against it. |
+| `tolerance` | Tolerance around `expected` for the continuity check. `null`/omitted to use the frame-interval-based default (see [architecture §3](architecture.md#3-continuity-and-sequence-hole-detection)). `0` asks for an exact match, allowing only floating-point noise (1e-6 ps). |
 
 These are equivalent to `Step.expected_gap_ps` / `Step.gap_tolerance_ps` in the
 [Python API](api.md#1-the-ambermetasimulation-model).
@@ -229,6 +229,9 @@ input_coords: { source: path, path: "restarts/custom.rst7" }
 | `starting_structure` | — | The Simulation's `starting_structure`. Normally only the first Step in a chain uses this. |
 | `step` | `ref: <step id>` | The **`rst` of the referenced Step** — the restart that Step wrote. This is the continuity chain: Step *N*'s input is Step *N−1*'s output. |
 | `path` | `path: "..."` | An explicit coordinate file, bypassing both of the above (e.g. a restart from outside this Simulation). |
+
+Any other `source` is refused when the manifest is loaded, with the step named: a misspelt
+source would otherwise leave the step with no input at all.
 
 The file that joins two Steps is written once, on the Step that **produces** it:
 

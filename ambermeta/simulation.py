@@ -21,6 +21,10 @@ class Topology:
     kind: str = "normal"          # "normal" | "hmr"
 
 
+# Every `InputCoords.source` that `resolve_input_coords` can answer.
+INPUT_SOURCES = ("starting_structure", "step", "path")
+
+
 @dataclass
 class InputCoords:
     source: str = "starting_structure"   # "starting_structure" | "step" | "path"
@@ -149,9 +153,20 @@ def payload_to_simulation(payload: Dict[str, Any]) -> Simulation:
         # "a skipped file costs a note and exit 0" fault tolerance the rest of the loader has.
         status = s.get("status")
         status = status if status == "queued" else None
+        # Unlike a status, an unknown source is refused: `resolve_input_coords` answers
+        # only these three, so a misspelt one left the step with no input and no parent,
+        # and validation then passed it as if the step had been declared correctly.
+        source = ic.get("source")
+        if source is None:
+            source = "starting_structure"
+        if source not in INPUT_SOURCES:
+            raise AmberMetaError(
+                f"Step {s.get('name') or s['id']!r}: input_coords.source {source!r} is not "
+                f"one of {', '.join(INPUT_SOURCES)}."
+            )
         step = Step(
             id=s["id"], name=s.get("name", ""), topology=s.get("topology"),
-            input_coords=InputCoords(source=ic.get("source", "starting_structure"),
+            input_coords=InputCoords(source=source,
                                      ref=ic.get("ref"), path=ic.get("path")),
             mdin=s.get("mdin"), mdout=s.get("mdout"), mdcrd=s.get("mdcrd"),
             rst=s.get("rst"), lineage=lineage, status=status,

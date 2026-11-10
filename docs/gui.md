@@ -251,7 +251,9 @@ The tray re-runs validation (and refills itself) after every document mutation, 
   ```
 
   For an unclosed bracket the first position is where the mistake is: it is where the bracket opened.
-- **Save** always writes the canonical **v2 manifest** — YAML or JSON only, chosen by the target's extension or by the Save dialog's format selector, which offers exactly those two.
+- **Save** always writes the canonical **v2 manifest**, YAML or JSON only. The name's extension decides which, because Open reads a manifest by its extension: `manifest.json` is written as JSON even if the Save dialog's format selector says yaml. When the selector disagrees with the name, the save says so in a warning:
+
+  > Saved manifest.json as JSON, the format its name says; Open reads a manifest by its extension. To save YAML, use a name ending in .yaml.
 - **Paths are stored relative to the launch directory**, with `/` separators, whichever way a file was assigned (drag, the Assign actions, a slot's file picker, the step editor), so they match the paths Discover writes and the manifest still resolves after the folder is moved or opened on another machine.
 - **Save writes only to a manifest name.** The target must end in `.yaml`, `.yml` or `.json`, the names Open reads back; anything else is refused with `400` before anything is written, so a run's own `.mdin`, `.mdout`, topology or restart can never be replaced by a manifest. The same rule holds for the manifest **Plan** writes. The Save dialog lists only manifests as files to overwrite, and says `This file exists and will be replaced.` when the name you pick or type is already on disk.
 - **A save reports what it actually wrote.** Every route here is a synchronous `def`, so Starlette runs it in a worker thread and an edit can land while a manifest is still being written — seconds, on a large campaign over a network filesystem. What went to disk is the document as it stood when the write began, so an edit made during it is genuinely not in the file. The dirty dot therefore stays lit and the result carries a warning:
