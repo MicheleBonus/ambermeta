@@ -59,7 +59,7 @@ These apply before the subcommand:
 
 <!-- BEGIN_CLI_HELP:root -->
 ```text
-usage: ambermeta [-h] [--log-level {DEBUG,INFO,WARNING,ERROR}]
+usage: ambermeta [-h] [--version] [--log-level {DEBUG,INFO,WARNING,ERROR}]
                  [--log-file LOG_FILE] [-q]
                  {plan,discover,validate,info,export,init,gui,completion} ...
 
@@ -86,6 +86,7 @@ positional arguments:
 
 options:
   -h, --help            show this help message and exit
+  --version             Print the version and exit
   --log-level {DEBUG,INFO,WARNING,ERROR}
                         Set logging level (default: INFO)
   --log-file LOG_FILE   Write logs to a file in addition to stderr
@@ -384,7 +385,7 @@ ambermeta discover [directory] [options]
 <!-- BEGIN_CLI_HELP:discover -->
 ```text
 usage: ambermeta discover [-h] [--recursive | --no-recursive]
-                          [--pattern PATTERN] [--write WRITE]
+                          [--pattern PATTERN] [--write WRITE] [--force]
                           [--format {json,yaml}]
                           [directory]
 
@@ -403,12 +404,15 @@ options:
                         recursive to disable)
   --pattern PATTERN     Regex filter for discovered files
   --write WRITE         Write the draft to this path as a v2 manifest
+  --force               Overwrite the --write file if it already exists
   --format {json,yaml}  Format for --write (default: inferred from extension,
                         else json)
 ```
 <!-- END_CLI_HELP:discover -->
 
 `--recursive`/`--no-recursive` is an `argparse.BooleanOptionalAction` pair (recursion is on by default).
+
+`--write` will not replace an existing file unless `--force` is given, as `init` does (`ERROR: sim.yaml already exists. Use --force to overwrite.`, exit `1`, checked before the scan), so re-running `discover --write` cannot wipe a manifest you have edited. A missing parent directory is created. An invalid `--pattern` is a usage error (exit `2`).
 
 ```text
 $ ambermeta discover tests/data/amber/md_test_files
@@ -789,7 +793,8 @@ ambermeta export <manifest> [options]
 
 <!-- BEGIN_CLI_HELP:export -->
 ```text
-usage: ambermeta export [-h] [-o OUTPUT] [--format {json,yaml}] manifest
+usage: ambermeta export [-h] [-o OUTPUT] [--force] [--format {json,yaml}]
+                        manifest
 
 Read a v2 manifest and re-emit it as canonical v2. Useful for converting
 between json and yaml, or for pretty-printing to stdout. Without --output,
@@ -802,12 +807,14 @@ options:
   -h, --help            show this help message and exit
   -o OUTPUT, --output OUTPUT
                         Write to this path (default: print JSON to stdout)
+  --force               Overwrite the --output file if it already exists
   --format {json,yaml}  Output format (default: inferred from --output
                         extension)
 ```
 <!-- END_CLI_HELP:export -->
 
 - Writes through `write_simulation` — **JSON or YAML only**.
+- `-o` will not replace an existing file unless `--force` is given; a missing parent directory is created.
 - Without `-o/--output`, the result prints as JSON to stdout.
 
 ### Convert a manifest to a different format
