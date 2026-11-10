@@ -1604,24 +1604,6 @@ def _looks_queued(mdin_details: Any, has_mdin: bool, has_mdout: bool) -> bool:
     return has_mdin and not has_mdout and bool(getattr(mdin_details, "cntrl_parameters", None))
 
 
-def collision_notes(stem: str, kinds: Dict[str, str]) -> List[str]:
-    """One note per kind for which `smart_group_files` passed over a file of `stem`.
-
-    Two files of one kind under one name (`prod.mdcrd` beside `prod.nc`, `system.parm7`
-    beside `system.prmtop`) compete for one slot; the first in sorted order is read. Not
-    INFO, because the file passed over may be the one that matters (a NetCDF trajectory
-    with frame times, beside an ASCII one with none), and nothing else names it. Shared by
-    the `plan --recursive` scan and Discover, so both say it the same way.
-    """
-    notes = []
-    for kind in ("prmtop", "mdin", "mdout", "mdcrd", "inpcrd"):
-        skipped = kinds.get(f"_collision_{kind}")
-        if skipped and kinds.get(kind):
-            notes.append(f"{stem} has more than one {kind} file: read "
-                         f"{os.path.basename(kinds[kind])}; not read: {skipped}.")
-    return notes
-
-
 def _manifest_to_stages(
     manifest: Dict[str, Dict[str, str]] | List[Dict[str, str]],
     directory: Optional[str],
@@ -2356,6 +2338,24 @@ def auto_detect_restart_chain(
             restart_mapping[stage.name] = best_match[0]
 
     return restart_mapping
+
+
+def collision_notes(stem: str, kinds: Dict[str, str]) -> List[str]:
+    """One note per kind for which `smart_group_files` passed over a file of `stem`.
+
+    Two files of one kind under one name (`prod.mdcrd` beside `prod.nc`, `system.parm7`
+    beside `system.prmtop`) compete for one slot; the first in sorted order is read. Not
+    INFO, because the file passed over may be the one that matters (a NetCDF trajectory
+    with frame times, beside an ASCII one with none), and nothing else names it. Shared by
+    the `plan --recursive` scan and Discover, so both say it the same way.
+    """
+    notes = []
+    for kind in ("prmtop", "mdin", "mdout", "mdcrd", "inpcrd"):
+        skipped = kinds.get(f"_collision_{kind}")
+        if skipped and kinds.get(kind):
+            notes.append(f"{stem} has more than one {kind} file: read "
+                         f"{os.path.basename(kinds[kind])}; not read: {skipped}.")
+    return notes
 
 
 def smart_group_files(
