@@ -1073,6 +1073,8 @@ The generated scripts complete all eight subcommands, including `discover` and `
 
 ## Environment variables
 
+`NO_COLOR` (any non-empty value, per [no-color.org](https://no-color.org)) turns coloured output off even on a terminal.
+
 Manifest paths support `${VAR}`/`$VAR` expansion by default. Every manifest-reading command — `plan -m`, `export`, `validate --manifest` — loads through `ambermeta.simulation.load_simulation`, which shares the same underlying reader, so expansion behaves identically everywhere (`init` never reads a manifest, only writes a template):
 
 ```yaml

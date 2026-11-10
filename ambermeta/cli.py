@@ -456,6 +456,10 @@ def _discover_command(args: argparse.Namespace) -> int:
     # Before the scan, so a refusal does not come after the whole draft has been printed.
     if getattr(args, "write", None) and not _prepare_output(args.write, getattr(args, "force", False)):
         return 1
+    if getattr(args, "format", None) and not getattr(args, "write", None):
+        # As `plan` says of --pattern without --recursive: an ignored flag is reported.
+        print(Colors.warning("WARNING: --format only applies to --write; ignored."),
+              file=sys.stderr)
 
     # apply_tags=True (also the default): `discover --write`'s manifest IS this command's
     # confirmation step, so unlike the GUI's Discover it writes the inferred grouping
@@ -529,6 +533,12 @@ def _export_command(args: argparse.Namespace) -> int:
         fmt = _resolve_sim_format(args.output, getattr(args, "format", None))
         write_simulation(sim, args.output, fmt)
         _out(Colors.success(f"Wrote v2 manifest: {args.output} ({fmt})"))
+    elif getattr(args, "format", None) == "yaml":
+        # `--format yaml` without -o printed JSON: the flag was read only for a file.
+        if yaml is None:
+            print(Colors.error("ERROR: PyYAML is required for YAML output"), file=sys.stderr)
+            return 1
+        print(yaml.safe_dump(simulation_to_payload(sim), sort_keys=False), end="")
     else:
         print(json.dumps(simulation_to_payload(sim), indent=2))
     return 0
@@ -794,6 +804,10 @@ class Colors:
     @classmethod
     def enabled(cls) -> bool:
         """Check if colors should be enabled."""
+        # no-color.org: a non-empty NO_COLOR turns colour off, terminal or not. Without it,
+        # `ambermeta ... 2>run.log` from a terminal wrote escape codes into the log.
+        if os.environ.get("NO_COLOR"):
+            return False
         return sys.stdout.isatty()
 
     @classmethod
