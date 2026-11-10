@@ -349,6 +349,36 @@ def _run_stem(step, base_directory):
     return step.name
 
 
+def _starting_structure_evidence(sim, base_directory):
+    """Why the starting structure is the one it is, as far as the files can say.
+
+    Discover prefers the file the first runs' mdouts record as their INPCRD, so when a run
+    that reads the starting structure records exactly that file, the record is the reason.
+    Otherwise it is only what every restart in the tree is: single-frame coordinates.
+    """
+    from ambermeta.mdout_header import read_mdout_header
+    from ambermeta.recorded_inputs import compare_recorded_input
+
+    def here(path):
+        return path if os.path.isabs(path) else os.path.join(base_directory, path)
+
+    start = here(sim.starting_structure)
+    for p in sim.phases:
+        for s in p.steps:
+            if s.input_coords.source != "starting_structure" or not s.mdout:
+                continue
+            mdout = here(s.mdout)
+            if not os.path.isfile(mdout):
+                continue
+            try:
+                recorded = read_mdout_header(mdout).assignment("INPCRD")
+            except (OSError, ValueError):
+                continue
+            if recorded and compare_recorded_input(start, recorded, os.path.dirname(mdout)) is None:
+                return f"{s.name}'s mdout records it as the coordinates it read (INPCRD)"
+    return "single-frame coordinates; feeds the first run"
+
+
 def build_suggestions(sim, base_directory, proposed=None):
     from ambermeta.lineages import lineages
     from ambermeta.protocol import sequence_findings
@@ -388,7 +418,7 @@ def build_suggestions(sim, base_directory, proposed=None):
     if sim.starting_structure:
         out.append(_sug("starting_structure", "applied",
                         f"{sim.starting_structure} set as the starting structure",
-                        "single-frame coordinates; feeds the first run", ["Undo"]))
+                        _starting_structure_evidence(sim, base_directory), ["Undo"]))
 
     role_pairs = [f"{p.name}->{p.role}" for p in sim.phases if p.role]
     if role_pairs:

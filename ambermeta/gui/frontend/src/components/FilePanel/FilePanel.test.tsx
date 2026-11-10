@@ -282,3 +282,29 @@ describe("FilePanel folder tree", () => {
     expect(await screen.findByText(/could not load files/i)).toBeInTheDocument();
   });
 });
+
+// Every restart was labelled "looks like the starting structure", including the ones runs
+// wrote; Discover picks a restart that no run in the tree wrote.
+describe("the starting-structure hint", () => {
+  const file = (name: string, file_type: FileInfo["file_type"]): FileInfo => ({
+    path: `/work/${name}`, name, file_type, is_directory: false, size: 1,
+    extension: name.slice(name.lastIndexOf(".")), parent: "/work", children: null,
+  });
+
+  it("is on a restart no run wrote, and not on one a run wrote", async () => {
+    queryClient.clear();
+    server.use(http.get("/api/files", () => HttpResponse.json([
+      file("prod_0000.rst", "inpcrd"), file("prod_0001.mdin", "mdin"),
+      file("prod_0001.mdout", "mdout"), file("prod_0001.rst", "inpcrd"),
+    ])));
+    render(
+      <QueryClientProvider client={queryClient}>
+        <SelectionProvider><DndTestProvider><FilePanel /></DndTestProvider></SelectionProvider>
+      </QueryClientProvider>,
+    );
+    await screen.findByText("prod_0001.rst");
+    expect(screen.getAllByText("looks like the starting structure")).toHaveLength(1);
+    const row = screen.getByText("prod_0000.rst").closest("[data-file-row], li, div")!.parentElement!;
+    expect(row.textContent).toContain("looks like the starting structure");
+  });
+});

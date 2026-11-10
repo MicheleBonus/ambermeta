@@ -4,6 +4,8 @@ import { useDocument, useUndo, useRedo } from "@/api/hooks";
 interface Props {
   onOpen: () => void;
   onSave: () => void;
+  /** Always asks where, even when the document already has a path (Save does not). */
+  onSaveAs?: () => void;
   onDiscover: () => void;
   onExport: () => void;
   onValidate: () => void;
@@ -12,7 +14,7 @@ interface Props {
 }
 
 export function TopBar({
-  onOpen, onSave, onDiscover, onExport, onValidate, onPlan, onDefineReplicas,
+  onOpen, onSave, onSaveAs, onDiscover, onExport, onValidate, onPlan, onDefineReplicas,
 }: Props) {
   const { data: doc } = useDocument();
   const undo = useUndo();
@@ -23,6 +25,7 @@ export function TopBar({
       <span className="font-semibold mr-2 text-ink">AmberMeta</span>
       <Button onClick={onOpen}>Open</Button>
       <Button variant="primary" onClick={onSave}>Save</Button>
+      {onSaveAs && <Button onClick={onSaveAs}>Save as…</Button>}
       {dirty && (
         <span data-testid="dirty-indicator" title="Unsaved changes"
           className="w-2 h-2 rounded-full bg-accent" />

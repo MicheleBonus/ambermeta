@@ -65,7 +65,7 @@ The server (FastAPI + Uvicorn) binds the host/port, resolves `directory` to an a
 | **Files** (left) | A searchable, drag-source file list scanned from the launch directory. |
 | **Canvas** (center) | The Simulation header (topology pool + starting structure) above a vertical timeline of phase sections and step cards. |
 | **Inspector** (right) | Peek/details/assign actions for the selected file; an editor for a selected step or phase (§6); the suggestions tray when the Simulation itself or nothing is selected. |
-| **Open / Save** | Load an existing manifest / write the current one to disk (dot = unsaved changes). |
+| **Open / Save / Save as…** | Load an existing manifest / write the current one to disk (dot = unsaved changes) / write it under a new name. Once a document has a path, **Save** writes straight back to it; **Save as…** always asks. The Save dialog starts from `manifest.yaml`. |
 | **Discover** | Discover-as-draft: scan the launch directory into a Simulation draft. |
 | **Define replicas…** | Open the proposal strip's segment picker (§5a) to declare run lineages by hand. Always enabled — it is the way back when the automatic inference refuses, which is most of the time. |
 | **Validate** | Run full validation and show the report. |
@@ -231,7 +231,7 @@ The tray re-runs validation (and refills itself) after every document mutation, 
 
 ## 8. Open, Save, Export
 
-- **Open** loads a **v2 manifest** — YAML or JSON — and resets undo history. There is no other reader. An old flat `stages:` document and a `.toml`/`.csv` path are each rejected with `400` and the core reader's own message (respectively):
+- **Open** loads a **v2 manifest** — YAML or JSON — and resets undo history. Its file list shows manifests only (`.yaml`, `.yml`, `.json`), as Save's does. There is no other reader. An old flat `stages:` document and a `.toml`/`.csv` path are each rejected with `400` and the core reader's own message (respectively):
 
   ```
   Could not read manifest: /abs/path/old.yaml is not a v2 manifest (no 'steps' key). Rebuild it with `ambermeta discover <dir> --write <path>`.
@@ -339,7 +339,7 @@ Real output (`POST /api/validate` after Discover, on the sample data):
   "suggestions": [
     { "id": "sug_1", "kind": "starting_structure", "severity": "applied",
       "title": "ntp_prod_0000.rst set as the starting structure",
-      "evidence": "single-frame coordinates; feeds the first run", "actions": ["Undo"] },
+      "evidence": "ntp_prod_0001's mdout records it as the coordinates it read (INPCRD)", "actions": ["Undo"] },
     { "id": "sug_2", "kind": "role_guess", "severity": "applied",
       "title": "Phase roles inferred from file content/names",
       "evidence": "Production->production", "actions": ["Undo"] },

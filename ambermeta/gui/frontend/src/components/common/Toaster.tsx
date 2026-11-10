@@ -28,7 +28,9 @@ export function Toaster() {
               ordinary one-line toast, which is every toast this component rendered before
               that message existed, carries no "\n" and is unaffected: `pre-line` changes
               only how an EXISTING break is honoured, not how a break-free message wraps. */}
-          <span className="whitespace-pre-line">{t.message}</span>
+          {/* overflow-wrap:anywhere so a long path breaks inside the box instead of
+              running past its edge (a "Saved to" path measured 494px in a 382px toast). */}
+          <span className="whitespace-pre-line [overflow-wrap:anywhere]">{t.message}</span>
           {t.action && (
             <button type="button"
               onClick={() => { t.action?.run(); dismissToast(t.id); }}

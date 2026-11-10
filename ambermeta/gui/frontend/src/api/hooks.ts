@@ -81,6 +81,9 @@ export const useSave = () =>
       // dirty dot going out — which reads as "nothing happened" if you were not watching
       // it, and never told you which file was written.
       if (res.document.manifest_path) pushToast(`Saved to ${res.document.manifest_path}`);
+      // The file just written belongs in Open and in the Files pane; the cached tree did
+      // not know about it until the page was reloaded.
+      void queryClient.invalidateQueries({ queryKey: ["files"] });
     },
   });
 export const usePlan = () =>
@@ -89,6 +92,7 @@ export const usePlan = () =>
     onSuccess: (res: PlanResult) => {
       setDocument(res.document);
       res.warnings.forEach((w) => pushToast(w, "warning"));
+      void queryClient.invalidateQueries({ queryKey: ["files"] });   // it wrote files, as Save does
     },
   });
 export const useValidate = () => useMutation({ mutationFn: () => api.validate() });

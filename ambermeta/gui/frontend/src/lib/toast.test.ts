@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import {
   pushToast, dismissToast, getToasts, subscribeToasts, _resetToasts,
 } from "./toast";
@@ -46,5 +46,33 @@ describe("toast store", () => {
   it("defaults tone to info", () => {
     pushToast("no tone");
     expect(getToasts()[0].tone).toBe("info");
+  });
+});
+
+// "Saved to ..." toasts stayed until dismissed, so a working session stacked them over the
+// tray. Information goes after a while; an error or warning stays until it is read.
+describe("toast lifetime", () => {
+  afterEach(() => { vi.useRealTimers(); });
+
+  it("an information toast goes by itself", () => {
+    vi.useFakeTimers();
+    pushToast("Saved to manifest.yaml", "info");
+    vi.advanceTimersByTime(10_000);
+    expect(getToasts()).toHaveLength(0);
+  });
+
+  it("an error or a warning stays until it is dismissed", () => {
+    vi.useFakeTimers();
+    pushToast("Could not read manifest", "error");
+    pushToast("Saved, but the document changed", "warning");
+    vi.advanceTimersByTime(60_000);
+    expect(getToasts().map((t) => t.tone)).toEqual(["error", "warning"]);
+  });
+
+  it("a toast offering an action stays, so the offer can be taken", () => {
+    vi.useFakeTimers();
+    pushToast("Deleted step", "info", { label: "Undo", run: () => {} });
+    vi.advanceTimersByTime(60_000);
+    expect(getToasts()).toHaveLength(1);
   });
 });

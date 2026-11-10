@@ -270,7 +270,8 @@ export default function App() {
           onDragCancel={() => setDrag(null)}
         >
           <div className="flex flex-col h-full">
-            <TopBar onOpen={onOpen} onSave={onSave} onDiscover={onDiscover}
+            <TopBar onOpen={onOpen} onSave={onSave} onSaveAs={() => setPicker("save")}
+              onDiscover={onDiscover}
               onExport={() => setExportOpen(true)} onValidate={() => setValidateOpen(true)}
               onPlan={() => setPlanOpen(true)} onDefineReplicas={onDefineReplicas} />
             <div className="flex flex-1 min-h-0">
@@ -284,10 +285,11 @@ export default function App() {
             </div>
           </div>
 
-          <FilePicker open={picker === "open"} mode="open" title="Open manifest"
+          <FilePicker open={picker === "open"} mode="open" title="Open manifest" manifests
             onClose={() => setPicker(null)}
             onPick={({ path }) => { setPicker(null); open.mutate(path); }} />
           <FilePicker open={picker === "save"} mode="save" title="Save manifest as"
+            defaultPath="manifest.yaml"
             onClose={() => setPicker(null)}
             onPick={({ path, format }) => { setPicker(null); save.mutate({ path, format }); }} />
           <DiscoverModal open={discoverOpen} onClose={() => setDiscoverOpen(false)}

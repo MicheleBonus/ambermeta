@@ -8,7 +8,7 @@ export function DiscoverModal(
   const [recursive, setRecursive] = useState(true);
   const [pattern, setPattern] = useState("");
   return (
-    <Modal open={open} title="Discover stages" onClose={onClose}>
+    <Modal open={open} title="Discover runs" onClose={onClose}>
       <label className="flex items-center gap-2 text-sm">
         <input type="checkbox" checked={recursive} onChange={(e) => setRecursive(e.target.checked)} />
         <span>Search subdirectories</span>
