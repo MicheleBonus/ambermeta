@@ -369,7 +369,7 @@ Findings:
   - Run check: ntp_prod_0004: Time step of 4 fs, but the topology has standard hydrogen masses (no hydrogen mass repartitioning); a time step above 2 fs needs repartitioned hydrogen masses.
   - Run check: ntp_prod_0005: Time step of 4 fs, but the topology has standard hydrogen masses (no hydrogen mass repartitioning); a time step above 2 fs needs repartitioned hydrogen masses.
 
-Validation: OK
+Validation: OK, 5 findings to review
 ```
 
 (`input=restart of <step> (<file>)` is the continuity chain, resolved to the producing step's name and its output restart. Each run of the sample starts where the previous one ended, so there are no continuity findings. The five `Run check` findings are a property of the sample as bundled — see [`validate --manifest`](#--manifest-mode-whole-simulation) — and make `plan -m sim.yaml --strict` exit `1`. The `--recursive` scan above prints none, because it binds no topology to the `ntp_prod_*` stages.)
@@ -666,7 +666,7 @@ Findings:
   - Run check: ntp_prod_0004: Time step of 4 fs, but the topology has standard hydrogen masses (no hydrogen mass repartitioning); a time step above 2 fs needs repartitioned hydrogen masses.
   - Run check: ntp_prod_0005: Time step of 4 fs, but the topology has standard hydrogen masses (no hydrogen mass repartitioning); a time step above 2 fs needs repartitioned hydrogen masses.
 
-Validation: OK
+Validation: OK, 5 findings to review
 ```
 
 The sample as bundled reports this on every run: its runs used `dt = 0.004` ps, and the bundled topology's 32,188 hydrogens all weigh 1.008 amu. Either the runs used a repartitioned topology that is not the one bundled, or they integrated standard-mass hydrogens at a time step those do not support; relabelling the topology as HMR would resolve neither. A run on an HMR topology does not raise it. The verdict stays `OK` because a finding is not an invalid document; with `--strict` the same run prints `Validation: ISSUES FOUND` and exits `1`.
@@ -714,13 +714,13 @@ $ ambermeta validate --manifest sim.yaml --format json
 
 - Continuity measures each step against the step it declares as its producer, whatever their order in
   the document. A step that declares the starting structure or an explicit file reports
-  `INFO: Continuity for <name> was not measured (it declares no producing stage).` rather than staying
+  `INFO: Continuity for <name> was not measured: no run is named as the one it continues from.` rather than staying
   silent. A member boundary is not a gap and is never a finding. Two runs of one directory and one member
   that continue the same restart are each reported (`continuity_gap`:
   `Continues from <run>, as <run> does: 2 runs in one directory continue the same restart.`), which is
   how a run that read an older restart than it should have shows.
 - A sequence hole is reported per member, so a replica that stopped early is named
-  (`rep2/prod sequence is missing member(s) 2, 3`, with `"lineage": "rep2"` on the suggestion) instead of
+  (`rep2/prod runs 2, 3 are missing`, with `"lineage": "rep2"` on the suggestion) instead of
   being hidden by its siblings' indices, and members numbered on offset scales raise nothing.
 
 An `[applied]` `lineage_group` suggestion lists what the document declares, and `discover` prints its
@@ -764,7 +764,7 @@ absent from an untagged document's summary.
 ```
 Lineage coherence:
   WARN Members differ in temp0 in their production runs (rep1: 300.0; rep2: 310.0).
-  INFO 3 steps read the restart written by common/equil and carry 3 distinct resolved seeds.
+  INFO 3 runs start from the restart written by common/equil, and their mdouts record 3 different random seeds (ig).
 ```
 
 Settings are compared **per role**: each member's minimization, heating and equilibration runs are

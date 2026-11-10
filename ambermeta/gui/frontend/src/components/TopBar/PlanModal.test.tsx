@@ -85,6 +85,8 @@ it("reports every file it wrote, so the user is not left guessing where they wen
   expect(await screen.findByText("/work/manifest.yaml")).toBeInTheDocument();
   expect(screen.getByText("/work/summary.json")).toBeInTheDocument();
   expect(screen.getByText(/5 step\(s\)/)).toBeInTheDocument();
+  // 100000 ps, said the way the CLI says it.
+  expect(screen.getByText(/100 ns total/)).toBeInTheDocument();
 });
 
 it("sends null for an output the user unticked", async () => {

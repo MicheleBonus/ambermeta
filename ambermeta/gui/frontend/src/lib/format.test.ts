@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { formatPs, formatCount, roleLabel, relativizePath, fileLabel, stemName } from "./format";
+import { formatPs, formatCount, roleLabel, relativizePath, fileLabel, stemName, formatDuration } from "./format";
 
 describe("format helpers", () => {
   it("formats ps and null", () => {
@@ -115,5 +115,17 @@ describe("fileLabel", () => {
   });
   it("always reports the original absolute path as full", () => {
     expect(fileLabel("/work/equil/01_min.mdin", "/work").full).toBe("/work/equil/01_min.mdin");
+  });
+});
+
+describe("formatDuration", () => {
+  // The CLI's `_duration`: ns from 1000 ps up, ps below, no padding zeros. `41100.000 ps`
+  // had to be counted digit by digit to be read as 41 ns.
+  it("reads like the CLI", () => {
+    expect(formatDuration(41100)).toBe("41.1 ns");
+    expect(formatDuration(100000)).toBe("100 ns");
+    expect(formatDuration(4003)).toBe("4.003 ns");
+    expect(formatDuration(3)).toBe("3 ps");
+    expect(formatDuration(0)).toBe("0 ps");
   });
 });

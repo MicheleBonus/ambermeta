@@ -427,8 +427,16 @@ def _sim_findings(report, *, strict: bool = False) -> None:
         _out("\nProtocol notes:")
         for note in issues:
             _out(f"  - {note}")
-    ok = bool(report.get("ok")) and not (strict and _report_findings(report))
-    _out(f"\nValidation: {'OK' if ok else 'ISSUES FOUND'}")
+    findings = len(_report_findings(report))
+    ok = bool(report.get("ok")) and not (strict and findings)
+    if not ok:
+        _out("\nValidation: ISSUES FOUND")
+    elif findings:
+        # OK is about validity (the chain holds, the files are there), and it sat straight
+        # under the findings, so a reader skimming for the verdict saw OK and stopped.
+        _out(f"\nValidation: OK, {findings} finding{'s' if findings != 1 else ''} to review")
+    else:
+        _out("\nValidation: OK")
 
 
 def _resolve_sim_format(path: str, requested: Optional[str]) -> str:

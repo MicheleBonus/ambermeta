@@ -730,7 +730,8 @@ def test_plan_recursive_stops_measuring_one_replica_against_another(timed_replic
     # restart beside a replica is not evidence of which run read it — and it says so.
     for head in ("rep1/prod_0001", "rep2/prod_0001", "rep3/prod_0001"):
         assert by_name[head].continuity == [
-            f"INFO: Continuity for {head} was not measured (no producing stage resolved)."]
+            f"INFO: Continuity for {head} was not measured: no run is named as the one "
+            "it continues from."]
 
     # Nothing for the user to act on: the chunks meet, and the engine now says so. This
     # list used to hold one "Gap detected without stated expectation" per replica —

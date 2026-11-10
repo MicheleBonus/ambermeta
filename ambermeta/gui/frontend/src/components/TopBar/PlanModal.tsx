@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Modal, Button } from "@/components/common";
 import { useDocument, useFiles, usePlan } from "@/api/hooks";
+import { formatDuration } from "@/lib/format";
 import type { FileInfo, PlanRequest } from "@/types";
 
 /** Comparable form of a user-typed path: separators and case are not meaningful here. */
@@ -196,7 +197,7 @@ export function PlanModal({ open, onClose }: { open: boolean; onClose: () => voi
           <p className="text-xs text-ink-secondary">
             {plan.data.stage_count} step(s)
             {typeof plan.data.totals.time_ps === "number" && plan.data.totals.time_ps > 0
-              ? ` · ${plan.data.totals.time_ps} ps total`
+              ? ` · ${formatDuration(plan.data.totals.time_ps)} total`
               : null}
           </p>
           <ul className="mt-1 space-y-0.5">

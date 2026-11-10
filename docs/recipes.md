@@ -88,7 +88,7 @@ Findings:
   - Run check: ntp_prod_0004: Time step of 4 fs, but the topology has standard hydrogen masses (no hydrogen mass repartitioning); a time step above 2 fs needs repartitioned hydrogen masses.
   - Run check: ntp_prod_0005: Time step of 4 fs, but the topology has standard hydrogen masses (no hydrogen mass repartitioning); a time step above 2 fs needs repartitioned hydrogen masses.
 
-Validation: OK
+Validation: OK, 5 findings to review
 ```
 
 Checks the whole Simulation: restart-to-input-coordinate continuity between consecutive steps, gaps in a numbered run sequence, missing files, and each run against what AMBER recorded (atom counts, mdin against mdout, time step against the topology's hydrogen masses, completion, and the INPCRD the mdout names against the declared input). The `Run check` lines are real for the sample as bundled: its runs used a 4-fs time step, and the bundled topology's hydrogens have standard masses; a run on an HMR topology does not report it. Add `--strict` to fail on any finding (so it exits `1` on this sample), or `--format json` for CI parsing.

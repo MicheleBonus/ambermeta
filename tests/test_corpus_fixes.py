@@ -129,7 +129,8 @@ def test_a_stage_reading_the_starting_structure_is_not_compared_with_its_neighbo
     proto = SimulationProtocol(stages=[equil, minim])
     proto.validate(cross_stage=True)
     assert _gap_notes(minim) == []
-    assert any("declares no producing stage" in n for n in minim.continuity)
+    assert any("no run is named as the one it continues from" in n
+               for n in minim.continuity)
     assert equil.continuity == []      # the first stage of an untagged document: no note
 
 

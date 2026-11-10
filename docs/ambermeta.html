@@ -275,7 +275,7 @@ Findings:
   - Run check: ntp_prod_0004: Time step of 4 fs, but the topology has standard hydrogen masses (no hydrogen mass repartitioning); a time step above 2 fs needs repartitioned hydrogen masses.
   - Run check: ntp_prod_0005: Time step of 4 fs, but the topology has standard hydrogen masses (no hydrogen mass repartitioning); a time step above 2 fs needs repartitioned hydrogen masses.
 
-Validation: OK</span></code></pre>
+Validation: OK, 5 findings to review</span></code></pre>
 <p>The chain is intact, so the verdict is <code>OK</code>. The <code>Run check</code> findings are real for the sample as bundled: its runs used a 4-fs time step (<code>dt = 0.004</code>), and the bundled topology's 32,188 hydrogens all weigh 1.008&nbsp;amu, so either the runs used a different (HMR) topology or they integrated hydrogens at a step those do not support. A run on an HMR topology does not report it. <code>--strict</code> fails on any finding, so it exits <code>1</code> on the untouched sample.</p>
 
 <h3>Re-emit the manifest — canonical v2, here converting YAML to JSON</h3>
@@ -340,7 +340,7 @@ Findings:
   - Run check: ntp_prod_0001: Time step of 4 fs, but the topology has standard hydrogen masses (no hydrogen mass repartitioning); a time step above 2 fs needs repartitioned hydrogen masses.
   ...
 
-Validation: OK</span></code></pre>
+Validation: OK, 5 findings to review</span></code></pre>
 
 <h3 id="cli-export"><code>export</code> <span class="badge cli">convert</span> <em>(new)</em></h3>
 <p>Read a v2 manifest and re-emit it as canonical <strong>v2</strong> — useful for converting between JSON and YAML, or for pretty-printing the whole document. <code>-o/--output PATH</code> (else prints JSON to stdout), <code>--format {json,yaml}</code> (else inferred from the output extension).</p>

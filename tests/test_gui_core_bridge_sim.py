@@ -56,7 +56,8 @@ def test_build_suggestions_flags_missing_run_and_hmr():
     assert "topology_confirm" in kinds   # two topologies, one HMR
     assert "starting_structure" in kinds and "role_guess" in kinds
     miss = next(s for s in sug if s["kind"] == "missing_run")
-    assert "2" in miss["evidence"]
+    assert miss["title"] == "prod run 2 is missing"
+    assert miss["evidence"] == "The prod runs here are numbered 1, 3."
     assert miss["base"] == "prod"
     assert miss["missing"] == [2]
     assert miss["lineage"] is None
@@ -76,13 +77,14 @@ def _missing_run(sim):
 
 
 def test_an_untagged_document_keeps_the_card_it_always_had():
-    # The wording is the guarantee, not just the count: an untagged document must read
-    # exactly as it did before members existed.
+    # The wording is the guarantee, not just the count: an untagged document names no
+    # member, as before members existed. (The words themselves were rewritten for every
+    # document, tagged or not, in the workflow walk-through's plain-wording pass.)
     sim = Simulation(phases=[Phase(id="p0", name="Production", role="production", steps=[
         Step(id="a", name="prod_0001"), Step(id="b", name="prod_0004")])])
     card, = _missing_run(sim)
-    assert card["title"] == "prod sequence is missing member(s) 2, 3"
-    assert card["evidence"] == "present members of 'prod' skip index(es) 2, 3"
+    assert card["title"] == "prod runs 2, 3 are missing"
+    assert card["evidence"] == "The prod runs here are numbered 1, 4."
     assert card["base"] == "prod"
 
 
@@ -92,7 +94,7 @@ def test_a_crashed_replica_is_reported_once_and_scoped_to_the_short_member():
     assert card["lineage"] == "rep2"
     assert card["base"] == "prod"          # the bare base the canvas matches a ghost on
     assert card["missing"] == [2, 3]
-    assert card["title"] == "rep2/prod sequence is missing member(s) 2, 3"
+    assert card["title"] == "rep2/prod runs 2, 3 are missing"
     assert "skip" not in card["evidence"]  # it stopped; it did not skip
 
 

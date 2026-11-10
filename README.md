@@ -145,7 +145,7 @@ Findings:
   - Run check: ntp_prod_0004: Time step of 4 fs, but the topology has standard hydrogen masses (no hydrogen mass repartitioning); a time step above 2 fs needs repartitioned hydrogen masses.
   - Run check: ntp_prod_0005: Time step of 4 fs, but the topology has standard hydrogen masses (no hydrogen mass repartitioning); a time step above 2 fs needs repartitioned hydrogen masses.
 
-Validation: OK
+Validation: OK, 5 findings to review
 ```
 
 The chain is intact, so the verdict is `OK`, but each run is compared with what AMBER recorded, and the sample as bundled ran at `dt = 0.004` ps with a topology whose 32,188 hydrogens all weigh 1.008 amu. A 4-fs time step needs repartitioned hydrogen masses, so either the runs used a different (HMR) topology than the one bundled, or they were integrated at a step their hydrogens do not support. On your own data with an HMR topology this finding does not appear. Findings leave the exit code at `0` by default; `--strict` makes any finding exit `1`, so `--strict` on the untouched sample exits `1`.
