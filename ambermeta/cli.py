@@ -445,9 +445,36 @@ def _named_files(sim):
     return [p for p in paths if p and not os.path.isabs(p)]
 
 
+_AS_ONE_SIMULATION_HELP = (
+    "Treat every run found as one simulation even when their atom counts differ "
+    "(by default a folder holding several systems is refused)")
+
+
+def _report_separate_systems(exc, directory: str, command: str) -> int:
+    """Print why a scan was refused and how to go on; the exit code to return.
+
+    `command` is the scan to suggest per folder, with `{}` where the folder goes.
+    """
+    print(Colors.error(f"ERROR: {exc}"), file=sys.stderr)
+    if exc.folders:
+        print("Run each one on its own:", file=sys.stderr)
+        for folder in exc.folders:
+            path = os.path.normpath(os.path.join(directory, folder))
+            if " " in path:
+                path = f'"{path}"'
+            print(f"  ambermeta {command.format(path)}", file=sys.stderr)
+        print("or pass --as-one-simulation to treat them as one simulation anyway.",
+              file=sys.stderr)
+    else:
+        print("They share a folder, so pick one system's runs with --pattern, or pass "
+              "--as-one-simulation to treat them as one simulation anyway.", file=sys.stderr)
+    return 1
+
+
 def _discover_command(args: argparse.Namespace) -> int:
     """Discover-as-draft: scan a directory into a Simulation draft; optionally write v2."""
     from ambermeta.gui.api.core_bridge import discover_draft
+    from ambermeta.systems import SeparateSystemsError
 
     directory = os.path.abspath(args.directory)
     if not os.path.isdir(directory):
@@ -465,8 +492,12 @@ def _discover_command(args: argparse.Namespace) -> int:
     # confirmation step, so unlike the GUI's Discover it writes the inferred grouping
     # straight onto the steps. Stated explicitly here rather than left to the default so
     # this call site reads as a decision, not an oversight.
-    result = discover_draft(directory, recursive=args.recursive, pattern=args.pattern,
-                            apply_tags=True)
+    try:
+        result = discover_draft(directory, recursive=args.recursive, pattern=args.pattern,
+                                apply_tags=True,
+                                as_one_simulation=getattr(args, "as_one_simulation", False))
+    except SeparateSystemsError as exc:
+        return _report_separate_systems(exc, args.directory, "discover {}")
     sim = result["simulation"]
     if not sim.phases:
         _out("No simulation files discovered; nothing to draft.")
@@ -1126,10 +1157,10 @@ _ambermeta_completion() {
 
     case "${COMP_WORDS[1]}" in
         plan)
-            COMPREPLY=( $(compgen -W "--help -m --manifest --skip-cross-stage-validation --strict --recursive --interactive -v --verbose --summary-path --summary-format --methods-summary-path --stats-csv --no-expand-env --pattern --auto-detect-restarts --prmtop" -- "$cur") )
+            COMPREPLY=( $(compgen -W "--help -m --manifest --skip-cross-stage-validation --strict --recursive --interactive -v --verbose --summary-path --summary-format --methods-summary-path --stats-csv --no-expand-env --pattern --auto-detect-restarts --prmtop --as-one-simulation" -- "$cur") )
             ;;
         discover)
-            COMPREPLY=( $(compgen -W "--help --recursive --no-recursive --pattern --write --force --format" -- "$cur") )
+            COMPREPLY=( $(compgen -W "--help --recursive --no-recursive --pattern --write --force --format --as-one-simulation" -- "$cur") )
             ;;
         validate)
             COMPREPLY=( $(compgen -W "--help --strict --format --manifest --allow-gaps" -- "$cur") )
@@ -1188,10 +1219,10 @@ _ambermeta() {
     args)
       case "$words[2]" in
         plan)
-          _arguments '--manifest[Path to manifest file]:file:_files' '--recursive[Auto-discover files]' '--interactive[Prompt for stages]' '--summary-path[Write protocol summary]:file:_files' '--summary-format[Summary format]:format:(json yaml)' '--methods-summary-path[Write methods summary]:file:_files' '--stats-csv[Write stats CSV]:file:_files' '--pattern[Regex file filter]:pattern:' '--prmtop[Global topology file]:file:_files' '--skip-cross-stage-validation[Skip continuity checks]' '--strict[Abort on first unreadable file]' '--no-expand-env[Disable env var expansion]' '--auto-detect-restarts[Link restarts automatically]' '(-v --verbose)'{-v,--verbose}'[Show detailed stage metadata]' '*:path:_files'
+          _arguments '--manifest[Path to manifest file]:file:_files' '--recursive[Auto-discover files]' '--interactive[Prompt for stages]' '--summary-path[Write protocol summary]:file:_files' '--summary-format[Summary format]:format:(json yaml)' '--methods-summary-path[Write methods summary]:file:_files' '--stats-csv[Write stats CSV]:file:_files' '--pattern[Regex file filter]:pattern:' '--prmtop[Global topology file]:file:_files' '--skip-cross-stage-validation[Skip continuity checks]' '--strict[Abort on first unreadable file]' '--no-expand-env[Disable env var expansion]' '--auto-detect-restarts[Link restarts automatically]' '(-v --verbose)'{-v,--verbose}'[Show detailed stage metadata]' '--as-one-simulation[Treat runs of different sizes as one simulation]' '*:path:_files'
           ;;
         discover)
-          _arguments '(--recursive --no-recursive)'{--recursive,--no-recursive}'[Recurse into subdirectories]' '--pattern[Regex file filter]:pattern:' '--write[Write v2 manifest to path]:file:_files' '--force[Overwrite the --write file]' '--format[Format for --write]:format:(json yaml)' '*:path:_files'
+          _arguments '(--recursive --no-recursive)'{--recursive,--no-recursive}'[Recurse into subdirectories]' '--pattern[Regex file filter]:pattern:' '--write[Write v2 manifest to path]:file:_files' '--force[Overwrite the --write file]' '--format[Format for --write]:format:(json yaml)' '--as-one-simulation[Treat runs of different sizes as one simulation]' '*:path:_files'
           ;;
         export)
           _arguments '(-o --output)'{-o,--output}'[Output path]:file:_files' '--force[Overwrite the --output file]' '--format[Output format]:format:(json yaml)' '1:manifest:_files'
@@ -1249,11 +1280,13 @@ complete -c ambermeta -n "__fish_seen_subcommand_from plan" -l no-expand-env -d 
 complete -c ambermeta -n "__fish_seen_subcommand_from plan" -l pattern -d "Regex filter for discovered files"
 complete -c ambermeta -n "__fish_seen_subcommand_from plan" -l auto-detect-restarts -d "Auto-link restart files"
 complete -c ambermeta -n "__fish_seen_subcommand_from plan" -l prmtop -d "Global prmtop file"
+complete -c ambermeta -n "__fish_seen_subcommand_from plan" -l as-one-simulation -d "Treat runs of different sizes as one simulation"
 
 complete -c ambermeta -n "__fish_seen_subcommand_from discover" -l recursive -d "Recurse into subdirectories"
 complete -c ambermeta -n "__fish_seen_subcommand_from discover" -l no-recursive -d "Do not recurse"
 complete -c ambermeta -n "__fish_seen_subcommand_from discover" -l pattern -d "Regex file filter"
 complete -c ambermeta -n "__fish_seen_subcommand_from discover" -l write -d "Write v2 manifest to path"
+complete -c ambermeta -n "__fish_seen_subcommand_from discover" -l as-one-simulation -d "Treat runs of different sizes as one simulation"
 complete -c ambermeta -n "__fish_seen_subcommand_from discover" -l force -d "Overwrite the --write file"
 complete -c ambermeta -n "__fish_seen_subcommand_from discover" -l format -d "Format for --write" -xa "json yaml"
 
@@ -1563,16 +1596,21 @@ def _plan_command(args: argparse.Namespace) -> int:
     elif args.recursive:
         # Recursive mode: auto-discover files without interactive prompts
         _out(f"\nScanning {directory} recursively for simulation files...")
-        protocol = auto_discover(
-            directory,
-            manifest=None,
-            skip_cross_stage_validation=bool(args.skip_cross_stage_validation),
-            recursive=True,
-            auto_detect_restarts=auto_detect_restarts,
-            pattern_filter=pattern_filter,
-            global_prmtop=global_prmtop,
-            strict=strict,
-        )
+        from ambermeta.systems import SeparateSystemsError
+        try:
+            protocol = auto_discover(
+                directory,
+                manifest=None,
+                skip_cross_stage_validation=bool(args.skip_cross_stage_validation),
+                recursive=True,
+                auto_detect_restarts=auto_detect_restarts,
+                pattern_filter=pattern_filter,
+                global_prmtop=global_prmtop,
+                strict=strict,
+                as_one_simulation=getattr(args, "as_one_simulation", False),
+            )
+        except SeparateSystemsError as exc:
+            return _report_separate_systems(exc, args.directory, "plan {} --recursive")
         if not protocol.stages:
             _out("No simulation files discovered; exiting.")
             _out("\nHint: Check that your directory contains files with recognized extensions:")
@@ -1833,6 +1871,11 @@ For documentation, visit: https://github.com/MicheleBonus/ambermeta
         "--prmtop",
         help="Global prmtop file to use for all stages (avoids specifying it per stage)",
     )
+    plan_parser.add_argument(
+        "--as-one-simulation",
+        action="store_true",
+        help=_AS_ONE_SIMULATION_HELP + " (with --recursive)",
+    )
 
     discover_parser = subparsers.add_parser(
         "discover",
@@ -1850,6 +1893,7 @@ For documentation, visit: https://github.com/MicheleBonus/ambermeta
     discover_parser.add_argument("--write", help="Write the draft to this path as a v2 manifest")
     discover_parser.add_argument("--force", action="store_true", help="Overwrite the --write file if it already exists")
     discover_parser.add_argument("--format", choices=["json", "yaml"], help="Format for --write (default: inferred from extension, else json)")
+    discover_parser.add_argument("--as-one-simulation", action="store_true", help=_AS_ONE_SIMULATION_HELP)
 
     # UX-005: validate subcommand
     validate_parser = subparsers.add_parser(

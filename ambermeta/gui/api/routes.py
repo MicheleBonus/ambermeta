@@ -144,8 +144,20 @@ def discover_document(req: DiscoverRequest) -> DiscoverResult:
     store = get_store()
     sim0, settings, manifest_path, base_directory = store.snapshot()
     _within_base(base_directory, base_directory)
-    out = core_bridge.discover_draft(base_directory, recursive=req.recursive,
-                                     pattern=req.pattern, apply_tags=False)
+    from ambermeta.systems import SeparateSystemsError
+    try:
+        out = core_bridge.discover_draft(base_directory, recursive=req.recursive,
+                                         pattern=req.pattern, apply_tags=False,
+                                         as_one_simulation=req.as_one_simulation)
+    except SeparateSystemsError as exc:
+        # The GUI serves one folder, so the way on is to start it in one system's folder.
+        # Named as folders, not as `ambermeta gui <folder>` commands: the server knows
+        # the launch directory but not where the user typed the command from.
+        where = (" (" + " or ".join(f"{f}/" for f in exc.folders) + " in this one)"
+                 if exc.folders else "")
+        raise HTTPException(status_code=400, detail=(
+            f"{exc}\nStart AmberMeta in one system's folder{where}, or tick "
+            "\"Treat everything here as one simulation\" in Discover."))
 
     # Discover replaces the document wholesale, so re-running it -- the natural reflex
     # after adding files to a campaign, and the most prominent button in the top bar --

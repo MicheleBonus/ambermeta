@@ -1,5 +1,5 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { api, type SaveResult, type SettingsPatch } from "./client";
+import { api, type DiscoverRequest, type SaveResult, type SettingsPatch } from "./client";
 import { DOCUMENT_KEY, queryClient, setDocument } from "./queryClient";
 import { pushToast, pushEditWarning } from "@/lib/toast";
 import type {
@@ -68,7 +68,7 @@ export const useAssign = () => docMutation((b: AssignRequest) => api.assign(b));
 
 export const useDiscover = () =>
   useMutation({
-    mutationFn: (a: { recursive: boolean; pattern?: string }) => api.discover(a),
+    mutationFn: (a: DiscoverRequest) => api.discover(a),
     onSuccess: (res) => { setDocument(res.document); res.warnings.forEach((w) => pushToast(w, "warning")); },
   });
 export const useSave = () =>

@@ -49,12 +49,19 @@ const patch = <T>(path: string, body: unknown) =>
 
 const del = <T>(path: string) => request<T>(path, { method: "DELETE" });
 
+/** `POST /document/discover`'s body (`DiscoverRequest` in schemas.py). */
+export interface DiscoverRequest {
+  recursive: boolean;
+  pattern?: string;
+  as_one_simulation?: boolean;
+}
+
 export const api = {
   getDocument: () => request<DocumentResponse>("/document"),
   openDocument: (path: string) => post<DocumentResponse>("/document/open", { path }),
   saveDocument: (a: { path?: string; format?: ExportFormat }) => post<SaveResult>("/document/save", a),
   previewDocument: (format: ExportFormat) => post<PreviewResponse>("/document/preview", { format }),
-  discover: (a: { recursive: boolean; pattern?: string }) => post<DiscoverResult>("/document/discover", a),
+  discover: (a: DiscoverRequest) => post<DiscoverResult>("/document/discover", a),
   validate: () => post<ValidationReport>("/validate"),
   plan: (b: PlanRequest) => post<PlanResult>("/plan", b),
   undo: () => post<DocumentResponse>("/undo"),
