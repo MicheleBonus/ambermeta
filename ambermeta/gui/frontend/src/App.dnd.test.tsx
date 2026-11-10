@@ -367,3 +367,15 @@ describe("DragChip", () => {
     expect(screen.getByText("Production")).toBeInTheDocument();
   });
 });
+
+it("tells keyboard users how to move a step, instead of promising a Space-bar drag", async () => {
+  // Only the pointer sensor is registered, so dnd-kit's default instructions ("press the
+  // space bar to pick up…") described a drag that never started.
+  await renderApp(ONE_PHASE, /prod_0001/);
+
+  const handle = screen.getByRole("button", { name: "drag step prod_0001" });
+  const help = document.getElementById(handle.getAttribute("aria-describedby") ?? "")?.textContent ?? "";
+
+  expect(help).not.toMatch(/space bar/i);
+  expect(help).toMatch(/Move up/);
+});

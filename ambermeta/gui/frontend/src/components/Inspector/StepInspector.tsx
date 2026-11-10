@@ -1,7 +1,8 @@
 import { useState } from "react";
-import { useDocument, useDeleteStep, useUpdateStep } from "@/api/hooks";
+import { useDocument, useDeleteStep, useMoveStep, useReorderSteps, useUpdateStep } from "@/api/hooks";
 import { useSelection } from "@/state/selection";
 import { Button, FileLabel } from "@/components/common";
+import { reorderIds } from "@/components/Canvas/reorderIds";
 import { useUndoOffer } from "@/lib/useUndoOffer";
 import type { InputCoordsModel, PhaseModel, StepModel } from "@/types";
 import { CommitField, CONTROL, Field } from "./NodeFields";
@@ -35,6 +36,8 @@ export function StepInspector({ stepId }: { stepId: string }) {
   const { select } = useSelection();
   const updateStep = useUpdateStep();
   const deleteStep = useDeleteStep();
+  const reorderSteps = useReorderSteps();
+  const moveStep = useMoveStep();
   const offerUndo = useUndoOffer();
   // Which step the user has asked to chain but not yet given a producer for. Held here
   // rather than sent, because the server refuses a "continues from" that names nobody:
@@ -50,6 +53,9 @@ export function StepInspector({ stepId }: { stepId: string }) {
   }
   const { phase, step } = found;
   const base = doc.base_directory;
+  const siblingIds = phase.steps.map((s) => s.id);
+  const position = siblingIds.indexOf(step.id);
+  const otherPhases = phases.filter((p) => p.id !== phase.id);
   const ic = step.input_coords;
   // Who would be affected by changing this step's restart — the other half of the link.
   const consumers = phases
@@ -204,6 +210,48 @@ export function StepInspector({ stepId }: { stepId: string }) {
           value={step.notes.join("\n")}
           onCommit={(text) => patch({ notes: text.split("\n").filter((line) => line.trim()) })}
         />
+      </div>
+
+      {/* The same moves a drag makes (onto the neighbour, onto another phase), for anyone
+          not dragging: reordering was pointer-only, and the drag handles told keyboard
+          users to press Space, which picked nothing up. */}
+      <div className="p-3 border-b border-hairline space-y-2">
+        <div className="text-xs text-ink-muted uppercase tracking-wide">Position</div>
+        <div className="flex gap-2">
+          <Button
+            disabled={position === 0}
+            onClick={() => reorderSteps.mutate({
+              phaseId: phase.id, ids: reorderIds(siblingIds, step.id, siblingIds[position - 1]) })}
+          >
+            Move up
+          </Button>
+          <Button
+            disabled={position === siblingIds.length - 1}
+            onClick={() => reorderSteps.mutate({
+              phaseId: phase.id, ids: reorderIds(siblingIds, step.id, siblingIds[position + 1]) })}
+          >
+            Move down
+          </Button>
+        </div>
+        {otherPhases.length > 0 && (
+          <Field label="Move to phase">
+            <select
+              aria-label="Move to phase"
+              value=""
+              onChange={(e) => {
+                if (e.target.value) {
+                  moveStep.mutate({ id: step.id, body: { phase_id: e.target.value, index: -1 } });
+                }
+              }}
+              className={CONTROL}
+            >
+              <option value="">Choose a phase…</option>
+              {otherPhases.map((p) => (
+                <option key={p.id} value={p.id}>{p.name}</option>
+              ))}
+            </select>
+          </Field>
+        )}
       </div>
 
       <div className="p-3">
