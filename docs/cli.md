@@ -138,10 +138,11 @@ usage: ambermeta plan [-h] [-m MANIFEST] [--recursive] [--interactive]
                       [--out DIR] [--summary-path SUMMARY_PATH]
                       [--summary-format {json,yaml}]
                       [--methods-summary-path METHODS_SUMMARY_PATH]
-                      [--stats-csv STATS_CSV] [--strict]
-                      [--skip-cross-stage-validation] [-v] [--no-expand-env]
-                      [--pattern PATTERN] [--as-one-simulation]
-                      [--auto-detect-restarts] [--prmtop PRMTOP]
+                      [--stats-csv STATS_CSV] [--methods-summary-md PATH]
+                      [--strict] [--skip-cross-stage-validation] [-v]
+                      [--no-expand-env] [--pattern PATTERN]
+                      [--as-one-simulation] [--auto-detect-restarts]
+                      [--prmtop PRMTOP]
                       [directory]
 
 Summarize a simulation and write its summary files. With -m, from a v2
@@ -172,8 +173,9 @@ Output files (any mode):
   --out writes all three under their usual names; a path given for one of
   them takes precedence for that file.
 
-  --out DIR             Write summary.json, methods_summary.json and stats.csv
-                        into this folder (created if missing)
+  --out DIR             Write summary.json, methods_summary.json,
+                        methods_summary.md and stats.csv into this folder
+                        (created if missing)
   --summary-path SUMMARY_PATH
                         Path for the full summary (JSON or YAML)
   --summary-format {json,yaml}
@@ -187,6 +189,10 @@ Output files (any mode):
   --stats-csv STATS_CSV
                         Path for per-run statistics (temperature, pressure,
                         density, energy) as CSV
+  --methods-summary-md PATH
+                        Path for the methods summary laid out to read
+                        (Markdown): the same content as the JSON, with one
+                        table of settings per phase
 
 With -m:
   --no-expand-env       Do not expand environment variables ($VAR) in the
@@ -234,9 +240,10 @@ Other options (any mode):
 
 | Flag | Output |
 |---|---|
-| `--out DIR` | All three below, as `summary.json` (`summary.yaml` with `--summary-format yaml`), `methods_summary.json` and `stats.csv` in `DIR`, created if missing. A path given for one of them wins for that file. |
+| `--out DIR` | All four below, as `summary.json` (`summary.yaml` with `--summary-format yaml`), `methods_summary.json`, `methods_summary.md` and `stats.csv` in `DIR`, created if missing. A path given for one of them wins for that file. |
 | `--summary-path FILE` | Full protocol summary (JSON/YAML; `--summary-format` forces the format) |
 | `--methods-summary-path FILE` | Methods summary (JSON): a compact digest of the full summary for writing a Methods section; see below |
+| `--methods-summary-md FILE` | The methods summary laid out to read (Markdown): see below |
 | `--stats-csv FILE` | Per-stage statistics (one row per stage) |
 
 The **methods summary** is built from the same record as `summary.json` (by
@@ -260,6 +267,8 @@ share it when not all do, the runs or replicas that differ, and a `source`:
 
 To rebuild it from an existing summary, including one written by an older AmberMeta:
 `python -m ambermeta.methods_summary summary.json -o methods_summary.json`.
+
+**`methods_summary.md`** is the same digest laid out to read, for whoever writes the Methods section: the project, software and system as lists, one table per phase with each setting's value, its source and the runs that differ, the observed temperature, pressure and density, the findings (with any you acknowledged and your notes), and what no run file records as a checklist. It is a rendering and nothing more: no sentence in it says what the JSON does not, and a field without a layout of its own is still shown as `Key: value`. `--methods-summary-md FILE` writes it, `--out` writes it beside the others, and `python -m ambermeta.methods_summary summary.json -o methods_summary.md` (or `--format md`) rebuilds it from any summary.
 
 > **Intent and execution are different numbers, and the bundle carries both.**
 > A phase's `stated_run_length_ps` (`nstlim × dt`) is the protocol as **specified**: what

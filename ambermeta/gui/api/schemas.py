@@ -273,6 +273,7 @@ class PlanRequest(BaseModel):
     """
     summary_path: Optional[str] = None
     methods_summary_path: Optional[str] = None
+    methods_summary_md_path: Optional[str] = None   # the same digest, laid out to read
     stats_csv_path: Optional[str] = None
     summary_format: str = "json"          # json | yaml; the methods summary is always JSON
     save_manifest_path: Optional[str] = None   # save the manifest in the same run

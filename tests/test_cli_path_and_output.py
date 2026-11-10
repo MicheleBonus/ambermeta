@@ -82,8 +82,8 @@ def test_out_writes_every_summary_under_its_usual_name(manifest, tmp_path, capsy
     rc, out, err = _run(["plan", "-m", str(manifest), "--out", str(results)], capsys,
                         monkeypatch)
     assert rc == 0, err
-    assert sorted(os.listdir(results)) == ["methods_summary.json", "stats.csv",
-                                           "summary.json"]
+    assert sorted(os.listdir(results)) == ["methods_summary.json", "methods_summary.md",
+                                           "stats.csv", "summary.json"]
     assert json.loads((results / "summary.json").read_text(encoding="utf-8"))["stages"]
 
 
@@ -95,7 +95,8 @@ def test_a_named_output_overrides_its_default_in_out(manifest, tmp_path, capsys,
                        "--summary-path", str(elsewhere)], capsys, monkeypatch)
     assert rc == 0, err
     assert elsewhere.is_file()
-    assert sorted(os.listdir(results)) == ["methods_summary.json", "stats.csv"]
+    assert sorted(os.listdir(results)) == ["methods_summary.json", "methods_summary.md",
+                                           "stats.csv"]
 
 
 def test_out_follows_summary_format(manifest, tmp_path, capsys, monkeypatch):

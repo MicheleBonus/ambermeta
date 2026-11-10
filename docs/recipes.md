@@ -117,6 +117,7 @@ ambermeta plan -m sim.yaml --out results/
 ...
 Wrote summary: /abs/path/results/summary.json
 Wrote methods_summary: /abs/path/results/methods_summary.json
+Wrote methods_summary_md: /abs/path/results/methods_summary.md
 Wrote stats_csv: /abs/path/results/stats.csv
 ```
 

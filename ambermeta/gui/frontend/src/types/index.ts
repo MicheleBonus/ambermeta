@@ -128,6 +128,7 @@ export interface DiscoverResult {
 export interface PlanRequest {
   summary_path?: string | null;
   methods_summary_path?: string | null;
+  methods_summary_md_path?: string | null;
   stats_csv_path?: string | null;
   summary_format?: "json" | "yaml";
   save_manifest_path?: string | null;

@@ -325,6 +325,7 @@ def plan_document(req: PlanRequest) -> PlanResult:
     targets: dict = {}
     for artifact, raw in (("summary", req.summary_path),
                           ("methods_summary", req.methods_summary_path),
+                          ("methods_summary_md", req.methods_summary_md_path),
                           ("stats_csv", req.stats_csv_path)):
         if raw:
             targets[artifact] = _within_base(raw, base_directory)
