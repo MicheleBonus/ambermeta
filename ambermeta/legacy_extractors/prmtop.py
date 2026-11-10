@@ -431,6 +431,12 @@ def extract_prmtop_metadata(filepath: str) -> PrmtopMetadata:
 
     # 2. Pointers
     pointers = prmtop.get("POINTERS")
+    if not pointers:
+        # Every topology LEaP, ParmEd or chamber writes has POINTERS: it holds the atom and
+        # residue counts everything else is read against. Without it the file is empty or
+        # is not a topology, and the defaults below would describe a system nobody built.
+        md.warnings.append(
+            "No %FLAG POINTERS section: the file is empty or is not an AMBER topology.")
     if pointers:
         md.natom = pointers[0] if len(pointers) > 0 else None
         md.nres = pointers[11] if len(pointers) > 11 else None

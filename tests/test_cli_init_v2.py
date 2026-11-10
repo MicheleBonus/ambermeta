@@ -24,3 +24,20 @@ def test_init_v2_writes_loadable_v2_manifest(tmp_path):
     assert sim.version == 2
     assert len(sim.phases) >= 2
     assert any(t.kind == "hmr" for t in sim.topologies)
+
+
+def test_the_init_template_validates_without_an_unexpected_error(tmp_path, capsys):
+    # The template's steps carry no `name`, which v2 allows. Validating it used to stop
+    # with "Unexpected error (ValueError: Each manifest entry must include a 'name'.)"
+    # instead of saying what a fresh template is missing: the files it names.
+    from ambermeta.cli import main
+
+    _init_command(_args(str(tmp_path)))
+
+    rc = main(["validate", "--manifest", str(tmp_path / "sim.yaml")])
+
+    captured = capsys.readouterr()
+    shown = captured.out + captured.err
+    assert "Unexpected error" not in shown
+    assert rc == 1  # the files the template names do not exist yet
+    assert "system.prmtop" in shown
