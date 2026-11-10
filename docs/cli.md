@@ -431,6 +431,8 @@ options:
 
 `--write` will not replace an existing file unless `--force` is given, as `init` does (`ERROR: sim.yaml already exists. Use --force to overwrite.`, exit `1`, checked before the scan), so re-running `discover --write` cannot wipe a manifest you have edited. A missing parent directory is created. An invalid `--pattern` is a usage error (exit `2`).
 
+A step's id is its name with anything but letters, digits, `_`, `.` and `-` turned into `_` (`equil/01_min` becomes `equil_01_min`), and a phase's id is its name in lower case (`production`, `equilibration_2`); a clash gets `_2`. So a `ref` names the run a step continues from, and the same directory drafts the same manifest every time. A YAML draft starts with comments listing what needs you, what `discover` guessed, and the command to validate it. Nothing reads them back, and re-saving the manifest (`export`, the GUI's Save) drops them. A JSON draft has no such header, since JSON has no comments.
+
 ### Several systems in one folder
 
 A folder whose runs report different atom counts holds several simulations: a restart written by a run of one size cannot be read by a run of another. `discover` and `plan --recursive` refuse such a folder instead of merging it into one simulation (exit `1`), name each system, and say how to go on:
@@ -471,7 +473,7 @@ Suggestions:
   - [applied] Phase roles inferred from file content/names
 ```
 
-`ntp_prod_0000` (a bare restart with no `mdin`/`mdout`) isn't turned into a step at all — a step needs at least an `mdin`/`mdout` pair to be a "run"; it is simply excluded from the draft. It is the starting structure because `ntp_prod_0001`'s mdout records it as INPCRD in its `File Assignments` block: where the first runs' mdouts name one file that is found in the directory and that no run wrote, `discover` takes that file. Byte-identical copies count as one file (since 1.3.0): replica directories that each hold a copy of the starting restart give one starting structure, named by the copy nearest the top of the tree, and each replica's first run still reads what it declares. Otherwise it falls back to the first single-frame coordinate file, in path order, that no run wrote, which here would be the tLEaP output `CH3L1_HUMAN_6NAG.crd`. The printed `input=restart of <step> (<file>)` names the *producing step* and the restart it resolves to, not the raw id: step ids (`10428ec4`, ... in the manifest below) are `uuid4` slices, regenerated on every run, so nothing user-facing prints them and nothing should depend on them being stable across invocations of `discover`.
+`ntp_prod_0000` (a bare restart with no `mdin`/`mdout`) isn't turned into a step at all — a step needs at least an `mdin`/`mdout` pair to be a "run"; it is simply excluded from the draft. It is the starting structure because `ntp_prod_0001`'s mdout records it as INPCRD in its `File Assignments` block: where the first runs' mdouts name one file that is found in the directory and that no run wrote, `discover` takes that file. Byte-identical copies count as one file (since 1.3.0): replica directories that each hold a copy of the starting restart give one starting structure, named by the copy nearest the top of the tree, and each replica's first run still reads what it declares. Otherwise it falls back to the first single-frame coordinate file, in path order, that no run wrote, which here would be the tLEaP output `CH3L1_HUMAN_6NAG.crd`. The printed `input=restart of <step> (<file>)` names the *producing step* and the restart it resolves to, not the raw id: step ids (`ntp_prod_0001`, ... in the manifest below) are `uuid4` slices, regenerated on every run, so nothing user-facing prints them and nothing should depend on them being stable across invocations of `discover`.
 
 Each step continues the run whose restart its mdout records as INPCRD in the `File Assignments` block. A byte-for-byte copy of a run's restart (replica directories often hold one) counts as that run's restart, and is never taken as the starting structure. The record is resolved as a path from the run's directory or, for a path from another machine, by file name among the restarts the runs wrote; several with that name are told apart by the trailing directories the record shares with them, then the run's own directory, then its replica. A record that points into another replica is not followed. Where the mdout records nothing usable (no mdout, a clipped path, an unknown or ambiguous name), the step continues the previous run of its directory in file order, and the first run of a directory reads the starting structure. Runs are written so that each producer precedes the runs that read it, and directories in role order (minimization, heating, equilibration, production), whatever their names. Where the pool holds several topologies, each run is bound to the one whose atom count matches its mdout's `NATOM`. The draft is a proposal to check, not a result: review it in the editor or in the manifest before relying on it.
 
@@ -521,6 +523,13 @@ Wrote v2 draft manifest: sim.yaml (yaml)
 ```
 
 ```yaml
+# Drafted by `ambermeta discover` from the run files. Check what it guessed,
+# then run: ambermeta validate --manifest sim.yaml
+#
+# Guessed from the files:
+#   - ntp_prod_0000.rst set as the starting structure
+#   - Phase roles inferred from file content/names
+
 version: 2
 simulation:
   topologies:
@@ -529,14 +538,14 @@ simulation:
     kind: normal
   starting_structure: ntp_prod_0000.rst
 phases:
-- id: 4ba21bbf
+- id: production
   name: Production
   role: production
   order: 0
 steps:
-- id: 10428ec4
+- id: ntp_prod_0001
   name: ntp_prod_0001
-  phase: 4ba21bbf
+  phase: production
   order: 0
   topology: top_CH3L1_HUMAN_6NAG
   input_coords:
@@ -546,14 +555,14 @@ steps:
   mdcrd: null
   notes: []
   rst: ntp_prod_0001.rst
-- id: c261aa4f
+- id: ntp_prod_0002
   name: ntp_prod_0002
-  phase: 4ba21bbf
+  phase: production
   order: 1
   topology: top_CH3L1_HUMAN_6NAG
   input_coords:
     source: step
-    ref: 10428ec4
+    ref: ntp_prod_0001
   mdin: ntp_prod_0002.mdin
   mdout: ntp_prod_0002.mdout
   mdcrd: null
@@ -701,7 +710,7 @@ $ ambermeta validate --manifest sim.yaml --format json
       "title": "Run check",
       "evidence": "ntp_prod_0001: Time step of 4 fs, but the topology has standard hydrogen masses (no hydrogen mass repartitioning); a time step above 2 fs needs repartitioned hydrogen masses.",
       "actions": ["Investigate"],
-      "step_id": "10428ec4"
+      "step_id": "ntp_prod_0001"
     },
     ...
   ]

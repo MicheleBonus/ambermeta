@@ -274,14 +274,14 @@ simulation:
     kind: normal
   starting_structure: ntp_prod_0000.rst
 phases:
-- id: a2a37983
+- id: production
   name: Production
   role: production
   order: 0
 steps:
-- id: b71986d7
+- id: ntp_prod_0001
   name: ntp_prod_0001
-  phase: a2a37983
+  phase: production
   order: 0
   topology: top_CH3L1_HUMAN_6NAG
   input_coords:
@@ -291,14 +291,14 @@ steps:
   mdcrd: null
   notes: []
   rst: ntp_prod_0001.rst
-- id: c1e0498e
+- id: ntp_prod_0002
   name: ntp_prod_0002
-  phase: a2a37983
+  phase: production
   order: 1
   topology: top_CH3L1_HUMAN_6NAG
   input_coords:
     source: step
-    ref: b71986d7
+    ref: ntp_prod_0001
   mdin: ntp_prod_0002.mdin
   mdout: ntp_prod_0002.mdout
   mdcrd: null
@@ -349,7 +349,7 @@ Real output (`POST /api/validate` after Discover, on the sample data):
     { "id": "sug_r_3", "kind": "step_check", "severity": "needs_you",
       "title": "Run check",
       "evidence": "ntp_prod_0001: Time step of 4 fs, but the topology has standard hydrogen masses (no hydrogen mass repartitioning); a time step above 2 fs needs repartitioned hydrogen masses.",
-      "actions": ["Investigate"], "step_id": "b71986d7" },
+      "actions": ["Investigate"], "step_id": "ntp_prod_0001" },
     ...
   ]
 }
@@ -529,9 +529,9 @@ $ curl -s -o /dev/null -w '%{http_code}\n' 'http://127.0.0.1:8799/api/nonexisten
     "topologies": [ { "id": "top_CH3L1_HUMAN_6NAG", "path": "CH3L1_HUMAN_6NAG.top", "kind": "normal" } ],
     "starting_structure": "ntp_prod_0000.rst",
     "phases": [
-      { "id": "a2a37983", "name": "Production", "role": "production",
+      { "id": "production", "name": "Production", "role": "production",
         "steps": [
-          { "id": "b71986d7", "name": "ntp_prod_0001", "topology": "top_CH3L1_HUMAN_6NAG",
+          { "id": "ntp_prod_0001", "name": "ntp_prod_0001", "topology": "top_CH3L1_HUMAN_6NAG",
             "input_coords": { "source": "starting_structure", "ref": null, "path": null },
             "mdin": "ntp_prod_0001.mdin", "mdout": "ntp_prod_0001.mdout", "mdcrd": null,
             "rst": "ntp_prod_0001.rst",

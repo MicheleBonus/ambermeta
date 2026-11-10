@@ -9,6 +9,7 @@ ambermeta.parsers.
 from __future__ import annotations
 
 import os
+import re
 import tempfile
 from typing import Any, Dict, List, Optional
 
@@ -938,6 +939,22 @@ def _topology_for_atoms(choice, natom, natom_by_topology, kind_by_topology):
     return (same_kind or matching)[0]
 
 
+def _readable_id(name, taken):
+    """`equil/01_min` -> `equil_01_min`: an id a person can read and type, unique in `taken`.
+
+    Discover used to mint ids from `uuid4().hex[:8]`, so a manifest linked its steps by
+    `ref: 54a5d00b` and editing which run a step continues from meant matching hex strings.
+    The name is the natural id. Only letters, digits, `_`, `.` and `-` are kept, because an
+    id travels in GUI URLs (`/api/steps/<id>`). A clash after cleaning gets `_2`, `_3`, ...
+    """
+    base = re.sub(r"[^A-Za-z0-9_.-]+", "_", name or "").strip("_.-") or "step"
+    candidate, n = base, 2
+    while candidate in taken:
+        candidate, n = f"{base}_{n}", n + 1
+    taken.add(candidate)
+    return candidate
+
+
 def discover_draft(base_directory, recursive=True, pattern=None, apply_tags=True,
                    as_one_simulation=False):
     """Scan `base_directory` into a Simulation draft, with a proposal beside it.
@@ -979,7 +996,6 @@ def discover_draft(base_directory, recursive=True, pattern=None, apply_tags=True
     from ambermeta.parsers import MdinParser
     from ambermeta.mdout_header import read_mdout_header
     from ambermeta.systems import SeparateSystemsError, separate_systems
-    import uuid
 
     grouped = smart_group_files(base_directory, pattern=pattern, recursive=recursive)
 
@@ -1087,6 +1103,8 @@ def discover_draft(base_directory, recursive=True, pattern=None, apply_tags=True
             natom_by_topology[t.id] = getattr(details, "natom", None)
     kind_by_topology = {t.id: t.kind for t in sim.topologies}
     step_id_by_stem: Dict[str, str] = {}
+    # One namespace for phase and step ids, so no ref can mean either.
+    taken_ids = set()
 
     for stem in order:
         kinds = grouped[stem]
@@ -1115,7 +1133,7 @@ def discover_draft(base_directory, recursive=True, pattern=None, apply_tags=True
         status = "queued" if _looks_queued(
             mdin_details, bool(kinds.get("mdin")), bool(kinds.get("mdout"))) else None
         step = Step(
-            id=uuid.uuid4().hex[:8], name=stem, topology=topology, input_coords=ic,
+            id=_readable_id(stem, taken_ids), name=stem, topology=topology, input_coords=ic,
             mdin=_relativize(kinds.get("mdin"), base_directory),
             mdout=_relativize(kinds.get("mdout"), base_directory),
             mdcrd=_relativize(kinds.get("mdcrd"), base_directory),
@@ -1145,14 +1163,16 @@ def discover_draft(base_directory, recursive=True, pattern=None, apply_tags=True
                           if sim.phases[i].role == role), None)
             if index is None:
                 index = len(sim.phases)
-                sim.phases.append(Phase(id=uuid.uuid4().hex[:8],
-                                        name=_phase_name(sim.phases, role), role=role))
+                name = _phase_name(sim.phases, role)
+                sim.phases.append(Phase(id=_readable_id(name.lower(), taken_ids),
+                                        name=name, role=role))
             phase = sim.phases[index]
             phase_index_by_lineage[member] = index
         else:
             if not sim.phases or sim.phases[-1].role != role:
-                sim.phases.append(Phase(id=uuid.uuid4().hex[:8],
-                                        name=_phase_name(sim.phases, role), role=role))
+                name = _phase_name(sim.phases, role)
+                sim.phases.append(Phase(id=_readable_id(name.lower(), taken_ids),
+                                        name=name, role=role))
             phase = sim.phases[-1]
         phase.steps.append(step)
 
