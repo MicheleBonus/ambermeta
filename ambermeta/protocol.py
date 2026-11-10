@@ -177,8 +177,9 @@ class SimulationStage:
 
         if not self._atom_counts():
             _add("No atom counts available for validation.")
-        for msg in (self._validate_atoms() + self._validate_timing()
-                    + self._validate_sampling() + self._validate_hmr_time_step()):
+        for msg in (self._validate_mdin_namelist() + self._validate_atoms()
+                    + self._validate_timing() + self._validate_sampling()
+                    + self._validate_hmr_time_step()):
             _add(msg, "step_check")
         for msg in self._validate_completion():
             _add(msg, "unfinished_run")
@@ -203,6 +204,23 @@ class SimulationStage:
             if n_atoms:
                 counts.append((label, n_atoms))
         return counts
+
+    def _validate_mdin_namelist(self) -> List[str]:
+        """A run whose mdin has no `&cntrl` namelist was not configured by that file.
+
+        tleap and cpptraj scripts share the `.in` extension. Read as an mdin, a `tleap.in`
+        became a stage of its own, chained after production and described as a 1-fs NVE
+        run: every setting was a default. The parser warns on the file; this puts it on
+        the run, where `plan`'s findings and the GUI's cards show it.
+        """
+        details = self.mdin.details if self.mdin else None
+        cntrl = getattr(details, "cntrl_parameters", None)
+        if isinstance(cntrl, dict) and not cntrl:
+            name = os.path.basename(getattr(self.mdin, "filename", "") or "") or "the mdin"
+            return [f"{name} has no &cntrl namelist, so it is not a sander/pmemd input "
+                    "(a tleap or cpptraj script?) and none of this run's settings come "
+                    "from it."]
+        return []
 
     def _validate_atoms(self) -> List[str]:
         counts = self._atom_counts()
@@ -233,7 +251,11 @@ class SimulationStage:
             dt = getattr(self.mdout.details, "dt", None)
             if length:
                 step_counts["mdout"] = length
-            if dt:
+            # `MdoutMetadata.dt` starts at 0.001 and only CONTROL DATA overwrites it, so an
+            # empty or NUL-filled mdout "had" a 0.001 time step and was reported as
+            # differing from its mdin. AMBER prints `dt` in the same "Molecular dynamics"
+            # block as `nstlim`: no `nstlim`, no stated `dt`.
+            if dt and length:
                 timesteps["mdout"] = dt
             if length and dt:
                 expected_durations["mdout"] = length * dt
@@ -1486,17 +1508,26 @@ def _apply_global_and_hmr_prmtop(stages, directory, *, global_prmtop,
       via implies_hmr); overrides any previously set prmtop.
     - Missing files: warn (or raise under strict).
     """
+    def _warn_all(msg):
+        logger.warning(msg)
+        for st in stages:
+            st.validation.append(f"WARNING: {msg}")
+
     def _load_topology(path, label):
         full = _resolve(directory, path)
         if not os.path.exists(full):
             msg = f"Requested {label} prmtop not found: {full}"
             if strict:
                 raise AmberMetaError(msg)
-            logger.warning(msg)
-            for st in stages:
-                st.validation.append(f"WARNING: {msg}")
+            _warn_all(msg)
             return None
-        return _safe_parse(PrmtopParser, full, "prmtop", None, strict=strict)
+        data = _safe_parse(PrmtopParser, full, "prmtop", None, strict=strict)
+        if data is None:
+            # `_safe_parse` has no stage to record this on, so it is said here. Dropped
+            # quietly, a directory or a `.gz` given as --prmtop read as no topology at
+            # all, and the HMR check never ran, while a typo in the name got a warning.
+            _warn_all(f"Requested {label} prmtop could not be read: {full}")
+        return data
 
     if global_prmtop:
         data = _load_topology(global_prmtop, "global")
@@ -3114,7 +3145,8 @@ PLAN_ARTIFACTS = ("summary", "methods_summary", "stats_csv")
 
 
 def read_prior_summary(path: str, summary_format: str = "json") -> Any:
-    """Whatever the summary artifact at `path` currently says, or `{}` if it says nothing.
+    """Whatever the summary artifact at `path` currently says: `{}` if there is none, and an
+    `_UnreadablePrior` if the file is there but cannot be parsed.
 
     **Must be called BEFORE the artifact is rewritten.** Reading afterwards sees the file
     this very run just wrote — new totals compared against themselves — so `totals_delta`
@@ -3128,21 +3160,35 @@ def read_prior_summary(path: str, summary_format: str = "json") -> Any:
     every future run against a YAML summary path would report nothing, not just this once.
 
     The guard is broad on purpose, not `(OSError, ValueError)`: `yaml.YAMLError` is neither,
-    and any genuinely unreadable or malformed prior artifact — missing file, truncated
-    write, a document from an unrelated tool at the same path — is "no prior claim", never a
-    reason to fail a plan that is otherwise about to succeed.
+    and any genuinely unreadable or malformed prior artifact — truncated write, a document
+    from an unrelated tool at the same path — is "no prior claim", never a reason to fail a
+    plan that is otherwise about to succeed. Only a missing file is a silent one, though:
+    `totals_delta` says when a file that was there could not be compared.
 
     Returns whatever the file parsed to, which is deliberately NOT narrowed to a dict —
     `totals_delta` is typed `Any` for its first argument and does the `isinstance` itself.
     """
+    # `utf-8-sig` reads a file with or without a BOM; Windows PowerShell 5 adds one when
+    # it re-saves a file as UTF-8, and `json.load` refuses it.
     try:
-        with open(path, "r", encoding="utf-8") as fh:
+        with open(path, "r", encoding="utf-8-sig") as fh:
             if summary_format == "yaml":
                 import yaml as _yaml
                 return _yaml.safe_load(fh)
             return json.load(fh)
-    except Exception:
+    except FileNotFoundError:
         return {}
+    except Exception as exc:
+        # The file is there and says nothing readable. That is still "no prior claim", but
+        # not a silent one: quiet, it read as "the totals did not change".
+        return _UnreadablePrior(f"{type(exc).__name__}: {exc}")
+
+
+class _UnreadablePrior:
+    """What `read_prior_summary` returns for a summary file that exists but won't parse."""
+
+    def __init__(self, reason: str) -> None:
+        self.reason = reason
 
 
 def totals_delta(previous: Any, current: Dict[str, float], path: str) -> Optional[str]:
@@ -3181,6 +3227,9 @@ def totals_delta(previous: Any, current: Dict[str, float], path: str) -> Optiona
     message that assumes a fixed location would point the user at a file that both isn't
     there and isn't the one that was actually compared against.
     """
+    if isinstance(previous, _UnreadablePrior):
+        return (f"totals not compared with the last summary.json ({path}): it could not be "
+                f"read ({previous.reason}). This run's summary replaces it.")
     before = previous.get("totals") if isinstance(previous, dict) else None
     before = before if isinstance(before, dict) else {}
     lines = []

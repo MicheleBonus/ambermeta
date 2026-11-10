@@ -339,6 +339,7 @@ def parse_mdin_file(filepath: str) -> MdinMetadata:
     
     md = MdinMetadata(filename=filepath)
     if not lines:
+        _warn_if_no_cntrl(md)
         return md
 
     # --- 1. Extract Title ---
@@ -364,6 +365,7 @@ def parse_mdin_file(filepath: str) -> MdinMetadata:
             break
 
     if not title_found:
+        _warn_if_no_cntrl(md)
         return md
 
     # --- 2. Extract namelists and free-text sections ---
@@ -423,8 +425,23 @@ def parse_mdin_file(filepath: str) -> MdinMetadata:
 
     # --- 4. Interpret into higher-level metadata ---
     _interpret_parameters(md)
+    _warn_if_no_cntrl(md)
 
     return md
+
+
+def _warn_if_no_cntrl(md: MdinMetadata) -> None:
+    """Say so when a file has no `&cntrl` namelist, the one sander/pmemd input requires.
+
+    tleap and cpptraj scripts share the `.in` extension, and with nothing to read every
+    setting keeps its default: a `tleap.in` was described as a 1-fs NVE MD run with an
+    8 A cutoff, passed `validate`, and joined `plan`'s run list. The defaults stay, since
+    other code reads them, but nothing presents them as the file's own any more.
+    """
+    if not md.cntrl_parameters:
+        md.warnings.append(
+            "No &cntrl namelist: this is not a sander/pmemd input (a tleap or cpptraj "
+            "script?). Its MD settings are AMBER's defaults, not read from the file.")
 
 # -------------------------------
 # 6. Interpretation / High-level Metadata
