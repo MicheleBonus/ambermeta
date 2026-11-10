@@ -14,6 +14,12 @@ interface Props {
   onClose: () => void;
 }
 
+/** The names Open reads a manifest back from, and so the only files Save may replace.
+ *  The server refuses any other target too; this keeps the list from offering them. */
+const MANIFEST_NAME = /\.(ya?ml|json)$/i;
+
+const slashes = (p: string) => p.replace(/\\/g, "/");
+
 function flatten(nodes: FileInfo[], q: string, type?: FileType): FileInfo[] {
   const out: FileInfo[] = [];
   const walk = (n: FileInfo) => {
@@ -35,7 +41,23 @@ export function FilePicker({ open, mode, title, filterType, onPick, onClose }: P
   // does not involve going back to the file tree and dragging.
   const [ignoreFilter, setIgnoreFilter] = useState(false);
   const type = ignoreFilter ? undefined : filterType;
-  const files = useMemo(() => flatten(tree, q.toLowerCase(), type), [tree, q, type]);
+  // Save lists only manifests: it used to offer every file under the launch directory
+  // "to overwrite", and picking a run's own .mdin replaced the input with YAML.
+  const files = useMemo(() => {
+    const all = flatten(tree, q.toLowerCase(), type);
+    return mode === "save" ? all.filter((f) => MANIFEST_NAME.test(f.name)) : all;
+  }, [tree, q, type, mode]);
+  // A name that is not a manifest name is refused by the server; say so here, before Save.
+  const manifestName = MANIFEST_NAME.test(path.trim());
+  // Whether the target names a file already on disk, whatever the search box holds. A
+  // typed name is relative to the launch directory, the parent of the tree's top level.
+  const replaces = useMemo(() => {
+    const target = slashes(path.trim());
+    if (mode !== "save" || !target || !MANIFEST_NAME.test(target)) return false;
+    const base = tree[0]?.parent ? slashes(tree[0].parent).replace(/\/$/, "") : "";
+    const full = /^([A-Za-z]:)?\//.test(target) ? target : `${base}/${target}`;
+    return flatten(tree, "", undefined).some((f) => slashes(f.path) === full);
+  }, [tree, path, mode]);
 
   return (
     <Modal open={open} title={title} onClose={onClose}>
@@ -58,7 +80,7 @@ export function FilePicker({ open, mode, title, filterType, onPick, onClose }: P
           // Without this the list reads as "choose a file to open", and the field that
           // actually names the new file sits below it looking optional.
           <p className="px-2 py-1 text-xs text-ink-muted border-b border-hairline">
-            Existing files — pick one to overwrite, or name a new one below.
+            Existing manifests — pick one to overwrite, or name a new one below.
           </p>
         )}
         {files.map((f) => (
@@ -81,6 +103,16 @@ export function FilePicker({ open, mode, title, filterType, onPick, onClose }: P
             <span className="block mt-1 text-xs text-ink-muted">
               A new name writes a new file; pick one above to overwrite it.
             </span>
+            {replaces && (
+              <span className="block mt-1 text-xs text-warning">
+                This file exists and will be replaced.
+              </span>
+            )}
+            {path.trim() && !manifestName && (
+              <span className="block mt-1 text-xs text-warning">
+                A manifest is saved as .yaml, .yml or .json.
+              </span>
+            )}
           </label>
           <label className="block text-sm">
             <span className="text-ink-secondary">Format</span>
@@ -96,7 +128,7 @@ export function FilePicker({ open, mode, title, filterType, onPick, onClose }: P
           </label>
           <div className="flex justify-end gap-2">
             <Button onClick={onClose}>Cancel</Button>
-            <Button variant="primary" disabled={!path.trim()}
+            <Button variant="primary" disabled={!path.trim() || !manifestName}
               onClick={() => onPick({ path: path.trim(), format })}>Save</Button>
           </div>
         </div>

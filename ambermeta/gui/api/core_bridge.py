@@ -285,8 +285,24 @@ def open_simulation(path, base_directory):
     return load_simulation(path)
 
 
+# The names `Open` reads a manifest back from (`manifest._read_raw_manifest`).
+_MANIFEST_SUFFIXES = (".yaml", ".yml", ".json")
+
+
 def save_simulation(sim, base_directory, path, fmt):
+    """Write the manifest that Save and Plan both produce.
+
+    The target must be a manifest file name. The Save dialog used to offer every file in
+    the launch directory as one to overwrite, and this wrote wherever it was pointed: a
+    run's own `.mdin` became YAML, and every later Save went back to it. Any other name
+    is refused before anything is written, so neither a run file nor a file `Open` cannot
+    read back is ever produced, whatever a client sends.
+    """
     from ambermeta.simulation import write_simulation
+    if os.path.splitext(path)[1].lower() not in _MANIFEST_SUFFIXES:
+        raise ValueError(
+            f"{os.path.basename(path)} is not a manifest file name. A manifest is saved as "
+            ".yaml, .yml or .json, the names Open reads back; nothing was written.")
     if fmt not in ("json", "yaml"):
         raise ValueError(f"v2 save supports json/yaml only, got: {fmt}")
     write_simulation(sim, path, fmt)
