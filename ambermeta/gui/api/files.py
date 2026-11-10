@@ -33,7 +33,14 @@ def detect_file_type(path: str) -> FileType:
     if ext == "out":
         from ambermeta.mdout_header import looks_like_mdout
         return FileType.MDOUT if looks_like_mdout(path) else FileType.OTHER
-    if ext in ("mdcrd", "nc", "crd", "x", "trj") or name.endswith(".mdcrd"):
+    if ext == "crd":
+        # AMBER uses .crd for LEaP's single-frame coordinate file as well as for
+        # trajectories, so the extension cannot say which. Typed as a trajectory, the
+        # sample's CH3L1_HUMAN_6NAG.crd went into a trajectory slot without a word, while
+        # Discover (through this same sniffer) treats it as input coordinates.
+        from ambermeta.coords import sniff_coordinate_kind
+        return FileType.INPCRD if sniff_coordinate_kind(path) == "inpcrd" else FileType.MDCRD
+    if ext in ("mdcrd", "nc", "x", "trj") or name.endswith(".mdcrd"):
         return FileType.MDCRD
     if ext in ("inpcrd", "rst", "rst7", "restrt", "ncrst") or name.endswith(".inpcrd"):
         return FileType.INPCRD

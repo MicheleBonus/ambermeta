@@ -101,9 +101,11 @@ Files are tagged by type from extension, and by canonical Amber default basename
 | `prmtop` | `.prmtop`, `.parm7`, `.top` | `prmtop`, `parm7` |
 | `mdin` | `.mdin`, `.in` | `mdin` |
 | `mdout` | `.mdout`, `.out` | `mdout` |
-| `mdcrd` | `.mdcrd`, `.nc`, `.crd`, `.x`, `.trj` | `mdcrd` |
-| `inpcrd` | `.inpcrd`, `.rst`, `.rst7`, `.restrt`, `.ncrst` | `inpcrd`, `restrt` |
+| `mdcrd` | `.mdcrd`, `.nc`, `.x`, `.trj`, and a `.crd` without an atom-count line under its title (a trajectory) | `mdcrd` |
+| `inpcrd` | `.inpcrd`, `.rst`, `.rst7`, `.restrt`, `.ncrst`, and a `.crd` with one (LEaP's coordinate file) | `inpcrd`, `restrt` |
 
+> A `.crd` is typed by its content: AMBER uses the extension for LEaP's single-frame coordinate file and for trajectories alike, and an atom-count line under the title is what marks the coordinate file (the check Discover uses to pick the starting structure).
+>
 > `.in`/`.out` are claimed for Amber `mdin`/`mdout` by convention — a non-Amber `.in`/`.out` in the launch directory would be mis-typed as one. Content sniffing is a possible follow-up, not done today.
 
 The tree descends up to five levels and skips `.`-prefixed directories, `__pycache__`, `node_modules`, and `.git`. Use the search box to filter by name. Every row is a drag source; drop it on a canvas target to assign it, or select it to inspect and use the Assign actions.
