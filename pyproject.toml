@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=61.0", "wheel"]
+requires = ["setuptools>=64", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -80,10 +80,10 @@ all = [
 ambermeta = "ambermeta.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/ambermeta/ambermeta"
-Documentation = "https://github.com/ambermeta/ambermeta#readme"
-Repository = "https://github.com/ambermeta/ambermeta.git"
-Issues = "https://github.com/ambermeta/ambermeta/issues"
+Homepage = "https://github.com/MicheleBonus/ambermeta"
+Documentation = "https://github.com/MicheleBonus/ambermeta#readme"
+Repository = "https://github.com/MicheleBonus/ambermeta.git"
+Issues = "https://github.com/MicheleBonus/ambermeta/issues"
 
 [tool.setuptools]
 packages = ["ambermeta", "ambermeta.parsers", "ambermeta.legacy_extractors", "ambermeta.gui", "ambermeta.gui.api"]
@@ -94,11 +94,13 @@ ambermeta = ["py.typed"]
 
 [tool.black]
 line-length = 100
-target-version = ["py38", "py39", "py310", "py311", "py312"]
+target-version = ["py39", "py310", "py311", "py312"]
 
 [tool.ruff]
 line-length = 100
-target-version = "py38"
+target-version = "py39"
+
+[tool.ruff.lint]
 select = [
     "E",   # pycodestyle errors
     "W",   # pycodestyle warnings
@@ -114,7 +116,7 @@ ignore = [
 ]
 
 [tool.mypy]
-python_version = "3.8"
+python_version = "3.9"
 warn_return_any = true
 warn_unused_configs = true
 ignore_missing_imports = true
