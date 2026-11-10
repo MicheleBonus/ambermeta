@@ -283,8 +283,8 @@ def test_distinct_seeds_off_one_restart_are_stated_as_a_graph_fact():
     finding, = [f for f in coherence(_fan_out(1, 2, 3)) if f.kind == "fan_out"]
     assert finding.severity == "info"
     assert finding.message == (
-        "3 steps read the restart written by common/equil and carry 3 distinct "
-        "resolved seeds.")
+        "3 runs start from the restart written by common/equil, and their mdouts record "
+        "3 different random seeds (ig).")
     # Decision 4: never a statistical claim, whatever the seeds say.
     assert "independent" not in finding.message and "ensemble" not in finding.message
 
@@ -294,7 +294,7 @@ def test_a_repeated_seed_off_one_restart_is_a_warning():
     is the only thing left to separate them. Two that share it are the same trajectory."""
     warning, = [f for f in coherence(_fan_out(7, 7, 9)) if f.kind == "seed"]
     assert warning.severity == "warning"
-    assert "only 2 distinct resolved seed(s)" in warning.message
+    assert "only 2 different random seed(s) (ig)" in warning.message
 
 
 def test_an_unstated_seed_is_reported_as_unknown_not_as_shared():
@@ -304,7 +304,7 @@ def test_an_unstated_seed_is_reported_as_unknown_not_as_shared():
     stages[2].mdout_header = None
     finding, = [f for f in coherence(stages) if f.kind in ("fan_out", "seed")]
     assert finding.severity == "info"
-    assert "state no resolved seed" in finding.message
+    assert "1 of their mdouts does not record the random seed (ig) used" in finding.message
 
 
 def test_members_that_share_no_producer_are_not_compared_on_seeds():

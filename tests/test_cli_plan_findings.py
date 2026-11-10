@@ -25,7 +25,7 @@ def crashed_manifest(crashed_replica_tree):
     return path
 
 
-FINDING = "rep2/prod sequence is missing member(s) 2, 3"
+FINDING = "rep2/prod runs 2, 3 are missing"
 
 
 # ---------------------------------------------------------------------------

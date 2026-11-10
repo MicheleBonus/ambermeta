@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { Modal, Badge } from "@/components/common";
 import { useValidate, useDocument } from "@/api/hooks";
 import { useSelection } from "@/state/selection";
+import { formatDuration } from "@/lib/format";
 import type { Suggestion } from "@/types";
 
 const FINDING_KINDS = new Set(["missing_run", "step_check", "unfinished_run", "input_mismatch"]);
@@ -105,7 +106,11 @@ export function ValidationPanel(
           <div key={s.name} className="border border-hairline rounded p-2">
             <button onClick={() => jump(s.name)}
               className="flex items-center gap-2 font-medium text-left">
-              <Badge tone={s.ok ? "valid" : "error"}>{s.ok ? "ok" : "error"}</Badge>
+              {/* "ok" is about the step's files; a step that carries a finding is valid
+                  and still worth a look, so it is not shown green. */}
+              {!s.ok ? <Badge tone="error">error</Badge>
+                : s.warnings.length ? <Badge tone="warning">check</Badge>
+                : <Badge tone="valid">ok</Badge>}
               <span>{s.name}</span>
             </button>
             {s.errors.map((e, i) => <p key={`e${i}`} className="text-error text-sm">{e}</p>)}
@@ -121,7 +126,7 @@ export function ValidationPanel(
             {Object.entries(report.lineages).map(([tag, t]) => (
               <li key={tag}>
                 <span className="font-semibold">{tag}</span>
-                {` · ${t.step_count} run(s) · ${t.time_ps.toFixed(3)} ps`}
+                {` · ${t.step_count} run(s) · ${formatDuration(t.time_ps)}`}
               </li>
             ))}
           </ul>
@@ -129,7 +134,7 @@ export function ValidationPanel(
       ) : null}
       {report && (
         <footer className="mt-3 text-xs text-ink-muted font-mono">
-          {report.totals.stage_count ?? 0} step(s) · {(report.totals.time_ps ?? 0).toFixed(3)} ps total
+          {report.totals.stage_count ?? 0} step(s) · {formatDuration(report.totals.time_ps ?? 0)} total
         </footer>
       )}
     </Modal>

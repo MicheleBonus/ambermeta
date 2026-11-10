@@ -123,7 +123,7 @@ if isinstance(prior_dt, (int, float)) and prior_dt > 0:
 
 A gap within an explicit `expected_gap_ps ± gap_tolerance_ps` window (or within the default floor, when no expectation is set) is logged as an `INFO` note — a **healthy transition is never flagged**. A gap outside that window, an overlap, or an unconfigured non-zero gap becomes a real (non-`INFO`) continuity note, which is what the GUI turns into a `continuity_gap` suggestion.
 
-"Consecutive" means consecutive **within one lineage**. When any step carries a `lineage` tag, `_check_continuity` partitions the stages by member first and compares pairs inside each member; each member's head is then measured against the step it actually continues from (its `input_coords.ref`, carried into the flat engine as `parent_id`), or gets an `INFO: Continuity for <name> was not measured (no producing stage resolved).` note where no producer resolves. A document that declares no lineage at all takes the original flat neighbour-by-neighbour path, unchanged.
+"Consecutive" means consecutive **within one lineage**. When any step carries a `lineage` tag, `_check_continuity` partitions the stages by member first and compares pairs inside each member; each member's head is then measured against the step it actually continues from (its `input_coords.ref`, carried into the flat engine as `parent_id`), or gets an `INFO: Continuity for <name> was not measured: no run is named as the one it continues from.` note where no producer resolves. A document that declares no lineage at all takes the original flat neighbour-by-neighbour path, unchanged.
 
 The tag reaches the engine by both routes into it, so the partition is not a manifest-only guarantee: `auto_discover`'s own directory scan (`plan --recursive`) runs the same `infer_lineages_from_layout` over the run groups it found, and tags each stage with the directory segment that names its member. Since 1.3.0 the scan also links runs as `discover` does (`ambermeta/run_order.py`): each run's `parent_id` is the run whose restart its mdout records as INPCRD, else the run before it in its directory, and the stages are reordered so every run follows the run it read. Continuity then measures those declared edges, so a member's head is measured against the shared run it branched from where the mdout records it. A run that no record links to a run here (its record names a file no run wrote, or nothing found here) is measured against the run before it in its member, in execution order (`order_predecessor_id`, not serialised), as the 1.2 scan measured every neighbour, but across directories only into a later role and from the member's one directory of the earlier role, never between sibling directories of one role; runs that record the same file at the same start time are a fan-out and are not chained. Where no mdout in the tree records a usable input, stages keep the name order, carry no `parent_id`, and every member's head reports that it was not measured — a restart sitting beside a replica is not evidence of which run read it, and the note is the honest answer.
 
@@ -134,15 +134,18 @@ tagged                                          untagged (what this used to do)
 ------------------------------------------      ------------------------------------------
 rep1/prod_0001  gap=None                        rep1/prod_0001  gap=None
   INFO: Continuity for rep1/prod_0001 was
-  not measured (no producing stage resolved).
+  not measured: no run is named as the one
+  it continues from.
 rep1/prod_0002  gap=0.0                         rep1/prod_0002  gap=0.0
 rep2/prod_0001  gap=None                        rep2/prod_0001  gap=None
   INFO: Continuity for rep2/prod_0001 was         INFO: Cannot verify continuity between
-  not measured (no producing stage resolved).     rep1/prod_0002 and rep2/prod_0001 ...
+  not measured: no run is named as the one       rep1/prod_0002 and rep2/prod_0001 ...
+  it continues from.
 rep2/prod_0002  gap=0.0                         rep2/prod_0002  gap=0.0
 rep3/prod_0001  gap=None                        rep3/prod_0001  gap=None
   INFO: Continuity for rep3/prod_0001 was         INFO: Cannot verify continuity between
-  not measured (no producing stage resolved).     rep2/prod_0002 and rep3/prod_0001 ...
+  not measured: no run is named as the one       rep2/prod_0002 and rep3/prod_0001 ...
+  it continues from.
 rep3/prod_0002  gap=0.0                         rep3/prod_0002  gap=0.0
 ```
 
@@ -172,7 +175,7 @@ Phase: Production [production]
   - ntp_prod_0005  from ntp_prod_0004
 
 Suggestions:
-  - [needs_you] ntp_prod sequence is missing member(s) 3
+  - [needs_you] ntp_prod run 3 is missing
   - [applied] ntp_prod_0000.rst set as the starting structure
   - [applied] Phase roles inferred from file content/names
 ```
@@ -186,14 +189,14 @@ Simulation validation
 Simulated time: 80 ns
 
 Findings:
-  - ntp_prod sequence is missing member(s) 3: present members of 'ntp_prod' skip index(es) 3
+  - ntp_prod run 3 is missing: The ntp_prod runs here are numbered 1-2, 4-5.
   - Run check: ntp_prod_0001: Time step of 4 fs, but the topology has standard hydrogen masses (no hydrogen mass repartitioning); a time step above 2 fs needs repartitioned hydrogen masses.
   - Run check: ntp_prod_0002: Time step of 4 fs, but the topology has standard hydrogen masses (no hydrogen mass repartitioning); a time step above 2 fs needs repartitioned hydrogen masses.
   - Run check: ntp_prod_0004: Time step of 4 fs, but the topology has standard hydrogen masses (no hydrogen mass repartitioning); a time step above 2 fs needs repartitioned hydrogen masses.
   - Declared input differs from the recorded one: ntp_prod_0004: This step declares ntp_prod_0002.rst as its input coordinates, but its mdout records /l/home/bonus/work/Projects/YKL-40/CH3L1_HUMAN_6NAG/prod/ntp_prod_0003.rst.
   - Run check: ntp_prod_0005: Time step of 4 fs, but the topology has standard hydrogen masses (no hydrogen mass repartitioning); a time step above 2 fs needs repartitioned hydrogen masses.
 
-Validation: OK
+Validation: OK, 6 findings to review
 ```
 
 (A sequence hole is a finding, not a hard failure by default — pass `--strict` to make findings a validation failure.) The hole is also seen from the other side: `ntp_prod_0004`'s mdout records that it read `ntp_prod_0003.rst`, not the `ntp_prod_0002.rst` the draft chained it to, and that comparison with AMBER's own record is a per-run finding of its own (§6). The `Run check` lines are a property of the sample as bundled: its runs used a 4-fs time step, and the bundled topology's hydrogens carry standard masses.

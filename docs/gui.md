@@ -204,8 +204,8 @@ A `missing_run` card carries a `lineage` field naming the member it is scoped to
 
 ```jsonc
 { "id": "sug_1", "kind": "missing_run", "severity": "needs_you",
-  "title": "rep2/prod sequence is missing member(s) 2, 3",
-  "evidence": "'rep2/prod' has no run at index(es) 2, 3",
+  "title": "rep2/prod runs 2, 3 are missing",
+  "evidence": "rep2 has prod run 1, and the other replicas go on to 3: rep2 may have stopped early, or its later runs were not deposited.",
   "base": "prod", "missing": [2, 3], "lineage": "rep2",
   "actions": ["Mark as expected gap", "Locate file", "Ignore"] }
 ```
@@ -317,8 +317,9 @@ Note `discover` here only found one `prmtop`, so it became the sole (`normal`) p
 than one member it also carries a **Lineages** section: what the members do and do not agree about,
 each finding with its own severity. Only a category error — different atom counts, or a member that
 ran no dynamics beside one that did — turns the badge red and `ok` false; a difference in `temp0` or
-`cut` is a note, and a statement like `3 steps read the restart written by common/equil and carry 3
-distinct resolved seeds` is neither. The badge used to read a flat green "All checks passed" for a
+`cut` is a note, and a statement like `3 runs start from the restart written by common/equil, and
+their mdouts record 3 different random seeds (ig)` is neither. A step whose files are fine but which
+carries a finding is badged **check** rather than a green **ok**. The badge used to read a flat green "All checks passed" for a
 document the CLI exited `1` on, because it counted only per-stage errors and a category error is not
 attached to any one stage.
 

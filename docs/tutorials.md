@@ -115,7 +115,7 @@ Findings:
   - Run check: ntp_prod_0004: Time step of 4 fs, but the topology has standard hydrogen masses (no hydrogen mass repartitioning); a time step above 2 fs needs repartitioned hydrogen masses.
   - Run check: ntp_prod_0005: Time step of 4 fs, but the topology has standard hydrogen masses (no hydrogen mass repartitioning); a time step above 2 fs needs repartitioned hydrogen masses.
 
-Validation: OK
+Validation: OK, 5 findings to review
 ```
 
 The edit broke nothing: the verdict is `OK` and there is no continuity finding. The five `Run check` lines are about the sample itself, and you will see them in every run below. Its runs used a 4-fs time step (`dt = 0.004`), while the bundled topology's 32,188 hydrogens all weigh the standard 1.008 amu; a step above 2 fs needs repartitioned hydrogen masses, so either the runs used a different (HMR) topology or they were integrated at a step their hydrogens do not support. On your own data with an HMR topology this finding does not appear.
@@ -231,7 +231,7 @@ Phase: Production [production]
   - ntp_prod_0005  from ntp_prod_0004
 
 Suggestions:
-  - [needs_you] ntp_prod sequence is missing member(s) 3
+  - [needs_you] ntp_prod run 3 is missing
   - [applied] ntp_prod_0000.rst set as the starting structure
   - [applied] Phase roles inferred from file content/names
 
@@ -250,14 +250,14 @@ Simulation validation
 Simulated time: 80 ns
 
 Findings:
-  - ntp_prod sequence is missing member(s) 3: present members of 'ntp_prod' skip index(es) 3
+  - ntp_prod run 3 is missing: The ntp_prod runs here are numbered 1-2, 4-5.
   - Run check: ntp_prod_0001: Time step of 4 fs, but the topology has standard hydrogen masses (no hydrogen mass repartitioning); a time step above 2 fs needs repartitioned hydrogen masses.
   - Run check: ntp_prod_0002: Time step of 4 fs, but the topology has standard hydrogen masses (no hydrogen mass repartitioning); a time step above 2 fs needs repartitioned hydrogen masses.
   - Run check: ntp_prod_0004: Time step of 4 fs, but the topology has standard hydrogen masses (no hydrogen mass repartitioning); a time step above 2 fs needs repartitioned hydrogen masses.
   - Declared input differs from the recorded one: ntp_prod_0004: This step declares ntp_prod_0002.rst as its input coordinates, but its mdout records /l/home/bonus/work/Projects/YKL-40/CH3L1_HUMAN_6NAG/prod/ntp_prod_0003.rst.
   - Run check: ntp_prod_0005: Time step of 4 fs, but the topology has standard hydrogen masses (no hydrogen mass repartitioning); a time step above 2 fs needs repartitioned hydrogen masses.
 
-Validation: OK
+Validation: OK, 6 findings to review
 ```
 
 Note the verdict is still `OK` — a sequence hole is a "needs you" finding, not a hard error, because a genuinely non-contiguous set of runs (independent replicas, say) is legitimate. The `Run check` lines are the sample's 4-fs time step from §1. `ntp_prod_0004`'s continuity is *not* flagged as broken: its bound input-coordinate source is `ntp_prod_0002`'s own restart (that's the file that exists), so the continuity check — which only compares a step's declared input against its declared predecessor — has nothing to complain about. What does flag it is AMBER's own record: `ntp_prod_0004`'s mdout says the run read `ntp_prod_0003.rst`. That path is from the cluster the runs came off, so only its file name can be compared here, and `ntp_prod_0003.rst` is not `ntp_prod_0002.rst`. The hole is a distinct, first-class finding, and the recorded input confirms it from the other side. To make findings count as failures in CI:
@@ -272,7 +272,7 @@ Simulation validation
 Simulated time: 80 ns
 
 Findings:
-  - ntp_prod sequence is missing member(s) 3: present members of 'ntp_prod' skip index(es) 3
+  - ntp_prod run 3 is missing: The ntp_prod runs here are numbered 1-2, 4-5.
   - Run check: ntp_prod_0001: Time step of 4 fs, but the topology has standard hydrogen masses (no hydrogen mass repartitioning); a time step above 2 fs needs repartitioned hydrogen masses.
   - Run check: ntp_prod_0002: Time step of 4 fs, but the topology has standard hydrogen masses (no hydrogen mass repartitioning); a time step above 2 fs needs repartitioned hydrogen masses.
   - Run check: ntp_prod_0004: Time step of 4 fs, but the topology has standard hydrogen masses (no hydrogen mass repartitioning); a time step above 2 fs needs repartitioned hydrogen masses.
@@ -326,7 +326,7 @@ Protocol notes:
   - Stage appears to overlap previous stage by 20000 ps.
   - Gap detected without stated expectation; verify continuity.
 
-Validation: OK
+Validation: OK, 8 findings to review
 ```
 
 This time it's a genuine continuity problem: `ntp_prod_0002` really did finish 20000 ps later than the restart `ntp_prod_0003` now claims to start from. The mistake is caught twice, independently: the continuity notes measure the times, and the `Declared input differs from the recorded one` finding compares the edited `ref` with the INPCRD `ntp_prod_0003`'s mdout records, which is `ntp_prod_0002.rst`. `--format json` gives the same findings machine-readably, including which step each is attached to:
@@ -495,7 +495,7 @@ Findings:
   - Run check: ntp_prod_0004: Time step of 4 fs, but the topology has standard hydrogen masses (no hydrogen mass repartitioning); a time step above 2 fs needs repartitioned hydrogen masses.
   - Run check: ntp_prod_0005: Time step of 4 fs, but the topology has standard hydrogen masses (no hydrogen mass repartitioning); a time step above 2 fs needs repartitioned hydrogen masses.
 
-Validation: OK
+Validation: OK, 5 findings to review
 ```
 
 The same verdict and the same five sample-specific `Run check` findings as the CLI-built manifest in §1.

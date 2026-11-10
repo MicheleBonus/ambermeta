@@ -1028,8 +1028,8 @@ class SimulationProtocol:
             # real measurement, and it gets one on the line below.
             if producer is None or producer is head:
                 head._add_continuity_note(
-                    f"INFO: Continuity for {head.name} was not measured "
-                    "(no producing stage resolved)."
+                    f"INFO: Continuity for {head.name} was not measured: no run is named "
+                    "as the one it continues from."
                 )
                 continue
             self._check_stage_pair(producer, head, allow_unexpected_gaps=allow_unexpected_gaps)
@@ -1080,10 +1080,11 @@ class SimulationProtocol:
                 continue
             if stage is first_run and not multi_member and not stage.parent_id:
                 continue
-            reason = ("no producing stage resolved" if stage.parent_id
-                      else "it declares no producing stage")
+            reason = ("the run it continues from is not among these runs"
+                      if stage.parent_id
+                      else "no run is named as the one it continues from")
             stage._add_continuity_note(
-                f"INFO: Continuity for {stage.name} was not measured ({reason})."
+                f"INFO: Continuity for {stage.name} was not measured: {reason}."
             )
 
         readers: Dict[Tuple[str, str, Optional[str]], List[SimulationStage]] = {}
@@ -1200,6 +1201,15 @@ class SimulationProtocol:
             current._add_continuity_note(
                 f"INFO: {current.name} set its own clock (irest = 0); continuity with "
                 f"{prev.name} follows the recorded input coordinates, not the clock."
+            )
+            return
+
+        if end_time is None and _is_minimisation(prev):
+            # Not a missing file: a minimisation has an mdout and writes a restart, but it
+            # runs no dynamics, so there is no clock for the next run to continue.
+            current._add_continuity_note(
+                f"INFO: Continuity between {prev.name} and {current.name} was not "
+                f"measured: {prev.name} is a minimisation, which has no simulation clock."
             )
             return
 
@@ -2002,22 +2012,34 @@ def sequence_findings(
     ``start_index`` continues an id sequence a caller has already begun.
     """
     out: List[Dict[str, Any]] = []
+    present = _sequence_presence(names, lineages)
     for (member, base), missing in detect_sequence_gaps(names, lineages).items():
         tag = None if member is UNTAGGED else member
         idxs = ", ".join(str(i) for i in missing)
-        # The member is named in the prose only when there is one, so an untagged document
-        # reads exactly as it always did. `base` stays the bare run base either way: it is
-        # what the canvas matches a ghost against, and it is shared by every member.
+        # The member is named in the prose only when there is one. `base` stays the bare
+        # run base either way: it is what the canvas matches a ghost against, and it is
+        # shared by every member.
         scope = f"{tag}/{base}" if tag else base
-        # A short member did not skip anything — it stopped. Saying "skip" of a run that
-        # crashed would be the same kind of unearned claim this keying exists to remove.
-        evidence = (f"'{scope}' has no run at index(es) {idxs}" if tag
-                    else f"present members of '{base}' skip index(es) {idxs}")
+        title = (f"{scope} run {idxs} is missing" if len(missing) == 1
+                 else f"{scope} runs {idxs} are missing")
+        own = present.get(base, {}).get(member, set())
+        held = (f"{base} run{'s' if len(own) != 1 else ''} {_number_ranges(own)}")
+        # A short member did not skip anything — it stopped, or what came after was not
+        # deposited. Saying "skip" of a run that crashed would be an unearned claim.
+        if tag and own and min(missing) > max(own):
+            evidence = (f"{tag} has {held}, and the other replicas go on to {max(missing)}: "
+                        f"{tag} may have stopped early, or its later runs were not "
+                        "deposited.")
+        elif tag and own and max(missing) < min(own):
+            evidence = (f"{tag} has {held}, and the other replicas start at "
+                        f"{min(missing)}.")
+        else:
+            evidence = f"The {scope} runs here are numbered {_number_ranges(own)}."
         out.append({
             "id": f"sug_{start_index + len(out)}",
             "kind": "missing_run",
             "severity": "needs_you",
-            "title": f"{scope} sequence is missing member(s) {idxs}",
+            "title": title,
             "evidence": evidence,
             "actions": ["Mark as expected gap", "Locate file", "Ignore"],
             "base": base,
@@ -2090,6 +2112,49 @@ def _overlapping_cohorts(by_member: Dict[Any, set]) -> List[List[Any]]:
     return cohorts
 
 
+def _is_minimisation(stage) -> bool:
+    """`imin = 1` in the stage's mdin or mdout: the content says so, not the name."""
+    mdin = getattr(getattr(stage, "mdin", None), "details", None)
+    cntrl = getattr(mdin, "cntrl_parameters", None) or {}
+    mdout = getattr(getattr(stage, "mdout", None), "details", None)
+    return cntrl.get("imin") == 1 or getattr(mdout, "imin", None) == 1
+
+
+def _sequence_presence(
+    names: List[str],
+    lineages: Optional[List[Optional[str]]] = None,
+) -> Dict[str, Dict[Any, set]]:
+    """base -> member -> the indices that member holds (see `detect_sequence_gaps`)."""
+    suffix_pattern = re.compile(r'^(.+?)[-_.]?(\d+)$')
+
+    tags: List[Optional[str]] = list(lineages) if lineages is not None else []
+    tags += [None] * (len(names) - len(tags))
+
+    present: Dict[str, Dict[Any, set]] = {}
+    for member, runs in buckets(_TaggedRun(n, t) for n, t in zip(names, tags)).items():
+        for run in runs:
+            stem = _numbered_stem(run.name)
+            match = suffix_pattern.match(stem)
+            if not match:
+                continue
+            base = match.group(1)
+            if base.isdigit():
+                continue
+            present.setdefault(base, {}).setdefault(member, set()).add(int(match.group(2)))
+    return present
+
+
+def _number_ranges(numbers) -> str:
+    """`1-2, 4-5` for {1, 2, 4, 5}; `1, 3` for {1, 3}."""
+    out: List[Tuple[int, int]] = []
+    for n in sorted(numbers):
+        if out and out[-1][1] == n - 1:
+            out[-1] = (out[-1][0], n)
+        else:
+            out.append((n, n))
+    return ", ".join(str(a) if a == b else f"{a}-{b}" for a, b in out)
+
+
 def detect_sequence_gaps(
     names: List[str],
     lineages: Optional[List[Optional[str]]] = None,
@@ -2123,24 +2188,7 @@ def detect_sequence_gaps(
       and neither member is short. Reporting them was the pre-lineage behaviour — one
       card naming eight runs that were never meant to exist.
     """
-    suffix_pattern = re.compile(r'^(.+?)[-_.]?(\d+)$')
-
-    tags: List[Optional[str]] = list(lineages) if lineages is not None else []
-    tags += [None] * (len(names) - len(tags))
-
-    # base -> member -> the indices that member holds
-    present: Dict[str, Dict[Any, set]] = {}
-    for member, runs in buckets(_TaggedRun(n, t) for n, t in zip(names, tags)).items():
-        for run in runs:
-            stem = _numbered_stem(run.name)
-            match = suffix_pattern.match(stem)
-            if not match:
-                continue
-            base = match.group(1)
-            if base.isdigit():
-                continue
-            present.setdefault(base, {}).setdefault(member, set()).add(int(match.group(2)))
-
+    present = _sequence_presence(names, lineages)
     gaps: Dict[Tuple[Any, str], List[int]] = {}
     for base, by_member in present.items():
         for cohort in _overlapping_cohorts(by_member):

@@ -454,23 +454,27 @@ def _seed_findings(stages: List[Any], members: Dict[str, List[Any]]) -> List[Fin
                  if getattr(s, "mdout_header", None) is not None
                  and s.mdout_header.resolved_ig is not None]
         producer = names.get(parent, parent)
+        # Said in terms of what the seed is for: runs that start from the same coordinates
+        # and velocities are set apart by their random seed (and by their inputs, where
+        # those differ, which is why this never says the seed is the ONLY difference).
+        branch = f"{len(consumers)} runs start from the restart written by {producer}"
         if len(seeds) < len(consumers):
+            missing = len(consumers) - len(seeds)
             out.append(Finding(
                 "info", "fan_out",
-                f"{len(consumers)} steps read the restart written by {producer}; "
-                f"{len(consumers) - len(seeds)} of them state no resolved seed."))
+                f"{branch}; {missing} of their mdouts {'does' if missing == 1 else 'do'} "
+                "not record the random seed (ig) used, which is what sets such runs apart."))
             continue
         distinct = len(set(seeds))
         if distinct == len(seeds):
             out.append(Finding(
                 "info", "fan_out",
-                f"{len(consumers)} steps read the restart written by {producer} "
-                f"and carry {distinct} distinct resolved seeds."))
+                f"{branch}, and their mdouts record {distinct} different random seeds (ig)."))
         else:
             out.append(Finding(
                 "warning", "seed",
-                f"{len(consumers)} steps read the restart written by {producer} "
-                f"but carry only {distinct} distinct resolved seed(s)."))
+                f"{branch}, but their mdouts record only {distinct} different random "
+                "seed(s) (ig): runs with the same seed and inputs may repeat each other."))
     return out
 
 

@@ -3,6 +3,16 @@ export function formatPs(v: number | null): string {
   return `${v} ps`;
 }
 
+/**
+ * `41.1 ns`, `3 ps`: ns from 1000 ps up, ps below, without padding zeros. The same rule as
+ * the CLI's `_duration`, so both front ends say a total the same way.
+ */
+export function formatDuration(ps: number): string {
+  const [value, unit] = Math.abs(ps) >= 1000 ? [ps / 1000, "ns"] : [ps, "ps"];
+  const text = value.toFixed(3).replace(/\.?0+$/, "");
+  return `${text || "0"} ${unit}`;
+}
+
 export function formatCount(n: number | null): string {
   if (n === null) return "—";
   return n.toLocaleString("en-US");
