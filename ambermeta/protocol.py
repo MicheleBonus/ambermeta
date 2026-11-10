@@ -1252,9 +1252,13 @@ class SimulationProtocol:
             current._add_continuity_note(f"INFO: Stage starts {gap:g} ps after previous ended.")
 
         if current.expected_gap_ps is not None:
-            tolerance = current.gap_tolerance_ps or default_tolerance
-            lower = current.expected_gap_ps - tolerance
-            upper = current.expected_gap_ps + tolerance
+            # A stated tolerance of 0 is kept (it asks for an exact match); only an
+            # unstated one falls back to the default window. `noise` still applies, so an
+            # exact match read from single-precision frame times is not reported as a miss.
+            tolerance = (current.gap_tolerance_ps if current.gap_tolerance_ps is not None
+                         else default_tolerance)
+            lower = current.expected_gap_ps - tolerance - noise
+            upper = current.expected_gap_ps + tolerance + noise
             if gap < lower:
                 current._add_continuity_note(
                     f"Observed gap {gap:g} ps is shorter than expected {current.expected_gap_ps:g} ps."
@@ -1604,6 +1608,15 @@ def _looks_queued(mdin_details: Any, has_mdin: bool, has_mdout: bool) -> bool:
     return has_mdin and not has_mdout and bool(getattr(mdin_details, "cntrl_parameters", None))
 
 
+def _first_stated(mapping: Dict[str, Any], *keys: str) -> Any:
+    """The first of `keys` that `mapping` gives a value for, 0 included; else None."""
+    for key in keys:
+        value = mapping.get(key)
+        if value is not None:
+            return value
+    return None
+
+
 def _manifest_to_stages(
     manifest: Dict[str, Dict[str, str]] | List[Dict[str, str]],
     directory: Optional[str],
@@ -1724,8 +1737,10 @@ def _manifest_to_stages(
         gap_info = entry.get("gaps") or entry.get("gap")
         notes = entry.get("notes")
         if isinstance(gap_info, dict):
-            expected = gap_info.get("expected") or gap_info.get("expected_ps")
-            tolerance = gap_info.get("tolerance") or gap_info.get("tolerance_ps")
+            # `is None`, not `or`: 0 ps is a statement ("these runs abut exactly", "flag
+            # any gap at all"), and `or` turned it into "nothing stated".
+            expected = _first_stated(gap_info, "expected", "expected_ps")
+            tolerance = _first_stated(gap_info, "tolerance", "tolerance_ps")
             if expected is not None:
                 stage.expected_gap_ps = float(expected)
             if tolerance is not None:
