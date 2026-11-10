@@ -240,7 +240,17 @@ The tray re-runs validation (and refills itself) after every document mutation, 
   the reader ever sees it, so what comes back is never the bare filename the client sent.
 
   Rebuild such a file with `ambermeta discover <dir> --write <path>` and open the result.
+
+  A manifest with a syntax error is a `400` as well, naming the file and the position:
+
+  ```
+  Could not read manifest: /abs/path/sim.yaml: YAML syntax error: while parsing a flow mapping (line 2, column 10): expected ',' or '}', but got '<stream end>' (line 3, column 1)
+  Could not read manifest: /abs/path/sim.json: JSON syntax error at line 1, column 26: Expecting value
+  ```
+
+  For an unclosed bracket the first position is where the mistake is: it is where the bracket opened.
 - **Save** always writes the canonical **v2 manifest** — YAML or JSON only, chosen by the target's extension or by the Save dialog's format selector, which offers exactly those two.
+- **Save writes only to a manifest name.** The target must end in `.yaml`, `.yml` or `.json`, the names Open reads back; anything else is refused with `400` before anything is written, so a run's own `.mdin`, `.mdout`, topology or restart can never be replaced by a manifest. The same rule holds for the manifest **Plan** writes. The Save dialog lists only manifests as files to overwrite, and says `This file exists and will be replaced.` when the name you pick or type is already on disk.
 - **A save reports what it actually wrote.** Every route here is a synchronous `def`, so Starlette runs it in a worker thread and an edit can land while a manifest is still being written — seconds, on a large campaign over a network filesystem. What went to disk is the document as it stood when the write began, so an edit made during it is genuinely not in the file. The dirty dot therefore stays lit and the result carries a warning:
 
   > Saved, but the document changed while it was being written — that change is not in the file. Save again.

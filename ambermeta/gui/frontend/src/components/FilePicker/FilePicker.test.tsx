@@ -117,4 +117,61 @@ describe("FilePicker", () => {
     expect(screen.queryByLabelText(/show all file types/i)).not.toBeInTheDocument();
   });
 
+  // The save picker listed every file under the launch directory as one "to overwrite";
+  // picking a run's own .mdin replaced it with the manifest. Only a manifest is a target.
+  const withManifests: FileInfo[] = [
+    ...mixed,
+    { path: "/work/sim.yaml", name: "sim.yaml", file_type: "other",
+      is_directory: false, size: 1, extension: ".yaml", parent: "/work", children: null },
+    { path: "/work/out/old.json", name: "old.json", file_type: "other",
+      is_directory: false, size: 1, extension: ".json", parent: "/work/out", children: null },
+  ];
+
+  it("save mode offers only manifests as files to overwrite", async () => {
+    setup("save", vi.fn(), { files: withManifests });
+    await screen.findByText("sim.yaml");
+    expect(screen.getByText("old.json")).toBeInTheDocument();
+    expect(screen.queryByText("system.prmtop")).not.toBeInTheDocument();
+    expect(screen.queryByText("02_heat.mdin")).not.toBeInTheDocument();
+    expect(screen.queryByText("02_heat.mdout")).not.toBeInTheDocument();
+  });
+
+  it("open mode still lists every file", async () => {
+    setup("open", vi.fn(), { files: withManifests });
+    await screen.findByText("sim.yaml");
+    expect(screen.getByText("system.prmtop")).toBeInTheDocument();
+  });
+
+  it("save mode says when the chosen name will replace an existing file", async () => {
+    setup("save", vi.fn(), { files: withManifests });
+    const pathInput = await screen.findByLabelText(/path/i);
+    await screen.findByText("sim.yaml");
+
+    await userEvent.type(pathInput, "new.yaml");
+    expect(screen.queryByText(/will be replaced/i)).not.toBeInTheDocument();
+
+    await userEvent.clear(pathInput);
+    await userEvent.type(pathInput, "out/old.json");  // typed, relative to the launch dir
+    expect(screen.getByText(/will be replaced/i)).toBeInTheDocument();
+
+    await userEvent.clear(pathInput);
+    await userEvent.click(screen.getByText("sim.yaml"));  // picked from the list
+    expect(screen.getByText(/will be replaced/i)).toBeInTheDocument();
+  });
+
+  it("save mode will not save under a name that is not a manifest", async () => {
+    // The server refuses it; saying "will be replaced" first, and then failing, was
+    // both wrong and late. The name an existing run file has gets the same answer.
+    const onPick = setup("save", vi.fn(), { files: withManifests });
+    const pathInput = await screen.findByLabelText(/path/i);
+    await screen.findByText("sim.yaml");
+
+    await userEvent.type(pathInput, "equil/02_heat.mdin");
+
+    expect(screen.queryByText(/will be replaced/i)).not.toBeInTheDocument();
+    expect(screen.getByText(/\.yaml, \.yml or \.json/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+    expect(onPick).not.toHaveBeenCalled();
+  });
+
 });

@@ -129,6 +129,25 @@ def validate_manifest(
 # Tolerant reader
 # ---------------------------------------------------------------------------
 
+def _yaml_syntax_error(path: Path, exc: Exception) -> str:
+    """A YAML parser error as one line that names the file.
+
+    PyYAML's own text names the stream `<unicode string>` (it parsed a string, not the
+    file) and spreads over five lines, and `YAMLError` is no `ValueError`, so it escaped
+    every caller's handler: the GUI answered Open with HTTP 500, the CLI with
+    "Unexpected error". Where the parser records them, both positions are kept -- the
+    construct that was open (`context`) and the point it failed (`problem`) -- because
+    for an unclosed bracket the first is where the mistake is.
+    """
+    parts = []
+    for text, mark in ((getattr(exc, "context", None), getattr(exc, "context_mark", None)),
+                       (getattr(exc, "problem", None), getattr(exc, "problem_mark", None))):
+        if text:
+            where = f" (line {mark.line + 1}, column {mark.column + 1})" if mark else ""
+            parts.append(f"{text}{where}")
+    return f"{path}: YAML syntax error: {': '.join(parts) or exc}"
+
+
 def _read_raw_manifest(manifest_path: Any, expand_env: bool = True) -> Any:
     """Read + parse a v2 manifest file (YAML or JSON) to its raw container."""
     path = Path(manifest_path)
@@ -139,14 +158,22 @@ def _read_raw_manifest(manifest_path: Any, expand_env: bool = True) -> Any:
     if suffix in {".yaml", ".yml"}:
         if yaml is None:
             raise ImportError("PyYAML is required to read YAML manifests. Install with `pip install pyyaml`.")
-        manifest = yaml.safe_load(text)
+        try:
+            manifest = yaml.safe_load(text)
+        except yaml.YAMLError as exc:
+            raise ValueError(_yaml_syntax_error(path, exc)) from exc
     elif suffix in (".toml", ".csv"):
         raise AmberMetaError(
             f"{path}: AmberMeta reads and writes manifests as YAML or JSON only; "
             "TOML and CSV are not manifest formats."
         )
     else:
-        manifest = json.loads(text)
+        try:
+            manifest = json.loads(text)
+        except json.JSONDecodeError as exc:
+            raise ValueError(
+                f"{path}: JSON syntax error at line {exc.lineno}, column {exc.colno}: "
+                f"{exc.msg}") from exc
     if manifest is None:
         return {}
     if not isinstance(manifest, (dict, list)):
