@@ -86,6 +86,29 @@ it("counts a sequence hole as a note", async () => {
   await waitFor(() => expect(screen.getByText("Valid, with 1 note(s)")).toBeInTheDocument());
 });
 
+it("lists the sequence hole it counts", async () => {
+  // The badge said "Valid, with 6 note(s)" and the panel showed five: a hole belongs to no
+  // step, so no step card carried it, and nothing else in the panel did either.
+  await show(report({
+    suggestions: [{ ...finding("missing_run", "present members of 'prod' skip index(es) 3"),
+                    title: "prod sequence is missing member(s) 3" }],
+  }));
+  await waitFor(() => expect(screen.getByText("Valid, with 1 note(s)")).toBeInTheDocument());
+  expect(screen.getByText(/prod sequence is missing member\(s\) 3/)).toBeInTheDocument();
+});
+
+it("does not list a run's own finding twice", async () => {
+  // A step-scoped finding is already on its step's card, from `stage_issues`.
+  const message = "The mdout has no completion marker: the run stopped early or is still running.";
+  await show(report({
+    stage_issues: [{ name: "prod_0005", ok: true, degraded: false, errors: [], warnings: [message],
+                     info: [], continuity: [], missing_files: [] }],
+    suggestions: [{ ...finding("unfinished_run", `prod_0005: ${message}`), step_id: "st5" }],
+  }));
+  await waitFor(() => expect(screen.getByText("Valid, with 1 note(s)")).toBeInTheDocument());
+  expect(screen.getAllByText(new RegExp(message.slice(0, 30)))).toHaveLength(1);
+});
+
 it("does not count what discovery applied", async () => {
   await show(report({
     suggestions: [{ ...finding("role_guess", "Production->production"), severity: "applied" }],
