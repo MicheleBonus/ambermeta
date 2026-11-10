@@ -11,6 +11,7 @@ from ambermeta.logging_config import configure_logging, get_logger
 from ambermeta.roles import classify_role
 from ambermeta.protocol import (
     SimulationProtocol,
+    SimulationStage,
     auto_discover,
     role_times,
 )
@@ -25,6 +26,28 @@ logger = get_logger(__name__)
 
 # Quiet-mode flag — set to True by main() when -q/--quiet is passed.
 _QUIET = False
+
+
+def _tolerate_unencodable_output() -> None:
+    """Make stdout and stderr replace a character they cannot encode, instead of raising.
+
+    A redirected or piped stdout on Windows is encoded with the ANSI code page (cp1252 on a
+    Western install), which has no glyph for most of Unicode. With Python's default
+    `errors="strict"`, one such character -- in a help string, or in a file name the tool
+    echoes back -- raised `UnicodeEncodeError` out of `print`, so the output stopped with a
+    traceback. Replacing it with `?` keeps the rest of the report. The CLI's own text is
+    kept within cp1252 so that nothing it writes itself is ever replaced.
+
+    A stream that already tolerates (stderr's default is `backslashreplace`) is left alone,
+    and so is one that cannot be reconfigured.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        if getattr(stream, "errors", None) != "strict":
+            continue
+        try:
+            stream.reconfigure(errors="replace")
+        except (AttributeError, ValueError, OSError):
+            pass
 
 
 def _out(*args, **kwargs) -> None:
@@ -626,7 +649,7 @@ def _print_protocol(protocol: SimulationProtocol, verbose: bool = False) -> None
                     f"time={mdcrd_details.time_start:g}–{mdcrd_details.time_end:g} ps"
                 )
             if getattr(mdcrd_details, "avg_dt", None):
-                mdcrd_bits.append(f"dt≈{mdcrd_details.avg_dt:g} ps")
+                mdcrd_bits.append(f"dt~{mdcrd_details.avg_dt:g} ps")
             if getattr(mdcrd_details, "has_box", False):
                 box_desc = "box"
                 if getattr(mdcrd_details, "box_type", None):
@@ -638,7 +661,7 @@ def _print_protocol(protocol: SimulationProtocol, verbose: bool = False) -> None
                         and len(volume_stats) == 3
                         and all(isinstance(v, (int, float)) for v in volume_stats)
                     ):
-                        box_desc += f", volume≈{float(volume_stats[2]):.2f} Å³"
+                        box_desc += f", volume~{float(volume_stats[2]):.2f} Å³"
                 mdcrd_bits.append(box_desc)
             if getattr(mdcrd_details, "is_remd", False):
                 remd_types = getattr(mdcrd_details, "remd_types", []) or []
@@ -741,6 +764,29 @@ class Colors:
         return f"{cls.BOLD}{cls.BLUE}{text}{cls.RESET}" if cls.enabled() else text
 
 
+def _lone_file_findings(parsed: Any) -> List[str]:
+    """The engine's own per-run findings for a file validated on its own.
+
+    A parser's warnings say whether a file could be read; whether the run it describes
+    finished is the engine's call (`SimulationStage.validate`), and per-file mode never
+    asked. A truncated or empty mdout therefore came back OK here while `plan` on the
+    same file reported "Run did not finish". Putting the one file into a stage of its own
+    asks the same checks the same way, so the two commands cannot disagree about it.
+    Only findings are taken: the stage's remarks (no atom counts to compare) describe the
+    one-file stage, not the file.
+    """
+    from ambermeta.parsers import InpcrdData, MdcrdData, MdinData, MdoutData, PrmtopData
+
+    slots = ((PrmtopData, "prmtop"), (InpcrdData, "inpcrd"), (MdinData, "mdin"),
+             (MdoutData, "mdout"), (MdcrdData, "mdcrd"))
+    slot = next((name for cls, name in slots if isinstance(parsed, cls)), None)
+    if slot is None:
+        return []
+    stage = SimulationStage(name=os.path.basename(parsed.filename), **{slot: parsed})
+    stage.validate()
+    return [message for _kind, message in stage.findings]
+
+
 def _get_parser_for_file(filepath: str):
     """Determine the appropriate parser based on file extension."""
     from ambermeta.parsers.prmtop import PrmtopParser
@@ -815,7 +861,8 @@ def _validate_command(args: argparse.Namespace) -> int:
 
         try:
             parse_result = parser.parse()
-            warnings = getattr(parse_result, "warnings", []) or []
+            warnings = list(getattr(parse_result, "warnings", []) or [])
+            warnings += _lone_file_findings(parse_result)
 
             if warnings:
                 file_result["status"] = "warning"
@@ -1623,7 +1670,7 @@ For documentation, visit: https://github.com/MicheleBonus/ambermeta
         action="store_true",
         help="Auto-discover simulation files recursively (no interactive prompts). "
              "Files are grouped by stem (filename without extension) and stage roles "
-             "are inferred from directory names (equil→equilibration, prod→production).",
+             "are inferred from directory names (equil -> equilibration, prod -> production).",
     )
     plan_parser.add_argument(
         "--interactive",
@@ -1683,7 +1730,7 @@ For documentation, visit: https://github.com/MicheleBonus/ambermeta
 
     discover_parser = subparsers.add_parser(
         "discover",
-        help="Discover files into a Simulation draft (Sim→Phase→Step) and optionally write a v2 manifest",
+        help="Discover files into a Simulation draft (Sim->Phase->Step) and optionally write a v2 manifest",
         description=(
             "Scan a directory into a draft Simulation using the same discover-as-draft engine "
             "as the GUI: a topology pool, phases inferred by role, and steps with per-step "
@@ -1832,6 +1879,7 @@ For documentation, visit: https://github.com/MicheleBonus/ambermeta
 
 
 def main(argv: List[str] | None = None) -> int:
+    _tolerate_unencodable_output()
     parser = build_parser()
     args = parser.parse_args(argv)
 

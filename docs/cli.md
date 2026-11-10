@@ -74,7 +74,7 @@ positional arguments:
                         manifest, recursive discovery, or explicit interactive
                         mode
     discover            Discover files into a Simulation draft
-                        (Sim→Phase→Step) and optionally write a v2 manifest
+                        (Sim->Phase->Step) and optionally write a v2 manifest
     validate            Validate simulation files without building full
                         protocol
     info                Display detailed metadata for a single file
@@ -173,8 +173,8 @@ options:
   --recursive           Auto-discover simulation files recursively (no
                         interactive prompts). Files are grouped by stem
                         (filename without extension) and stage roles are
-                        inferred from directory names (equil→equilibration,
-                        prod→production).
+                        inferred from directory names (equil -> equilibration,
+                        prod -> production).
   --interactive         Enable interactive prompt mode for manually defining
                         stages.
   -v, --verbose         Show detailed metadata, warnings, and continuity
@@ -570,6 +570,8 @@ options:
 ### Per-file mode
 
 Status per file: **OK** (parsed, no warnings), **WARN** (parsed, has warnings), **ERROR** (unreadable/missing). `--strict` turns warnings into a non-zero exit.
+
+A file's warnings are its parser's, plus the run's own findings for that file taken on its own, the same ones `plan` reports. So a topology with no `POINTERS` section (an empty file, or one that is not a topology) is `WARN`, and so is an mdout without AMBER's completion marker: the run stopped early or is still running.
 
 ```text
 $ ambermeta validate tests/data/amber/md_test_files/ntp_prod_0001.mdin tests/data/amber/md_test_files/ntp_prod_0001.mdout

@@ -52,7 +52,7 @@ def test_print_protocol_includes_mdcrd_box_and_remd_metadata(capsys):
     _print_protocol(protocol)
     output = capsys.readouterr().out
 
-    assert "mdcrd: frames=10, time=0–9 ps, dt≈1 ps, box=Triclinic, volume≈100.00 Å³, T (280.0–320.0K, avg 300.0K)" in output
+    assert "mdcrd: frames=10, time=0–9 ps, dt~1 ps, box=Triclinic, volume~100.00 Å³, T (280.0–320.0K, avg 300.0K)" in output
 
 
 def test_print_protocol_reports_the_queued_count_and_marks_each_queued_stage(capsys, sys021_tree):

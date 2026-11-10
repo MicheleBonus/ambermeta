@@ -45,3 +45,36 @@ def test_validate_manifest_json_format(tmp_path, capsys):
 def test_validate_requires_files_or_manifest(capsys):
     rc = main(["validate"])
     assert rc == 2
+
+
+def test_an_unnamed_step_is_validated_under_its_id(tmp_path, capsys, sample_md_data_dir):
+    # `name` is optional on a v2 step (docs/manifest.md). The flat engine underneath
+    # requires one, so an unnamed step used to stop validation with "Unexpected error
+    # (ValueError: Each manifest entry must include a 'name'.)". The id is what the
+    # step is called instead, as it is in the GUI's continuity messages.
+    sample = sample_md_data_dir
+    manifest = tmp_path / "unnamed.json"
+    manifest.write_text(json.dumps({
+        "version": 2,
+        "simulation": {
+            "topologies": [{"id": "top", "path": str(sample / "CH3L1_HUMAN_6NAG.top"),
+                            "kind": "normal"}],
+            "starting_structure": str(sample / "ntp_prod_0000.rst"),
+        },
+        "phases": [{"id": "ph", "name": "Production", "role": "production", "order": 0}],
+        "steps": [{"id": "st_first", "phase": "ph", "order": 0, "topology": "top",
+                   "input_coords": {"source": "starting_structure"},
+                   "mdin": str(sample / "ntp_prod_0001.mdin"),
+                   "mdout": str(sample / "ntp_prod_0001.mdout")}],
+    }), encoding="utf-8")
+
+    rc = main(["validate", "--manifest", str(manifest), "--format", "json"])
+
+    out = capsys.readouterr().out
+    assert rc == 0
+    report = json.loads(out)
+    # The sample's runs used a 4-fs time step on a standard-mass topology, which is a
+    # Run check on this step; the card names the step by its id.
+    checks = [s for s in report["suggestions"] if s["kind"] == "step_check"]
+    assert checks
+    assert all(s["evidence"].startswith("st_first: ") for s in checks)

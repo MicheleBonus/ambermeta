@@ -402,7 +402,9 @@ def _flatten_simulation(sim):
             # file to read the time out of.
             inpcrd = resolve_input_coords(sim, s)
             flat.append({
-                "name": s.name, "role": p.role, "phase": p.name, "step_id": s.id,
+                # `name` is optional on a v2 step and the flat engine requires one; an
+                # unnamed step is called by its id, as the GUI's continuity messages do.
+                "name": s.name or s.id, "role": p.role, "phase": p.name, "step_id": s.id,
                 # The producing step, carried as an id. `inpcrd` above is that producer's
                 # restart *path*, which several steps can share, so the edge itself cannot
                 # be recovered from it downstream.
