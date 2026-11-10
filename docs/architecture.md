@@ -151,6 +151,8 @@ The within-member chunk boundaries are measured either way and meet exactly (`ga
 
 **Sequence holes** are a separate, first-class finding: `detect_sequence_gaps(names, lineages=None)` looks at numbered-run families (`prod_0001`, `prod_0002`, `prod_0004`, …) and reports the missing indices **per member**, keyed on `(member, base)` — here, `{(UNTAGGED, "prod"): [3]}` — independent of whether any continuity gap was ever measured, because the file for index 3 simply doesn't exist to measure a gap against. `lineages` is read positionally alongside `names`, one tag per run and `None` where a run carries none; omitting it puts every run in the one untagged bucket (`ambermeta.lineages.UNTAGGED`), which is the single family the detector always had. Inside a member, an index between its lowest and its highest that no run occupies is missing; across members of one base, only those whose numbering *overlaps* frame each other — so `rep2` stopping at `prod_0001` beside `rep1`'s `0001-0003` is reported, while a member numbered `0011-0012` on a scale of its own is not.
 
+In a v2 document the names handed to it are the steps' runs, not their labels: each step's mdout path without its extension (else its mdin's), relative to the base directory, and the step's `name` only when it names no file. Discover names a step after that same stem, so a discovered document scans as it always did, while renaming a step in the GUI (`ntp_prod_0002` to `prod_two`) no longer reports a run that is still there as missing (`core_bridge._run_stem`).
+
 Real output on the sample data (`tests/data/amber/md_test_files/`, a 64,528-atom glycoprotein system with a five-run NPT production sequence) with `ntp_prod_0003.*` removed:
 
 ```
