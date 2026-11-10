@@ -17,6 +17,7 @@ ambermeta/
   roles.py               # classify_role() — the ONE role classifier, shared by CLI and GUI
   topology_pool.py       # TopologyPool + classify_topology_pool() — HMR detection over a set of prmtops
   coords.py              # sniff_coordinate_kind() — inpcrd vs mdcrd by content, not extension
+  systems.py             # separate_systems() — runs of different atom counts are separate simulations
   protocol.py            # SimulationStage, SimulationProtocol, ProtocolBuilder — discovery, assembly,
                           # continuity/sequence-gap detection; still the shared validation machinery
   manifest.py            # tolerant YAML/JSON reader + in-memory stage-dict helpers; STAGE_FILE_KINDS
@@ -377,3 +378,4 @@ These are the invariants the rest of the system (and its tests) depend on:
 5. **Inference is always announced** — any role, topology kind, or starting structure inferred from content or path shows up as an `INFO` note or a suggestion, never a silent guess.
 6. **Failures are data, not crashes** — `FileLoadError` + fault-tolerant `plan`/`discover`; `--strict` to opt into hard failure.
 7. **The GUI imports the core only through `core_bridge.py`** — no duplicated logic, byte-identical manifests, server-authoritative state.
+8. **A scan is one simulation.** `discover_draft` and `auto_discover`'s scan refuse runs whose mdouts report different atom counts (`systems.separate_systems`, `SeparateSystemsError`), because no run can continue a run of another size; `as_one_simulation=True` scans them as one anyway. A manifest is never checked this way.

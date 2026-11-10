@@ -938,8 +938,13 @@ def _topology_for_atoms(choice, natom, natom_by_topology, kind_by_topology):
     return (same_kind or matching)[0]
 
 
-def discover_draft(base_directory, recursive=True, pattern=None, apply_tags=True):
+def discover_draft(base_directory, recursive=True, pattern=None, apply_tags=True,
+                   as_one_simulation=False):
     """Scan `base_directory` into a Simulation draft, with a proposal beside it.
+
+    Raises `SeparateSystemsError` when the runs report different atom counts, i.e. the
+    directory holds several simulations; `as_one_simulation=True` drafts them as one
+    anyway, which is what this did before the check existed.
 
     `apply_tags` decides whether the inferred grouping (see `infer_lineages_from_layout`)
     is WRITTEN onto `Step.lineage` (`True`, the default) or only PROPOSED, in the returned
@@ -973,6 +978,7 @@ def discover_draft(base_directory, recursive=True, pattern=None, apply_tags=True
         collision_notes)
     from ambermeta.parsers import MdinParser
     from ambermeta.mdout_header import read_mdout_header
+    from ambermeta.systems import SeparateSystemsError, separate_systems
     import uuid
 
     grouped = smart_group_files(base_directory, pattern=pattern, recursive=recursive)
@@ -1051,6 +1057,13 @@ def discover_draft(base_directory, recursive=True, pattern=None, apply_tags=True
                 headers[stem] = read_mdout_header(kinds["mdout"])
             except (IOError, OSError, ValueError, LookupError):
                 pass
+    # Runs of different sizes are separate simulations (see `ambermeta.systems`). Refused
+    # here rather than drafted: a merged draft of two systems looks plausible and is wrong.
+    if not as_one_simulation:
+        systems = separate_systems(
+            {stem: getattr(headers.get(stem), "natom", None) for stem in run_stems})
+        if systems:
+            raise SeparateSystemsError(systems)
     # What each run read, as its mdout records it, and an order that writes every
     # producer before the runs that read it. See `_recorded_producers`.
     recorded = _recorded_producers(run_stems, grouped, tags, headers)

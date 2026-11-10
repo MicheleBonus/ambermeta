@@ -453,6 +453,10 @@ def test_the_merged_apo_holo_tree_is_tagged_and_then_reported_on(tmp_path, capsy
     `discover`/`plan` do with a grouping they resolved, and the user is told in the same
     breath that a member holds two different systems. Tags plus an error, not tags in
     silence. Exit 1 without `--strict`, like every other category error.
+
+    apo and holo are two systems, so by default the scan now refuses the tree before
+    tagging anything (`ambermeta.systems`, `test_separate_systems.py`). The merge, and
+    this test's account of what it then reports, still happen under `--as-one-simulation`.
     """
     from tests.conftest import RunSpec, write_run_tree, _PROD_MDIN
 
@@ -463,6 +467,11 @@ def test_the_merged_apo_holo_tree_is_tagged_and_then_reported_on(tmp_path, capsy
         for index in ("01", "02", "03")])
 
     assert main(["plan", "--recursive", str(tmp_path)]) == 1
+    refused = capsys.readouterr()
+    assert "2 separate simulations" in refused.err
+    assert "apo/" in refused.err and "holo/" in refused.err
+
+    assert main(["plan", "--recursive", "--as-one-simulation", str(tmp_path)]) == 1
     printed = capsys.readouterr().out
     # Tagged: the merge really did happen, so the silence being fixed is the real one.
     assert "3 declared lineage(s)" in printed or "Per lineage:" in printed

@@ -464,6 +464,9 @@ class SaveResult(BaseModel):
 class DiscoverRequest(BaseModel):
     recursive: bool = True
     pattern: Optional[str] = None
+    # Runs of different atom counts are separate simulations and Discover refuses them
+    # (`ambermeta.systems`); this drafts them as one anyway, for a false alarm.
+    as_one_simulation: bool = False
 
 
 class DiscoverResult(BaseModel):

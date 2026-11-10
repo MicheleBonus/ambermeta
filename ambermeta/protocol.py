@@ -2651,6 +2651,7 @@ def auto_discover(
     allow_unexpected_gaps: bool = False,
     progress_callback: Optional[Callable[[str, int, int], None]] = None,
     strict: bool = False,
+    as_one_simulation: bool = False,
 ) -> SimulationProtocol:
     if manifest is not None:
         stages = _manifest_to_stages(
@@ -2688,6 +2689,23 @@ def auto_discover(
 
     # Use smart grouping for file discovery
     grouped = smart_group_files(directory, pattern=pattern_filter, recursive=recursive)
+
+    # Runs of different sizes are separate simulations; summing them into one protocol's
+    # totals is the merge `discover` refuses too (see `ambermeta.systems`).
+    if not as_one_simulation:
+        from ambermeta.mdout_header import read_mdout_header
+        from ambermeta.systems import SeparateSystemsError, separate_systems
+        natom_by_run = {}
+        for stem in _run_stems(grouped):
+            mdout = grouped[stem].get("mdout")
+            if mdout:
+                try:
+                    natom_by_run[stem] = read_mdout_header(mdout).natom
+                except (IOError, OSError, ValueError, LookupError):
+                    pass
+        systems = separate_systems(natom_by_run)
+        if systems:
+            raise SeparateSystemsError(systems)
 
     # The same layout inference `discover_draft` performs, because this is the same tree
     # read for the same purpose — `plan <dir> --recursive` reaches the engine here instead

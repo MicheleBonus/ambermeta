@@ -148,7 +148,7 @@ usage: ambermeta plan [-h] [-m MANIFEST] [--skip-cross-stage-validation]
                       [--methods-summary-path METHODS_SUMMARY_PATH]
                       [--stats-csv STATS_CSV] [--no-expand-env]
                       [--pattern PATTERN] [--auto-detect-restarts]
-                      [--prmtop PRMTOP]
+                      [--prmtop PRMTOP] [--as-one-simulation]
                       [directory]
 
 Build and summarize a SimulationProtocol from manifest, recursive discovery,
@@ -203,6 +203,9 @@ options:
                         stages
   --prmtop PRMTOP       Global prmtop file to use for all stages (avoids
                         specifying it per stage)
+  --as-one-simulation   Treat every run found as one simulation even when
+                        their atom counts differ (by default a folder holding
+                        several systems is refused) (with --recursive)
 ```
 <!-- END_CLI_HELP:plan -->
 
@@ -386,7 +389,7 @@ ambermeta discover [directory] [options]
 ```text
 usage: ambermeta discover [-h] [--recursive | --no-recursive]
                           [--pattern PATTERN] [--write WRITE] [--force]
-                          [--format {json,yaml}]
+                          [--format {json,yaml}] [--as-one-simulation]
                           [directory]
 
 Scan a directory into a draft Simulation using the same discover-as-draft
@@ -407,12 +410,33 @@ options:
   --force               Overwrite the --write file if it already exists
   --format {json,yaml}  Format for --write (default: inferred from extension,
                         else json)
+  --as-one-simulation   Treat every run found as one simulation even when
+                        their atom counts differ (by default a folder holding
+                        several systems is refused)
 ```
 <!-- END_CLI_HELP:discover -->
 
 `--recursive`/`--no-recursive` is an `argparse.BooleanOptionalAction` pair (recursion is on by default).
 
 `--write` will not replace an existing file unless `--force` is given, as `init` does (`ERROR: sim.yaml already exists. Use --force to overwrite.`, exit `1`, checked before the scan), so re-running `discover --write` cannot wipe a manifest you have edited. A missing parent directory is created. An invalid `--pattern` is a usage error (exit `2`).
+
+### Several systems in one folder
+
+A folder whose runs report different atom counts holds several simulations: a restart written by a run of one size cannot be read by a run of another. `discover` and `plan --recursive` refuse such a folder instead of merging it into one simulation (exit `1`), name each system, and say how to go on:
+
+```text
+$ ambermeta discover campaign
+
+ERROR: This folder holds 2 separate simulations: their runs report different atom counts, and a run can only continue a run of the same size.
+  wt/   7 run(s), 64528 atoms
+  mut/  6 run(s), 64530 atoms
+Run each one on its own:
+  ambermeta discover campaign/wt
+  ambermeta discover campaign/mut
+or pass --as-one-simulation to treat them as one simulation anyway.
+```
+
+The sizes come from each mdout's `RESOURCE USE` block; a run that states none is not counted. When the systems share a folder (a vacuum minimisation beside the solvated runs), each is named by its first run, and the advice is to pick one system's runs with `--pattern`. `--as-one-simulation` scans everything as one simulation, as before. A manifest is never checked this way: it is your own statement of what one simulation is. Two systems of the same size are not told apart.
 
 ```text
 $ ambermeta discover tests/data/amber/md_test_files
@@ -1068,7 +1092,7 @@ The generated scripts complete all eight subcommands, including `discover` and `
 | Code | Command(s) | Meaning |
 |---|---|---|
 | `0` | all | Success (including a fault-tolerant `plan` that skipped bad files, or a `plan`/`validate` run that reported findings without `--strict`) |
-| `1` | `plan`, `discover`, `validate`, `export`, `init`, `info`, `gui` | Runtime failure: unreadable/missing input, parse failure, nothing discovered, manifest not found/invalid, validation findings, a `--strict` hard stop, `--strict` with any finding — continuity, sequence hole, a run's own finding (`step_check`, `unfinished_run`, `input_mismatch`), or lineage-coherence warning — on `plan` as well as `validate`, or a missing extra/directory, a port already in use, or a port outside 1-65535 (`gui`) |
+| `1` | `plan`, `discover`, `validate`, `export`, `init`, `info`, `gui` | Runtime failure: unreadable/missing input, parse failure, nothing discovered, a folder holding several systems (`discover`, `plan --recursive`; see [Several systems in one folder](#several-systems-in-one-folder)), manifest not found/invalid, validation findings, a `--strict` hard stop, `--strict` with any finding — continuity, sequence hole, a run's own finding (`step_check`, `unfinished_run`, `input_mismatch`), or lineage-coherence warning — on `plan` as well as `validate`, or a missing extra/directory, a port already in use, or a port outside 1-65535 (`gui`) |
 | `2` | `plan`, `validate` | Bad invocation: `plan` with no mode selected (`--manifest`/`--recursive`/`--interactive`); `validate` with neither `files` nor `--manifest` |
 
 ---
