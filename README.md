@@ -11,7 +11,7 @@
 
 You point it at a directory (or a manifest), and it answers the questions that are tedious to answer by hand: *What was actually run? In what order? Do the restarts line up? Is any topology hydrogen-mass-repartitioned? What were the ensemble, thermostat, barostat, and cutoff? Did the run finish? Is a member of a numbered sequence missing?*
 
-- **Version:** 1.3.0 · **Python:** 3.9+ · **License:** BUSL-1.1
+- **Version:** 1.4.0 · **Python:** 3.9+ · **License:** BUSL-1.1
 - **Repository:** <https://github.com/MicheleBonus/ambermeta>
 
 ---
@@ -344,6 +344,18 @@ A single-page, fully offline HTML version of these docs lives at [`docs/ambermet
 - **Fault tolerance:** `ambermeta plan` is fault-tolerant by default — an unreadable or malformed file is skipped, the error is recorded against its stage/step, and the run still completes (exit `0`). Pass `--strict` to make the first bad file a hard error.
 - **Role inference is heuristic.** When a phase or stage omits its role, AmberMeta infers it from `imin` in the `mdin`/`mdout`, the file/path name, and other content (restraints, a temperature ramp, run length), via the shared classifier in `ambermeta/roles.py`, and records that it did so. Name cues are matched per path component, directories first: `min`/`em`, `heat`, `equil`/`equi`/`eq`, `prod`, then `nvt`/`npt` (so `nvt_prod_0001` is production), each followed by `_`, `.`, `-`, a digit or the end of the name (`prod1`, `eq0001`); the full table is in the [manifest schema](docs/manifest.md#7-canonical-role-tokens). Verify inferred roles before publishing.
 - **Manifest formats:** JSON or YAML, in both directions. TOML and CSV are not manifest formats — a `.toml`/`.csv` manifest path is refused with a message that says so. (`--stats-csv` still writes a per-stage statistics CSV; that is a report, not a manifest.)
+
+### Behavior changes in 1.4.0
+
+- **A finding can be settled with a note.** A manifest may list findings you have reviewed under `acknowledged:`, each with a note that says why it stands. `validate` and `plan` show them apart under "Acknowledged", they no longer count for the verdict or for `--strict`, and an entry that no longer matches a finding is listed as no longer found. The notes are kept in `summary.json` and in the methods summary. In the GUI, a finding offers **Acknowledge…** and an acknowledged one offers **Reopen**. See [Settling a finding](docs/manifest.md#93-settling-a-finding-acknowledged).
+- **The methods summary as Markdown.** `plan --methods-summary-md FILE` writes a readable Markdown version beside the JSON, `plan --out DIR` writes it as `methods_summary.md`, and `python -m ambermeta.methods_summary summary.json -o methods_summary.md` converts any existing summary. The GUI's Plan dialog writes it by default.
+- **One simulation per folder.** `discover`, `plan --recursive` and the GUI's Discover refuse a folder whose runs report different atom counts and name each system, where 1.3.0 merged them. `--as-one-simulation` keeps the old behavior.
+- **Plainer output.** The verdict counts what is left to check (`Validation: OK, N findings to review`), findings are worded in plain language, and a gap in a numbered series names the run that is missing. `--help` shows the typical workflow, `plan`'s options are grouped, `plan --out DIR` writes every summary into one folder, and the run listing is compact (`-v` for full lines).
+- **Readable manifests.** Ids are readable: a step's id is its run's name and a phase's id is its name in lower case (`production`). A YAML draft written with `discover --write` starts with a comment that says what to check.
+- **No silent overwrites.** `discover --write` and `export -o` refuse to replace an existing file without the new `--force`, so a script that rewrites a manifest needs the flag. A missing parent directory is created.
+- **Smaller CLI changes:** `ambermeta --version`; `NO_COLOR` is honoured; `export --format yaml` prints YAML; `export` keeps `$VARS` as written; `init` refuses a name that is not `.yaml`/`.yml`; `--help` no longer crashes when piped on Windows.
+- **Fixes that change results:** a stated gap or tolerance of `0` is honoured; an unknown `input_coords.source` is refused when the manifest is loaded; an `.in` file without `&cntrl` (`tleap.in`) gets a warning and a finding instead of passing as an MD run; `validate <files>` reports an empty or cut-off file instead of OK; where two files of a run share a stem (`prod_0001.mdcrd` beside `prod_0001.nc`), the run names the one it read and the one it did not; reordering steps in the GUI keeps the links that AMBER recorded.
+- **Packaging:** `pyproject.toml` is the only packaging file.
 
 ### Behavior changes in 1.3.0
 
