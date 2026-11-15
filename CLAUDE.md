@@ -103,7 +103,8 @@ uv run --python 3.11 --no-project python scripts/export_cli_help.py --check  # w
 
 ## Packaging
 
-- `pyproject.toml` is the only packaging file: metadata, version, extras and tool config all live there. There is no `setup.py`. Editable installs go through PEP 660, hence `setuptools>=64` in `[build-system]`.
+- `pyproject.toml` is the only packaging file: metadata, version, extras and tool config all live there. There is no `setup.py`. Editable installs go through PEP 660, and the licence is an SPDX expression (`license = "BUSL-1.1"`, PEP 639) rather than a table plus a licence classifier, which setuptools stops building on 2027-02-18; hence `setuptools>=77` in `[build-system]`.
+- Releases: publishing a GitHub release whose tag is `v` + the version in `pyproject.toml` runs `.github/workflows/release.yml`, which builds, checks and smoke-tests the package and uploads it to PyPI by trusted publishing (no token). Run the workflow by hand (`workflow_dispatch`) to build and check without publishing.
 - `[tool.setuptools] packages` is an explicit list. A new subpackage has to be added there, or it won't ship in a non-editable install. A new module inside an existing package needs nothing.
 
 ## Conventions

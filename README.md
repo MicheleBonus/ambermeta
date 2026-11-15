@@ -1,7 +1,7 @@
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/logo/ambermeta_logo_dark.svg">
-    <img src="docs/assets/logo/ambermeta_logo.svg" alt="AmberMeta" width="520">
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/CPCLab/ambermeta/main/docs/assets/logo/ambermeta_logo_dark.svg">
+    <img src="https://raw.githubusercontent.com/CPCLab/ambermeta/main/docs/assets/logo/ambermeta_logo.svg" alt="AmberMeta" width="520">
   </picture>
 </p>
 
@@ -46,6 +46,13 @@ Two interfaces sit on one shared core:
 ## 2. Install
 
 AmberMeta requires **Python 3.9+**. The base install is dependency-light; optional features live behind extras.
+
+```bash
+python -m pip install ambermeta              # from PyPI
+python -m pip install "ambermeta[all]"       # with all runtime features
+```
+
+From a clone of the repository, for development:
 
 ```bash
 python -m pip install -e .
@@ -161,7 +168,7 @@ Wrote methods_summary_md: /abs/path/results/methods_summary.md
 Wrote stats_csv: /abs/path/results/stats.csv
 ```
 
-That is the whole path: `discover --write`, read and fix the manifest, `validate --manifest`, then `plan -m ... --out`. `ambermeta --help` lists the same four steps. Editing a manifest by hand, converting it between YAML and JSON (`export`), and each summary file in detail are in the [CLI reference](docs/cli.md) and the [tutorials](docs/tutorials.md).
+That is the whole path: `discover --write`, read and fix the manifest, `validate --manifest`, then `plan -m ... --out`. `ambermeta --help` lists the same four steps. Editing a manifest by hand, converting it between YAML and JSON (`export`), and each summary file in detail are in the [CLI reference](https://github.com/CPCLab/ambermeta/blob/main/docs/cli.md) and the [tutorials](https://github.com/CPCLab/ambermeta/blob/main/docs/tutorials.md).
 
 ---
 
@@ -214,9 +221,9 @@ Each step's `input_coords.source` is one of `starting_structure`, `step` (with `
 ambermeta validate --manifest simulation.yaml --format json
 ```
 
-A finding you have reviewed (a replica stopped on purpose, a run that was not deposited) can be settled in the manifest with a note, under `acknowledged:`; it is then listed apart with that note, no longer fails `--strict`, and is carried into the summaries. See [manifest §9.3](docs/manifest.md#93-settling-a-finding-acknowledged).
+A finding you have reviewed (a replica stopped on purpose, a run that was not deposited) can be settled in the manifest with a note, under `acknowledged:`; it is then listed apart with that note, no longer fails `--strict`, and is carried into the summaries. See [manifest §9.3](https://github.com/CPCLab/ambermeta/blob/main/docs/manifest.md#93-settling-a-finding-acknowledged).
 
-The complete schema — every key, all input-coordinate sources, gap configuration, environment-variable expansion, and role tokens — is documented in the [manifest schema reference](docs/manifest.md).
+The complete schema — every key, all input-coordinate sources, gap configuration, environment-variable expansion, and role tokens — is documented in the [manifest schema reference](https://github.com/CPCLab/ambermeta/blob/main/docs/manifest.md).
 
 ### Coming from v1?
 
@@ -274,7 +281,7 @@ meta = result.details
 print(meta.natom, meta.hmr_active, meta.solvent_type)
 ```
 
-The full surface — every `ambermeta.simulation` dataclass, the retained `SimulationProtocol`/`SimulationStage`/`ProtocolBuilder`, the `core_bridge.discover_draft`/`validate_simulation` helpers that back the CLI and GUI, and every parser metadata field — is in the [Python API reference](docs/api.md).
+The full surface — every `ambermeta.simulation` dataclass, the retained `SimulationProtocol`/`SimulationStage`/`ProtocolBuilder`, the `core_bridge.discover_draft`/`validate_simulation` helpers that back the CLI and GUI, and every parser metadata field — is in the [Python API reference](https://github.com/CPCLab/ambermeta/blob/main/docs/api.md).
 
 ---
 
@@ -293,9 +300,9 @@ A rebuilt three-pane browser app for assembling and auditing a Simulation:
 
 A **Suggestions** tray surfaces every inferred thing (roles, HMR topology, starting structure, sequence holes, continuity gaps) as an explainable, undoable suggestion rather than applying it silently. **Discover** re-runs discover-as-draft on the launch directory; **Open**/**Save** read and write the same v2 manifest the CLI does; **Validate** lists issues.
 
-Run lineages are **proposed, never written**. After a Discover that found a grouping, a **proposal strip** shows the members it inferred, the directories each was built from, an editable name per member, and a segment picker for regrouping by a different part of the path — plus the cross-directory restart handoffs that AMBER's own mdout `File Assignments` records (`equil/01/18_ntp_equi → prod/01/nvt_prod_0001`). Discover already follows a record that identifies one run, in every directory, so the draft chain is what AMBER recorded wherever it recorded something usable. Nothing lands until you press **Accept**. The inference refuses more layouts than it accepts; **Define replicas…** in the top bar opens the same picker on demand and never refuses, so a tree it could not reconcile is still one click from being declared. See [GUI guide §5a](docs/gui.md).
+Run lineages are **proposed, never written**. After a Discover that found a grouping, a **proposal strip** shows the members it inferred, the directories each was built from, an editable name per member, and a segment picker for regrouping by a different part of the path — plus the cross-directory restart handoffs that AMBER's own mdout `File Assignments` records (`equil/01/18_ntp_equi → prod/01/nvt_prod_0001`). Discover already follows a record that identifies one run, in every directory, so the draft chain is what AMBER recorded wherever it recorded something usable. Nothing lands until you press **Accept**. The inference refuses more layouts than it accepts; **Define replicas…** in the top bar opens the same picker on demand and never refuses, so a tree it could not reconcile is still one click from being declared. See [GUI guide §5a](https://github.com/CPCLab/ambermeta/blob/main/docs/gui.md).
 
-The server is server-authoritative (a single document held server-side; every mutation returns the new document; undo/redo call the server), single-user, **localhost-only**, and confines all file access to the launch directory. Full walkthrough, including the HTTP API surface: [GUI guide](docs/gui.md).
+The server is server-authoritative (a single document held server-side; every mutation returns the new document; undo/redo call the server), single-user, **localhost-only**, and confines all file access to the launch directory. Full walkthrough, including the HTTP API surface: [GUI guide](https://github.com/CPCLab/ambermeta/blob/main/docs/gui.md).
 
 ---
 
@@ -312,7 +319,7 @@ The server is server-authoritative (a single document held server-side; every mu
 | `ambermeta gui` | Launch the browser GUI |
 | `ambermeta completion` | Emit a shell-completion script (bash / zsh / fish) |
 
-Global options (`--log-level`, `--log-file`, `-q/--quiet`) and every flag are documented — and kept in sync with the parser by CI — in the [CLI reference](docs/cli.md).
+Global options (`--log-level`, `--log-file`, `-q/--quiet`) and every flag are documented — and kept in sync with the parser by CI — in the [CLI reference](https://github.com/CPCLab/ambermeta/blob/main/docs/cli.md).
 
 ---
 
@@ -320,17 +327,17 @@ Global options (`--log-level`, `--log-file`, `-q/--quiet`) and every flag are do
 
 | Document | What's inside |
 |---|---|
-| [Architecture](docs/architecture.md) | How the engine is built: the Simulation → Phase → Step model, the topology pool and input-coordinate sources, continuity/sequence detection, manifest v2 and its reader, the shared role classifier, the parser layer, and the GUI's single-engine bridge |
-| [CLI reference](docs/cli.md) | Every command, flag, exit code, and environment variable |
-| [Python API reference](docs/api.md) | Classes, functions, parser metadata fields, and worked examples |
-| [Manifest schema](docs/manifest.md) | The full v2 schema, environment-variable expansion, and role tokens |
-| [GUI guide](docs/gui.md) | The browser app, its API surface, and its security model |
-| [Tutorials](docs/tutorials.md) | Task-oriented, step-by-step walkthroughs |
-| [Recipes](docs/recipes.md) | Copy-paste CLI one-liners for common jobs |
-| [Depositor SOP](docs/sop/ambermeta-sop.pdf) | The procedure for applying AmberMeta to a collected dataset, one system at a time — prerequisites, the layout to use, the GUI walkthrough, and what to do with each finding ([source](docs/sop/ambermeta-sop.tex)) |
-| [Replica layouts](docs/sop/replica-layouts.pdf) | Which directory conventions the layout inference detects, which it declines and why, and how to declare the rest by hand ([source](docs/sop/replica-layouts.tex)) |
+| [Architecture](https://github.com/CPCLab/ambermeta/blob/main/docs/architecture.md) | How the engine is built: the Simulation → Phase → Step model, the topology pool and input-coordinate sources, continuity/sequence detection, manifest v2 and its reader, the shared role classifier, the parser layer, and the GUI's single-engine bridge |
+| [CLI reference](https://github.com/CPCLab/ambermeta/blob/main/docs/cli.md) | Every command, flag, exit code, and environment variable |
+| [Python API reference](https://github.com/CPCLab/ambermeta/blob/main/docs/api.md) | Classes, functions, parser metadata fields, and worked examples |
+| [Manifest schema](https://github.com/CPCLab/ambermeta/blob/main/docs/manifest.md) | The full v2 schema, environment-variable expansion, and role tokens |
+| [GUI guide](https://github.com/CPCLab/ambermeta/blob/main/docs/gui.md) | The browser app, its API surface, and its security model |
+| [Tutorials](https://github.com/CPCLab/ambermeta/blob/main/docs/tutorials.md) | Task-oriented, step-by-step walkthroughs |
+| [Recipes](https://github.com/CPCLab/ambermeta/blob/main/docs/recipes.md) | Copy-paste CLI one-liners for common jobs |
+| [Depositor SOP](https://github.com/CPCLab/ambermeta/blob/main/docs/sop/ambermeta-sop.pdf) | The procedure for applying AmberMeta to a collected dataset, one system at a time — prerequisites, the layout to use, the GUI walkthrough, and what to do with each finding ([source](https://github.com/CPCLab/ambermeta/blob/main/docs/sop/ambermeta-sop.tex)) |
+| [Replica layouts](https://github.com/CPCLab/ambermeta/blob/main/docs/sop/replica-layouts.pdf) | Which directory conventions the layout inference detects, which it declines and why, and how to declare the rest by hand ([source](https://github.com/CPCLab/ambermeta/blob/main/docs/sop/replica-layouts.tex)) |
 
-A single-page, fully offline HTML version of these docs lives at [`docs/ambermeta.html`](docs/ambermeta.html) — open it in any browser (no server, no network).
+A single-page, fully offline HTML version of these docs lives at [`docs/ambermeta.html`](https://github.com/CPCLab/ambermeta/blob/main/docs/ambermeta.html) — open it in any browser (no server, no network).
 
 ---
 
@@ -340,14 +347,14 @@ A single-page, fully offline HTML version of these docs lives at [`docs/ambermet
 - **AMBER engines:** parses output from both `pmemd`/`pmemd.cuda` and `sander`. GPU model and ns/day come from the `mdout` footer where present. Completion and wall-time are read per engine: `pmemd` writes a `Final Performance Info` block and a `Total wall time:` line, `sander` writes neither — its completion is taken from its own end-of-run markers (`Run done at`, `wallclock() was called`) and its wall clock from the `Total time` line in `TIMINGS`.
 - **NetCDF:** `.nc` trajectories and `.ncrst` restarts require the `netcdf` extra. Without it, ASCII trajectories/restarts still parse; NetCDF files are reported as unreadable rather than crashing the run, and continuity reads each run's start time from its `mdout` instead. A run that set its own clock (`irest = 0`, new velocities) is then not measured against the run before it: it gets an INFO note that continuity follows the recorded input coordinates.
 - **Incomplete trajectories are not read as complete ones.** NetCDF-3 stores record variables interleaved at the end of the file, so records that were never written back read as fill. A trajectory that is truncated, still being written, or half-copied is detected by its frame times ceasing to increase: AmberMeta reports the frames that are really on disk, warns that the times are not reported, and lets continuity fall through to the `mdout` rather than taking a fill value as the run's end time. Box records that read as empty are dropped from the box and volume statistics with a warning of their own.
-- **One simulation per folder.** A folder whose runs report different atom counts holds several systems, so `discover`, `plan --recursive` and the GUI's Discover refuse it and name each system; run each system's folder on its own, or pass `--as-one-simulation` for a false alarm. See [Several systems in one folder](docs/cli.md#several-systems-in-one-folder).
+- **One simulation per folder.** A folder whose runs report different atom counts holds several systems, so `discover`, `plan --recursive` and the GUI's Discover refuse it and name each system; run each system's folder on its own, or pass `--as-one-simulation` for a false alarm. See [Several systems in one folder](https://github.com/CPCLab/ambermeta/blob/main/docs/cli.md#several-systems-in-one-folder).
 - **Fault tolerance:** `ambermeta plan` is fault-tolerant by default — an unreadable or malformed file is skipped, the error is recorded against its stage/step, and the run still completes (exit `0`). Pass `--strict` to make the first bad file a hard error.
-- **Role inference is heuristic.** When a phase or stage omits its role, AmberMeta infers it from `imin` in the `mdin`/`mdout`, the file/path name, and other content (restraints, a temperature ramp, run length), via the shared classifier in `ambermeta/roles.py`, and records that it did so. Name cues are matched per path component, directories first: `min`/`em`, `heat`, `equil`/`equi`/`eq`, `prod`, then `nvt`/`npt` (so `nvt_prod_0001` is production), each followed by `_`, `.`, `-`, a digit or the end of the name (`prod1`, `eq0001`); the full table is in the [manifest schema](docs/manifest.md#7-canonical-role-tokens). Verify inferred roles before publishing.
+- **Role inference is heuristic.** When a phase or stage omits its role, AmberMeta infers it from `imin` in the `mdin`/`mdout`, the file/path name, and other content (restraints, a temperature ramp, run length), via the shared classifier in `ambermeta/roles.py`, and records that it did so. Name cues are matched per path component, directories first: `min`/`em`, `heat`, `equil`/`equi`/`eq`, `prod`, then `nvt`/`npt` (so `nvt_prod_0001` is production), each followed by `_`, `.`, `-`, a digit or the end of the name (`prod1`, `eq0001`); the full table is in the [manifest schema](https://github.com/CPCLab/ambermeta/blob/main/docs/manifest.md#7-canonical-role-tokens). Verify inferred roles before publishing.
 - **Manifest formats:** JSON or YAML, in both directions. TOML and CSV are not manifest formats — a `.toml`/`.csv` manifest path is refused with a message that says so. (`--stats-csv` still writes a per-stage statistics CSV; that is a report, not a manifest.)
 
 ### Behavior changes in 1.4.0
 
-- **A finding can be settled with a note.** A manifest may list findings you have reviewed under `acknowledged:`, each with a note that says why it stands. `validate` and `plan` show them apart under "Acknowledged", they no longer count for the verdict or for `--strict`, and an entry that no longer matches a finding is listed as no longer found. The notes are kept in `summary.json` and in the methods summary. In the GUI, a finding offers **Acknowledge…** and an acknowledged one offers **Reopen**. See [Settling a finding](docs/manifest.md#93-settling-a-finding-acknowledged).
+- **A finding can be settled with a note.** A manifest may list findings you have reviewed under `acknowledged:`, each with a note that says why it stands. `validate` and `plan` show them apart under "Acknowledged", they no longer count for the verdict or for `--strict`, and an entry that no longer matches a finding is listed as no longer found. The notes are kept in `summary.json` and in the methods summary. In the GUI, a finding offers **Acknowledge…** and an acknowledged one offers **Reopen**. See [Settling a finding](https://github.com/CPCLab/ambermeta/blob/main/docs/manifest.md#93-settling-a-finding-acknowledged).
 - **The methods summary as Markdown.** `plan --methods-summary-md FILE` writes a readable Markdown version beside the JSON, `plan --out DIR` writes it as `methods_summary.md`, and `python -m ambermeta.methods_summary summary.json -o methods_summary.md` converts any existing summary. The GUI's Plan dialog writes it by default.
 - **One simulation per folder.** `discover`, `plan --recursive` and the GUI's Discover refuse a folder whose runs report different atom counts and name each system, where 1.3.0 merged them. `--as-one-simulation` keeps the old behavior.
 - **Plainer output.** The verdict counts what is left to check (`Validation: OK, N findings to review`), findings are worded in plain language, and a gap in a numbered series names the run that is missing. `--help` shows the typical workflow, `plan`'s options are grouped, `plan --out DIR` writes every summary into one folder, and the run listing is compact (`-v` for full lines).
@@ -369,4 +376,4 @@ A single-page, fully offline HTML version of these docs lives at [`docs/ambermet
 
 ## 10. License
 
-AmberMeta is distributed under the **Business Source License 1.1 (BUSL-1.1)**. See [`LICENSE`](LICENSE) for the full terms.
+AmberMeta is distributed under the **Business Source License 1.1 (BUSL-1.1)**. See [`LICENSE`](https://github.com/CPCLab/ambermeta/blob/main/LICENSE) for the full terms.
