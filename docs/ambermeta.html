@@ -283,7 +283,7 @@ Validation: OK, 5 findings to review</span></code></pre>
 
 <span class="o">Wrote v2 manifest: sim.json (json)</span></code></pre>
 
-<p>The full manifest-driven workflow — editing a manifest by hand, re-validating, exporting reproducibility artifacts — is in the <a href="https://github.com/MicheleBonus/ambermeta/blob/main/docs/cli.md">CLI reference</a> and the <a href="https://github.com/MicheleBonus/ambermeta/blob/main/docs/tutorials.md">tutorials</a>.</p>
+<p>The full manifest-driven workflow — editing a manifest by hand, re-validating, exporting reproducibility artifacts — is in the <a href="https://github.com/CPCLab/ambermeta/blob/main/docs/cli.md">CLI reference</a> and the <a href="https://github.com/CPCLab/ambermeta/blob/main/docs/tutorials.md">tutorials</a>.</p>
 </section>
 
 <section id="cli" class="wrap">
@@ -355,7 +355,7 @@ Validation: OK, 5 findings to review</span></code></pre>
 <h3 id="cli-init"><code>init</code> <span class="badge cli">bootstrap</span></h3>
 <p><code>init</code> writes a static, commented <strong>v2 template</strong> manifest (topology pool, minimization + production phases, both <code>input_coords</code> sources shown) — it does not scan the directory; it's a starting point to hand-edit. Its only flags are <code>-o/--output</code> (default <code>manifest.yaml</code>) and <code>--force</code>, which overwrites an existing file without prompting. To build a manifest <em>from</em> a directory, use <a href="#cli-discover"><code>discover</code></a>.</p>
 
-<aside class="note"><strong>The full flag list is generated from the parser and kept in sync by CI.</strong> See the <a href="https://github.com/MicheleBonus/ambermeta/blob/main/docs/cli.md">CLI reference</a> for every flag, with verbatim <code>--help</code> output.</aside>
+<aside class="note"><strong>The full flag list is generated from the parser and kept in sync by CI.</strong> See the <a href="https://github.com/CPCLab/ambermeta/blob/main/docs/cli.md">CLI reference</a> for every flag, with verbatim <code>--help</code> output.</aside>
 </section>
 
 <section id="manifests" class="wrap">
@@ -419,7 +419,7 @@ steps:
 
 <p>The fix is the one the message names: point <code>discover</code> at the directory the run lives in and let it rebuild the document as v2, then hand-edit anything it inferred wrongly. A file that <em>does</em> announce itself as v2 (<code>version: 2</code>, or a top-level <code>simulation</code>/<code>phases</code> key) but has lost its <code>steps</code> list gets a different message, telling you to restore the list rather than throw the file away.</p>
 
-<aside class="note"><strong>One format in, the same format out.</strong> Every entry point — <code>plan -m</code>, <code>export</code>, <code>validate --manifest</code>, and the GUI's Open — reads v2 and only v2, and every writer emits v2. <code>ambermeta init</code> generates a fresh v2 template if you'd rather start clean. Full schema — every key, environment-variable expansion, role tokens: <a href="https://github.com/MicheleBonus/ambermeta/blob/main/docs/manifest.md">manifest reference</a>.</aside>
+<aside class="note"><strong>One format in, the same format out.</strong> Every entry point — <code>plan -m</code>, <code>export</code>, <code>validate --manifest</code>, and the GUI's Open — reads v2 and only v2, and every writer emits v2. <code>ambermeta init</code> generates a fresh v2 template if you'd rather start clean. Full schema — every key, environment-variable expansion, role tokens: <a href="https://github.com/CPCLab/ambermeta/blob/main/docs/manifest.md">manifest reference</a>.</aside>
 </section>
 
 <section id="api" class="wrap">
@@ -495,7 +495,7 @@ print(md.finished_properly)            <span class="o"># True</span>
 print(md.stats.temp_stats.mean)        <span class="o"># 300.43200000000013</span>
 print(md.stats.temp_stats.stdev)       <span class="o"># 1.2504190252445306</span></code></pre>
 
-<aside class="note">Full signatures, every parser field, and the export structures are in the <a href="https://github.com/MicheleBonus/ambermeta/blob/main/docs/api.md">Python API reference</a>.</aside>
+<aside class="note">Full signatures, every parser field, and the export structures are in the <a href="https://github.com/CPCLab/ambermeta/blob/main/docs/api.md">Python API reference</a>.</aside>
 </section>
 
 <section id="gui" class="wrap">
@@ -534,7 +534,7 @@ print(md.stats.temp_stats.stdev)       <span class="o"># 1.2504190252445306</spa
 <tr><td>Files</td><td><code>GET /api/files</code>, <code>/files/metadata</code>, <code>/files/raw</code>, <code>/files/related/{stem}</code></td></tr>
 </tbody>
 </table>
-<aside class="note">Full endpoint shapes, data models, and the UI tour are in the <a href="https://github.com/MicheleBonus/ambermeta/blob/main/docs/gui.md">GUI guide</a>.</aside>
+<aside class="note">Full endpoint shapes, data models, and the UI tour are in the <a href="https://github.com/CPCLab/ambermeta/blob/main/docs/gui.md">GUI guide</a>.</aside>
 </section>
 
 <section id="architecture" class="wrap">
@@ -580,7 +580,7 @@ print(md.stats.temp_stats.stdev)       <span class="o"># 1.2504190252445306</spa
 </table>
 
 <aside class="key"><strong>Invariants worth remembering.</strong> (1) <code>parse().details</code> carries the metadata. (2) One manifest format — <code>load_simulation()</code> accepts v2 JSON or YAML and nothing else; <code>write_simulation()</code> emits the same. (3) One role classifier (<code>roles.classify_role</code>), one continuity algorithm, one sequence-hole detector — shared verbatim by the CLI and the GUI. (4) Inference is always announced as an <code>INFO</code> note or suggestion, never a silent guess. (5) Failures are data (<code>FileLoadError</code>), not crashes — <code>--strict</code> opts into hard failure. (6) The GUI imports the core only through <code>core_bridge.py</code>.</aside>
-<aside class="note">The full internals walkthrough is in the <a href="https://github.com/MicheleBonus/ambermeta/blob/main/docs/architecture.md">architecture document</a>.</aside>
+<aside class="note">The full internals walkthrough is in the <a href="https://github.com/CPCLab/ambermeta/blob/main/docs/architecture.md">architecture document</a>.</aside>
 </section>
 
 <section id="fields" class="wrap">
@@ -676,21 +676,21 @@ print(md.stats.temp_stats.stdev)       <span class="o"># 1.2504190252445306</spa
 <table>
 <thead><tr><th>Document</th><th>Contents</th></tr></thead>
 <tbody>
-<tr><td><a href="https://github.com/MicheleBonus/ambermeta/blob/main/docs/architecture.md">architecture.md</a></td><td>Engine internals and the Simulation → Phase → Step model</td></tr>
-<tr><td><a href="https://github.com/MicheleBonus/ambermeta/blob/main/docs/cli.md">cli.md</a></td><td>Every command, flag, exit code, env var — including <code>discover</code>/<code>export</code></td></tr>
-<tr><td><a href="https://github.com/MicheleBonus/ambermeta/blob/main/docs/api.md">api.md</a></td><td>The <code>ambermeta.simulation</code> model, the retained engine, core_bridge helpers, parser fields, examples</td></tr>
-<tr><td><a href="https://github.com/MicheleBonus/ambermeta/blob/main/docs/manifest.md">manifest.md</a></td><td>The full v2 schema and its two serializations (YAML and JSON)</td></tr>
-<tr><td><a href="https://github.com/MicheleBonus/ambermeta/blob/main/docs/gui.md">gui.md</a></td><td>The rebuilt browser app, its HTTP API, its security model</td></tr>
-<tr><td><a href="https://github.com/MicheleBonus/ambermeta/blob/main/docs/tutorials.md">tutorials.md</a></td><td>Task-oriented walkthroughs</td></tr>
-<tr><td><a href="https://github.com/MicheleBonus/ambermeta/blob/main/docs/recipes.md">recipes.md</a></td><td>Copy-paste CLI one-liners</td></tr>
-<tr><td><a href="https://github.com/MicheleBonus/ambermeta/blob/main/docs/sop/ambermeta-sop.pdf">sop/ambermeta-sop.pdf</a></td><td>Depositor SOP: applying AmberMeta to a collected dataset, one system at a time</td></tr>
-<tr><td><a href="https://github.com/MicheleBonus/ambermeta/blob/main/docs/sop/replica-layouts.pdf">sop/replica-layouts.pdf</a></td><td>Which replica directory conventions the layout inference detects, and how to declare the rest by hand</td></tr>
+<tr><td><a href="https://github.com/CPCLab/ambermeta/blob/main/docs/architecture.md">architecture.md</a></td><td>Engine internals and the Simulation → Phase → Step model</td></tr>
+<tr><td><a href="https://github.com/CPCLab/ambermeta/blob/main/docs/cli.md">cli.md</a></td><td>Every command, flag, exit code, env var — including <code>discover</code>/<code>export</code></td></tr>
+<tr><td><a href="https://github.com/CPCLab/ambermeta/blob/main/docs/api.md">api.md</a></td><td>The <code>ambermeta.simulation</code> model, the retained engine, core_bridge helpers, parser fields, examples</td></tr>
+<tr><td><a href="https://github.com/CPCLab/ambermeta/blob/main/docs/manifest.md">manifest.md</a></td><td>The full v2 schema and its two serializations (YAML and JSON)</td></tr>
+<tr><td><a href="https://github.com/CPCLab/ambermeta/blob/main/docs/gui.md">gui.md</a></td><td>The rebuilt browser app, its HTTP API, its security model</td></tr>
+<tr><td><a href="https://github.com/CPCLab/ambermeta/blob/main/docs/tutorials.md">tutorials.md</a></td><td>Task-oriented walkthroughs</td></tr>
+<tr><td><a href="https://github.com/CPCLab/ambermeta/blob/main/docs/recipes.md">recipes.md</a></td><td>Copy-paste CLI one-liners</td></tr>
+<tr><td><a href="https://github.com/CPCLab/ambermeta/blob/main/docs/sop/ambermeta-sop.pdf">sop/ambermeta-sop.pdf</a></td><td>Depositor SOP: applying AmberMeta to a collected dataset, one system at a time</td></tr>
+<tr><td><a href="https://github.com/CPCLab/ambermeta/blob/main/docs/sop/replica-layouts.pdf">sop/replica-layouts.pdf</a></td><td>Which replica directory conventions the layout inference detects, and how to declare the rest by hand</td></tr>
 </tbody>
 </table>
 </section>
 
 <footer class="foot">
-<p>AmberMeta v1.1.0 · distributed under the Business Source License 1.1 (BUSL-1.1) · <a href="https://github.com/MicheleBonus/ambermeta">github.com/MicheleBonus/ambermeta</a></p>
+<p>AmberMeta v1.1.0 · distributed under the Business Source License 1.1 (BUSL-1.1) · <a href="https://github.com/CPCLab/ambermeta">github.com/CPCLab/ambermeta</a></p>
 </footer>
 </main>
 </div>
