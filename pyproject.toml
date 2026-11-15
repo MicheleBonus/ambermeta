@@ -80,10 +80,10 @@ all = [
 ambermeta = "ambermeta.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/MicheleBonus/ambermeta"
-Documentation = "https://github.com/MicheleBonus/ambermeta#readme"
-Repository = "https://github.com/MicheleBonus/ambermeta.git"
-Issues = "https://github.com/MicheleBonus/ambermeta/issues"
+Homepage = "https://github.com/CPCLab/ambermeta"
+Documentation = "https://github.com/CPCLab/ambermeta#readme"
+Repository = "https://github.com/CPCLab/ambermeta.git"
+Issues = "https://github.com/CPCLab/ambermeta/issues"
 
 [tool.setuptools]
 packages = ["ambermeta", "ambermeta.parsers", "ambermeta.legacy_extractors", "ambermeta.gui", "ambermeta.gui.api"]

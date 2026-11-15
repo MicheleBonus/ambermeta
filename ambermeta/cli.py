@@ -1861,7 +1861,7 @@ File types:
   coordinates:  .rst7, .rst, .restrt, .ncrst, .inpcrd
   .crd is a trajectory or LEaP coordinates, told apart by content.
 
-For documentation, visit: https://github.com/MicheleBonus/ambermeta
+For documentation, visit: https://github.com/CPCLab/ambermeta
 """,
     )
 
